@@ -11,26 +11,60 @@ logmind automatically tracks decisions made during AI-assisted development, main
 ## Quick Start
 
 ```bash
-# Install
-pip install logmind
+# Install (once)
+pipx install logmind
 
 # Initialize in your project
 cd your-project
 logmind init
 
-# Log a decision (appends to file, commits, pushes)
+# Log decisions - Python API
 from logmind import log
-
-log("Chose FastAPI over Flask for async support",
+log("Chose FastAPI over Flask",
     reasoning="Need async/await for WebSocket handling")
+
+# Or use CLI
+logmind log "Use PostgreSQL for database" \
+  -r "Need ACID compliance" \
+  -a "MongoDB" -a "SQLite"
+
+# View and search decisions
+logmind show
+logmind search "postgres"
 ```
+
+## Contributing / Development Setup
+
+Working on logmind itself? Set it up like any CLI tool:
+
+```bash
+# Clone the repo
+git clone https://github.com/your-username/logmind.git
+cd logmind
+
+# Install globally in editable mode (like npm, git, docker)
+pipx install -e .
+
+# Now just use it!
+logmind log "Add new feature" -r "Reasoning here"
+logmind show
+logmind search "keyword"
+
+# Run tests
+python3 -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+**Why pipx?** logmind is a CLI tool, not a library. It should be globally available like `git` or `npm`.
 
 ## Documentation
 
 - **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
 - **[CLAUDE.md Insertion](docs/claude-md-insertion.md)** - How logmind integrates with AI instruction files
 - **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
-- **Development Status** - Currently in planning phase
+- **Development Status** - Phase 2 Complete (core features + config + search)
 
 ## How It Works
 

@@ -98,3 +98,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Explains why pipx (CLI tool philosophy)
 
 ---
+## 2025-10-19 17:44 - Make logmind commit all changed files, not just docs
+
+**Reasoning:** When logging a decision, users expect ALL their changes to be committed together with that decision - like a normal git workflow. Previously only docs/ files were committed.
+
+**Alternatives considered:** Keep selective file commits
+
+**Implications:**
+- logmind now does 'git add .' before committing
+- All changes committed together with decision
+- More intuitive git workflow
+
+---

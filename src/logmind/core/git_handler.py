@@ -64,6 +64,31 @@ def git_add(files: List[str], path: Optional[Path] = None) -> None:
         raise GitError(f"Failed to add files to git: {e.stderr}")
 
 
+def git_add_all(path: Optional[Path] = None) -> None:
+    """
+    Add all changed files to git staging area (git add .).
+
+    Args:
+        path: Repository root. Defaults to current directory.
+
+    Raises:
+        GitError: If git add fails
+    """
+    if path is None:
+        path = Path.cwd()
+
+    try:
+        subprocess.run(
+            ["git", "add", "."],
+            cwd=path,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise GitError(f"Failed to add files to git: {e.stderr}")
+
+
 def git_commit(message: str, path: Optional[Path] = None) -> None:
     """
     Commit staged changes with a message.

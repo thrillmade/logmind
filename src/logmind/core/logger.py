@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from logmind.core.config import load_config
-from logmind.core.git_handler import commit_and_push, is_git_repo
+from logmind.core.git_handler import commit_and_push, is_git_repo, git_add_all, git_commit, git_push
 from logmind.core.tree_gen import update_file_structure
 
 
@@ -236,22 +236,15 @@ def log(
 
     # Commit and push if requested
     if auto_commit and is_git_repo():
-        files_to_commit = [
-            "docs/decisions.md",
-        ]
-
-        # Add file-structure if it was updated
-        if config.auto_update_file_structure:
-            files_to_commit.append("docs/file-structure.md")
-
-        # Add archive if it was created/updated
-        archive_path = docs_path / "decisions-archive.md"
-        if archive_path.exists():
-            files_to_commit.append("docs/decisions-archive.md")
+        # Add ALL changed files (not just docs)
+        git_add_all()
 
         # Use configured commit message template
         commit_message = config.commit_message_template.format(decision=decision)
-        commit_and_push(files_to_commit, commit_message, push=auto_push)
+        git_commit(commit_message)
+
+        if auto_push:
+            git_push()
 
 
 def log_first_decision(docs_path: Optional[Path] = None) -> None:
