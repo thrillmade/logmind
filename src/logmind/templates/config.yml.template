@@ -1,0 +1,41 @@
+# logmind configuration
+# This file controls how logmind behaves in this project
+
+# Git integration
+git:
+  # Automatically commit after logging a decision
+  auto_commit: true
+
+  # Automatically push after committing
+  auto_push: true
+
+  # Commit message template
+  # Available variables: {decision}
+  commit_message_template: "logmind: {decision}"
+
+# Decision management
+decisions:
+  # Maximum number of recent decisions to keep in decisions.md
+  # Older decisions are moved to decisions-archive.md
+  max_recent: 20
+
+# File structure generation
+file_structure:
+  # Update file-structure.md on every log
+  auto_update: true
+
+  # Directories to ignore in tree output
+  ignore_patterns:
+    - __pycache__
+    - .git
+    - node_modules
+    - venv
+    - .venv
+    - env
+    - .env
+    - "*.pyc"
+    - .pytest_cache
+    - .mypy_cache
+    - dist
+    - build
+    - "*.egg-info"

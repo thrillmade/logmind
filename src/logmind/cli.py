@@ -6,9 +6,11 @@ from typing import Optional
 
 import click
 
+from logmind.core.config import load_config
 from logmind.core.git_handler import commit_and_push, is_git_repo
 from logmind.core.inserter import insert_into_all_ai_files
 from logmind.core.logger import log as log_decision, log_first_decision
+from logmind.core.search import format_search_results, search_decisions
 from logmind.core.tree_gen import update_file_structure
 
 
@@ -78,6 +80,13 @@ def init(no_git: bool):
     update_file_structure(docs_path)
     click.echo("✓ Created docs/file-structure.md")
 
+    # Create .logmind directory and config file
+    logmind_dir = root_path / ".logmind"
+    logmind_dir.mkdir(exist_ok=True)
+    config_template = (template_dir / "config.yml.template").read_text()
+    (logmind_dir / "config.yml").write_text(config_template)
+    click.echo("✓ Created .logmind/config.yml")
+
     # Insert into AI instruction files
     messages = insert_into_all_ai_files(root_path)
     for msg in messages:
@@ -94,6 +103,7 @@ def init(no_git: bool):
                 "docs/decisions.md",
                 "docs/decisions-archive.md",
                 "docs/file-structure.md",
+                ".logmind/config.yml",
             ]
 
             # Add CLAUDE.md if it was created/modified
@@ -172,6 +182,14 @@ def log(
     alternatives = list(alternative) if alternative else None
     implications = list(implication) if implication else None
 
+    # Load config to determine defaults
+    config = load_config()
+
+    # Determine commit and push behavior
+    # CLI flags override config
+    should_commit = config.auto_commit if not no_commit else False
+    should_push = config.auto_push if not no_push else False
+
     try:
         log_decision(
             decision=decision,
@@ -179,14 +197,17 @@ def log(
             alternatives=alternatives,
             implications=implications,
             docs_path=docs_path,
-            auto_commit=not no_commit,
-            auto_push=not no_push,
+            auto_commit=should_commit,
+            auto_push=should_push,
         )
 
         click.secho(f"✓ Logged decision: \"{decision}\"", fg="green")
 
-        if not no_commit:
-            click.echo("✓ Committed and pushed changes")
+        if should_commit:
+            if should_push:
+                click.echo("✓ Committed and pushed changes")
+            else:
+                click.echo("✓ Committed changes (push disabled)")
 
     except Exception as e:
         click.secho(f"Error: {e}", fg="red")
@@ -227,6 +248,91 @@ def show(show_all: bool):
             click.echo("ARCHIVED DECISIONS")
             click.echo("=" * 80 + "\n")
             click.echo(archive_path.read_text())
+
+
+@main.command()
+@click.argument("query")
+@click.option(
+    "--case-sensitive",
+    "-c",
+    is_flag=True,
+    help="Perform case-sensitive search",
+)
+@click.option(
+    "--no-archive",
+    is_flag=True,
+    help="Don't search archived decisions",
+)
+@click.option(
+    "--no-context",
+    is_flag=True,
+    help="Don't show context lines around matches",
+)
+@click.option(
+    "--context-lines",
+    "-C",
+    type=int,
+    default=2,
+    help="Number of context lines to show (default: 2)",
+)
+def search(
+    query: str,
+    case_sensitive: bool,
+    no_archive: bool,
+    no_context: bool,
+    context_lines: int,
+):
+    """
+    Search through decision logs for a term or pattern.
+
+    Supports regex patterns. By default, search is case-insensitive
+    and includes archived decisions.
+
+    Examples:
+        logmind search "postgres"
+        logmind search "database.*choice" -c
+        logmind search "API" --no-archive
+    """
+    docs_path = Path.cwd() / "docs"
+
+    if not docs_path.exists():
+        click.secho(
+            "Error: docs/ directory not found. Run 'logmind init' first.",
+            fg="red",
+        )
+        sys.exit(1)
+
+    try:
+        results = search_decisions(
+            query=query,
+            docs_path=docs_path,
+            case_sensitive=case_sensitive,
+            include_archive=not no_archive,
+            context_lines=context_lines,
+        )
+
+        if not results:
+            click.secho(f"No matches found for: {query}", fg="yellow")
+            return
+
+        # Show result count
+        click.secho(
+            f"Found {len(results)} match{'es' if len(results) != 1 else ''} for: {query}",
+            fg="green",
+        )
+        click.echo()
+
+        # Format and display results
+        formatted = format_search_results(
+            results,
+            show_context=not no_context,
+            highlight_term=query if not case_sensitive else None,
+        )
+        click.echo(formatted)
+
+    except Exception as e:
+        click.secho(f"Error during search: {e}", fg="red")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

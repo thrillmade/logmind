@@ -9,7 +9,16 @@ src/logmind.egg-info/entry_points.txt
 src/logmind.egg-info/requires.txt
 src/logmind.egg-info/top_level.txt
 src/logmind/core/__init__.py
+src/logmind/core/config.py
 src/logmind/core/git_handler.py
 src/logmind/core/inserter.py
 src/logmind/core/logger.py
+src/logmind/core/search.py
 src/logmind/core/tree_gen.py
+tests/test_cli.py
+tests/test_config.py
+tests/test_git_handler.py
+tests/test_inserter.py
+tests/test_logger.py
+tests/test_search.py
+tests/test_tree_gen.py

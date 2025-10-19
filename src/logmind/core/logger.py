@@ -4,11 +4,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
+from logmind.core.config import load_config
 from logmind.core.git_handler import commit_and_push, is_git_repo
 from logmind.core.tree_gen import update_file_structure
-
-
-MAX_RECENT_DECISIONS = 20
 
 
 def _format_decision(
@@ -168,17 +166,17 @@ def log(
     alternatives: Optional[Union[List[str], str]] = None,
     implications: Optional[Union[List[str], str]] = None,
     docs_path: Optional[Path] = None,
-    auto_commit: bool = True,
-    auto_push: bool = True,
+    auto_commit: Optional[bool] = None,
+    auto_push: Optional[bool] = None,
 ) -> None:
     """
     Log a decision to the decision log.
 
     This function:
     1. Appends the decision to docs/decisions.md
-    2. Archives oldest decision if > 20 entries
+    2. Archives oldest decision if > max_recent entries (from config)
     3. Updates docs/file-structure.md with current tree
-    4. Commits and pushes changes (if auto_commit=True)
+    4. Commits and pushes changes (based on config or parameters)
 
     Args:
         decision: Decision summary (will be used in commit message)
@@ -186,8 +184,8 @@ def log(
         alternatives: Other options considered (string or list)
         implications: What this decision means (string or list)
         docs_path: Path to docs directory. Defaults to ./docs
-        auto_commit: Whether to auto-commit. Defaults to True.
-        auto_push: Whether to auto-push. Defaults to True.
+        auto_commit: Whether to auto-commit. If None, uses config value.
+        auto_push: Whether to auto-push. If None, uses config value.
 
     Raises:
         FileNotFoundError: If docs/ doesn't exist (run logmind init first)
@@ -199,6 +197,15 @@ def log(
         raise FileNotFoundError(
             "docs/ directory not found. Run 'logmind init' first to initialize."
         )
+
+    # Load configuration
+    config = load_config()
+
+    # Use config values if not explicitly provided
+    if auto_commit is None:
+        auto_commit = config.auto_commit
+    if auto_push is None:
+        auto_push = config.auto_push
 
     # Normalize inputs
     if isinstance(alternatives, str):
@@ -217,27 +224,33 @@ def log(
     updated_content = current_content + decision_entry
     decisions_path.write_text(updated_content)
 
-    # Check if we need to archive
+    # Check if we need to archive (use config value)
     decision_count = _count_decisions(updated_content)
-    if decision_count > MAX_RECENT_DECISIONS:
+    max_recent = config.max_recent_decisions
+    if decision_count > max_recent:
         _archive_oldest_decision(docs_path)
 
-    # Update file structure
-    update_file_structure(docs_path)
+    # Update file structure (if configured)
+    if config.auto_update_file_structure:
+        update_file_structure(docs_path)
 
     # Commit and push if requested
     if auto_commit and is_git_repo():
         files_to_commit = [
             "docs/decisions.md",
-            "docs/file-structure.md",
         ]
+
+        # Add file-structure if it was updated
+        if config.auto_update_file_structure:
+            files_to_commit.append("docs/file-structure.md")
 
         # Add archive if it was created/updated
         archive_path = docs_path / "decisions-archive.md"
         if archive_path.exists():
             files_to_commit.append("docs/decisions-archive.md")
 
-        commit_message = f"logmind: {decision}"
+        # Use configured commit message template
+        commit_message = config.commit_message_template.format(decision=decision)
         commit_and_push(files_to_commit, commit_message, push=auto_push)
 
 
