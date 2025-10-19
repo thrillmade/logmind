@@ -75,3 +75,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Better discoverability of logmind features for AI agents
 
 ---
+## 2025-10-19 17:41 - Use pipx for global logmind installation like standard CLI tools
+
+**Reasoning:** logmind is a CLI tool like git/npm/docker - should be globally installed, not repo-local. Users expect to just type 'logmind' without prefixes or activation.
+
+**Alternatives considered:** Repo-local venv with wrapper script, Makefile commands
+
+**Implications:**
+- Contributors run 'pipx install -e .' once after cloning
+- Clean CLI experience: just type 'logmind'
+- Works from any directory
+- Need to document setup in README
+
+---
