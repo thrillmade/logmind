@@ -25,3 +25,8 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Need to learn Click API
 
 ---
+## 2025-10-19 16:26 - Test Python API
+
+**Reasoning:** Testing that import works
+
+---
