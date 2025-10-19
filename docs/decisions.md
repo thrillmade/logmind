@@ -15,3 +15,13 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Git history will serve as an audit trail for all decisions
 
 ---
+## 2025-10-19 16:26 - Use Click for CLI framework
+
+**Reasoning:** Click provides excellent argument parsing and is widely used
+
+**Alternatives considered:** argparse, Typer
+
+**Implications:**
+- Need to learn Click API
+
+---
