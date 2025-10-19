@@ -88,3 +88,13 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Need to document setup in README
 
 ---
+## 2025-10-19 17:41 - Update README with pipx setup instructions and CLI examples
+
+**Reasoning:** Contributors need clear setup instructions. README should show both Python API and CLI usage, and explain the pipx approach.
+
+**Implications:**
+- Clear onboarding for new contributors
+- README shows complete feature set (log, show, search)
+- Explains why pipx (CLI tool philosophy)
+
+---
