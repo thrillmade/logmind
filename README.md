@@ -33,15 +33,16 @@ log("Chose FastAPI over Flask for async support",
 ## How It Works
 
 1. **Install** logmind as a package
-2. **Init** creates `docs/` folder with `decisions.md` and `file-structure.md`
-3. **Log** a decision - it appends to the file, regenerates tree, commits, and pushes
-4. **Context** AI agents read the history and current structure
+2. **Init** creates `docs/` folder with template files
+3. **Log** a decision - appends, archives old ones (keeps 20 recent), regenerates tree, commits, and pushes
+4. **Context** AI agents read the 20 most recent decisions and current file structure
 
 ## Why logmind?
 
-- **Simple:** One append-only file, no database
+- **Simple:** Two markdown files (recent + archive), no database
+- **Focused:** Only 20 most recent decisions for relevant AI context
 - **Git-native:** Every decision is a commit, git history is your audit trail
-- **AI-friendly:** Two files (decisions + structure) give complete context
+- **AI-friendly:** Recent decisions + file structure = complete context
 - **Automatic:** Commits and pushes on every log
 
 See [docs/plan.md](docs/plan.md) for complete architecture and roadmap.
