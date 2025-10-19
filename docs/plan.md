@@ -180,11 +180,12 @@ AI agents read files for full project context:
 - [x] Basic CLI: `logmind log "decision"` from command line
 - [x] Comprehensive test suite (65 tests, 100% passing)
 
-### Phase 2: Enhanced Features (50% complete)
-- [ ] Configuration options (git auto-push on/off, custom commit messages)
+### Phase 2: Enhanced Features ✅ COMPLETE
+- [x] Configuration options (git auto-push on/off, custom commit messages)
 - [x] CLI command to view recent decisions: `logmind show`
-- [ ] Search decisions: `logmind search "postgres"`
+- [x] Search decisions: `logmind search "postgres"`
 - [x] Git integration checks (warn if not in git repo)
+- [x] Test suite expanded to 95 tests (all passing)
 
 ### Phase 3: AI Integrations (Optional)
 - [ ] Decorators for automatic logging
