@@ -162,28 +162,29 @@ AI agents read files for full project context:
 
 ## Development Phases
 
-### Phase 1: Core Package (MVP)
-- [ ] Package structure and setup.py/pyproject.toml
-- [ ] `logmind init` command that:
-  - [ ] Creates docs/ folder and template files (decisions.md, decisions-archive.md, file-structure.md)
-  - [ ] Detects AI instruction files (CLAUDE.md, .cursorrules, .github/copilot-instructions.md)
-  - [ ] Inserts logmind section into these files without overwriting existing content
-  - [ ] Creates CLAUDE.md if it doesn't exist
-  - [ ] Logs first decision: "Initialize logmind decision tracking"
-  - [ ] Commits all changes: "logmind: Initialize decision tracking"
-- [ ] `logmind.log()` function that:
-  - [ ] Appends to docs/decisions.md
-  - [ ] Archives oldest decision if > 20 entries (moves to decisions-archive.md)
-  - [ ] Regenerates docs/file-structure.md using `tree`
-  - [ ] Git commits all changed files
-  - [ ] Pushes to remote
-- [ ] Basic CLI: `logmind log "decision"` from command line
+### Phase 1: Core Package (MVP) ✅ COMPLETE
+- [x] Package structure and setup.py/pyproject.toml
+- [x] `logmind init` command that:
+  - [x] Creates docs/ folder and template files (decisions.md, decisions-archive.md, file-structure.md)
+  - [x] Detects AI instruction files (CLAUDE.md, .cursorrules, .github/copilot-instructions.md)
+  - [x] Inserts logmind section into these files without overwriting existing content
+  - [x] Creates CLAUDE.md if it doesn't exist
+  - [x] Logs first decision: "Initialize logmind decision tracking"
+  - [x] Commits all changes: "logmind: Initialize decision tracking"
+- [x] `logmind.log()` function that:
+  - [x] Appends to docs/decisions.md
+  - [x] Archives oldest decision if > 20 entries (moves to decisions-archive.md)
+  - [x] Regenerates docs/file-structure.md using `tree`
+  - [x] Git commits all changed files
+  - [x] Pushes to remote
+- [x] Basic CLI: `logmind log "decision"` from command line
+- [x] Comprehensive test suite (65 tests, 100% passing)
 
-### Phase 2: Enhanced Features
+### Phase 2: Enhanced Features (50% complete)
 - [ ] Configuration options (git auto-push on/off, custom commit messages)
-- [ ] CLI command to view recent decisions: `logmind show`
+- [x] CLI command to view recent decisions: `logmind show`
 - [ ] Search decisions: `logmind search "postgres"`
-- [ ] Git integration checks (warn if not in git repo)
+- [x] Git integration checks (warn if not in git repo)
 
 ### Phase 3: AI Integrations (Optional)
 - [ ] Decorators for automatic logging

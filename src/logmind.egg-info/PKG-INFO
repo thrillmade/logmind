@@ -1,0 +1,77 @@
+Metadata-Version: 2.4
+Name: logmind
+Version: 0.1.0
+Summary: AI decision logging system for development projects
+Author: logmind contributors
+License: MIT
+Project-URL: Homepage, https://github.com/logmind/logmind
+Project-URL: Documentation, https://github.com/logmind/logmind#readme
+Project-URL: Repository, https://github.com/logmind/logmind
+Keywords: ai,decision-logging,documentation,development
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: click>=8.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+
+# logmind
+
+AI decision logging system for development projects.
+
+## Overview
+
+logmind automatically tracks decisions made during AI-assisted development, maintains up-to-date documentation, and provides rich context for AI agents.
+
+**Key concept:** Install once, init anywhere, log everything.
+
+## Quick Start
+
+```bash
+# Install
+pip install logmind
+
+# Initialize in your project
+cd your-project
+logmind init
+
+# Log a decision (appends to file, commits, pushes)
+from logmind import log
+
+log("Chose FastAPI over Flask for async support",
+    reasoning="Need async/await for WebSocket handling")
+```
+
+## Documentation
+
+- **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
+- **[CLAUDE.md Insertion](docs/claude-md-insertion.md)** - How logmind integrates with AI instruction files
+- **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
+- **Development Status** - Currently in planning phase
+
+## How It Works
+
+1. **Install** logmind as a package
+2. **Init** creates `docs/` folder and inserts instructions into `CLAUDE.md` (preserving existing content)
+3. **Log** a decision - appends, archives old ones (keeps 20 recent), regenerates tree, commits, and pushes
+4. **Context** AI agents read the 20 most recent decisions and current file structure
+
+## Why logmind?
+
+- **Simple:** Two markdown files (recent + archive), no database
+- **Focused:** Only 20 most recent decisions for relevant AI context
+- **Git-native:** Every decision is a commit, git history is your audit trail
+- **AI-friendly:** Recent decisions + file structure = complete context
+- **Automatic:** Commits and pushes on every log
+
+See [docs/plan.md](docs/plan.md) for complete architecture and roadmap.

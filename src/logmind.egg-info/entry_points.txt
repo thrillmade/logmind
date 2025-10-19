@@ -1,0 +1,2 @@
+[console_scripts]
+logmind = logmind.cli:main
