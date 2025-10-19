@@ -28,12 +28,14 @@ log("Chose FastAPI over Flask for async support",
 ## Documentation
 
 - **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
+- **[CLAUDE.md Insertion](docs/claude-md-insertion.md)** - How logmind integrates with AI instruction files
+- **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
 - **Development Status** - Currently in planning phase
 
 ## How It Works
 
 1. **Install** logmind as a package
-2. **Init** creates `docs/` folder with template files
+2. **Init** creates `docs/` folder and inserts instructions into `CLAUDE.md` (preserving existing content)
 3. **Log** a decision - appends, archives old ones (keeps 20 recent), regenerates tree, commits, and pushes
 4. **Context** AI agents read the 20 most recent decisions and current file structure
 
