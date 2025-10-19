@@ -63,3 +63,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - CLI command: logmind search 'query'
 
 ---
+## 2025-10-19 17:16 - Enhance CLAUDE.md templates with comprehensive CLI examples and search documentation
+
+**Reasoning:** AI agents need clear, practical examples of both Python API and CLI commands. Previous templates only showed Python usage, but agents often work in shell contexts where CLI is more appropriate.
+
+**Alternatives considered:** Keep only Python API examples, Create separate CLI-only documentation
+
+**Implications:**
+- All new logmind projects will get improved instructions with both API styles
+- Agents will know about search, show, and log commands
+- Better discoverability of logmind features for AI agents
+
+---
