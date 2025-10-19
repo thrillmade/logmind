@@ -51,3 +51,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Configurable max_recent_decisions threshold
 
 ---
+## 2025-10-19 16:57 - Implement search command for decision logs
+
+**Reasoning:** Users need to be able to search through past decisions to find relevant context quickly. Supports regex patterns, case-sensitive/insensitive search, and includes archived decisions by default.
+
+**Alternatives considered:** grep-based approach, Full-text search engine
+
+**Implications:**
+- Search includes both decisions.md and decisions-archive.md
+- Context lines shown around matches for better understanding
+- CLI command: logmind search 'query'
+
+---
