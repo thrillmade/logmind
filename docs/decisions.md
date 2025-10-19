@@ -39,3 +39,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Better compliance with decision tracking
 
 ---
+## 2025-10-19 16:52 - Implement configuration system
+
+**Reasoning:** Allow users to customize git behavior, commit messages, and archive settings without changing code
+
+**Alternatives considered:** Command-line flags only, Environment variables
+
+**Implications:**
+- Users can disable auto-push if preferred
+- Custom commit message templates supported
+- Configurable max_recent_decisions threshold
+
+---
