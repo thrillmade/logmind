@@ -30,3 +30,12 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Reasoning:** Testing that import works
 
 ---
+## 2025-10-19 16:42 - Update CLAUDE.md instructions to be more urgent and directive
+
+**Reasoning:** AI agents need clear requirements, not suggestions. Must emphasize that decision logging is mandatory.
+
+**Implications:**
+- AI agents will be more likely to actually log decisions
+- Better compliance with decision tracking
+
+---
