@@ -16,8 +16,11 @@
 - Add dependencies or libraries
 - Make security or performance decisions
 
-**How to log:**
+**BEFORE writing code, ask yourself: "Should this be logged?" If yes, log it IMMEDIATELY.**
 
+### How to Log Decisions
+
+**Python API (example):**
 ```python
 from logmind import log
 
@@ -27,7 +30,28 @@ log("Decision summary",
     implications=["Impact 1", "Impact 2"])
 ```
 
-**BEFORE writing code, ask yourself: "Should this be logged?" If yes, log it IMMEDIATELY.**
+**CLI (example for shell commands):**
+```bash
+logmind log "Use PostgreSQL for database" \
+  -r "Need ACID compliance" \
+  -a "MongoDB" -a "SQLite" \
+  -i "Need connection pooling"
+```
+
+### Viewing Past Decisions
+
+```bash
+# View recent decisions
+logmind show
+
+# View all decisions including archive
+logmind show --all
+
+# Search for specific topics
+logmind search "postgres"
+logmind search "API" --case-sensitive
+logmind search "database" --no-archive
+```
 
 ### Required Reading
 
@@ -37,6 +61,8 @@ log("Decision summary",
 - **[docs/file-structure.md](docs/file-structure.md)** - Current project structure (REQUIRED)
 
 These files contain critical context about why the project is structured the way it is.
+
+**Use `logmind search "keyword"` to find relevant past decisions quickly.**
 <!-- logmind-end -->
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -54,21 +80,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-This is a Python package. Standard commands will be:
+This is a Python package. Standard commands:
 
 ```bash
-# Setup (when implemented)
-pip install -e .
+# Setup development environment
+python3 -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
 
-# Run tests (when implemented)
-pytest
+# Run tests
+pytest                    # All tests
+pytest tests/test_*.py -v # Specific test file
 
-# Build package (when implemented)
+# Build package
 python -m build
+```
+
+## logmind CLI Commands
+
+You can use logmind via CLI or Python API:
+
+```bash
+# View recent decisions
+logmind show
+logmind show --all  # Include archive
+
+# Search decisions
+logmind search "postgres"
+logmind search "API" --case-sensitive
+logmind search "config" --no-archive
+
+# Log decision via CLI
+logmind log "Use Redis for caching" \
+  -r "Need fast session storage" \
+  -a "Memcached" -a "In-memory dict" \
+  -i "Need to run Redis server"
 ```
 
 ## Current Status
 
-**Phase:** Planning and initial setup
+**Phase 2 Complete** - Configuration system and search functionality implemented
 
-See [docs/plan.md](docs/plan.md) for development phases and technical decisions.
+✅ Phase 1: Core package (init, log, show)
+✅ Phase 2: Configuration + search
+🔲 Phase 3: AI integrations (decorators, plugins)
+
+See [docs/plan.md](docs/plan.md) for complete roadmap.

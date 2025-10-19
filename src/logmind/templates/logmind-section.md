@@ -14,8 +14,11 @@
 - Add dependencies or libraries
 - Make security or performance decisions
 
-**How to log:**
+**BEFORE writing code, ask yourself: "Should this be logged?" If yes, log it IMMEDIATELY.**
 
+### How to Log Decisions
+
+**Python API (example):**
 ```python
 from logmind import log
 
@@ -25,7 +28,28 @@ log("Decision summary",
     implications=["Impact 1", "Impact 2"])
 ```
 
-**BEFORE writing code, ask yourself: "Should this be logged?" If yes, log it IMMEDIATELY.**
+**CLI (example for shell commands):**
+```bash
+logmind log "Use PostgreSQL for database" \
+  -r "Need ACID compliance" \
+  -a "MongoDB" -a "SQLite" \
+  -i "Need connection pooling"
+```
+
+### Viewing Past Decisions
+
+```bash
+# View recent decisions
+logmind show
+
+# View all decisions including archive
+logmind show --all
+
+# Search for specific topics
+logmind search "postgres"
+logmind search "API" --case-sensitive
+logmind search "database" --no-archive
+```
 
 ### Required Reading
 
@@ -35,4 +59,6 @@ log("Decision summary",
 - **[docs/file-structure.md](docs/file-structure.md)** - Current project structure (REQUIRED)
 
 These files contain critical context about why the project is structured the way it is.
+
+**Use `logmind search "keyword"` to find relevant past decisions quickly.**
 <!-- logmind-end -->
