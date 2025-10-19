@@ -18,10 +18,11 @@ pip install logmind
 cd your-project
 logmind init
 
-# Start logging decisions
-from logmind import log_decision
+# Log a decision (appends to file, commits, pushes)
+from logmind import log
 
-log_decision("Chose FastAPI over Flask for async support")
+log("Chose FastAPI over Flask for async support",
+    reasoning="Need async/await for WebSocket handling")
 ```
 
 ## Documentation
@@ -32,14 +33,15 @@ log_decision("Chose FastAPI over Flask for async support")
 ## How It Works
 
 1. **Install** logmind as a package
-2. **Init** creates standardized docs structure in your project
-3. **Log** decisions automatically as you develop
-4. **Context** AI agents get rich, up-to-date project understanding
+2. **Init** creates `docs/` folder with `decisions.md` and `file-structure.md`
+3. **Log** a decision - it appends to the file, regenerates tree, commits, and pushes
+4. **Context** AI agents read the history and current structure
 
 ## Why logmind?
 
-- **For AI agents:** Consistent context across all projects
-- **For developers:** Automatic decision history and documentation
-- **For teams:** Shared understanding of architectural choices
+- **Simple:** One append-only file, no database
+- **Git-native:** Every decision is a commit, git history is your audit trail
+- **AI-friendly:** Two files (decisions + structure) give complete context
+- **Automatic:** Commits and pushes on every log
 
 See [docs/plan.md](docs/plan.md) for complete architecture and roadmap.
