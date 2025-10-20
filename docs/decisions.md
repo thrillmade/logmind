@@ -3,18 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 17:16 - Enhance CLAUDE.md templates with comprehensive CLI examples and search documentation
-
-**Reasoning:** AI agents need clear, practical examples of both Python API and CLI commands. Previous templates only showed Python usage, but agents often work in shell contexts where CLI is more appropriate.
-
-**Alternatives considered:** Keep only Python API examples, Create separate CLI-only documentation
-
-**Implications:**
-- All new logmind projects will get improved instructions with both API styles
-- Agents will know about search, show, and log commands
-- Better discoverability of logmind features for AI agents
-
----
 ## 2025-10-19 17:41 - Use pipx for global logmind installation like standard CLI tools
 
 **Reasoning:** logmind is a CLI tool like git/npm/docker - should be globally installed, not repo-local. Users expect to just type 'logmind' without prefixes or activation.
@@ -122,5 +110,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Template strings support {arg_name} placeholders
 - @log_choice decorator for return-value-based decisions
 - 15 comprehensive tests, 110 total tests passing
+
+---
+## 2025-10-19 20:28 - Add decorator documentation to README and update plan
+
+**Reasoning:** Users need clear examples of how to use the new @log_decision and @log_choice decorators. README should showcase Phase 3 features.
+
+**Implications:**
+- README shows decorator usage examples
+- Plan.md updated to show Phase 3 progress (33% complete)
+- Clear path forward for remaining Phase 3 features
 
 ---

@@ -31,6 +31,26 @@ logmind log "Use PostgreSQL for database" \
 # View and search decisions
 logmind show
 logmind search "postgres"
+
+# Auto-log with decorators
+from logmind import log_decision, log_choice
+
+@log_decision(
+    decision="Authenticate user with {method}",
+    reasoning="Security checkpoint"
+)
+def authenticate(method="oauth"):
+    # Your auth code
+    return True
+
+@log_choice(
+    choices={
+        "redis": "Use Redis for caching",
+        "memory": "Use in-memory caching",
+    }
+)
+def select_cache():
+    return "redis" if is_production() else "memory"
 ```
 
 ## Contributing / Development Setup

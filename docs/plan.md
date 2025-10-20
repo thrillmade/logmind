@@ -187,8 +187,12 @@ AI agents read files for full project context:
 - [x] Git integration checks (warn if not in git repo)
 - [x] Test suite expanded to 95 tests (all passing)
 
-### Phase 3: AI Integrations (Optional)
-- [ ] Decorators for automatic logging
+### Phase 3: AI Integrations (In Progress - 33% Complete)
+- [x] Decorators for automatic logging (@log_decision, @log_choice)
+  - [x] Template string support with {arg_name} placeholders
+  - [x] Support for reasoning, alternatives, implications
+  - [x] @log_choice for return-value-based decisions
+  - [x] 15 comprehensive tests (110 total tests passing)
 - [ ] Framework-specific plugins (LangChain, AutoGen)
 - [ ] Hooks for automatic decision detection
 
