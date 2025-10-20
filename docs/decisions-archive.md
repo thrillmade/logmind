@@ -5,6 +5,17 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 17:41 - Update README with pipx setup instructions and CLI examples
+
+**Reasoning:** Contributors need clear setup instructions. README should show both Python API and CLI usage, and explain the pipx approach.
+
+**Implications:**
+- Clear onboarding for new contributors
+- README shows complete feature set (log, show, search)
+- Explains why pipx (CLI tool philosophy)
+
+---
+
 ## 2025-10-19 17:41 - Use pipx for global logmind installation like standard CLI tools
 
 **Reasoning:** logmind is a CLI tool like git/npm/docker - should be globally installed, not repo-local. Users expect to just type 'logmind' without prefixes or activation.

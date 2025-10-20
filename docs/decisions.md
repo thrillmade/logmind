@@ -3,16 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 17:41 - Update README with pipx setup instructions and CLI examples
-
-**Reasoning:** Contributors need clear setup instructions. README should show both Python API and CLI usage, and explain the pipx approach.
-
-**Implications:**
-- Clear onboarding for new contributors
-- README shows complete feature set (log, show, search)
-- Explains why pipx (CLI tool philosophy)
-
----
 ## 2025-10-19 17:44 - Make logmind commit all changed files, not just docs
 
 **Reasoning:** When logging a decision, users expect ALL their changes to be committed together with that decision - like a normal git workflow. Previously only docs/ files were committed.
@@ -118,5 +108,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - All twine checks pass
 - Templates included correctly
 - Package name: logmind v0.1.0
+
+---
+## 2025-10-20 07:07 - Add logmind-readme.md to docs folder for AI agents
+
+**Reasoning:** AI agents need easy access to logmind documentation without navigating to repository root. Creates docs/logmind-readme.md during init by copying README.md content.
+
+**Implications:**
+- CLAUDE.md and other AI instruction files now link to docs/logmind-readme.md
+- AI agents can read complete logmind instructions directly from docs folder
+- Template files updated: logmind-section.md and CLAUDE.md.template
 
 ---
