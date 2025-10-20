@@ -3,18 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 17:44 - Make logmind commit all changed files, not just docs
-
-**Reasoning:** When logging a decision, users expect ALL their changes to be committed together with that decision - like a normal git workflow. Previously only docs/ files were committed.
-
-**Alternatives considered:** Keep selective file commits
-
-**Implications:**
-- logmind now does 'git add .' before committing
-- All changes committed together with decision
-- More intuitive git workflow
-
----
 ## 2025-10-19 18:42 - Test decision
 
 **Reasoning:** Test reasoning
@@ -117,6 +105,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - CLAUDE.md and other AI instruction files now link to docs/logmind-readme.md
 - AI agents can read complete logmind instructions directly from docs folder
+- Template files updated: logmind-section.md and CLAUDE.md.template
+
+---
+## 2025-10-20 07:12 - Make decisions-archive.md optional reference, not required reading
+
+**Reasoning:** Archive is a searchable reference for historical context, not something AI agents must read upfront. Only recent decisions (docs/decisions.md) are required.
+
+**Implications:**
+- decisions-archive.md moved to 'Additional Reference' section
+- Reduces cognitive load for AI agents - focus on recent 20 decisions
 - Template files updated: logmind-section.md and CLAUDE.md.template
 
 ---

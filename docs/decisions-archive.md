@@ -5,6 +5,19 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 17:44 - Make logmind commit all changed files, not just docs
+
+**Reasoning:** When logging a decision, users expect ALL their changes to be committed together with that decision - like a normal git workflow. Previously only docs/ files were committed.
+
+**Alternatives considered:** Keep selective file commits
+
+**Implications:**
+- logmind now does 'git add .' before committing
+- All changes committed together with decision
+- More intuitive git workflow
+
+---
+
 ## 2025-10-19 17:41 - Update README with pipx setup instructions and CLI examples
 
 **Reasoning:** Contributors need clear setup instructions. README should show both Python API and CLI usage, and explain the pipx approach.

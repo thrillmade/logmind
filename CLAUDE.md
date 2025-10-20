@@ -58,10 +58,13 @@ logmind search "database" --no-archive
 **READ THESE FILES FIRST** before starting any work:
 - **[docs/logmind-readme.md](docs/logmind-readme.md)** - Complete logmind documentation and usage guide (REQUIRED)
 - **[docs/decisions.md](docs/decisions.md)** - 20 most recent decisions (REQUIRED)
-- **[docs/decisions-archive.md](docs/decisions-archive.md)** - Historical decisions
 - **[docs/file-structure.md](docs/file-structure.md)** - Current project structure (REQUIRED)
 
 These files contain critical context about why the project is structured the way it is.
+
+### Additional Reference
+
+- **[docs/decisions-archive.md](docs/decisions-archive.md)** - Historical decisions (searchable reference, not required reading)
 
 **Use `logmind search "keyword"` to find relevant past decisions quickly.**
 <!-- logmind-end -->
