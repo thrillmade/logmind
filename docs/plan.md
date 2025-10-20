@@ -193,8 +193,11 @@ AI agents read files for full project context:
   - [x] Support for reasoning, alternatives, implications
   - [x] @log_choice for return-value-based decisions
   - [x] 15 comprehensive tests (110 total tests passing)
-- [ ] Framework-specific plugins (LangChain, AutoGen)
-- [ ] Hooks for automatic decision detection
+- [ ] Framework-specific plugins (Optional - via integrations module)
+  - [ ] Base integration pattern for AI frameworks
+  - [ ] LangChain callback integration (example)
+  - [ ] Documentation for custom integrations
+- [ ] Git pre-commit hook for decision detection (Optional)
 
 ### Phase 4: Advanced Features (Future)
 - [ ] Decision templates for common patterns

@@ -59,7 +59,7 @@ Working on logmind itself? Set it up like any CLI tool:
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/logmind.git
+git clone https://github.com/thrillmot/logmind.git
 cd logmind
 
 # Install globally in editable mode (like npm, git, docker)

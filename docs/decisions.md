@@ -3,19 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 17:41 - Use pipx for global logmind installation like standard CLI tools
-
-**Reasoning:** logmind is a CLI tool like git/npm/docker - should be globally installed, not repo-local. Users expect to just type 'logmind' without prefixes or activation.
-
-**Alternatives considered:** Repo-local venv with wrapper script, Makefile commands
-
-**Implications:**
-- Contributors run 'pipx install -e .' once after cloning
-- Clean CLI experience: just type 'logmind'
-- Works from any directory
-- Need to document setup in README
-
----
 ## 2025-10-19 17:41 - Update README with pipx setup instructions and CLI examples
 
 **Reasoning:** Contributors need clear setup instructions. README should show both Python API and CLI usage, and explain the pipx approach.
@@ -120,5 +107,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - README shows decorator usage examples
 - Plan.md updated to show Phase 3 progress (33% complete)
 - Clear path forward for remaining Phase 3 features
+
+---
+## 2025-10-19 20:46 - Prepare package for PyPI publishing
+
+**Reasoning:** Package built and validated. Added LICENSE, MANIFEST.in, updated pyproject.toml with proper metadata, created CHANGELOG. Ready for upload to PyPI.
+
+**Implications:**
+- Built packages in dist/ folder (wheel and tar.gz)
+- All twine checks pass
+- Templates included correctly
+- Package name: logmind v0.1.0
 
 ---

@@ -5,16 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "logmind"
 version = "0.1.0"
-description = "AI decision logging system for development projects"
+description = "Decision logging for AI-assisted development - automatic tracking, git integration, and context for AI agents"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
     {name = "logmind contributors"}
 ]
-keywords = ["ai", "decision-logging", "documentation", "development"]
+keywords = [
+    "ai", "decision-logging", "documentation", "development",
+    "llm", "ai-agents", "decision-tracking", "git-integration",
+    "claude", "gpt", "copilot"
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -23,6 +27,10 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Topic :: Text Processing :: Markup :: Markdown",
 ]
 
 dependencies = [
@@ -41,12 +49,16 @@ dev = [
 logmind = "logmind.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/logmind/logmind"
-Documentation = "https://github.com/logmind/logmind#readme"
-Repository = "https://github.com/logmind/logmind"
+Homepage = "https://github.com/thrillmot/logmind"
+Documentation = "https://github.com/thrillmot/logmind#readme"
+Repository = "https://github.com/thrillmot/logmind"
+"Bug Tracker" = "https://github.com/thrillmot/logmind/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+logmind = ["templates/*.template", "templates/*.md"]
 
 [tool.black]
 line-length = 100

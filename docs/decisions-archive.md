@@ -5,6 +5,20 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 17:41 - Use pipx for global logmind installation like standard CLI tools
+
+**Reasoning:** logmind is a CLI tool like git/npm/docker - should be globally installed, not repo-local. Users expect to just type 'logmind' without prefixes or activation.
+
+**Alternatives considered:** Repo-local venv with wrapper script, Makefile commands
+
+**Implications:**
+- Contributors run 'pipx install -e .' once after cloning
+- Clean CLI experience: just type 'logmind'
+- Works from any directory
+- Need to document setup in README
+
+---
+
 ## 2025-10-19 17:16 - Enhance CLAUDE.md templates with comprehensive CLI examples and search documentation
 
 **Reasoning:** AI agents need clear, practical examples of both Python API and CLI commands. Previous templates only showed Python usage, but agents often work in shell contexts where CLI is more appropriate.

@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+# Include all template files
+recursive-include src/logmind/templates *.template *.md
+
+# Exclude test files and cache
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
