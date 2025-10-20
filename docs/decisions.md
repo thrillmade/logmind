@@ -3,54 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 16:25 - Initialize logmind decision tracking
-
-**Reasoning:** Starting structured decision logging for this project to maintain clear documentation of architectural choices and provide context for AI agents.
-
-**Alternatives considered:** Manual decision documentation, ADR (Architecture Decision Records)
-
-**Implications:**
-- All significant decisions should now be logged using `logmind.log()`
-- AI agents will have access to decision history via docs/decisions.md
-- Git history will serve as an audit trail for all decisions
-
----
-## 2025-10-19 16:26 - Use Click for CLI framework
-
-**Reasoning:** Click provides excellent argument parsing and is widely used
-
-**Alternatives considered:** argparse, Typer
-
-**Implications:**
-- Need to learn Click API
-
----
-## 2025-10-19 16:26 - Test Python API
-
-**Reasoning:** Testing that import works
-
----
-## 2025-10-19 16:42 - Update CLAUDE.md instructions to be more urgent and directive
-
-**Reasoning:** AI agents need clear requirements, not suggestions. Must emphasize that decision logging is mandatory.
-
-**Implications:**
-- AI agents will be more likely to actually log decisions
-- Better compliance with decision tracking
-
----
-## 2025-10-19 16:52 - Implement configuration system
-
-**Reasoning:** Allow users to customize git behavior, commit messages, and archive settings without changing code
-
-**Alternatives considered:** Command-line flags only, Environment variables
-
-**Implications:**
-- Users can disable auto-push if preferred
-- Custom commit message templates supported
-- Configurable max_recent_decisions threshold
-
----
 ## 2025-10-19 16:57 - Implement search command for decision logs
 
 **Reasoning:** Users need to be able to search through past decisions to find relevant context quickly. Supports regex patterns, case-sensitive/insensitive search, and includes archived decisions by default.
@@ -108,5 +60,66 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - logmind now does 'git add .' before committing
 - All changes committed together with decision
 - More intuitive git workflow
+
+---
+## 2025-10-19 18:42 - Test decision
+
+**Reasoning:** Test reasoning
+
+---
+## 2025-10-19 18:42 - Use oauth authentication
+
+**Reasoning:** Security for /api/data
+
+---
+## 2025-10-19 18:42 - Connect to db.example.com:3306
+
+---
+## 2025-10-19 18:42 - Cache backend: redis
+
+---
+## 2025-10-19 18:42 - Use FastAPI
+
+**Reasoning:** Best for our use case
+
+**Alternatives considered:** Django, Flask, Tornado
+
+---
+## 2025-10-19 18:42 - Deploy to AWS
+
+**Alternatives considered:** AWS eu-west-1, GCP, Azure
+
+---
+## 2025-10-19 18:42 - Enable dark_mode
+
+**Implications:**
+- Users will see new UI
+- Backend load may increase
+
+---
+## 2025-10-19 18:42 - Process item1
+
+---
+## 2025-10-19 18:42 - Process item2
+
+---
+## 2025-10-19 18:42 - Process item3
+
+---
+## 2025-10-19 18:42 - Use Redis for caching
+
+---
+## 2025-10-19 18:42 - Use PostgreSQL
+
+**Reasoning:** Selected postgres based on requirements
+
+---
+## 2025-10-19 18:42 - Unknown choice: memcached
+
+---
+## 2025-10-19 18:42 - The answer
+
+---
+## 2025-10-19 18:42 - Attempt risky operation
 
 ---
