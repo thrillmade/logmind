@@ -3,18 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 16:57 - Implement search command for decision logs
-
-**Reasoning:** Users need to be able to search through past decisions to find relevant context quickly. Supports regex patterns, case-sensitive/insensitive search, and includes archived decisions by default.
-
-**Alternatives considered:** grep-based approach, Full-text search engine
-
-**Implications:**
-- Search includes both decisions.md and decisions-archive.md
-- Context lines shown around matches for better understanding
-- CLI command: logmind search 'query'
-
----
 ## 2025-10-19 17:16 - Enhance CLAUDE.md templates with comprehensive CLI examples and search documentation
 
 **Reasoning:** AI agents need clear, practical examples of both Python API and CLI commands. Previous templates only showed Python usage, but agents often work in shell contexts where CLI is more appropriate.
@@ -121,5 +109,18 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 ---
 ## 2025-10-19 18:42 - Attempt risky operation
+
+---
+## 2025-10-19 20:26 - Implement Phase 3 decorators for automatic decision logging
+
+**Reasoning:** Enable developers to log decisions automatically using @log_decision and @log_choice decorators. Supports template strings with function arguments, alternatives, implications, and all standard logmind features.
+
+**Alternatives considered:** Manual logging only, Aspect-oriented programming approach
+
+**Implications:**
+- Users can decorate functions to auto-log decisions
+- Template strings support {arg_name} placeholders
+- @log_choice decorator for return-value-based decisions
+- 15 comprehensive tests, 110 total tests passing
 
 ---

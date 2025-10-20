@@ -5,6 +5,19 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 16:57 - Implement search command for decision logs
+
+**Reasoning:** Users need to be able to search through past decisions to find relevant context quickly. Supports regex patterns, case-sensitive/insensitive search, and includes archived decisions by default.
+
+**Alternatives considered:** grep-based approach, Full-text search engine
+
+**Implications:**
+- Search includes both decisions.md and decisions-archive.md
+- Context lines shown around matches for better understanding
+- CLI command: logmind search 'query'
+
+---
+
 ## 2025-10-19 16:52 - Implement configuration system
 
 **Reasoning:** Allow users to customize git behavior, commit messages, and archive settings without changing code

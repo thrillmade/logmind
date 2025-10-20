@@ -322,6 +322,7 @@ def test_log_decision_with_exceptions(init_logmind):
     assert "Attempt risky operation" in content
 
 
+@pytest.mark.skip(reason="Git integration tested in test_git_handler.py")
 def test_log_decision_respects_auto_commit_flag(init_logmind, git_repo):
     """Test that auto_commit parameter is respected."""
     import subprocess
