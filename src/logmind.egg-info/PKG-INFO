@@ -1,3 +1,38 @@
+Metadata-Version: 2.4
+Name: logmind
+Version: 0.1.0
+Summary: Decision logging for AI-assisted development - automatic tracking, git integration, and context for AI agents
+Author: logmind contributors
+License: MIT
+Project-URL: Homepage, https://github.com/thrillmot/logmind
+Project-URL: Documentation, https://github.com/thrillmot/logmind#readme
+Project-URL: Repository, https://github.com/thrillmot/logmind
+Project-URL: Bug Tracker, https://github.com/thrillmot/logmind/issues
+Keywords: ai,decision-logging,documentation,development,llm,ai-agents,decision-tracking,git-integration,claude,gpt,copilot
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Software Development :: Documentation
+Classifier: Topic :: Software Development :: Version Control :: Git
+Classifier: Topic :: Text Processing :: Markup :: Markdown
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: click>=8.0.0
+Requires-Dist: pyyaml>=6.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Dynamic: license-file
+
 # logmind
 
 AI decision logging system for development projects.
