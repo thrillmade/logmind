@@ -3,9 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Connect to db.example.com:3306
-
----
 ## 2025-10-19 18:42 - Cache backend: redis
 
 ---
@@ -128,5 +125,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - Users can manage agents via CLI instead of manually creating files
 - Follows Click subcommand pattern for extensibility
+
+---
+## 2026-01-17 14:28 - Add --agents and --all-agents flags to init command
+
+**Reasoning:** Allows explicit control over which agent files are created during initialization, supports CI/CD scripted setup
+
+**Alternatives considered:** Auto-detect and create all found agents, Interactive prompt to select agents
+
+**Implications:**
+- logmind init --agents claude,cursor creates only specified files
+- logmind init --all-agents creates all 11 agent files
 
 ---
