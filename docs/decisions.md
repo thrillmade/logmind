@@ -3,9 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Process item2
-
----
 ## 2025-10-19 18:42 - Process item3
 
 ---
@@ -166,5 +163,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - Runs pip install --upgrade logmind
 - Shows before/after version comparison
+
+---
+## 2026-01-17 16:05 - Create Homebrew tap structure for distribution
+
+**Reasoning:** Homebrew is preferred installation method for macOS/Linux CLI tools
+
+**Alternatives considered:** Only distribute via PyPI, Submit directly to homebrew-core
+
+**Implications:**
+- Created homebrew-logmind/ with Formula/logmind.rb
+- Custom tap allows faster iteration before homebrew-core submission
 
 ---
