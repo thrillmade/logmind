@@ -5,6 +5,12 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 18:42 - Use oauth authentication
+
+**Reasoning:** Security for /api/data
+
+---
+
 ## 2025-10-19 18:42 - Test decision
 
 **Reasoning:** Test reasoning

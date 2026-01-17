@@ -3,11 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Use oauth authentication
-
-**Reasoning:** Security for /api/data
-
----
 ## 2025-10-19 18:42 - Connect to db.example.com:3306
 
 ---
@@ -122,5 +117,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - Now support 11 AI agents total
 - AGENTS.md provides cross-tool compatibility
+
+---
+## 2026-01-17 14:28 - Implement logmind agents CLI command group with list, add, remove subcommands
+
+**Reasoning:** Provides visibility into configured agents, easy setup without manual file creation, and project-level agent control
+
+**Alternatives considered:** Single 'agents' command that does everything, Separate commands like 'list-agents', 'add-agent'
+
+**Implications:**
+- Users can manage agents via CLI instead of manually creating files
+- Follows Click subcommand pattern for extensibility
 
 ---
