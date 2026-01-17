@@ -3,9 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Cache backend: redis
-
----
 ## 2025-10-19 18:42 - Use FastAPI
 
 **Reasoning:** Best for our use case
@@ -136,5 +133,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - logmind init --agents claude,cursor creates only specified files
 - logmind init --all-agents creates all 11 agent files
+
+---
+## 2026-01-17 14:29 - Rename claude-md-insertion.md to ai-agent-files.md
+
+**Reasoning:** Original name was Claude-specific but we now support 11 AI agents; generic name better reflects scope
+
+**Alternatives considered:** Keep original name, Name it agent-instruction-files.md
+
+**Implications:**
+- Updated all doc links in README.md and logmind-readme.md
 
 ---

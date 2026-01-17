@@ -5,6 +5,10 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 18:42 - Cache backend: redis
+
+---
+
 ## 2025-10-19 18:42 - Connect to db.example.com:3306
 
 ---
