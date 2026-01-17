@@ -5,6 +5,14 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 18:42 - Use FastAPI
+
+**Reasoning:** Best for our use case
+
+**Alternatives considered:** Django, Flask, Tornado
+
+---
+
 ## 2025-10-19 18:42 - Cache backend: redis
 
 ---

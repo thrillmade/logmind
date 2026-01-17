@@ -3,13 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Use FastAPI
-
-**Reasoning:** Best for our use case
-
-**Alternatives considered:** Django, Flask, Tornado
-
----
 ## 2025-10-19 18:42 - Deploy to AWS
 
 **Alternatives considered:** AWS eu-west-1, GCP, Azure
@@ -143,5 +136,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 **Implications:**
 - Updated all doc links in README.md and logmind-readme.md
+
+---
+## 2026-01-17 14:30 - Use AGENT_REGISTRY dict as single source of truth for agent metadata
+
+**Reasoning:** Centralizes agent definitions (file path, display name, is_json) in one place; makes adding new agents trivial
+
+**Alternatives considered:** Separate config files per agent, Hardcoded if/elif chains
+
+**Implications:**
+- Adding a new agent requires only one dict entry plus template function update
+- All agent functions derive from registry automatically
 
 ---
