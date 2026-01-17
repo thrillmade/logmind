@@ -5,7 +5,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from logmind.cli import init, log, main, show
+from logmind.cli import agents, init, log, main, show
 
 
 def test_cli_help():
@@ -267,3 +267,190 @@ def test_full_workflow(git_repo):
         )
         assert "logmind: Initialize decision tracking" in result.stdout
         assert "logmind: Use PostgreSQL" in result.stdout
+
+
+# ============================================================================
+# Agents Command Tests
+# ============================================================================
+
+
+def test_agents_command_help():
+    """Test agents command help."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["agents", "--help"])
+
+    assert result.exit_code == 0
+    assert "Manage AI agent" in result.output
+
+
+def test_agents_list_command(temp_dir):
+    """Test agents list command."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(main, ["agents", "list"])
+
+        assert result.exit_code == 0
+        assert "AI Agent Status" in result.output
+        assert "claude" in result.output
+        assert "cursor" in result.output
+        assert "windsurf" in result.output
+
+
+def test_agents_list_shows_configured(git_repo):
+    """Test agents list shows configured agents."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        # Initialize first
+        runner.invoke(init)
+
+        result = runner.invoke(main, ["agents", "list"])
+
+        assert result.exit_code == 0
+        # CLAUDE.md should be configured
+        assert "configured" in result.output
+
+
+def test_agents_add_command(temp_dir):
+    """Test agents add command."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(main, ["agents", "add", "cursor", "--no-commit"])
+
+        assert result.exit_code == 0
+        assert "Created .cursorrules" in result.output
+        assert (Path.cwd() / ".cursorrules").exists()
+
+
+def test_agents_add_windsurf(temp_dir):
+    """Test adding windsurf agent."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(main, ["agents", "add", "windsurf", "--no-commit"])
+
+        assert result.exit_code == 0
+        assert "Created .windsurfrules" in result.output
+        assert (Path.cwd() / ".windsurfrules").exists()
+
+
+def test_agents_add_unknown_fails(temp_dir):
+    """Test adding unknown agent fails."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(main, ["agents", "add", "unknown_agent"])
+
+        assert result.exit_code != 0
+        assert "Unknown agent" in result.output
+
+
+def test_agents_add_existing_file(temp_dir):
+    """Test adding agent when file exists but without logmind."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Create existing file without logmind section
+        (Path.cwd() / ".cursorrules").write_text("# Existing rules\n")
+
+        result = runner.invoke(main, ["agents", "add", "cursor", "--no-commit"])
+
+        assert result.exit_code == 0
+        assert "Added logmind instructions" in result.output
+
+
+def test_agents_remove_command(temp_dir):
+    """Test agents remove command."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Create the file first
+        (Path.cwd() / ".cursorrules").write_text("rules\n")
+
+        result = runner.invoke(main, ["agents", "remove", "cursor", "--force", "--no-commit"])
+
+        assert result.exit_code == 0
+        assert "Removed .cursorrules" in result.output
+        assert not (Path.cwd() / ".cursorrules").exists()
+
+
+def test_agents_remove_nonexistent(temp_dir):
+    """Test removing non-existent agent."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(main, ["agents", "remove", "cursor", "--force"])
+
+        assert result.exit_code == 0
+        assert "not configured" in result.output
+
+
+def test_agents_remove_unknown_fails(temp_dir):
+    """Test removing unknown agent fails."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(main, ["agents", "remove", "unknown_agent", "--force"])
+
+        assert result.exit_code != 0
+        assert "Unknown agent" in result.output
+
+
+# ============================================================================
+# Init with Agents Flag Tests
+# ============================================================================
+
+
+def test_init_with_agents_flag(temp_dir):
+    """Test init with --agents flag."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git", "--agents", "claude,cursor"])
+
+        assert result.exit_code == 0
+        assert (Path.cwd() / "CLAUDE.md").exists()
+        assert (Path.cwd() / ".cursorrules").exists()
+
+
+def test_init_with_all_agents_flag(temp_dir):
+    """Test init with --all-agents flag."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git", "--all-agents"])
+
+        assert result.exit_code == 0
+        assert (Path.cwd() / "CLAUDE.md").exists()
+        assert (Path.cwd() / ".cursorrules").exists()
+        assert (Path.cwd() / ".windsurfrules").exists()
+        assert (Path.cwd() / "CONVENTIONS.md").exists()
+
+
+def test_init_with_windsurf(temp_dir):
+    """Test init with windsurf agent."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git", "--agents", "windsurf"])
+
+        assert result.exit_code == 0
+        assert (Path.cwd() / ".windsurfrules").exists()
+        content = (Path.cwd() / ".windsurfrules").read_text()
+        assert "<!-- logmind-start -->" in content
+
+
+def test_init_with_unknown_agent_warns(temp_dir):
+    """Test init with unknown agent shows warning."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git", "--agents", "claude,unknown_agent"])
+
+        assert result.exit_code == 0
+        assert "Warning" in result.output
+        assert "unknown_agent" in result.output
+        # Should still create claude
+        assert (Path.cwd() / "CLAUDE.md").exists()

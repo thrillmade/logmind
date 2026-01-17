@@ -3,11 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Test decision
-
-**Reasoning:** Test reasoning
-
----
 ## 2025-10-19 18:42 - Use oauth authentication
 
 **Reasoning:** Security for /api/data
@@ -116,5 +111,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - decisions-archive.md moved to 'Additional Reference' section
 - Reduces cognitive load for AI agents - focus on recent 20 decisions
 - Template files updated: logmind-section.md and CLAUDE.md.template
+
+---
+## 2026-01-17 14:28 - Add Cline and OpenAI Codex (AGENTS.md) to supported agents
+
+**Reasoning:** Cline is a major VS Code agent using .clinerules; AGENTS.md is an emerging universal standard supported by OpenAI Codex, Cursor, Windsurf, and others under the Linux Foundation
+
+**Alternatives considered:** Only add Cline, Only add AGENTS.md, Wait for more adoption
+
+**Implications:**
+- Now support 11 AI agents total
+- AGENTS.md provides cross-tool compatibility
 
 ---

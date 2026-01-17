@@ -8,7 +8,16 @@ import click
 
 from logmind.core.config import load_config
 from logmind.core.git_handler import commit_and_push, is_git_repo
-from logmind.core.inserter import insert_into_all_ai_files
+from logmind.core.inserter import (
+    AGENT_REGISTRY,
+    create_agent_file,
+    get_agent_file_path,
+    get_agent_status,
+    get_all_agent_names,
+    insert_into_all_ai_files,
+    insert_logmind_section,
+    remove_agent_file,
+)
 from logmind.core.logger import log as log_decision, log_first_decision
 from logmind.core.search import format_search_results, search_decisions
 from logmind.core.tree_gen import update_file_structure
@@ -27,11 +36,22 @@ def main():
     is_flag=True,
     help="Skip git operations (don't commit initialization)",
 )
-def init(no_git: bool):
+@click.option(
+    "--agents",
+    "agents_list",
+    type=str,
+    help="Comma-separated list of agents to configure (e.g., claude,cursor,windsurf)",
+)
+@click.option(
+    "--all-agents",
+    is_flag=True,
+    help="Configure all supported AI agents",
+)
+def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
     """
     Initialize logmind in the current project.
 
-    Creates docs/ folder, template files, inserts instructions into CLAUDE.md,
+    Creates docs/ folder, template files, inserts instructions into AI agent files,
     logs first decision, and commits changes.
     """
     root_path = Path.cwd()
@@ -58,6 +78,18 @@ def init(no_git: bool):
         if not click.confirm("Continue without git?"):
             sys.exit(1)
         no_git = True
+
+    # Parse agents list
+    agents = None
+    if all_agents:
+        agents = get_all_agent_names()
+    elif agents_list:
+        agents = [a.strip() for a in agents_list.split(",") if a.strip()]
+        # Validate agent names
+        valid_agents = get_all_agent_names()
+        for agent in agents:
+            if agent not in valid_agents:
+                click.secho(f"Warning: Unknown agent '{agent}'. Valid agents: {', '.join(valid_agents)}", fg="yellow")
 
     # Create docs directory
     docs_path.mkdir(parents=True, exist_ok=True)
@@ -95,7 +127,7 @@ def init(no_git: bool):
     click.echo("✓ Created .logmind/config.yml")
 
     # Insert into AI instruction files
-    messages = insert_into_all_ai_files(root_path)
+    messages = insert_into_all_ai_files(root_path, agents=agents)
     for msg in messages:
         click.echo(msg)
 
@@ -118,9 +150,17 @@ def init(no_git: bool):
             if logmind_readme_path.exists():
                 files_to_commit.append("docs/logmind-readme.md")
 
-            # Add CLAUDE.md if it was created/modified
+            # Add any created AI instruction files
+            for agent_name in (agents or ["claude"]):
+                file_path = get_agent_file_path(agent_name, root_path)
+                if file_path and file_path.exists():
+                    # Get relative path
+                    rel_path = file_path.relative_to(root_path)
+                    files_to_commit.append(str(rel_path))
+
+            # Also check for CLAUDE.md specifically (in case it was auto-created)
             claude_path = root_path / "CLAUDE.md"
-            if claude_path.exists():
+            if claude_path.exists() and "CLAUDE.md" not in files_to_commit:
                 files_to_commit.append("CLAUDE.md")
 
             commit_and_push(
@@ -344,6 +384,165 @@ def search(
 
     except Exception as e:
         click.secho(f"Error during search: {e}", fg="red")
+        sys.exit(1)
+
+
+# Agents command group
+@main.group()
+def agents():
+    """Manage AI agent configuration files."""
+    pass
+
+
+@agents.command("list")
+def agents_list():
+    """List all supported agents and their status."""
+    root_path = Path.cwd()
+    status = get_agent_status(root_path)
+
+    click.echo("AI Agent Status:")
+    click.echo()
+
+    for agent_name, info in status.items():
+        if info["configured"]:
+            icon = click.style("✓", fg="green")
+            status_text = click.style("configured", fg="green")
+        elif info["exists"]:
+            icon = click.style("~", fg="yellow")
+            status_text = click.style("exists (no logmind)", fg="yellow")
+        else:
+            icon = click.style("✗", fg="red")
+            status_text = click.style("not configured", fg="red")
+
+        click.echo(f"  {icon} {agent_name:12} {info['file']:40} ({status_text})")
+
+    click.echo()
+    click.echo(f"Supported agents: {', '.join(get_all_agent_names())}")
+
+
+@agents.command("add")
+@click.argument("agent_name")
+@click.option(
+    "--no-commit",
+    is_flag=True,
+    help="Don't commit the new file",
+)
+def agents_add(agent_name: str, no_commit: bool):
+    """Add an AI agent configuration file."""
+    root_path = Path.cwd()
+
+    # Validate agent name
+    if agent_name not in AGENT_REGISTRY:
+        click.secho(
+            f"Error: Unknown agent '{agent_name}'. Valid agents: {', '.join(get_all_agent_names())}",
+            fg="red",
+        )
+        sys.exit(1)
+
+    file_path = get_agent_file_path(agent_name, root_path)
+
+    if file_path and file_path.exists():
+        # File exists - try to insert logmind section
+        from logmind.core.inserter import is_agent_json
+
+        if is_agent_json(agent_name):
+            click.secho(f"✓ {file_path.name} already exists (JSON format)", fg="yellow")
+        else:
+            inserted = insert_logmind_section(file_path)
+            if inserted:
+                click.secho(f"✓ Added logmind instructions to {file_path.name}", fg="green")
+            else:
+                click.secho(f"✓ {file_path.name} already has logmind instructions", fg="yellow")
+    else:
+        # Create new file
+        created = create_agent_file(agent_name, root_path)
+        if created:
+            click.secho(f"✓ Created {created.name} with logmind instructions", fg="green")
+
+            # Commit if requested
+            if not no_commit and is_git_repo():
+                try:
+                    rel_path = created.relative_to(root_path)
+                    commit_and_push(
+                        [str(rel_path)],
+                        f"logmind: Add {agent_name} agent configuration",
+                        push=True,
+                    )
+                    click.echo("✓ Committed changes")
+                except Exception as e:
+                    click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
+        else:
+            click.secho(f"Error: Failed to create file for agent '{agent_name}'", fg="red")
+            sys.exit(1)
+
+
+@agents.command("remove")
+@click.argument("agent_name")
+@click.option(
+    "--no-commit",
+    is_flag=True,
+    help="Don't commit the removal",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Remove without confirmation",
+)
+def agents_remove(agent_name: str, no_commit: bool, force: bool):
+    """Remove an AI agent configuration file."""
+    root_path = Path.cwd()
+
+    # Validate agent name
+    if agent_name not in AGENT_REGISTRY:
+        click.secho(
+            f"Error: Unknown agent '{agent_name}'. Valid agents: {', '.join(get_all_agent_names())}",
+            fg="red",
+        )
+        sys.exit(1)
+
+    file_path = get_agent_file_path(agent_name, root_path)
+
+    if not file_path or not file_path.exists():
+        click.secho(f"Agent '{agent_name}' is not configured (file does not exist)", fg="yellow")
+        return
+
+    # Confirm removal
+    if not force:
+        if not click.confirm(f"Remove {file_path.name}?"):
+            click.echo("Cancelled.")
+            return
+
+    # Remove the file
+    removed = remove_agent_file(agent_name, root_path)
+
+    if removed:
+        click.secho(f"✓ Removed {file_path.name}", fg="green")
+
+        # Commit if requested
+        if not no_commit and is_git_repo():
+            try:
+                rel_path = file_path.relative_to(root_path)
+                # Use git rm for proper tracking
+                import subprocess
+
+                subprocess.run(
+                    ["git", "add", str(rel_path)],
+                    cwd=root_path,
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "commit", "-m", f"logmind: Remove {agent_name} agent configuration"],
+                    cwd=root_path,
+                    check=True,
+                    capture_output=True,
+                )
+                click.echo("✓ Committed changes")
+            except Exception as e:
+                click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
+    else:
+        click.secho(f"Error: Failed to remove {file_path.name}", fg="red")
         sys.exit(1)
 
 

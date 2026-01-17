@@ -82,7 +82,7 @@ pytest
 ## Documentation
 
 - **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
-- **[CLAUDE.md Insertion](docs/claude-md-insertion.md)** - How logmind integrates with AI instruction files
+- **[AI Agent Files](docs/ai-agent-files.md)** - How logmind integrates with AI instruction files
 - **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
 - **Development Status** - Phase 2 Complete (core features + config + search)
 

@@ -161,6 +161,7 @@ def test_default_config_structure():
     assert "git" in DEFAULT_CONFIG
     assert "decisions" in DEFAULT_CONFIG
     assert "file_structure" in DEFAULT_CONFIG
+    assert "agents" in DEFAULT_CONFIG
 
     assert "auto_commit" in DEFAULT_CONFIG["git"]
     assert "auto_push" in DEFAULT_CONFIG["git"]
@@ -170,3 +171,61 @@ def test_default_config_structure():
 
     assert "ignore_patterns" in DEFAULT_CONFIG["file_structure"]
     assert isinstance(DEFAULT_CONFIG["file_structure"]["ignore_patterns"], list)
+
+
+def test_config_agents_property(temp_dir):
+    """Test config agents property."""
+    config_path = temp_dir / ".logmind" / "config.yml"
+    config = Config(config_path)
+
+    agents = config.agents
+    assert isinstance(agents, dict)
+    assert "claude" in agents
+    assert "cursor" in agents
+    assert "windsurf" in agents
+    assert agents["claude"] is True  # Default enabled
+    assert agents["cursor"] is False  # Default disabled
+
+
+def test_config_get_enabled_agents(temp_dir):
+    """Test getting enabled agents."""
+    config_path = temp_dir / ".logmind" / "config.yml"
+    config = Config(config_path)
+
+    enabled = config.get_enabled_agents()
+    assert isinstance(enabled, list)
+    assert "claude" in enabled  # Claude is enabled by default
+    assert "cursor" not in enabled  # Cursor is disabled by default
+
+
+def test_config_agents_from_file(temp_dir):
+    """Test loading agents config from file."""
+    config_dir = temp_dir / ".logmind"
+    config_dir.mkdir()
+
+    config_file = config_dir / "config.yml"
+    config_file.write_text("""
+agents:
+  claude: true
+  cursor: true
+  copilot: false
+  windsurf: true
+""")
+
+    config = Config(config_file)
+    enabled = config.get_enabled_agents()
+
+    assert "claude" in enabled
+    assert "cursor" in enabled
+    assert "windsurf" in enabled
+    assert "copilot" not in enabled
+
+
+def test_default_agents_structure():
+    """Test that DEFAULT_CONFIG has all agents."""
+    agents = DEFAULT_CONFIG["agents"]
+    expected = ["claude", "cursor", "copilot", "windsurf", "aider", "continue", "cody", "zed", "amazonq", "cline", "codex"]
+
+    for agent in expected:
+        assert agent in agents
+        assert isinstance(agents[agent], bool)

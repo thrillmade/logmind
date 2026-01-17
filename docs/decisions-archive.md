@@ -5,6 +5,12 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 18:42 - Test decision
+
+**Reasoning:** Test reasoning
+
+---
+
 ## 2025-10-19 17:44 - Make logmind commit all changed files, not just docs
 
 **Reasoning:** When logging a decision, users expect ALL their changes to be committed together with that decision - like a normal git workflow. Previously only docs/ files were committed.
