@@ -40,7 +40,7 @@ DEFAULT_CONFIG = {
     },
     "agents": {
         "claude": True,
-        "cursor": False,
+        "cursor": True,
         "copilot": False,
         "windsurf": False,
         "aider": False,

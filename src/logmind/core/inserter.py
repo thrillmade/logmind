@@ -431,3 +431,69 @@ def insert_into_all_ai_files(
                     messages.append(f"✓ {file_path.name} already has logmind instructions")
 
     return messages
+
+
+def sync_agent_files_from_config(root_path: Optional[Path] = None) -> List[str]:
+    """
+    Sync agent files based on configuration.
+
+    For each enabled agent in config:
+    - If file doesn't exist → CREATE it with logmind section
+    - If file exists but lacks logmind section → INSERT section
+    - If file exists with logmind section → skip (already done)
+
+    This runs silently by default - only returns messages for actions taken.
+
+    Args:
+        root_path: Project root. Defaults to current directory.
+
+    Returns:
+        List of action messages (only for files created or updated)
+    """
+    if root_path is None:
+        root_path = Path.cwd()
+
+    # Import here to avoid circular dependency
+    from logmind.core.config import load_config
+
+    # Check if logmind is initialized (config exists)
+    config_path = root_path / ".logmind" / "config.yml"
+    if not config_path.exists():
+        return []
+
+    config = load_config(config_path)
+    enabled_agents = config.get_enabled_agents()
+
+    if not enabled_agents:
+        return []
+
+    messages = []
+
+    for agent_name in enabled_agents:
+        if agent_name not in AGENT_REGISTRY:
+            continue
+
+        file_path = get_agent_file_path(agent_name, root_path)
+        if file_path is None:
+            continue
+
+        if file_path.exists():
+            # File exists - check if it needs logmind section
+            if not is_agent_json(agent_name):
+                try:
+                    content = file_path.read_text()
+                    if not has_logmind_section(content):
+                        # Insert logmind section
+                        inserted = insert_logmind_section(file_path)
+                        if inserted:
+                            messages.append(f"✓ Added logmind section to {file_path.name}")
+                except Exception:
+                    pass
+            # JSON files and already-configured files: skip silently
+        else:
+            # File doesn't exist - create it
+            created = create_agent_file(agent_name, root_path)
+            if created:
+                messages.append(f"✓ Created {created.name} with logmind section")
+
+    return messages

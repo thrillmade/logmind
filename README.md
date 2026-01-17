@@ -8,11 +8,24 @@ logmind automatically tracks decisions made during AI-assisted development, main
 
 **Key concept:** Install once, init anywhere, log everything.
 
+## Installation
+
+```bash
+# Using pipx (recommended)
+pipx install logmind
+
+# Using Homebrew (macOS/Linux)
+brew tap thrillmot/logmind
+brew install logmind
+
+# Using pip
+pip install logmind
+```
+
 ## Quick Start
 
 ```bash
-# Install (once)
-pipx install logmind
+# If installed via pipx/brew, it's already available globally
 
 # Initialize in your project
 cd your-project

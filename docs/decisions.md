@@ -3,11 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Deploy to AWS
-
-**Alternatives considered:** AWS eu-west-1, GCP, Azure
-
----
 ## 2025-10-19 18:42 - Enable dark_mode
 
 **Implications:**
@@ -147,5 +142,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - Adding a new agent requires only one dict entry plus template function update
 - All agent functions derive from registry automatically
+
+---
+## 2026-01-17 16:00 - Implement config-driven agent file sync
+
+**Reasoning:** User wants to configure agents in config.yml and have files auto-created/updated on any logmind command
+
+**Alternatives considered:** Only sync on init, Require explicit sync command
+
+**Implications:**
+- sync_agent_files_from_config() added to inserter.py
+- Called from log, show, search, and agents list commands
 
 ---

@@ -17,6 +17,7 @@ from logmind.core.inserter import (
     insert_into_all_ai_files,
     insert_logmind_section,
     remove_agent_file,
+    sync_agent_files_from_config,
 )
 from logmind.core.logger import log as log_decision, log_first_decision
 from logmind.core.search import format_search_results, search_decisions
@@ -125,6 +126,11 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
     config_template = (template_dir / "config.yml.template").read_text()
     (logmind_dir / "config.yml").write_text(config_template)
     click.echo("✓ Created .logmind/config.yml")
+
+    # If no agents specified, use config defaults (claude + cursor enabled by default)
+    if agents is None:
+        config = load_config(logmind_dir / "config.yml")
+        agents = config.get_enabled_agents()
 
     # Insert into AI instruction files
     messages = insert_into_all_ai_files(root_path, agents=agents)
@@ -261,6 +267,11 @@ def log(
             else:
                 click.echo("✓ Committed changes (push disabled)")
 
+        # Sync agent files from config
+        sync_messages = sync_agent_files_from_config()
+        for msg in sync_messages:
+            click.echo(msg)
+
     except Exception as e:
         click.secho(f"Error: {e}", fg="red")
         sys.exit(1)
@@ -284,6 +295,11 @@ def show(show_all: bool):
             fg="red",
         )
         sys.exit(1)
+
+    # Sync agent files from config
+    sync_messages = sync_agent_files_from_config()
+    for msg in sync_messages:
+        click.echo(msg)
 
     decisions_path = docs_path / "decisions.md"
 
@@ -354,6 +370,11 @@ def search(
         )
         sys.exit(1)
 
+    # Sync agent files from config
+    sync_messages = sync_agent_files_from_config()
+    for msg in sync_messages:
+        click.echo(msg)
+
     try:
         results = search_decisions(
             query=query,
@@ -398,6 +419,12 @@ def agents():
 def agents_list():
     """List all supported agents and their status."""
     root_path = Path.cwd()
+
+    # Sync agent files from config
+    sync_messages = sync_agent_files_from_config(root_path)
+    for msg in sync_messages:
+        click.echo(msg)
+
     status = get_agent_status(root_path)
 
     click.echo("AI Agent Status:")
@@ -543,6 +570,57 @@ def agents_remove(agent_name: str, no_commit: bool, force: bool):
                 click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
     else:
         click.secho(f"Error: Failed to remove {file_path.name}", fg="red")
+        sys.exit(1)
+
+
+@main.command()
+def update():
+    """
+    Update logmind to the latest version.
+
+    Runs 'pip install --upgrade logmind' and shows version changes.
+    """
+    import subprocess
+
+    # Get current version
+    try:
+        from importlib.metadata import version as get_version
+        current_version = get_version("logmind")
+    except Exception:
+        current_version = "unknown"
+
+    click.echo(f"Current version: {current_version}")
+    click.echo("Checking for updates...")
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "logmind"],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            click.secho(f"Error updating: {result.stderr}", fg="red")
+            sys.exit(1)
+
+        # Get new version
+        try:
+            # Force reimport to get new version
+            import importlib
+            import logmind
+            importlib.reload(logmind)
+            from importlib.metadata import version as get_version
+            new_version = get_version("logmind")
+        except Exception:
+            new_version = "unknown"
+
+        if current_version == new_version:
+            click.secho(f"✓ Already at latest version ({current_version})", fg="green")
+        else:
+            click.secho(f"✓ Updated: {current_version} → {new_version}", fg="green")
+
+    except Exception as e:
+        click.secho(f"Error: {e}", fg="red")
         sys.exit(1)
 
 

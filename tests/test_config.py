@@ -184,7 +184,7 @@ def test_config_agents_property(temp_dir):
     assert "cursor" in agents
     assert "windsurf" in agents
     assert agents["claude"] is True  # Default enabled
-    assert agents["cursor"] is False  # Default disabled
+    assert agents["cursor"] is True  # Default enabled
 
 
 def test_config_get_enabled_agents(temp_dir):
@@ -195,7 +195,8 @@ def test_config_get_enabled_agents(temp_dir):
     enabled = config.get_enabled_agents()
     assert isinstance(enabled, list)
     assert "claude" in enabled  # Claude is enabled by default
-    assert "cursor" not in enabled  # Cursor is disabled by default
+    assert "cursor" in enabled  # Cursor is enabled by default
+    assert "windsurf" not in enabled  # Other agents disabled by default
 
 
 def test_config_agents_from_file(temp_dir):

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from logmind.cli import agents, init, log, main, show
+from logmind.cli import agents, init, log, main, show, update
 
 
 def test_cli_help():
@@ -454,3 +454,110 @@ def test_init_with_unknown_agent_warns(temp_dir):
         assert "unknown_agent" in result.output
         # Should still create claude
         assert (Path.cwd() / "CLAUDE.md").exists()
+
+
+# ============================================================================
+# Update Command Tests
+# ============================================================================
+
+
+def test_update_command_help():
+    """Test update command help."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["update", "--help"])
+
+    assert result.exit_code == 0
+    assert "Update logmind" in result.output
+    assert "pip install --upgrade" in result.output
+
+
+def test_update_command_shows_version():
+    """Test update command shows version info."""
+    runner = CliRunner()
+    # The actual update may fail in test environment, but it should at least start
+    result = runner.invoke(update)
+
+    # Should show current version info
+    assert "Current version:" in result.output or "version" in result.output.lower()
+
+
+# ============================================================================
+# Config-Driven Sync Integration Tests
+# ============================================================================
+
+
+def test_show_command_syncs_agent_files(temp_dir):
+    """Test that show command syncs agent files from config."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Initialize first
+        runner.invoke(init, ["--no-git"])
+
+        # Manually enable cursor in config
+        config_path = Path.cwd() / ".logmind" / "config.yml"
+        config_content = config_path.read_text()
+        config_content = config_content.replace("cursor: false", "cursor: true")
+        config_path.write_text(config_content)
+
+        # Run show (should sync and create .cursorrules)
+        result = runner.invoke(show)
+
+        assert result.exit_code == 0
+        assert (Path.cwd() / ".cursorrules").exists()
+
+
+def test_log_command_syncs_agent_files(git_repo):
+    """Test that log command syncs agent files from config."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        # Initialize first
+        runner.invoke(init)
+
+        # Manually enable windsurf in config
+        config_path = Path.cwd() / ".logmind" / "config.yml"
+        config_content = config_path.read_text()
+        config_content = config_content.replace("windsurf: false", "windsurf: true")
+        config_path.write_text(config_content)
+
+        # Run log (should sync and create .windsurfrules)
+        result = runner.invoke(log, ["Test decision", "--no-commit"])
+
+        assert result.exit_code == 0
+        assert (Path.cwd() / ".windsurfrules").exists()
+        assert ".windsurfrules" in result.output
+
+
+def test_init_creates_default_agents(temp_dir):
+    """Test that init creates both CLAUDE.md and .cursorrules by default."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git"])
+
+        assert result.exit_code == 0
+        # Both claude and cursor are enabled by default
+        assert (Path.cwd() / "CLAUDE.md").exists()
+        assert (Path.cwd() / ".cursorrules").exists()
+
+        # Verify they have logmind sections
+        claude_content = (Path.cwd() / "CLAUDE.md").read_text()
+        cursor_content = (Path.cwd() / ".cursorrules").read_text()
+        assert "<!-- logmind-start -->" in claude_content
+        assert "<!-- logmind-start -->" in cursor_content
+
+
+def test_default_config_enables_claude_and_cursor(temp_dir):
+    """Test that default config has claude and cursor enabled."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        runner.invoke(init, ["--no-git"])
+
+        config_path = Path.cwd() / ".logmind" / "config.yml"
+        config_content = config_path.read_text()
+
+        # Verify defaults
+        assert "claude: true" in config_content
+        assert "cursor: true" in config_content

@@ -44,7 +44,7 @@ file_structure:
 # Set to true to enable an agent, false to disable
 agents:
   claude: true       # CLAUDE.md
-  cursor: false      # .cursorrules
+  cursor: true       # .cursorrules
   copilot: false     # .github/copilot-instructions.md
   windsurf: false    # .windsurfrules
   aider: false       # CONVENTIONS.md

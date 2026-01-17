@@ -161,14 +161,60 @@ AI agents read files for full project context:
 - Recent decisions most relevant to ongoing work
 - Full history still available in archive + git history
 
+## Development History
+
+### Phase 1: Core Package (MVP) ✅ COMPLETE
+- [x] Package structure and setup.py/pyproject.toml
+- [x] `logmind init` command that:
+  - [x] Creates docs/ folder and template files (decisions.md, decisions-archive.md, file-structure.md)
+  - [x] Detects AI instruction files (CLAUDE.md, .cursorrules, .github/copilot-instructions.md)
+  - [x] Inserts logmind section into these files without overwriting existing content
+  - [x] Creates CLAUDE.md if it doesn't exist
+  - [x] Logs first decision: "Initialize logmind decision tracking"
+  - [x] Commits all changes: "logmind: Initialize decision tracking"
+- [x] `logmind.log()` function that:
+  - [x] Appends to docs/decisions.md
+  - [x] Archives oldest decision if > 20 entries (moves to decisions-archive.md)
+  - [x] Regenerates docs/file-structure.md using `tree`
+  - [x] Git commits all changed files
+  - [x] Pushes to remote
+- [x] Basic CLI: `logmind log "decision"` from command line
+- [x] Comprehensive test suite (65 tests, 100% passing)
+
+### Phase 2: Enhanced Features ✅ COMPLETE
+- [x] Configuration options (git auto-push on/off, custom commit messages)
+- [x] CLI command to view recent decisions: `logmind show`
+- [x] Search decisions: `logmind search "postgres"`
+- [x] Git integration checks (warn if not in git repo)
+- [x] Test suite expanded to 95 tests (all passing)
+
+### Phase 3: AI Integrations ✅ COMPLETE (Core Features)
+- [x] Decorators for automatic logging (@log_decision, @log_choice)
+  - [x] Template string support with {arg_name} placeholders
+  - [x] Support for reasoning, alternatives, implications
+  - [x] @log_choice for return-value-based decisions
+  - [x] 15 comprehensive tests (110 total tests passing)
+- [x] Universal AI agent support (11 agents)
+  - [x] Agent registry with file paths and formats
+  - [x] CLI commands: `agents list`, `agents add`, `agents remove`
+  - [x] Init flags: `--agents`, `--all-agents`
+  - [x] JSON support for Cody and Zed
+  - [x] Test suite expanded to 160+ tests
+
+### Test Progression
+- Phase 1: 65 tests
+- Phase 2: 95 tests
+- Phase 3: 110 tests
+- Current: 160+ tests (all passing)
+
 ## Completed Features
 
 See [README.md](../README.md) for usage documentation:
 
 - **Phase 1**: Core package (`init`, `log`, `show`)
 - **Phase 2**: Configuration system, search functionality
-- **Phase 3 Partial**: Decorators (`@log_decision`, `@log_choice`)
-- **AI Agent Configuration**: Universal agent support (11 agents), CLI commands, init flags
+- **Phase 3**: Decorators (`@log_decision`, `@log_choice`) + Universal agent support
+- **AI Agent Configuration**: 11 agents, CLI commands, init flags, config-driven sync
 
 ### Supported AI Agents
 

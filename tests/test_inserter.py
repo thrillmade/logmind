@@ -19,6 +19,7 @@ from logmind.core.inserter import (
     insert_logmind_section,
     is_agent_json,
     remove_agent_file,
+    sync_agent_files_from_config,
 )
 
 
@@ -591,3 +592,126 @@ def test_insert_into_file_no_heading(temp_dir):
     content = claude_file.read_text()
     assert "<!-- logmind-start -->" in content
     assert "Some content without heading" in content
+
+
+# ============================================================================
+# Test Config-Driven Agent Sync
+# ============================================================================
+
+
+def test_sync_agent_files_no_config(temp_dir):
+    """Test sync returns empty when no config exists."""
+    messages = sync_agent_files_from_config(temp_dir)
+    assert messages == []
+
+
+def test_sync_agent_files_creates_missing_files(temp_dir):
+    """Test sync creates files for enabled agents."""
+    # Create .logmind/config.yml with cursor enabled
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: true
+  windsurf: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should create .cursorrules and .windsurfrules
+    assert len(messages) == 2
+    assert any(".cursorrules" in msg for msg in messages)
+    assert any(".windsurfrules" in msg for msg in messages)
+    assert (temp_dir / ".cursorrules").exists()
+    assert (temp_dir / ".windsurfrules").exists()
+
+
+def test_sync_agent_files_inserts_into_existing(temp_dir):
+    """Test sync inserts logmind section into existing files without it."""
+    # Create .logmind/config.yml
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Create existing .cursorrules without logmind section
+    (temp_dir / ".cursorrules").write_text("# Existing rules\n\nSome rules here\n")
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should insert into existing file
+    assert len(messages) == 1
+    assert "Added logmind section" in messages[0]
+
+    content = (temp_dir / ".cursorrules").read_text()
+    assert "<!-- logmind-start -->" in content
+    assert "Existing rules" in content
+
+
+def test_sync_agent_files_skips_configured(temp_dir):
+    """Test sync skips files that already have logmind section."""
+    # Create .logmind/config.yml
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Create .cursorrules WITH logmind section
+    (temp_dir / ".cursorrules").write_text(
+        "# Cursor Rules\n\n<!-- logmind-start -->\nContent\n<!-- logmind-end -->\n"
+    )
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should return empty (file already configured)
+    assert messages == []
+
+
+def test_sync_agent_files_no_enabled_agents(temp_dir):
+    """Test sync returns empty when no agents are enabled."""
+    # Create .logmind/config.yml with all agents disabled
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: false
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    messages = sync_agent_files_from_config(temp_dir)
+    assert messages == []
+
+
+def test_sync_agent_files_creates_nested_directory(temp_dir):
+    """Test sync creates parent directories for nested agent files."""
+    # Create .logmind/config.yml with copilot enabled
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: false
+  copilot: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should create .github/copilot-instructions.md
+    assert len(messages) == 1
+    assert (temp_dir / ".github" / "copilot-instructions.md").exists()
