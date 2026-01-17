@@ -3,9 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Process item3
-
----
 ## 2025-10-19 18:42 - Use Redis for caching
 
 ---
@@ -174,5 +171,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - Created homebrew-logmind/ with Formula/logmind.rb
 - Custom tap allows faster iteration before homebrew-core submission
+
+---
+## 2026-01-17 16:06 - Merge plan archive into plan.md Development History section
+
+**Reasoning:** Consolidate documentation - archive had valuable phase completion details that were missing from plan.md
+
+**Alternatives considered:** Keep archive as separate file, Delete archive without merging
+
+**Implications:**
+- Added detailed Phase 1-3 checklists to plan.md
+- Included test progression history (65 to 160+ tests)
+- Deleted docs/plan-archive-2025-01.md
 
 ---
