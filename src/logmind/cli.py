@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import click
 
@@ -571,6 +571,72 @@ def agents_remove(agent_name: str, no_commit: bool, force: bool):
     else:
         click.secho(f"Error: Failed to remove {file_path.name}", fg="red")
         sys.exit(1)
+
+
+# Config command group
+@main.group()
+def config():
+    """View and modify logmind configuration."""
+    pass
+
+
+@config.command("list")
+def config_list():
+    """Show all configuration settings."""
+    import yaml
+
+    cfg = load_config()
+    click.echo(yaml.dump(cfg._config, default_flow_style=False, sort_keys=False))
+
+
+@config.command("get")
+@click.argument("key")
+def config_get(key: str):
+    """
+    Get a configuration value by key (dot notation).
+
+    Examples:
+        logmind config get git.auto_push
+        logmind config get decisions.max_recent
+    """
+    cfg = load_config()
+    value = cfg.get(key)
+    if value is None:
+        click.secho(f"Key '{key}' not found", fg="red", err=True)
+        sys.exit(1)
+    click.echo(value)
+
+
+@config.command("set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str):
+    """
+    Set a configuration value.
+
+    Values are auto-converted: "true"/"false" -> bool, digits -> int.
+
+    Examples:
+        logmind config set git.auto_push false
+        logmind config set decisions.max_recent 30
+    """
+    cfg = load_config()
+
+    # Parse value type
+    parsed_value: Any
+    if value.lower() == "true":
+        parsed_value = True
+    elif value.lower() == "false":
+        parsed_value = False
+    elif value.isdigit():
+        parsed_value = int(value)
+    elif value.replace(".", "", 1).isdigit() and value.count(".") == 1:
+        parsed_value = float(value)
+    else:
+        parsed_value = value
+
+    cfg.set(key, parsed_value)
+    click.secho(f"Set {key} = {parsed_value}", fg="green")
 
 
 @main.command()

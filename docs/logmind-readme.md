@@ -36,6 +36,11 @@ logmind search "postgres"
 logmind agents list
 logmind agents add windsurf
 
+# View and modify configuration
+logmind config list
+logmind config get git.auto_push
+logmind config set git.auto_push false
+
 # Upgrade logmind
 logmind update
 

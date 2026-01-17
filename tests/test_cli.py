@@ -5,7 +5,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from logmind.cli import agents, init, log, main, show, update
+from logmind.cli import agents, config, init, log, main, show, update
 
 
 def test_cli_help():
@@ -561,3 +561,134 @@ def test_default_config_enables_claude_and_cursor(temp_dir):
         # Verify defaults
         assert "claude: true" in config_content
         assert "cursor: true" in config_content
+
+
+# ============================================================================
+# Config Command Tests
+# ============================================================================
+
+
+def test_config_list_command(temp_dir):
+    """Test config list command shows all configuration."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Initialize first to create config
+        runner.invoke(init, ["--no-git"])
+
+        result = runner.invoke(main, ["config", "list"])
+
+        assert result.exit_code == 0
+        # Verify output contains expected YAML keys
+        assert "git:" in result.output
+        assert "decisions:" in result.output
+        assert "agents:" in result.output
+
+
+def test_config_get_command(temp_dir):
+    """Test config get command retrieves values."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Initialize first
+        runner.invoke(init, ["--no-git"])
+
+        result = runner.invoke(main, ["config", "get", "git.auto_push"])
+
+        assert result.exit_code == 0
+        assert "True" in result.output
+
+
+def test_config_get_nonexistent_key(temp_dir):
+    """Test config get with nonexistent key returns error."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Initialize first
+        runner.invoke(init, ["--no-git"])
+
+        result = runner.invoke(main, ["config", "get", "nonexistent.key"])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+
+def test_config_set_command(temp_dir):
+    """Test config set command modifies values."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Initialize first
+        runner.invoke(init, ["--no-git"])
+
+        # Set a value
+        result = runner.invoke(main, ["config", "set", "git.auto_push", "false"])
+
+        assert result.exit_code == 0
+        assert "Set git.auto_push = False" in result.output
+
+        # Verify the change
+        get_result = runner.invoke(main, ["config", "get", "git.auto_push"])
+        assert "False" in get_result.output
+
+
+def test_config_set_creates_nested_key(temp_dir):
+    """Test config set creates nested keys that don't exist."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Initialize first
+        runner.invoke(init, ["--no-git"])
+
+        # Set a new nested key
+        result = runner.invoke(main, ["config", "set", "custom.new.key", "myvalue"])
+
+        assert result.exit_code == 0
+        assert "Set custom.new.key = myvalue" in result.output
+
+        # Verify the key was created
+        get_result = runner.invoke(main, ["config", "get", "custom.new.key"])
+        assert result.exit_code == 0
+        assert "myvalue" in get_result.output
+
+
+def test_config_set_type_conversion(temp_dir):
+    """Test config set converts types correctly."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Initialize first
+        runner.invoke(init, ["--no-git"])
+
+        # Test bool conversion: "true" -> True
+        result = runner.invoke(main, ["config", "set", "test.bool_true", "true"])
+        assert result.exit_code == 0
+        assert "Set test.bool_true = True" in result.output
+
+        # Test bool conversion: "false" -> False
+        result = runner.invoke(main, ["config", "set", "test.bool_false", "false"])
+        assert result.exit_code == 0
+        assert "Set test.bool_false = False" in result.output
+
+        # Test int conversion: "42" -> 42
+        result = runner.invoke(main, ["config", "set", "test.integer", "42"])
+        assert result.exit_code == 0
+        assert "Set test.integer = 42" in result.output
+
+        # Test float conversion: "3.14" -> 3.14
+        result = runner.invoke(main, ["config", "set", "test.float_val", "3.14"])
+        assert result.exit_code == 0
+        assert "Set test.float_val = 3.14" in result.output
+
+        # Test string passthrough: "hello" -> "hello"
+        result = runner.invoke(main, ["config", "set", "test.string_val", "hello"])
+        assert result.exit_code == 0
+        assert "Set test.string_val = hello" in result.output
+
+        # Verify the values via config list
+        list_result = runner.invoke(main, ["config", "list"])
+        assert "bool_true: true" in list_result.output
+        assert "bool_false: false" in list_result.output
+        assert "integer: 42" in list_result.output
+        assert "float_val: 3.14" in list_result.output
+        assert "string_val: hello" in list_result.output

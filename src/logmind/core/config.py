@@ -138,13 +138,14 @@ class Config:
 
         return value
 
-    def set(self, key_path: str, value: Any) -> None:
+    def set(self, key_path: str, value: Any, save: bool = True) -> None:
         """
         Set configuration value using dot notation.
 
         Args:
             key_path: Dot-separated path (e.g., "git.auto_commit")
             value: Value to set
+            save: Whether to save to file after setting (default: True)
         """
         keys = key_path.split(".")
         config = self._config
@@ -155,6 +156,9 @@ class Config:
             config = config[key]
 
         config[keys[-1]] = value
+
+        if save:
+            self.save()
 
     def save(self) -> None:
         """Save configuration to file."""

@@ -3,14 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Use PostgreSQL
-
-**Reasoning:** Selected postgres based on requirements
-
----
-## 2025-10-19 18:42 - Unknown choice: memcached
-
----
 ## 2025-10-19 18:42 - The answer
 
 ---
@@ -191,5 +183,25 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - Users now see accurate feature status
 - Quick Start examples match actual CLI commands
+
+---
+## 2026-01-17 18:23 - Add CLI tests for config commands
+
+**Reasoning:** Config CLI commands (list, get, set) had no test coverage
+
+**Alternatives considered:** Only test Python API, Skip CLI tests
+
+**Implications:**
+- 6 new tests cover list, get, set, error handling, nested keys, and type conversion
+
+---
+## 2026-01-17 18:24 - Add CLI tests for config commands
+
+**Reasoning:** Config CLI commands (list, get, set) had no test coverage
+
+**Alternatives considered:** Only test Python API, Skip CLI tests
+
+**Implications:**
+- 6 new tests cover list, get, set, error handling, nested keys, and type conversion
 
 ---

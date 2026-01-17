@@ -5,6 +5,16 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 18:42 - Unknown choice: memcached
+
+---
+
+## 2025-10-19 18:42 - Use PostgreSQL
+
+**Reasoning:** Selected postgres based on requirements
+
+---
+
 ## 2025-10-19 18:42 - Use Redis for caching
 
 ---
