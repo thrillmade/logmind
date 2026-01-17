@@ -3,9 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Use Redis for caching
-
----
 ## 2025-10-19 18:42 - Use PostgreSQL
 
 **Reasoning:** Selected postgres based on requirements
@@ -183,5 +180,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Added detailed Phase 1-3 checklists to plan.md
 - Included test progression history (65 to 160+ tests)
 - Deleted docs/plan-archive-2025-01.md
+
+---
+## 2026-01-17 16:28 - Update documentation to reflect Phase 3 completion
+
+**Reasoning:** README.md and docs/logmind-readme.md were out of date - showed Phase 2 and missing agents/update commands
+
+**Alternatives considered:** Leave docs as-is, Update only phase status
+
+**Implications:**
+- Users now see accurate feature status
+- Quick Start examples match actual CLI commands
 
 ---
