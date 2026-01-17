@@ -3,13 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Enable dark_mode
-
-**Implications:**
-- Users will see new UI
-- Backend load may increase
-
----
 ## 2025-10-19 18:42 - Process item1
 
 ---
@@ -153,5 +146,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - sync_agent_files_from_config() added to inserter.py
 - Called from log, show, search, and agents list commands
+
+---
+## 2026-01-17 16:05 - Enable both Claude and Cursor as default agents
+
+**Reasoning:** Most users will want Claude Code and Cursor configured by default - the two most popular AI coding assistants
+
+**Alternatives considered:** Only Claude enabled by default, No agents enabled by default
+
+**Implications:**
+- config.py DEFAULT_CONFIG updated: cursor: True
+- config.yml.template updated: cursor: true
+- Init command now creates both CLAUDE.md and .cursorrules by default
 
 ---
