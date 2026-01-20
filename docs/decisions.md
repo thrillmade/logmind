@@ -3,9 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - The answer
-
----
 ## 2025-10-19 18:42 - Attempt risky operation
 
 ---
@@ -203,5 +200,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 **Implications:**
 - 6 new tests cover list, get, set, error handling, nested keys, and type conversion
+
+---
+## 2026-01-19 21:26 - Fix agents_remove to push after commit
+
+**Reasoning:** Bug found by bugbot: agents_remove used raw subprocess for git add/commit but never pushed to remote, unlike agents_add which uses commit_and_push(push=True)
+
+**Alternatives considered:** Keep local-only commits (rejected: inconsistent with agents_add behavior), Add separate git push subprocess call (rejected: commit_and_push already exists)
+
+**Implications:**
+- agents_remove now behaves consistently with agents_add
+- All changes are pushed to remote automatically
 
 ---
