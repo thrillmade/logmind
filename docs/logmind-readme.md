@@ -32,6 +32,18 @@ logmind log "Use PostgreSQL for database" \
 logmind show
 logmind search "postgres"
 
+# Manage AI agents
+logmind agents list
+logmind agents add windsurf
+
+# View and modify configuration
+logmind config list
+logmind config get git.auto_push
+logmind config set git.auto_push false
+
+# Upgrade logmind
+logmind update
+
 # Auto-log with decorators
 from logmind import log_decision, log_choice
 
@@ -82,9 +94,9 @@ pytest
 ## Documentation
 
 - **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
-- **[CLAUDE.md Insertion](docs/claude-md-insertion.md)** - How logmind integrates with AI instruction files
+- **[AI Agent Files](docs/ai-agent-files.md)** - How logmind integrates with AI instruction files
 - **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
-- **Development Status** - Phase 2 Complete (core features + config + search)
+- **Development Status** - Phase 3 Complete (decorators + agents + auto-update)
 
 ## How It Works
 

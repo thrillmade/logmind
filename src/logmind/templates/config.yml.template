@@ -39,3 +39,18 @@ file_structure:
     - dist
     - build
     - "*.egg-info"
+
+# AI Agent configuration
+# Set to true to enable an agent, false to disable
+agents:
+  claude: true       # CLAUDE.md
+  cursor: true       # .cursorrules
+  copilot: false     # .github/copilot-instructions.md
+  windsurf: false    # .windsurfrules
+  aider: false       # CONVENTIONS.md
+  continue: false    # .continuerules
+  cody: false        # .sourcegraph/cody.json
+  zed: false         # .zed/settings.json
+  amazonq: false     # .amazonq/rules.md
+  cline: false       # .clinerules
+  codex: false       # AGENTS.md (OpenAI Codex / universal standard)

@@ -32,7 +32,7 @@ pip install logmind
 
 # Initialize in a project
 cd my-ai-project
-logmind init  # Creates docs/, inserts instructions into CLAUDE.md
+logmind init  # Creates docs/, inserts instructions into AI agent files
 
 # Log a decision (appends, commits, pushes)
 from logmind import log
@@ -43,7 +43,7 @@ log("Chose FastAPI over Flask for async support",
 
 **What `logmind init` does:**
 1. Creates `docs/` folder with template files
-2. Finds or creates `CLAUDE.md` (or other AI instruction files)
+2. Finds or creates AI instruction files (CLAUDE.md, .cursorrules, etc.)
 3. Inserts logmind usage instructions **without overwriting** existing content
 4. Logs the first decision: "Initialize logmind decision tracking"
 5. Commits all changes with message: "logmind: Initialize decision tracking"
@@ -54,17 +54,16 @@ log("Chose FastAPI over Flask for async support",
 
 ```
 logmind/
-├── cli.py              # CLI commands (init, log, etc.)
+├── cli.py              # CLI commands (init, log, show, search, agents)
 ├── core/
 │   ├── logger.py       # Decision logging engine
 │   ├── git_handler.py  # Auto-commit and push
 │   ├── tree_gen.py     # File structure generator
-│   └── inserter.py     # CLAUDE.md instruction inserter
+│   ├── config.py       # Configuration management
+│   ├── search.py       # Decision search functionality
+│   └── inserter.py     # AI instruction file inserter
+├── decorators.py       # @log_decision, @log_choice
 ├── templates/          # Files created during init
-│   ├── logmind-section.md      # Section to insert into CLAUDE.md
-│   ├── CLAUDE.md.template      # Full template if creating new
-│   ├── decisions.md.template
-│   └── file-structure.md.template
 └── integrations/       # Hooks for AI frameworks (future)
 ```
 
@@ -73,6 +72,8 @@ logmind/
 ```
 my-ai-project/
 ├── CLAUDE.md                  # AI agent instructions
+├── .logmind/
+│   └── config.yml             # Project configuration
 ├── docs/
 │   ├── decisions.md           # 20 most recent decisions
 │   ├── decisions-archive.md   # Older decisions (chronological)
@@ -84,7 +85,7 @@ my-ai-project/
 - **decisions.md**: Only the 20 most recent decisions (keeps AI context focused)
 - **decisions-archive.md**: Full history of older decisions (21+)
 - **file-structure.md**: Auto-generated using `tree` command, updated on each log
-- **CLAUDE.md**: References all docs, but AI reads recent decisions first
+- **AI instruction files**: CLAUDE.md, .cursorrules, etc. - links to all docs
 
 ## Core Features
 
@@ -152,7 +153,7 @@ AI agents read files for full project context:
 - `docs/decisions.md` - **20 most recent decisions** (focused, current reasoning)
 - `docs/decisions-archive.md` - Historical decisions (reference when needed)
 - `docs/file-structure.md` - What exists in the project
-- `CLAUDE.md` - Links to all docs
+- AI instruction files - Links to all docs
 
 **Why limit to 20 recent decisions?**
 - Keeps AI context focused on current state
@@ -160,7 +161,7 @@ AI agents read files for full project context:
 - Recent decisions most relevant to ongoing work
 - Full history still available in archive + git history
 
-## Development Phases
+## Development History
 
 ### Phase 1: Core Package (MVP) ✅ COMPLETE
 - [x] Package structure and setup.py/pyproject.toml
@@ -187,22 +188,146 @@ AI agents read files for full project context:
 - [x] Git integration checks (warn if not in git repo)
 - [x] Test suite expanded to 95 tests (all passing)
 
-### Phase 3: AI Integrations (In Progress - 33% Complete)
+### Phase 3: AI Integrations ✅ COMPLETE (Core Features)
 - [x] Decorators for automatic logging (@log_decision, @log_choice)
   - [x] Template string support with {arg_name} placeholders
   - [x] Support for reasoning, alternatives, implications
   - [x] @log_choice for return-value-based decisions
   - [x] 15 comprehensive tests (110 total tests passing)
-- [ ] Framework-specific plugins (Optional - via integrations module)
-  - [ ] Base integration pattern for AI frameworks
-  - [ ] LangChain callback integration (example)
-  - [ ] Documentation for custom integrations
-- [ ] Git pre-commit hook for decision detection (Optional)
+- [x] Universal AI agent support (11 agents)
+  - [x] Agent registry with file paths and formats
+  - [x] CLI commands: `agents list`, `agents add`, `agents remove`
+  - [x] Init flags: `--agents`, `--all-agents`
+  - [x] JSON support for Cody and Zed
+  - [x] Test suite expanded to 160+ tests
+
+### Test Progression
+- Phase 1: 65 tests
+- Phase 2: 95 tests
+- Phase 3: 110 tests
+- Current: 160+ tests (all passing)
+
+## Completed Features
+
+See [README.md](../README.md) for usage documentation:
+
+- **Phase 1**: Core package (`init`, `log`, `show`)
+- **Phase 2**: Configuration system, search functionality
+- **Phase 3**: Decorators (`@log_decision`, `@log_choice`) + Universal agent support
+- **AI Agent Configuration**: 11 agents, CLI commands, init flags, config-driven sync
+
+### Supported AI Agents
+
+| Agent | Instruction File |
+|-------|------------------|
+| Claude Code | `CLAUDE.md` |
+| Cursor | `.cursorrules` |
+| GitHub Copilot | `.github/copilot-instructions.md` |
+| Windsurf | `.windsurfrules` |
+| Aider | `CONVENTIONS.md` |
+| Continue | `.continuerules` |
+| Sourcegraph Cody | `.sourcegraph/cody.json` |
+| Zed AI | `.zed/settings.json` |
+| Amazon Q | `.amazonq/rules.md` |
+| Cline | `.clinerules` |
+| OpenAI Codex | `AGENTS.md` |
+
+### Agent CLI Commands
+
+```bash
+logmind agents list           # List all agents with status
+logmind agents add <name>     # Add agent to project
+logmind agents remove <name>  # Remove agent from project
+logmind init --agents claude,cursor  # Init with specific agents
+logmind init --all-agents            # Init with all agents
+```
+
+## Development Roadmap
+
+### Framework Integrations
+
+#### LangChain Callback Integration
+
+Automatically log decisions from LangChain agent runs.
+
+```python
+from logmind.integrations import LangChainLogger
+
+chain = LLMChain(llm=llm, callbacks=[LangChainLogger()])
+```
+
+**Benefits:**
+- **Zero-friction logging** - Decisions captured automatically
+- **Agent transparency** - See what AI agents decided and why
+- **Debugging** - Trace decision paths in complex chains
+- **Audit trail** - Full history of AI-driven decisions
+
+#### Base Integration Pattern
+
+Extensible pattern for custom AI framework integrations.
+
+**Benefits:**
+- **Framework agnostic** - Works with any AI library
+- **Community contributions** - Others can add integrations
+- **Consistent interface** - Same logging API everywhere
+
+#### Documentation for Custom Integrations
+
+Step-by-step guide for building custom framework integrations.
+
+**Benefits:**
+- **Self-service** - Users can add their own integrations
+- **Adoption** - Lower barrier to extending logmind
+- **Quality** - Consistent patterns across integrations
+- **Community growth** - Contributors have clear guidance
+
+### Git Pre-commit Hook
+
+Detect undocumented decisions in code changes.
+
+```bash
+# .git/hooks/pre-commit
+logmind check-decisions
+```
+
+**Benefits:**
+- **Enforcement** - Can't forget to log decisions
+- **Code review aid** - Reviewers see decision context
+- **Quality gate** - Ensures documentation stays current
+- **Team accountability** - Everyone logs decisions
 
 ### Phase 4: Advanced Features (Future)
-- [ ] Decision templates for common patterns
-- [ ] Analytics on decision frequency
-- [ ] Multi-project decision aggregation
+
+#### Decision Templates
+
+Pre-built templates for common decision patterns.
+
+```bash
+logmind log --template database "Use PostgreSQL"
+```
+
+**Benefits:**
+- **Consistency** - Standard format for common decisions
+- **Speed** - Faster logging with pre-filled fields
+- **Best practices** - Guide users to capture key info
+
+#### Analytics Dashboard
+
+Visualize decision patterns and frequency.
+
+**Benefits:**
+- **Insights** - See what areas have most decisions
+- **Trends** - Track decision velocity over time
+- **Team patterns** - Identify knowledge silos
+
+#### Multi-project Aggregation
+
+Aggregate decisions across related projects.
+
+**Benefits:**
+- **Organization view** - See all decisions across repos
+- **Knowledge sharing** - Learn from other projects
+- **Consistency** - Identify conflicting decisions
 
 ## Technical Decisions
 

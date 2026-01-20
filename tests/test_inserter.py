@@ -3,14 +3,99 @@
 from pathlib import Path
 
 from logmind.core.inserter import (
+    AGENT_REGISTRY,
+    create_agent_file,
     create_claude_md,
     find_ai_instruction_files,
+    get_agent_display_name,
+    get_agent_file_path,
+    get_agent_status,
+    get_agent_template,
+    get_all_agent_names,
     get_full_claude_template,
     get_logmind_section,
     has_logmind_section,
     insert_into_all_ai_files,
     insert_logmind_section,
+    is_agent_json,
+    remove_agent_file,
+    sync_agent_files_from_config,
 )
+
+
+# ============================================================================
+# Test Agent Registry
+# ============================================================================
+
+
+def test_agent_registry_contains_all_agents():
+    """Test that the registry contains all expected agents."""
+    expected_agents = [
+        "claude",
+        "cursor",
+        "copilot",
+        "windsurf",
+        "aider",
+        "continue",
+        "cody",
+        "zed",
+        "amazonq",
+        "cline",
+        "codex",
+    ]
+    for agent in expected_agents:
+        assert agent in AGENT_REGISTRY
+
+
+def test_get_all_agent_names():
+    """Test getting all agent names."""
+    names = get_all_agent_names()
+    assert len(names) == 11
+    assert "claude" in names
+    assert "cursor" in names
+    assert "windsurf" in names
+    assert "cline" in names
+    assert "codex" in names
+
+
+def test_get_agent_file_path(temp_dir):
+    """Test getting agent file paths."""
+    assert get_agent_file_path("claude", temp_dir) == temp_dir / "CLAUDE.md"
+    assert get_agent_file_path("cursor", temp_dir) == temp_dir / ".cursorrules"
+    assert get_agent_file_path("copilot", temp_dir) == temp_dir / ".github" / "copilot-instructions.md"
+    assert get_agent_file_path("windsurf", temp_dir) == temp_dir / ".windsurfrules"
+    assert get_agent_file_path("aider", temp_dir) == temp_dir / "CONVENTIONS.md"
+    assert get_agent_file_path("continue", temp_dir) == temp_dir / ".continuerules"
+    assert get_agent_file_path("cody", temp_dir) == temp_dir / ".sourcegraph" / "cody.json"
+    assert get_agent_file_path("zed", temp_dir) == temp_dir / ".zed" / "settings.json"
+    assert get_agent_file_path("amazonq", temp_dir) == temp_dir / ".amazonq" / "rules.md"
+    assert get_agent_file_path("cline", temp_dir) == temp_dir / ".clinerules"
+    assert get_agent_file_path("codex", temp_dir) == temp_dir / "AGENTS.md"
+    assert get_agent_file_path("unknown", temp_dir) is None
+
+
+def test_get_agent_display_name():
+    """Test getting agent display names."""
+    assert get_agent_display_name("claude") == "Claude Code"
+    assert get_agent_display_name("cursor") == "Cursor"
+    assert get_agent_display_name("copilot") == "GitHub Copilot"
+    assert get_agent_display_name("windsurf") == "Windsurf"
+    assert get_agent_display_name("unknown") == "unknown"
+
+
+def test_is_agent_json():
+    """Test JSON agent detection."""
+    assert is_agent_json("cody") is True
+    assert is_agent_json("zed") is True
+    assert is_agent_json("claude") is False
+    assert is_agent_json("cursor") is False
+    assert is_agent_json("windsurf") is False
+    assert is_agent_json("unknown") is False
+
+
+# ============================================================================
+# Test File Detection
+# ============================================================================
 
 
 def test_find_ai_instruction_files_empty(temp_dir):
@@ -54,14 +139,74 @@ def test_find_ai_instruction_files_copilot(temp_dir):
     assert files[0][1] == "copilot"
 
 
+def test_find_ai_instruction_files_windsurf(temp_dir):
+    """Test finding .windsurfrules."""
+    (temp_dir / ".windsurfrules").write_text("rules\n")
+
+    files = find_ai_instruction_files(temp_dir)
+
+    assert len(files) == 1
+    assert files[0][0] == temp_dir / ".windsurfrules"
+    assert files[0][1] == "windsurf"
+
+
+def test_find_ai_instruction_files_aider(temp_dir):
+    """Test finding CONVENTIONS.md."""
+    (temp_dir / "CONVENTIONS.md").write_text("# Conventions\n")
+
+    files = find_ai_instruction_files(temp_dir)
+
+    assert len(files) == 1
+    assert files[0][0] == temp_dir / "CONVENTIONS.md"
+    assert files[0][1] == "aider"
+
+
 def test_find_ai_instruction_files_multiple(temp_dir):
     """Test finding multiple AI instruction files."""
     (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n")
     (temp_dir / ".cursorrules").write_text("rules\n")
+    (temp_dir / ".windsurfrules").write_text("rules\n")
 
     files = find_ai_instruction_files(temp_dir)
 
-    assert len(files) == 2
+    assert len(files) == 3
+
+
+# ============================================================================
+# Test Agent Status
+# ============================================================================
+
+
+def test_get_agent_status_empty(temp_dir):
+    """Test agent status when no files exist."""
+    status = get_agent_status(temp_dir)
+
+    assert len(status) == 11  # All agents should be in status
+    assert status["claude"]["exists"] is False
+    assert status["claude"]["configured"] is False
+    assert status["cursor"]["exists"] is False
+    assert status["cline"]["exists"] is False
+    assert status["codex"]["exists"] is False
+
+
+def test_get_agent_status_with_files(temp_dir):
+    """Test agent status with some files present."""
+    # Create CLAUDE.md with logmind section
+    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n\n<!-- logmind-start -->\nContent\n<!-- logmind-end -->\n")
+    # Create .cursorrules without logmind section
+    (temp_dir / ".cursorrules").write_text("rules only\n")
+
+    status = get_agent_status(temp_dir)
+
+    assert status["claude"]["exists"] is True
+    assert status["claude"]["configured"] is True
+    assert status["cursor"]["exists"] is True
+    assert status["cursor"]["configured"] is False  # No logmind section
+
+
+# ============================================================================
+# Test Logmind Section
+# ============================================================================
 
 
 def test_has_logmind_section_false():
@@ -93,6 +238,58 @@ def test_get_full_claude_template():
     assert "# CLAUDE.md" in template
     assert "<!-- logmind-start -->" in template
     assert "Project Overview" in template
+
+
+# ============================================================================
+# Test Agent Templates
+# ============================================================================
+
+
+def test_get_agent_template_claude():
+    """Test getting Claude template."""
+    template = get_agent_template("claude")
+    assert "# CLAUDE.md" in template
+    assert "<!-- logmind-start -->" in template
+
+
+def test_get_agent_template_cursor():
+    """Test getting Cursor template."""
+    template = get_agent_template("cursor")
+    assert "# Cursor Rules" in template
+    assert "<!-- logmind-start -->" in template
+
+
+def test_get_agent_template_windsurf():
+    """Test getting Windsurf template."""
+    template = get_agent_template("windsurf")
+    assert "# Windsurf Rules" in template
+    assert "<!-- logmind-start -->" in template
+
+
+def test_get_agent_template_aider():
+    """Test getting Aider template."""
+    template = get_agent_template("aider")
+    assert "# Project Conventions" in template
+    assert "<!-- logmind-start -->" in template
+
+
+def test_get_agent_template_cody_json():
+    """Test getting Cody template (JSON format)."""
+    template = get_agent_template("cody")
+    assert '"logmind"' in template
+    assert '"enabled": true' in template
+
+
+def test_get_agent_template_zed_json():
+    """Test getting Zed template (JSON format)."""
+    template = get_agent_template("zed")
+    assert '"logmind"' in template
+    assert '"enabled": true' in template
+
+
+# ============================================================================
+# Test Insertion
+# ============================================================================
 
 
 def test_insert_logmind_section_new_file(temp_dir):
@@ -138,6 +335,11 @@ def test_insert_logmind_section_after_heading(temp_dir):
     assert heading_idx < logmind_idx < section2_idx
 
 
+# ============================================================================
+# Test File Creation
+# ============================================================================
+
+
 def test_create_claude_md(temp_dir):
     """Test creating new CLAUDE.md file."""
     claude_file = temp_dir / "CLAUDE.md"
@@ -150,6 +352,88 @@ def test_create_claude_md(temp_dir):
     content = claude_file.read_text()
     assert "# CLAUDE.md" in content
     assert "<!-- logmind-start -->" in content
+
+
+def test_create_agent_file_cursor(temp_dir):
+    """Test creating .cursorrules file."""
+    result = create_agent_file("cursor", temp_dir)
+
+    assert result == temp_dir / ".cursorrules"
+    assert result.exists()
+
+    content = result.read_text()
+    assert "# Cursor Rules" in content
+    assert "<!-- logmind-start -->" in content
+
+
+def test_create_agent_file_windsurf(temp_dir):
+    """Test creating .windsurfrules file."""
+    result = create_agent_file("windsurf", temp_dir)
+
+    assert result == temp_dir / ".windsurfrules"
+    assert result.exists()
+
+    content = result.read_text()
+    assert "# Windsurf Rules" in content
+
+
+def test_create_agent_file_copilot_creates_directory(temp_dir):
+    """Test that creating copilot file creates .github directory."""
+    result = create_agent_file("copilot", temp_dir)
+
+    assert result == temp_dir / ".github" / "copilot-instructions.md"
+    assert result.exists()
+    assert (temp_dir / ".github").is_dir()
+
+
+def test_create_agent_file_cody_json(temp_dir):
+    """Test creating Cody JSON file."""
+    result = create_agent_file("cody", temp_dir)
+
+    assert result == temp_dir / ".sourcegraph" / "cody.json"
+    assert result.exists()
+
+    content = result.read_text()
+    assert '"logmind"' in content
+
+
+def test_create_agent_file_unknown(temp_dir):
+    """Test creating unknown agent returns None."""
+    result = create_agent_file("unknown_agent", temp_dir)
+    assert result is None
+
+
+# ============================================================================
+# Test File Removal
+# ============================================================================
+
+
+def test_remove_agent_file(temp_dir):
+    """Test removing agent file."""
+    # Create file first
+    (temp_dir / ".cursorrules").write_text("rules\n")
+
+    result = remove_agent_file("cursor", temp_dir)
+
+    assert result is True
+    assert not (temp_dir / ".cursorrules").exists()
+
+
+def test_remove_agent_file_not_exists(temp_dir):
+    """Test removing non-existent file returns False."""
+    result = remove_agent_file("cursor", temp_dir)
+    assert result is False
+
+
+def test_remove_agent_file_unknown(temp_dir):
+    """Test removing unknown agent returns False."""
+    result = remove_agent_file("unknown", temp_dir)
+    assert result is False
+
+
+# ============================================================================
+# Test Insert Into All
+# ============================================================================
 
 
 def test_insert_into_all_ai_files_creates_claude(temp_dir):
@@ -193,3 +477,241 @@ def test_insert_into_all_ai_files_no_create(temp_dir):
 
     assert len(messages) == 0
     assert not (temp_dir / "CLAUDE.md").exists()
+
+
+def test_insert_into_all_ai_files_specific_agents(temp_dir):
+    """Test creating specific agents."""
+    messages = insert_into_all_ai_files(temp_dir, agents=["claude", "cursor", "windsurf"])
+
+    assert len(messages) == 3
+    assert (temp_dir / "CLAUDE.md").exists()
+    assert (temp_dir / ".cursorrules").exists()
+    assert (temp_dir / ".windsurfrules").exists()
+
+
+def test_insert_into_all_ai_files_unknown_agent(temp_dir):
+    """Test with unknown agent in list."""
+    messages = insert_into_all_ai_files(temp_dir, agents=["claude", "unknown_agent"])
+
+    assert len(messages) == 2
+    assert "Unknown agent" in messages[1]
+    assert (temp_dir / "CLAUDE.md").exists()
+
+
+# ============================================================================
+# Edge Case Tests
+# ============================================================================
+
+
+def test_create_agent_file_cline(temp_dir):
+    """Test creating .clinerules file."""
+    result = create_agent_file("cline", temp_dir)
+
+    assert result == temp_dir / ".clinerules"
+    assert result.exists()
+
+    content = result.read_text()
+    assert "# Cline Rules" in content
+    assert "<!-- logmind-start -->" in content
+
+
+def test_create_agent_file_codex(temp_dir):
+    """Test creating AGENTS.md file."""
+    result = create_agent_file("codex", temp_dir)
+
+    assert result == temp_dir / "AGENTS.md"
+    assert result.exists()
+
+    content = result.read_text()
+    assert "# AGENTS.md" in content
+    assert "<!-- logmind-start -->" in content
+
+
+def test_json_templates_are_valid():
+    """Test that JSON agent templates are valid JSON."""
+    import json
+
+    cody_template = get_agent_template("cody")
+    zed_template = get_agent_template("zed")
+
+    # Should not raise
+    cody_parsed = json.loads(cody_template)
+    zed_parsed = json.loads(zed_template)
+
+    assert "logmind" in cody_parsed
+    assert "logmind" in zed_parsed
+    assert cody_parsed["logmind"]["enabled"] is True
+    assert zed_parsed["logmind"]["enabled"] is True
+
+
+def test_find_cline_and_codex(temp_dir):
+    """Test finding Cline and Codex files."""
+    (temp_dir / ".clinerules").write_text("# Cline rules\n")
+    (temp_dir / "AGENTS.md").write_text("# AGENTS.md\n")
+
+    files = find_ai_instruction_files(temp_dir)
+
+    agent_names = [name for _, name in files]
+    assert "cline" in agent_names
+    assert "codex" in agent_names
+
+
+def test_insert_preserves_unicode(temp_dir):
+    """Test that insertion preserves unicode characters."""
+    claude_file = temp_dir / "CLAUDE.md"
+    claude_file.write_text("# CLAUDE.md\n\n## Japanese: \u65e5\u672c\u8a9e\n\n## Emoji: \U0001F680\n")
+
+    insert_logmind_section(claude_file)
+
+    content = claude_file.read_text()
+    assert "\u65e5\u672c\u8a9e" in content  # Japanese text preserved
+    assert "\U0001F680" in content  # Emoji preserved
+    assert "<!-- logmind-start -->" in content
+
+
+def test_insert_into_empty_file(temp_dir):
+    """Test inserting into an empty file."""
+    claude_file = temp_dir / "CLAUDE.md"
+    claude_file.write_text("")
+
+    result = insert_logmind_section(claude_file)
+
+    assert result is True
+    content = claude_file.read_text()
+    assert "<!-- logmind-start -->" in content
+
+
+def test_insert_into_file_no_heading(temp_dir):
+    """Test inserting into file with no heading."""
+    claude_file = temp_dir / "CLAUDE.md"
+    claude_file.write_text("Some content without heading\n\nMore content\n")
+
+    result = insert_logmind_section(claude_file)
+
+    assert result is True
+    content = claude_file.read_text()
+    assert "<!-- logmind-start -->" in content
+    assert "Some content without heading" in content
+
+
+# ============================================================================
+# Test Config-Driven Agent Sync
+# ============================================================================
+
+
+def test_sync_agent_files_no_config(temp_dir):
+    """Test sync returns empty when no config exists."""
+    messages = sync_agent_files_from_config(temp_dir)
+    assert messages == []
+
+
+def test_sync_agent_files_creates_missing_files(temp_dir):
+    """Test sync creates files for enabled agents."""
+    # Create .logmind/config.yml with cursor enabled
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: true
+  windsurf: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should create .cursorrules and .windsurfrules
+    assert len(messages) == 2
+    assert any(".cursorrules" in msg for msg in messages)
+    assert any(".windsurfrules" in msg for msg in messages)
+    assert (temp_dir / ".cursorrules").exists()
+    assert (temp_dir / ".windsurfrules").exists()
+
+
+def test_sync_agent_files_inserts_into_existing(temp_dir):
+    """Test sync inserts logmind section into existing files without it."""
+    # Create .logmind/config.yml
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Create existing .cursorrules without logmind section
+    (temp_dir / ".cursorrules").write_text("# Existing rules\n\nSome rules here\n")
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should insert into existing file
+    assert len(messages) == 1
+    assert "Added logmind section" in messages[0]
+
+    content = (temp_dir / ".cursorrules").read_text()
+    assert "<!-- logmind-start -->" in content
+    assert "Existing rules" in content
+
+
+def test_sync_agent_files_skips_configured(temp_dir):
+    """Test sync skips files that already have logmind section."""
+    # Create .logmind/config.yml
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Create .cursorrules WITH logmind section
+    (temp_dir / ".cursorrules").write_text(
+        "# Cursor Rules\n\n<!-- logmind-start -->\nContent\n<!-- logmind-end -->\n"
+    )
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should return empty (file already configured)
+    assert messages == []
+
+
+def test_sync_agent_files_no_enabled_agents(temp_dir):
+    """Test sync returns empty when no agents are enabled."""
+    # Create .logmind/config.yml with all agents disabled
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: false
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    messages = sync_agent_files_from_config(temp_dir)
+    assert messages == []
+
+
+def test_sync_agent_files_creates_nested_directory(temp_dir):
+    """Test sync creates parent directories for nested agent files."""
+    # Create .logmind/config.yml with copilot enabled
+    logmind_dir = temp_dir / ".logmind"
+    logmind_dir.mkdir()
+    config_content = """
+agents:
+  claude: false
+  cursor: false
+  copilot: true
+"""
+    (logmind_dir / "config.yml").write_text(config_content)
+
+    # Run sync
+    messages = sync_agent_files_from_config(temp_dir)
+
+    # Should create .github/copilot-instructions.md
+    assert len(messages) == 1
+    assert (temp_dir / ".github" / "copilot-instructions.md").exists()

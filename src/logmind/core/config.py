@@ -38,6 +38,19 @@ DEFAULT_CONFIG = {
             "*.egg-info",
         ],
     },
+    "agents": {
+        "claude": True,
+        "cursor": True,
+        "copilot": False,
+        "windsurf": False,
+        "aider": False,
+        "continue": False,
+        "cody": False,
+        "zed": False,
+        "amazonq": False,
+        "cline": False,
+        "codex": False,
+    },
 }
 
 
@@ -125,13 +138,14 @@ class Config:
 
         return value
 
-    def set(self, key_path: str, value: Any) -> None:
+    def set(self, key_path: str, value: Any, save: bool = True) -> None:
         """
         Set configuration value using dot notation.
 
         Args:
             key_path: Dot-separated path (e.g., "git.auto_commit")
             value: Value to set
+            save: Whether to save to file after setting (default: True)
         """
         keys = key_path.split(".")
         config = self._config
@@ -142,6 +156,9 @@ class Config:
             config = config[key]
 
         config[keys[-1]] = value
+
+        if save:
+            self.save()
 
     def save(self) -> None:
         """Save configuration to file."""
@@ -182,6 +199,16 @@ class Config:
     def ignore_patterns(self) -> list:
         """Patterns to ignore in file structure."""
         return self.get("file_structure.ignore_patterns", [])
+
+    @property
+    def agents(self) -> Dict[str, bool]:
+        """Agent configuration."""
+        return self.get("agents", {})
+
+    def get_enabled_agents(self) -> list:
+        """Get list of enabled agent names."""
+        agents = self.agents
+        return [name for name, enabled in agents.items() if enabled]
 
 
 def load_config(config_path: Optional[Path] = None) -> Config:

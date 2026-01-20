@@ -5,6 +5,74 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 18:42 - Unknown choice: memcached
+
+---
+
+## 2025-10-19 18:42 - Use PostgreSQL
+
+**Reasoning:** Selected postgres based on requirements
+
+---
+
+## 2025-10-19 18:42 - Use Redis for caching
+
+---
+
+## 2025-10-19 18:42 - Process item3
+
+---
+
+## 2025-10-19 18:42 - Process item2
+
+---
+
+## 2025-10-19 18:42 - Process item1
+
+---
+
+## 2025-10-19 18:42 - Enable dark_mode
+
+**Implications:**
+- Users will see new UI
+- Backend load may increase
+
+---
+
+## 2025-10-19 18:42 - Deploy to AWS
+
+**Alternatives considered:** AWS eu-west-1, GCP, Azure
+
+---
+
+## 2025-10-19 18:42 - Use FastAPI
+
+**Reasoning:** Best for our use case
+
+**Alternatives considered:** Django, Flask, Tornado
+
+---
+
+## 2025-10-19 18:42 - Cache backend: redis
+
+---
+
+## 2025-10-19 18:42 - Connect to db.example.com:3306
+
+---
+
+## 2025-10-19 18:42 - Use oauth authentication
+
+**Reasoning:** Security for /api/data
+
+---
+
+## 2025-10-19 18:42 - Test decision
+
+**Reasoning:** Test reasoning
+
+---
+
 ## 2025-10-19 17:44 - Make logmind commit all changed files, not just docs
 
 **Reasoning:** When logging a decision, users expect ALL their changes to be committed together with that decision - like a normal git workflow. Previously only docs/ files were committed.
