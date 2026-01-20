@@ -478,6 +478,18 @@ def agents_add(agent_name: str, no_commit: bool):
             inserted = insert_logmind_section(file_path)
             if inserted:
                 click.secho(f"✓ Added logmind instructions to {file_path.name}", fg="green")
+                # Commit if requested
+                if not no_commit and is_git_repo():
+                    try:
+                        rel_path = file_path.relative_to(root_path)
+                        commit_and_push(
+                            [str(rel_path)],
+                            f"logmind: Add instructions to {agent_name} agent file",
+                            push=True,
+                        )
+                        click.echo("✓ Committed changes")
+                    except Exception as e:
+                        click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
             else:
                 click.secho(f"✓ {file_path.name} already has logmind instructions", fg="yellow")
     else:
@@ -550,20 +562,10 @@ def agents_remove(agent_name: str, no_commit: bool, force: bool):
         if not no_commit and is_git_repo():
             try:
                 rel_path = file_path.relative_to(root_path)
-                # Use git rm for proper tracking
-                import subprocess
-
-                subprocess.run(
-                    ["git", "add", str(rel_path)],
-                    cwd=root_path,
-                    check=True,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    ["git", "commit", "-m", f"logmind: Remove {agent_name} agent configuration"],
-                    cwd=root_path,
-                    check=True,
-                    capture_output=True,
+                commit_and_push(
+                    [str(rel_path)],
+                    f"logmind: Remove {agent_name} agent configuration",
+                    push=True,
                 )
                 click.echo("✓ Committed changes")
             except Exception as e:
