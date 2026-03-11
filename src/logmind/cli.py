@@ -19,6 +19,7 @@ from logmind.core.inserter import (
     remove_agent_file,
     sync_agent_files_from_config,
 )
+from logmind.core.decision_templates import get_template, list_templates
 from logmind.core.logger import log as log_decision, log_first_decision
 from logmind.core.search import format_search_results, search_decisions
 from logmind.core.tree_gen import update_file_structure
@@ -211,6 +212,13 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
     is_flag=True,
     help="Don't auto-push after committing",
 )
+@click.option(
+    "--template",
+    "-T",
+    type=str,
+    default=None,
+    help="Pre-fill from a built-in template (database, api, architecture, security, performance, library, deployment)",
+)
 def log(
     decision: str,
     reasoning: Optional[str],
@@ -218,6 +226,7 @@ def log(
     implication: tuple,
     no_commit: bool,
     no_push: bool,
+    template: Optional[str],
 ):
     """
     Log a decision to the decision log.
@@ -239,6 +248,22 @@ def log(
 
     alternatives = list(alternative) if alternative else None
     implications = list(implication) if implication else None
+
+    # Apply template defaults (explicit CLI flags take precedence)
+    if template:
+        tmpl = get_template(template)
+        if tmpl is None:
+            available = ", ".join(list_templates().keys())
+            click.secho(
+                f"Unknown template '{template}'. Available: {available}", fg="red"
+            )
+            sys.exit(1)
+        if reasoning is None:
+            reasoning = tmpl["reasoning"]
+        if alternatives is None:
+            alternatives = tmpl["alternatives"]
+        if implications is None:
+            implications = tmpl["implications"]
 
     # Load config to determine defaults
     config = load_config()
@@ -406,6 +431,25 @@ def search(
     except Exception as e:
         click.secho(f"Error during search: {e}", fg="red")
         sys.exit(1)
+
+
+@main.command("templates")
+def templates_list():
+    """
+    List available decision templates.
+
+    Templates pre-fill reasoning, alternatives, and implications for common
+    decision types. Use with: logmind log --template <name> "Your decision"
+
+    Example:
+        logmind log --template database "Use PostgreSQL"
+    """
+    click.echo("Available decision templates:\n")
+    for name, description in list_templates().items():
+        click.echo(f"  {name:<14} {description}")
+    click.echo(
+        "\nUsage: logmind log --template <name> \"Your decision here\""
+    )
 
 
 # Agents command group

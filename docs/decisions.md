@@ -3,16 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 20:28 - Add decorator documentation to README and update plan
-
-**Reasoning:** Users need clear examples of how to use the new @log_decision and @log_choice decorators. README should showcase Phase 3 features.
-
-**Implications:**
-- README shows decorator usage examples
-- Plan.md updated to show Phase 3 progress (33% complete)
-- Clear path forward for remaining Phase 3 features
-
----
 ## 2025-10-19 20:46 - Prepare package for PyPI publishing
 
 **Reasoning:** Package built and validated. Added LICENSE, MANIFEST.in, updated pyproject.toml with proper metadata, created CHANGELOG. Ready for upload to PyPI.
@@ -219,5 +209,18 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - logmind check-decisions exits 1 when >20 lines staged without decisions.md update
 - logmind install-hook creates or appends to .git/hooks/pre-commit
 - 15 new tests added
+
+---
+## 2026-03-10 23:46 - Add decision templates with --template flag and logmind templates command
+
+**Reasoning:** Roadmap item: pre-built templates for common patterns speed up logging and enforce consistent structure
+
+**Alternatives considered:** Config-file-based templates, Interactive prompts
+
+**Implications:**
+- 7 built-in templates: database, api, architecture, security, performance, library, deployment
+- logmind log --template <name> pre-fills reasoning, alternatives, implications; explicit flags override
+- logmind templates lists all available templates
+- 23 new tests added
 
 ---

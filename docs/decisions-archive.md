@@ -5,6 +5,17 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 20:28 - Add decorator documentation to README and update plan
+
+**Reasoning:** Users need clear examples of how to use the new @log_decision and @log_choice decorators. README should showcase Phase 3 features.
+
+**Implications:**
+- README shows decorator usage examples
+- Plan.md updated to show Phase 3 progress (33% complete)
+- Clear path forward for remaining Phase 3 features
+
+---
+
 ## 2025-10-19 20:26 - Implement Phase 3 decorators for automatic decision logging
 
 **Reasoning:** Enable developers to log decisions automatically using @log_decision and @log_choice decorators. Supports template strings with function arguments, alternatives, implications, and all standard logmind features.
