@@ -3,16 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-20 07:12 - Make decisions-archive.md optional reference, not required reading
-
-**Reasoning:** Archive is a searchable reference for historical context, not something AI agents must read upfront. Only recent decisions (docs/decisions.md) are required.
-
-**Implications:**
-- decisions-archive.md moved to 'Additional Reference' section
-- Reduces cognitive load for AI agents - focus on recent 20 decisions
-- Template files updated: logmind-section.md and CLAUDE.md.template
-
----
 ## 2026-01-17 14:28 - Add Cline and OpenAI Codex (AGENTS.md) to supported agents
 
 **Reasoning:** Cline is a major VS Code agent using .clinerules; AGENTS.md is an emerging universal standard supported by OpenAI Codex, Cursor, Windsurf, and others under the Linux Foundation
@@ -227,5 +217,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - logmind aggregate --summary shows per-project decision counts
 - --limit, --no-archive flags control output scope
 - 26 new tests added
+
+---
+## 2026-03-11 00:18 - Add Homebrew tap formula for logmind distribution
+
+**Reasoning:** Roadmap item: lower adoption barrier by enabling brew install logmind for non-Python developers
+
+**Alternatives considered:** Only distribute via pip/pipx, Docker image
+
+**Implications:**
+- homebrew-tap/Formula/logmind.rb contains the Homebrew formula
+- SHA256 is a placeholder — will be updated when published to PyPI
+- Install via: brew tap thrillmot/logmind && brew install logmind
 
 ---

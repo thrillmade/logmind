@@ -5,6 +5,17 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-20 07:12 - Make decisions-archive.md optional reference, not required reading
+
+**Reasoning:** Archive is a searchable reference for historical context, not something AI agents must read upfront. Only recent decisions (docs/decisions.md) are required.
+
+**Implications:**
+- decisions-archive.md moved to 'Additional Reference' section
+- Reduces cognitive load for AI agents - focus on recent 20 decisions
+- Template files updated: logmind-section.md and CLAUDE.md.template
+
+---
+
 ## 2025-10-20 07:07 - Add logmind-readme.md to docs folder for AI agents
 
 **Reasoning:** AI agents need easy access to logmind documentation without navigating to repository root. Creates docs/logmind-readme.md during init by copying README.md content.
