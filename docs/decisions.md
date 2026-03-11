@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 14:28 - Add --agents and --all-agents flags to init command
-
-**Reasoning:** Allows explicit control over which agent files are created during initialization, supports CI/CD scripted setup
-
-**Alternatives considered:** Auto-detect and create all found agents, Interactive prompt to select agents
-
-**Implications:**
-- logmind init --agents claude,cursor creates only specified files
-- logmind init --all-agents creates all 11 agent files
-
----
 ## 2026-01-17 14:29 - Rename claude-md-insertion.md to ai-agent-files.md
 
 **Reasoning:** Original name was Claude-specific but we now support 11 AI agents; generic name better reflects scope
@@ -228,5 +217,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - 301 tests passing
 - 7 new CLI commands: check-decisions, install-hook, templates, stats, aggregate, and supporting subcommands
 - Homebrew tap formula and custom integrations docs added
+
+---
+## 2026-03-11 00:36 - Update all markdown docs to reflect Phase 4 completion
+
+**Reasoning:** README, logmind-readme, plan.md, and CHANGELOG were all missing new commands and features added this session
+
+**Implications:**
+- README and logmind-readme: added stats, aggregate, check-decisions, install-hook, templates, --template, integrations section
+- plan.md: architecture updated with new modules, all roadmap items marked complete, test count updated to 301
+- CHANGELOG: new [Unreleased] section listing all Phase 4 additions
+- All docs have backlinks — no orphaned files
 
 ---

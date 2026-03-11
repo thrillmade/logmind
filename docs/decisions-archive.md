@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 14:28 - Add --agents and --all-agents flags to init command
+
+**Reasoning:** Allows explicit control over which agent files are created during initialization, supports CI/CD scripted setup
+
+**Alternatives considered:** Auto-detect and create all found agents, Interactive prompt to select agents
+
+**Implications:**
+- logmind init --agents claude,cursor creates only specified files
+- logmind init --all-agents creates all 11 agent files
+
+---
+
 ## 2026-01-17 14:28 - Implement logmind agents CLI command group with list, add, remove subcommands
 
 **Reasoning:** Provides visibility into configured agents, easy setup without manual file creation, and project-level agent control

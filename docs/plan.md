@@ -54,17 +54,23 @@ log("Chose FastAPI over Flask for async support",
 
 ```
 logmind/
-├── cli.py              # CLI commands (init, log, show, search, agents)
+├── cli.py                    # CLI commands (init, log, show, search, stats, aggregate, ...)
 ├── core/
-│   ├── logger.py       # Decision logging engine
-│   ├── git_handler.py  # Auto-commit and push
-│   ├── tree_gen.py     # File structure generator
-│   ├── config.py       # Configuration management
-│   ├── search.py       # Decision search functionality
-│   └── inserter.py     # AI instruction file inserter
-├── decorators.py       # @log_decision, @log_choice
-├── templates/          # Files created during init
-└── integrations/       # Hooks for AI frameworks (future)
+│   ├── logger.py             # Decision logging engine
+│   ├── git_handler.py        # Auto-commit and push
+│   ├── tree_gen.py           # File structure generator
+│   ├── config.py             # Configuration management
+│   ├── search.py             # Decision search functionality
+│   ├── inserter.py           # AI instruction file inserter
+│   ├── analytics.py          # Stats, monthly chart, keyword analysis
+│   ├── aggregator.py         # Multi-project decision aggregation
+│   └── decision_templates.py # Built-in templates for common decisions
+├── decorators.py             # @log_decision, @log_choice
+├── integrations/
+│   ├── __init__.py           # Exports LangChainLogger
+│   ├── base.py               # BaseIntegration for custom frameworks
+│   └── langchain.py          # LangChain callback handler
+└── templates/                # Files created during init
 ```
 
 ### Project Structure (After `logmind init`)
@@ -201,20 +207,32 @@ AI agents read files for full project context:
   - [x] JSON support for Cody and Zed
   - [x] Test suite expanded to 160+ tests
 
+### Phase 4: Advanced Features ✅ COMPLETE
+- [x] LangChain callback integration (`LangChainLogger`)
+- [x] `BaseIntegration` pattern for custom framework integrations
+- [x] Custom integrations documentation (`docs/custom-integrations.md`)
+- [x] `logmind check-decisions` — git pre-commit hook
+- [x] `logmind install-hook` — one-command hook installation
+- [x] Decision templates (`logmind log --template`, `logmind templates`)
+- [x] Analytics dashboard (`logmind stats` with ASCII chart + keywords)
+- [x] Multi-project aggregation (`logmind aggregate`)
+- [x] Homebrew tap formula (`homebrew-tap/Formula/logmind.rb`)
+- [x] Test suite expanded to 301 tests (all passing)
+
 ### Test Progression
 - Phase 1: 65 tests
 - Phase 2: 95 tests
-- Phase 3: 110 tests
-- Current: 178 tests (all passing)
+- Phase 3: 178 tests
+- Phase 4: 301 tests (all passing)
 
 ## Completed Features
 
-See [README.md](../README.md) for usage documentation:
+See [README.md](../README.md) for usage documentation.
 
 - **Phase 1**: Core package (`init`, `log`, `show`)
 - **Phase 2**: Configuration system, search functionality
-- **Phase 3**: Decorators (`@log_decision`, `@log_choice`) + Universal agent support
-- **AI Agent Configuration**: 11 agents, CLI commands, init flags, config-driven sync
+- **Phase 3**: Decorators (`@log_decision`, `@log_choice`) + Universal agent support (11 agents)
+- **Phase 4**: Framework integrations, pre-commit hook, templates, analytics, aggregation, Homebrew
 
 ### Supported AI Agents
 
@@ -244,9 +262,11 @@ logmind init --all-agents            # Init with all agents
 
 ## Development Roadmap
 
-### Framework Integrations
+> **All roadmap items below are complete. See Development History above for the full checklist.**
 
-#### LangChain Callback Integration
+### Framework Integrations ✅
+
+#### LangChain Callback Integration ✅
 
 Automatically log decisions from LangChain agent runs.
 
@@ -262,18 +282,18 @@ chain = LLMChain(llm=llm, callbacks=[LangChainLogger()])
 - **Debugging** - Trace decision paths in complex chains
 - **Audit trail** - Full history of AI-driven decisions
 
-#### Base Integration Pattern
+#### Base Integration Pattern ✅
 
-Extensible pattern for custom AI framework integrations.
+Extensible pattern for custom AI framework integrations. See [docs/custom-integrations.md](custom-integrations.md).
 
 **Benefits:**
 - **Framework agnostic** - Works with any AI library
 - **Community contributions** - Others can add integrations
 - **Consistent interface** - Same logging API everywhere
 
-#### Documentation for Custom Integrations
+#### Documentation for Custom Integrations ✅
 
-Step-by-step guide for building custom framework integrations.
+Step-by-step guide at [docs/custom-integrations.md](custom-integrations.md).
 
 **Benefits:**
 - **Self-service** - Users can add their own integrations
@@ -281,13 +301,13 @@ Step-by-step guide for building custom framework integrations.
 - **Quality** - Consistent patterns across integrations
 - **Community growth** - Contributors have clear guidance
 
-### Git Pre-commit Hook
+### Git Pre-commit Hook ✅
 
-Detect undocumented decisions in code changes.
+`logmind check-decisions` and `logmind install-hook`.
 
 ```bash
-# .git/hooks/pre-commit
-logmind check-decisions
+logmind install-hook          # one command to install
+logmind check-decisions       # run manually or in CI
 ```
 
 **Benefits:**
@@ -296,12 +316,13 @@ logmind check-decisions
 - **Quality gate** - Ensures documentation stays current
 - **Team accountability** - Everyone logs decisions
 
-### Homebrew Tap
+### Homebrew Tap ✅
 
-Distribute logmind via Homebrew for non-Python users.
+Formula at `homebrew-tap/Formula/logmind.rb`.
 
 ```bash
-brew install logmind/tap/logmind
+brew tap thrillmot/logmind
+brew install logmind
 ```
 
 **Benefits:**
@@ -309,14 +330,15 @@ brew install logmind/tap/logmind
 - **Adoption** - Lower barrier for developers outside the Python ecosystem
 - **Discoverability** - Listed in Homebrew search results
 
-### Phase 4: Advanced Features (Future)
+### Phase 4: Advanced Features ✅
 
-#### Decision Templates
+#### Decision Templates ✅
 
-Pre-built templates for common decision patterns.
+7 built-in templates: `database`, `api`, `architecture`, `security`, `performance`, `library`, `deployment`.
 
 ```bash
 logmind log --template database "Use PostgreSQL"
+logmind templates   # list all
 ```
 
 **Benefits:**
@@ -324,18 +346,28 @@ logmind log --template database "Use PostgreSQL"
 - **Speed** - Faster logging with pre-filled fields
 - **Best practices** - Guide users to capture key info
 
-#### Analytics Dashboard
+#### Analytics Dashboard ✅
 
-Visualize decision patterns and frequency.
+ASCII bar chart, velocity trend, top keywords.
+
+```bash
+logmind stats
+logmind stats --months 6
+```
 
 **Benefits:**
 - **Insights** - See what areas have most decisions
 - **Trends** - Track decision velocity over time
 - **Team patterns** - Identify knowledge silos
 
-#### Multi-project Aggregation
+#### Multi-project Aggregation ✅
 
-Aggregate decisions across related projects.
+Unified feed or summary across multiple repos.
+
+```bash
+logmind aggregate ~/projects/api ~/projects/frontend
+logmind aggregate --summary ~/work/*/
+```
 
 **Benefits:**
 - **Organization view** - See all decisions across repos

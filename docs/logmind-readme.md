@@ -32,6 +32,22 @@ logmind log "Use PostgreSQL for database" \
 logmind show
 logmind search "postgres"
 
+# Log with a built-in template (pre-fills reasoning, alternatives, implications)
+logmind log --template database "Use PostgreSQL"
+logmind templates   # list all available templates
+
+# Analytics and stats
+logmind stats
+logmind stats --months 6
+
+# Aggregate decisions across multiple projects
+logmind aggregate ~/projects/api ~/projects/frontend
+logmind aggregate --summary ~/work/*/
+
+# Enforce decision logging with a pre-commit hook
+logmind install-hook          # installs .git/hooks/pre-commit
+logmind check-decisions       # run manually or in CI
+
 # Manage AI agents
 logmind agents list
 logmind agents add windsurf
@@ -91,12 +107,31 @@ pytest
 
 **Why pipx?** logmind is a CLI tool, not a library. It should be globally available like `git` or `npm`.
 
+## Framework Integrations
+
+```python
+# LangChain — auto-log agent decisions (pip install logmind[langchain])
+from logmind.integrations import LangChainLogger
+
+chain = LLMChain(llm=llm, callbacks=[LangChainLogger()])
+
+# Custom framework — subclass BaseIntegration
+from logmind.integrations.base import BaseIntegration
+
+class MyLogger(BaseIntegration):
+    def on_decision(self, output):
+        self.log(f"Chose: {output}", reasoning="My framework decided")
+```
+
+See [custom-integrations.md](custom-integrations.md) for patterns, examples, and publishing guide.
+
 ## Documentation
 
-- **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
-- **[AI Agent Files](docs/ai-agent-files.md)** - How logmind integrates with AI instruction files
-- **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
-- **Development Status** - Phase 3 Complete (decorators + agents + auto-update)
+- **[Plan & Architecture](plan.md)** - Vision, approach, and technical details
+- **[AI Agent Files](ai-agent-files.md)** - How logmind integrates with AI instruction files
+- **[Custom Integrations](custom-integrations.md)** - Build integrations for any AI framework
+- **[First Decision Example](first-decision-example.md)** - What the initial decision looks like
+- **Development Status** - All phases complete ✅
 
 ## How It Works
 
