@@ -400,14 +400,10 @@ def test_search_cli_exit_code_zero_on_match(git_repo):
 
 
 def test_search_cli_exit_code_nonzero_on_no_match(git_repo):
-    """Exit code is non-zero (or output indicates no match) when nothing found.
-
-    The search command returns exit code 0 even on no match (it just prints a
-    message), so we verify the output explicitly instead of relying on exit code.
-    """
+    """Search with no results exits 0 and prints a 'no matches' message."""
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=git_repo):
         _make_docs()
         result = runner.invoke(main, ["search", "zzz_no_match_zzz"])
-    # The CLI prints a "no matches" style message; exit code may be 0 or 1
-    assert "no matches" in result.output.lower() or "no results" in result.output.lower() or result.exit_code != 0
+    assert result.exit_code == 0
+    assert "No matches found for:" in result.output

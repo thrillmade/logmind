@@ -5,6 +5,17 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 18:23 - Add CLI tests for config commands
+
+**Reasoning:** Config CLI commands (list, get, set) had no test coverage
+
+**Alternatives considered:** Only test Python API, Skip CLI tests
+
+**Implications:**
+- 6 new tests cover list, get, set, error handling, nested keys, and type conversion
+
+---
+
 ## 2026-01-17 16:28 - Update documentation to reflect Phase 3 completion
 
 **Reasoning:** README.md and docs/logmind-readme.md were out of date - showed Phase 2 and missing agents/update commands

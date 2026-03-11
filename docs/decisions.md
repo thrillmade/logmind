@@ -3,16 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 18:23 - Add CLI tests for config commands
-
-**Reasoning:** Config CLI commands (list, get, set) had no test coverage
-
-**Alternatives considered:** Only test Python API, Skip CLI tests
-
-**Implications:**
-- 6 new tests cover list, get, set, error handling, nested keys, and type conversion
-
----
 ## 2026-01-17 18:24 - Add CLI tests for config commands
 
 **Reasoning:** Config CLI commands (list, get, set) had no test coverage
@@ -215,5 +205,13 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 **Implications:**
 - Test now asserts exact expected output: exit 0, prompt shown, Cancelled message
+
+---
+## 2026-03-11 02:56 - Fix tautological assertion in search no-match test
+
+**Reasoning:** BugBot caught same pattern as agents remove fix: result.exit_code \!= 0 disjunct masked any crash as a passing test
+
+**Implications:**
+- Test now asserts exit 0 and exact 'No matches found for:' message
 
 ---
