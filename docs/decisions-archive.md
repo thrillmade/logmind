@@ -5,6 +5,17 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 14:29 - Rename claude-md-insertion.md to ai-agent-files.md
+
+**Reasoning:** Original name was Claude-specific but we now support 11 AI agents; generic name better reflects scope
+
+**Alternatives considered:** Keep original name, Name it agent-instruction-files.md
+
+**Implications:**
+- Updated all doc links in README.md and logmind-readme.md
+
+---
+
 ## 2026-01-17 14:28 - Add --agents and --all-agents flags to init command
 
 **Reasoning:** Allows explicit control over which agent files are created during initialization, supports CI/CD scripted setup

@@ -3,16 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 14:29 - Rename claude-md-insertion.md to ai-agent-files.md
-
-**Reasoning:** Original name was Claude-specific but we now support 11 AI agents; generic name better reflects scope
-
-**Alternatives considered:** Keep original name, Name it agent-instruction-files.md
-
-**Implications:**
-- Updated all doc links in README.md and logmind-readme.md
-
----
 ## 2026-01-17 14:30 - Use AGENT_REGISTRY dict as single source of truth for agent metadata
 
 **Reasoning:** Centralizes agent definitions (file path, display name, is_json) in one place; makes adding new agents trivial
@@ -228,5 +218,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - plan.md: architecture updated with new modules, all roadmap items marked complete, test count updated to 301
 - CHANGELOG: new [Unreleased] section listing all Phase 4 additions
 - All docs have backlinks — no orphaned files
+
+---
+## 2026-03-11 00:53 - Add Claude PR review GitHub Action
+
+**Reasoning:** Article at madewithlove.com shows Claude outperforms BugBot at half the cost — focused prompt on critical issues only beats generic review
+
+**Alternatives considered:** Keep BugBot only, Use both BugBot and Claude review
+
+**Implications:**
+- Triggers on PR opened and synchronize only — avoids repeat reviews
+- Prompt scoped to bugs, security, performance, missing tests, git integration — skips style nits
+- Requires ANTHROPIC_API_KEY secret in GitHub repo settings
 
 ---
