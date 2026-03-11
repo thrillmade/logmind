@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 16:28 - Update documentation to reflect Phase 3 completion
-
-**Reasoning:** README.md and docs/logmind-readme.md were out of date - showed Phase 2 and missing agents/update commands
-
-**Alternatives considered:** Leave docs as-is, Update only phase status
-
-**Implications:**
-- Users now see accurate feature status
-- Quick Start examples match actual CLI commands
-
----
 ## 2026-01-17 18:23 - Add CLI tests for config commands
 
 **Reasoning:** Config CLI commands (list, get, set) had no test coverage
@@ -218,5 +207,13 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Test count: 301 -> 353 passing
 - New test_parser.py covers DECISION_HEADER regex and iter_decisions fully
 - Search CLI, git_add_all, _archive_oldest_decision, log --no-push, agents remove confirmation now all tested
+
+---
+## 2026-03-11 02:51 - Fix tautological assertion in agents remove test
+
+**Reasoning:** BugBot caught that result.exit_code != 0 as a final disjunct made the assertion always pass on any error, masking regressions
+
+**Implications:**
+- Test now asserts exact expected output: exit 0, prompt shown, Cancelled message
 
 ---

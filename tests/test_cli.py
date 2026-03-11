@@ -1017,11 +1017,6 @@ def test_agents_remove_without_force_prompts(temp_dir):
         # Provide "n" so the confirmation prompt cancels the removal
         result = runner.invoke(main, ["agents", "remove", "cursor"], input="n\n")
 
-        # Either exit non-zero, show the confirmation prompt, or say "use --force"
-        prompt_shown = (
-            "Remove" in result.output
-            or "force" in result.output.lower()
-            or "Cancelled" in result.output
-            or result.exit_code != 0
-        )
-        assert prompt_shown
+        assert result.exit_code == 0
+        assert "Remove" in result.output
+        assert "Cancelled" in result.output

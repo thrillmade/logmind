@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 16:28 - Update documentation to reflect Phase 3 completion
+
+**Reasoning:** README.md and docs/logmind-readme.md were out of date - showed Phase 2 and missing agents/update commands
+
+**Alternatives considered:** Leave docs as-is, Update only phase status
+
+**Implications:**
+- Users now see accurate feature status
+- Quick Start examples match actual CLI commands
+
+---
+
 ## 2026-01-17 16:06 - Merge plan archive into plan.md Development History section
 
 **Reasoning:** Consolidate documentation - archive had valuable phase completion details that were missing from plan.md
