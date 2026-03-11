@@ -5,6 +5,17 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-20 07:07 - Add logmind-readme.md to docs folder for AI agents
+
+**Reasoning:** AI agents need easy access to logmind documentation without navigating to repository root. Creates docs/logmind-readme.md during init by copying README.md content.
+
+**Implications:**
+- CLAUDE.md and other AI instruction files now link to docs/logmind-readme.md
+- AI agents can read complete logmind instructions directly from docs folder
+- Template files updated: logmind-section.md and CLAUDE.md.template
+
+---
+
 ## 2025-10-19 20:46 - Prepare package for PyPI publishing
 
 **Reasoning:** Package built and validated. Added LICENSE, MANIFEST.in, updated pyproject.toml with proper metadata, created CHANGELOG. Ready for upload to PyPI.

@@ -3,16 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-20 07:07 - Add logmind-readme.md to docs folder for AI agents
-
-**Reasoning:** AI agents need easy access to logmind documentation without navigating to repository root. Creates docs/logmind-readme.md during init by copying README.md content.
-
-**Implications:**
-- CLAUDE.md and other AI instruction files now link to docs/logmind-readme.md
-- AI agents can read complete logmind instructions directly from docs folder
-- Template files updated: logmind-section.md and CLAUDE.md.template
-
----
 ## 2025-10-20 07:12 - Make decisions-archive.md optional reference, not required reading
 
 **Reasoning:** Archive is a searchable reference for historical context, not something AI agents must read upfront. Only recent decisions (docs/decisions.md) are required.
@@ -224,5 +214,18 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - analytics.py parses decisions from both decisions.md and archive
 - No new dependencies — pure Python with ASCII bar chart
 - 37 new tests added
+
+---
+## 2026-03-11 00:14 - Add multi-project aggregation with logmind aggregate command
+
+**Reasoning:** Roadmap item: view and search decisions across multiple repos in one place
+
+**Alternatives considered:** Centralized database for cross-project storage, Separate aggregation service
+
+**Implications:**
+- logmind aggregate <path1> <path2> shows unified feed sorted newest-first
+- logmind aggregate --summary shows per-project decision counts
+- --limit, --no-archive flags control output scope
+- 26 new tests added
 
 ---

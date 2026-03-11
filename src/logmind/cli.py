@@ -19,6 +19,7 @@ from logmind.core.inserter import (
     remove_agent_file,
     sync_agent_files_from_config,
 )
+from logmind.core.aggregator import aggregate_projects, project_summary
 from logmind.core.analytics import ascii_bar_chart, compute_stats
 from logmind.core.decision_templates import get_template, list_templates
 from logmind.core.logger import log as log_decision, log_first_decision
@@ -432,6 +433,88 @@ def search(
     except Exception as e:
         click.secho(f"Error during search: {e}", fg="red")
         sys.exit(1)
+
+
+@main.command("aggregate")
+@click.argument("projects", nargs=-1, type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--limit",
+    "-n",
+    default=20,
+    type=int,
+    help="Maximum number of decisions to show (default: 20)",
+)
+@click.option(
+    "--no-archive",
+    is_flag=True,
+    help="Exclude archived decisions",
+)
+@click.option(
+    "--summary",
+    "show_summary",
+    is_flag=True,
+    help="Show per-project counts instead of a decision feed",
+)
+def aggregate(projects: tuple, limit: int, no_archive: bool, show_summary: bool):
+    """
+    View decisions aggregated across multiple projects.
+
+    Pass one or more project directories (paths containing a docs/ folder).
+
+    Examples:
+        logmind aggregate ~/projects/api ~/projects/frontend
+        logmind aggregate --summary ~/work/*/
+        logmind aggregate --limit 50 --no-archive ~/projects/app
+    """
+    if not projects:
+        click.secho("Error: provide at least one project path.", fg="red")
+        sys.exit(1)
+
+    project_paths = [Path(p) for p in projects]
+    missing = [p for p in project_paths if not (p / "docs").exists()]
+
+    if missing:
+        for m in missing:
+            click.secho(f"Warning: {m} has no docs/ directory — skipping.", fg="yellow")
+        project_paths = [p for p in project_paths if (p / "docs").exists()]
+
+    if not project_paths:
+        click.secho("No valid logmind projects found.", fg="red")
+        sys.exit(1)
+
+    if show_summary:
+        summary = project_summary(project_paths)
+        click.secho("Project Summary", bold=True)
+        click.echo("─" * 40)
+        total = 0
+        for name, count in sorted(summary.items(), key=lambda x: -x[1]):
+            click.echo(f"  {name:<30} {count} decisions")
+            total += count
+        click.echo("─" * 40)
+        click.secho(f"  {'Total':<30} {total} decisions", bold=True)
+        return
+
+    entries = aggregate_projects(
+        project_paths,
+        include_archive=not no_archive,
+        limit=limit,
+    )
+
+    if not entries:
+        click.secho("No decisions found across the specified projects.", fg="yellow")
+        return
+
+    click.secho(
+        f"Showing {len(entries)} most recent decisions across "
+        f"{len(project_paths)} project{'s' if len(project_paths) != 1 else ''}:",
+        bold=True,
+    )
+    click.echo()
+
+    for entry in entries:
+        date_str = entry.date.strftime("%Y-%m-%d")
+        click.secho(f"[{entry.project}]", fg="cyan", nl=False)
+        click.echo(f"  {date_str}  {entry.title}")
 
 
 @main.command("stats")
