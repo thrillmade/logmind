@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 16:05 - Create Homebrew tap structure for distribution
-
-**Reasoning:** Homebrew is preferred installation method for macOS/Linux CLI tools
-
-**Alternatives considered:** Only distribute via PyPI, Submit directly to homebrew-core
-
-**Implications:**
-- Created homebrew-logmind/ with Formula/logmind.rb
-- Custom tap allows faster iteration before homebrew-core submission
-
----
 ## 2026-01-17 16:06 - Merge plan archive into plan.md Development History section
 
 **Reasoning:** Consolidate documentation - archive had valuable phase completion details that were missing from plan.md
@@ -221,5 +210,13 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 ## 2026-03-11 01:05 - Trigger automated code review scan
 
 **Reasoning:** Opening PR to run BugBot and Claude review across full codebase
+
+---
+## 2026-03-11 01:58 - Add Phase 5 publication roadmap to plan.md
+
+**Reasoning:** Plan.md was missing the PyPI, GitHub Release, and Homebrew tap publication steps needed to make logmind publicly installable and self-updating
+
+**Implications:**
+- Clear checklist for publishing to PyPI, creating Homebrew tap repo, and enabling logmind update
 
 ---

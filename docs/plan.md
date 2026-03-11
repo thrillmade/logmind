@@ -219,6 +219,44 @@ AI agents read files for full project context:
 - [x] Homebrew tap formula (`homebrew-tap/Formula/logmind.rb`)
 - [x] Test suite expanded to 301 tests (all passing)
 
+### Phase 5: Publication & Distribution 🔲 IN PROGRESS
+
+Goal: make `pip install logmind` and `brew install logmind` work publicly, and enable `logmind update` to self-upgrade in any repo.
+
+- [ ] Build distribution artifacts
+  ```bash
+  python -m build   # produces dist/logmind-x.x.x.tar.gz and .whl
+  ```
+- [ ] Publish to PyPI
+  ```bash
+  twine upload dist/*
+  # Requires: PyPI account + API token stored as PYPI_API_TOKEN
+  ```
+- [ ] Verify public install works
+  ```bash
+  pip install logmind
+  logmind --version
+  ```
+- [ ] Create GitHub Release with tag `v0.1.0` and upload the `.tar.gz` artifact
+- [ ] Create separate `homebrew-logmind` GitHub repo (Homebrew tap convention requires `homebrew-<name>`)
+  - Copy `homebrew-tap/Formula/logmind.rb` into `Formula/logmind.rb` in that repo
+- [ ] Compute real SHA256 for the published PyPI tarball
+  ```bash
+  curl -sL https://files.pythonhosted.org/packages/source/l/logmind/logmind-0.1.0.tar.gz | shasum -a 256
+  ```
+- [ ] Update formula `sha256 "PLACEHOLDER_SHA256"` with the real value and push to tap repo
+- [ ] Verify Homebrew install works end-to-end
+  ```bash
+  brew tap thrillmot/logmind
+  brew install logmind
+  logmind --version
+  ```
+- [ ] Verify `logmind update` self-upgrades correctly in another repo
+  ```bash
+  logmind update
+  ```
+- [ ] Add GitHub Actions workflow to auto-publish to PyPI on release tag push (`on: push: tags: ['v*']`)
+
 ### Test Progression
 - Phase 1: 65 tests
 - Phase 2: 95 tests
@@ -233,6 +271,7 @@ See [README.md](../README.md) for usage documentation.
 - **Phase 2**: Configuration system, search functionality
 - **Phase 3**: Decorators (`@log_decision`, `@log_choice`) + Universal agent support (11 agents)
 - **Phase 4**: Framework integrations, pre-commit hook, templates, analytics, aggregation, Homebrew
+- **Phase 5**: Publication & distribution (in progress — see checklist above)
 
 ### Supported AI Agents
 

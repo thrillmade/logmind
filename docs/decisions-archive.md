@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 16:05 - Create Homebrew tap structure for distribution
+
+**Reasoning:** Homebrew is preferred installation method for macOS/Linux CLI tools
+
+**Alternatives considered:** Only distribute via PyPI, Submit directly to homebrew-core
+
+**Implications:**
+- Created homebrew-logmind/ with Formula/logmind.rb
+- Custom tap allows faster iteration before homebrew-core submission
+
+---
+
 ## 2026-01-17 16:05 - Add logmind update command for self-upgrade
 
 **Reasoning:** Users need easy way to upgrade logmind without remembering pip commands
