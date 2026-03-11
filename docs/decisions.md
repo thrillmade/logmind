@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 20:46 - Prepare package for PyPI publishing
-
-**Reasoning:** Package built and validated. Added LICENSE, MANIFEST.in, updated pyproject.toml with proper metadata, created CHANGELOG. Ready for upload to PyPI.
-
-**Implications:**
-- Built packages in dist/ folder (wheel and tar.gz)
-- All twine checks pass
-- Templates included correctly
-- Package name: logmind v0.1.0
-
----
 ## 2025-10-20 07:07 - Add logmind-readme.md to docs folder for AI agents
 
 **Reasoning:** AI agents need easy access to logmind documentation without navigating to repository root. Creates docs/logmind-readme.md during init by copying README.md content.
@@ -222,5 +211,18 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - logmind log --template <name> pre-fills reasoning, alternatives, implications; explicit flags override
 - logmind templates lists all available templates
 - 23 new tests added
+
+---
+## 2026-03-11 00:00 - Add analytics dashboard with logmind stats command
+
+**Reasoning:** Roadmap item: visualize decision patterns, frequency, and trends without adding heavy dependencies
+
+**Alternatives considered:** External visualization library (matplotlib, rich), Web dashboard
+
+**Implications:**
+- logmind stats shows total counts, monthly ASCII bar chart, velocity trend, and top keywords
+- analytics.py parses decisions from both decisions.md and archive
+- No new dependencies — pure Python with ASCII bar chart
+- 37 new tests added
 
 ---

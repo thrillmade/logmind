@@ -19,6 +19,7 @@ from logmind.core.inserter import (
     remove_agent_file,
     sync_agent_files_from_config,
 )
+from logmind.core.analytics import ascii_bar_chart, compute_stats
 from logmind.core.decision_templates import get_template, list_templates
 from logmind.core.logger import log as log_decision, log_first_decision
 from logmind.core.search import format_search_results, search_decisions
@@ -431,6 +432,77 @@ def search(
     except Exception as e:
         click.secho(f"Error during search: {e}", fg="red")
         sys.exit(1)
+
+
+@main.command("stats")
+@click.option(
+    "--months",
+    "-m",
+    default=12,
+    type=int,
+    help="Number of recent months to show in the chart (default: 12)",
+)
+def stats(months: int):
+    """
+    Show analytics and statistics for your decision log.
+
+    Displays total decisions, monthly activity chart, velocity trend,
+    and top keywords across all logged decisions.
+    """
+    docs_path = Path.cwd() / "docs"
+
+    if not docs_path.exists():
+        click.secho(
+            "Error: docs/ directory not found. Run 'logmind init' first.",
+            fg="red",
+        )
+        sys.exit(1)
+
+    data = compute_stats(docs_path)
+
+    if data["total"] == 0:
+        click.secho("No decisions logged yet. Run 'logmind log' to get started.", fg="yellow")
+        return
+
+    # Header
+    click.secho("Decision Log Analytics", bold=True)
+    click.echo("─" * 40)
+
+    # Totals
+    click.echo(f"Total decisions:  {data['total']}")
+    click.echo(f"  Recent:         {data['recent_count']}")
+    click.echo(f"  Archived:       {data['archive_count']}")
+    click.echo()
+
+    # Velocity
+    v30 = data["velocity_30"]
+    vp30 = data["velocity_prior_30"]
+    trend = ""
+    if vp30 > 0:
+        pct = int(((v30 - vp30) / vp30) * 100)
+        trend = f"  ({'+' if pct >= 0 else ''}{pct}% vs prior 30 days)"
+    click.echo(f"Last 30 days:     {v30} decisions{trend}")
+    if data["most_active_month"]:
+        click.echo(
+            f"Most active:      {data['most_active_month']} ({data['most_active_count']} decisions)"
+        )
+    click.echo()
+
+    # Monthly chart (last N months)
+    by_month = data["by_month"]
+    sorted_months = sorted(by_month.keys())[-months:]
+    chart_data = {m: by_month[m] for m in sorted_months}
+
+    if chart_data:
+        click.secho(f"Activity (last {min(months, len(chart_data))} months):", bold=True)
+        click.echo(ascii_bar_chart(chart_data))
+        click.echo()
+
+    # Keywords
+    if data["keywords"]:
+        click.secho("Top keywords:", bold=True)
+        for word, count in data["keywords"]:
+            click.echo(f"  {word:<20} {count}")
 
 
 @main.command("templates")

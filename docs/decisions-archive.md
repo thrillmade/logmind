@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 20:46 - Prepare package for PyPI publishing
+
+**Reasoning:** Package built and validated. Added LICENSE, MANIFEST.in, updated pyproject.toml with proper metadata, created CHANGELOG. Ready for upload to PyPI.
+
+**Implications:**
+- Built packages in dist/ folder (wheel and tar.gz)
+- All twine checks pass
+- Templates included correctly
+- Package name: logmind v0.1.0
+
+---
+
 ## 2025-10-19 20:28 - Add decorator documentation to README and update plan
 
 **Reasoning:** Users need clear examples of how to use the new @log_decision and @log_choice decorators. README should showcase Phase 3 features.
