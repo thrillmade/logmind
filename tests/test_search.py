@@ -267,3 +267,143 @@ def test_search_result_repr():
     assert "decisions.md" in repr_str
     assert "42" in repr_str
     assert "Test Decision" in repr_str
+
+
+# ---------------------------------------------------------------------------
+# CLI: logmind search
+# ---------------------------------------------------------------------------
+
+from click.testing import CliRunner
+
+from logmind.cli import main
+
+SAMPLE_DECISIONS_MD_CLI = """\
+# Decision Log
+---
+## 2026-01-10 09:00 - Use PostgreSQL for database
+**Reasoning:** ACID compliance needed
+---
+## 2026-02-01 10:00 - Adopt Redis for caching
+**Reasoning:** Fast session storage
+---
+"""
+
+SAMPLE_ARCHIVE_MD_CLI = """\
+# Decision Archive
+---
+## 2025-11-01 08:00 - Choose Python for implementation
+**Reasoning:** Rich ecosystem
+---
+"""
+
+
+def _make_docs(decisions_content=SAMPLE_DECISIONS_MD_CLI, archive_content=SAMPLE_ARCHIVE_MD_CLI):
+    """Create docs/ with decisions.md and decisions-archive.md under cwd."""
+    docs = Path(".") / "docs"
+    docs.mkdir(exist_ok=True)
+    (docs / "decisions.md").write_text(decisions_content)
+    (docs / "decisions-archive.md").write_text(archive_content)
+
+
+def test_search_cli_finds_match(git_repo):
+    """Basic query returns matching decision title in output."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        result = runner.invoke(main, ["search", "PostgreSQL"])
+    assert result.exit_code == 0
+    assert "PostgreSQL" in result.output
+
+
+def test_search_cli_no_results(git_repo):
+    """Query with no match shows a 'no results' style message."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        result = runner.invoke(main, ["search", "nonexistent_term_xyz"])
+    assert result.exit_code == 0
+    assert "no matches" in result.output.lower() or "no results" in result.output.lower()
+
+
+def test_search_cli_no_docs_fails(git_repo):
+    """search exits 1 when docs/ directory doesn't exist."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        # Do NOT create docs/
+        result = runner.invoke(main, ["search", "anything"])
+    assert result.exit_code == 1
+    assert "docs/" in result.output
+
+
+def test_search_cli_case_sensitive(git_repo):
+    """--case-sensitive flag: uppercase query matches but lowercase does not."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        # Uppercase "PostgreSQL" should match
+        result_upper = runner.invoke(main, ["search", "--case-sensitive", "PostgreSQL"])
+        assert result_upper.exit_code == 0
+        assert "PostgreSQL" in result_upper.output
+
+        # Lowercase "postgresql" should NOT match
+        result_lower = runner.invoke(main, ["search", "--case-sensitive", "postgresql"])
+        assert result_lower.exit_code == 0
+        assert "no matches" in result_lower.output.lower() or "no results" in result_lower.output.lower()
+
+
+def test_search_cli_case_insensitive_default(git_repo):
+    """Default (no flag): lowercase query matches mixed-case content."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        result = runner.invoke(main, ["search", "postgresql"])
+    assert result.exit_code == 0
+    assert "PostgreSQL" in result.output
+
+
+def test_search_cli_no_archive_flag(git_repo):
+    """--no-archive excludes archive results from output."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        # "Python" only appears in the archive content
+        result_with_archive = runner.invoke(main, ["search", "Python"])
+        assert result_with_archive.exit_code == 0
+        assert "Python" in result_with_archive.output
+
+        result_no_archive = runner.invoke(main, ["search", "--no-archive", "Python"])
+        assert result_no_archive.exit_code == 0
+        assert "no matches" in result_no_archive.output.lower() or "no results" in result_no_archive.output.lower()
+
+
+def test_search_cli_no_context_flag(git_repo):
+    """--no-context output doesn't show surrounding context lines beyond the match."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        result_default = runner.invoke(main, ["search", "PostgreSQL"])
+        result_no_ctx = runner.invoke(main, ["search", "--no-context", "PostgreSQL"])
+
+    assert result_no_ctx.exit_code == 0
+    assert "PostgreSQL" in result_no_ctx.output
+    # With no context the output should be shorter than (or equal to) the default
+    assert len(result_no_ctx.output) <= len(result_default.output)
+
+
+def test_search_cli_exit_code_zero_on_match(git_repo):
+    """Exit code is 0 when results are found."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        result = runner.invoke(main, ["search", "Redis"])
+    assert result.exit_code == 0
+
+
+def test_search_cli_exit_zero_on_no_match(git_repo):
+    """Search with no results exits 0 and prints a 'no matches' message."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        _make_docs()
+        result = runner.invoke(main, ["search", "zzz_no_match_zzz"])
+    assert result.exit_code == 0
+    assert "No matches found for:" in result.output

@@ -5,6 +5,53 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 18:24 - Add CLI tests for config commands
+
+**Reasoning:** Config CLI commands (list, get, set) had no test coverage
+
+**Alternatives considered:** Only test Python API, Skip CLI tests
+
+**Implications:**
+- 6 new tests cover list, get, set, error handling, nested keys, and type conversion
+
+---
+
+## 2026-01-17 18:23 - Add CLI tests for config commands
+
+**Reasoning:** Config CLI commands (list, get, set) had no test coverage
+
+**Alternatives considered:** Only test Python API, Skip CLI tests
+
+**Implications:**
+- 6 new tests cover list, get, set, error handling, nested keys, and type conversion
+
+---
+
+## 2026-01-17 16:28 - Update documentation to reflect Phase 3 completion
+
+**Reasoning:** README.md and docs/logmind-readme.md were out of date - showed Phase 2 and missing agents/update commands
+
+**Alternatives considered:** Leave docs as-is, Update only phase status
+
+**Implications:**
+- Users now see accurate feature status
+- Quick Start examples match actual CLI commands
+
+---
+
+## 2026-01-17 16:06 - Merge plan archive into plan.md Development History section
+
+**Reasoning:** Consolidate documentation - archive had valuable phase completion details that were missing from plan.md
+
+**Alternatives considered:** Keep archive as separate file, Delete archive without merging
+
+**Implications:**
+- Added detailed Phase 1-3 checklists to plan.md
+- Included test progression history (65 to 160+ tests)
+- Deleted docs/plan-archive-2025-01.md
+
+---
+
 ## 2026-01-17 16:05 - Create Homebrew tap structure for distribution
 
 **Reasoning:** Homebrew is preferred installation method for macOS/Linux CLI tools

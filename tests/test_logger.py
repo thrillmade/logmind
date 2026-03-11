@@ -200,3 +200,54 @@ def test_log_with_string_alternatives_and_implications(docs_dir):
 
     assert "Single alternative" in content
     assert "Single implication" in content
+
+
+def test_archive_oldest_decision_moves_entry(docs_dir):
+    """Test that _archive_oldest_decision moves the oldest entry out of decisions.md."""
+    decision_block = (
+        "## 2025-01-01 10:00 - Old decision\n"
+        "\n"
+        "**Reasoning:** For testing\n"
+        "\n"
+        "**Alternatives considered:** Option X\n"
+        "\n"
+        "**Implications:**\n"
+        "- Some impact\n"
+        "\n"
+        "---\n"
+        "\n"
+    )
+    decisions_path = docs_dir / "decisions.md"
+    decisions_path.write_text("# Decision Log\n\n---\n" + decision_block)
+
+    _archive_oldest_decision(docs_dir)
+
+    decisions_content = decisions_path.read_text()
+    archive_content = (docs_dir / "decisions-archive.md").read_text()
+
+    assert "Old decision" not in decisions_content
+    assert "Old decision" in archive_content
+
+
+def test_archive_oldest_decision_creates_archive_if_missing(docs_dir):
+    """Test that _archive_oldest_decision creates decisions-archive.md when absent."""
+    archive_path = docs_dir / "decisions-archive.md"
+    archive_path.unlink()
+    assert not archive_path.exists()
+
+    decision_block = (
+        "## 2025-01-01 11:00 - Another old decision\n"
+        "\n"
+        "**Reasoning:** Testing archive creation\n"
+        "\n"
+        "---\n"
+        "\n"
+    )
+    decisions_path = docs_dir / "decisions.md"
+    decisions_path.write_text("# Decision Log\n\n---\n" + decision_block)
+
+    _archive_oldest_decision(docs_dir)
+
+    assert archive_path.exists()
+    archive_content = archive_path.read_text()
+    assert "Another old decision" in archive_content

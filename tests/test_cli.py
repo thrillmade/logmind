@@ -966,3 +966,57 @@ def test_install_hook_existing_hook_with_force(git_repo):
     content = hook_path.read_text()
     assert "existing hook" in content
     assert "logmind check-decisions" in content
+
+
+# ============================================================================
+# Log --no-push / --no-commit flag tests
+# ============================================================================
+
+
+def test_log_command_no_commit_flag(git_repo):
+    """Test that log --no-commit exits 0 and does not auto-commit."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        runner.invoke(init)
+
+        result = runner.invoke(log, ["Decision", "--no-commit"])
+
+        assert result.exit_code == 0
+        assert "Logged decision" in result.output
+        # Commit message should NOT appear since commit is disabled
+        assert "Committed" not in result.output
+
+
+def test_log_command_no_push_flag(git_repo):
+    """Test that log --no-push exits 0."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        runner.invoke(init)
+
+        result = runner.invoke(log, ["Decision", "--no-push"])
+
+        assert result.exit_code == 0
+        assert "Logged decision" in result.output
+
+
+# ============================================================================
+# Agents remove without --force test
+# ============================================================================
+
+
+def test_agents_remove_without_force_prompts(temp_dir):
+    """Test that agents remove without --force prompts for confirmation."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        # Create the agent file so removal can proceed past the "not configured" check
+        (Path.cwd() / ".cursorrules").write_text("# rules\n")
+
+        # Provide "n" so the confirmation prompt cancels the removal
+        result = runner.invoke(main, ["agents", "remove", "cursor"], input="n\n")
+
+        assert result.exit_code == 0
+        assert "Remove" in result.output
+        assert "Cancelled" in result.output
