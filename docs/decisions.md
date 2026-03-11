@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 14:28 - Implement logmind agents CLI command group with list, add, remove subcommands
-
-**Reasoning:** Provides visibility into configured agents, easy setup without manual file creation, and project-level agent control
-
-**Alternatives considered:** Single 'agents' command that does everything, Separate commands like 'list-agents', 'add-agent'
-
-**Implications:**
-- Users can manage agents via CLI instead of manually creating files
-- Follows Click subcommand pattern for extensibility
-
----
 ## 2026-01-17 14:28 - Add --agents and --all-agents flags to init command
 
 **Reasoning:** Allows explicit control over which agent files are created during initialization, supports CI/CD scripted setup
@@ -229,5 +218,15 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - docs/custom-integrations.md covers BaseIntegration API, full examples, testing, and publishing
 - Includes CrewAI, AutoGen, opt-in logging, and context-aware patterns
+
+---
+## 2026-03-11 00:31 - Complete all roadmap items from plan.md
+
+**Reasoning:** All planned features implemented, tested, committed, and pushed in a single session
+
+**Implications:**
+- 301 tests passing
+- 7 new CLI commands: check-decisions, install-hook, templates, stats, aggregate, and supporting subcommands
+- Homebrew tap formula and custom integrations docs added
 
 ---

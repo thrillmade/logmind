@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 14:28 - Implement logmind agents CLI command group with list, add, remove subcommands
+
+**Reasoning:** Provides visibility into configured agents, easy setup without manual file creation, and project-level agent control
+
+**Alternatives considered:** Single 'agents' command that does everything, Separate commands like 'list-agents', 'add-agent'
+
+**Implications:**
+- Users can manage agents via CLI instead of manually creating files
+- Follows Click subcommand pattern for extensibility
+
+---
+
 ## 2026-01-17 14:28 - Add Cline and OpenAI Codex (AGENTS.md) to supported agents
 
 **Reasoning:** Cline is a major VS Code agent using .clinerules; AGENTS.md is an emerging universal standard supported by OpenAI Codex, Cursor, Windsurf, and others under the Linux Foundation
