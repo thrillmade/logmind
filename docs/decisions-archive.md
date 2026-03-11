@@ -5,6 +5,19 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 16:05 - Enable both Claude and Cursor as default agents
+
+**Reasoning:** Most users will want Claude Code and Cursor configured by default - the two most popular AI coding assistants
+
+**Alternatives considered:** Only Claude enabled by default, No agents enabled by default
+
+**Implications:**
+- config.py DEFAULT_CONFIG updated: cursor: True
+- config.yml.template updated: cursor: true
+- Init command now creates both CLAUDE.md and .cursorrules by default
+
+---
+
 ## 2026-01-17 16:00 - Implement config-driven agent file sync
 
 **Reasoning:** User wants to configure agents in config.yml and have files auto-created/updated on any logmind command

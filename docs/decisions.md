@@ -3,18 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 16:05 - Enable both Claude and Cursor as default agents
-
-**Reasoning:** Most users will want Claude Code and Cursor configured by default - the two most popular AI coding assistants
-
-**Alternatives considered:** Only Claude enabled by default, No agents enabled by default
-
-**Implications:**
-- config.py DEFAULT_CONFIG updated: cursor: True
-- config.yml.template updated: cursor: true
-- Init command now creates both CLAUDE.md and .cursorrules by default
-
----
 ## 2026-01-17 16:05 - Add logmind update command for self-upgrade
 
 **Reasoning:** Users need easy way to upgrade logmind without remembering pip commands
@@ -231,5 +219,13 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - .github/workflows/claude-review.yml triggers on PR open and synchronize
 - BugBot enabled via Cursor settings — no repo config needed
 - BugBot immediately caught duplicated parsing logic across analytics.py and aggregator.py
+
+---
+## 2026-03-11 00:58 - Fix Claude review action: add id-token write permission
+
+**Reasoning:** Action failed with OIDC token error — anthropics/claude-code-action@v1 requires id-token: write to authenticate
+
+**Implications:**
+- Also requires ANTHROPIC_API_KEY secret set in GitHub repo settings
 
 ---
