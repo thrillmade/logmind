@@ -5,6 +5,20 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2025-10-19 20:26 - Implement Phase 3 decorators for automatic decision logging
+
+**Reasoning:** Enable developers to log decisions automatically using @log_decision and @log_choice decorators. Supports template strings with function arguments, alternatives, implications, and all standard logmind features.
+
+**Alternatives considered:** Manual logging only, Aspect-oriented programming approach
+
+**Implications:**
+- Users can decorate functions to auto-log decisions
+- Template strings support {arg_name} placeholders
+- @log_choice decorator for return-value-based decisions
+- 15 comprehensive tests, 110 total tests passing
+
+---
+
 ## 2025-10-19 18:42 - Attempt risky operation
 
 ---

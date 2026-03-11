@@ -3,19 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 20:26 - Implement Phase 3 decorators for automatic decision logging
-
-**Reasoning:** Enable developers to log decisions automatically using @log_decision and @log_choice decorators. Supports template strings with function arguments, alternatives, implications, and all standard logmind features.
-
-**Alternatives considered:** Manual logging only, Aspect-oriented programming approach
-
-**Implications:**
-- Users can decorate functions to auto-log decisions
-- Template strings support {arg_name} placeholders
-- @log_choice decorator for return-value-based decisions
-- 15 comprehensive tests, 110 total tests passing
-
----
 ## 2025-10-19 20:28 - Add decorator documentation to README and update plan
 
 **Reasoning:** Users need clear examples of how to use the new @log_decision and @log_choice decorators. README should showcase Phase 3 features.
@@ -220,5 +207,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - langchain is now an optional dependency: pip install logmind[langchain]
 - Users subclass BaseIntegration to build custom integrations
 - 22 new tests added
+
+---
+## 2026-03-10 23:40 - Add check-decisions and install-hook CLI commands
+
+**Reasoning:** Implements git pre-commit hook support from roadmap — enforces decision logging at commit time
+
+**Alternatives considered:** External hook script with no CLI support, Only a check command with no install helper
+
+**Implications:**
+- logmind check-decisions exits 1 when >20 lines staged without decisions.md update
+- logmind install-hook creates or appends to .git/hooks/pre-commit
+- 15 new tests added
 
 ---

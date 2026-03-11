@@ -5,7 +5,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from logmind.cli import agents, config, init, log, main, show, update
+from logmind.cli import agents, config, init, log, main, show, update, check_decisions, install_hook
 
 
 def test_cli_help():
@@ -692,3 +692,277 @@ def test_config_set_type_conversion(temp_dir):
         assert "integer: 42" in list_result.output
         assert "float_val: 3.14" in list_result.output
         assert "string_val: hello" in list_result.output
+
+
+# ---------------------------------------------------------------------------
+# check-decisions tests
+# ---------------------------------------------------------------------------
+
+
+def test_check_decisions_not_a_git_repo(tmp_path):
+    """check-decisions exits 0 with a message when not in a git repo."""
+    runner = CliRunner()
+    from unittest.mock import patch
+
+    with patch("logmind.cli.is_git_repo", return_value=False):
+        result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 0
+    assert "Not a git repository" in result.output
+
+
+def test_check_decisions_passes_when_decisions_md_staged(git_repo):
+    """check-decisions exits 0 when docs/decisions.md is in the staged files."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged_output = "docs/decisions.md\nsrc/foo.py\n"
+    mock_result = MagicMock()
+    mock_result.stdout = staged_output
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", return_value=mock_result):
+                result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 0
+    assert "staged" in result.output
+
+
+def test_check_decisions_passes_below_threshold(git_repo):
+    """check-decisions exits 0 when lines changed are below the threshold."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    # No staged files (no decisions.md)
+    staged = MagicMock()
+    staged.stdout = "src/small_change.py\n"
+
+    # 5 lines added, 3 removed = 8 total (below default 20)
+    numstat = MagicMock()
+    numstat.stdout = "5\t3\tsrc/small_change.py\n"
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", side_effect=[staged, numstat]):
+                result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 0
+    assert "below" in result.output
+
+
+def test_check_decisions_fails_above_threshold(git_repo):
+    """check-decisions exits 1 when lines changed exceed the threshold."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged = MagicMock()
+    staged.stdout = "src/big_change.py\n"
+
+    # 15 added + 10 removed = 25 total (above default 20)
+    numstat = MagicMock()
+    numstat.stdout = "15\t10\tsrc/big_change.py\n"
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", side_effect=[staged, numstat]):
+                result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 1
+    assert "without updating" in result.output
+
+
+def test_check_decisions_no_fail_flag(git_repo):
+    """check-decisions exits 0 with --no-fail even when threshold exceeded."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged = MagicMock()
+    staged.stdout = "src/big_change.py\n"
+
+    numstat = MagicMock()
+    numstat.stdout = "15\t10\tsrc/big_change.py\n"
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", side_effect=[staged, numstat]):
+                result = runner.invoke(main, ["check-decisions", "--no-fail"])
+
+    assert result.exit_code == 0
+    assert "without updating" in result.output
+
+
+def test_check_decisions_custom_threshold(git_repo):
+    """check-decisions respects --threshold option."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged = MagicMock()
+    staged.stdout = "src/change.py\n"
+
+    # 25 lines changed — above default 20 but below custom 50
+    numstat = MagicMock()
+    numstat.stdout = "15\t10\tsrc/change.py\n"
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", side_effect=[staged, numstat]):
+                result = runner.invoke(main, ["check-decisions", "--threshold", "50"])
+
+    assert result.exit_code == 0
+    assert "below" in result.output
+
+
+def test_check_decisions_skips_docs_files(git_repo):
+    """check-decisions excludes docs/ files from the line count."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged = MagicMock()
+    staged.stdout = "docs/plan.md\n"
+
+    # 50 lines in docs/ only — should be excluded
+    numstat = MagicMock()
+    numstat.stdout = "50\t0\tdocs/plan.md\n"
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", side_effect=[staged, numstat]):
+                result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 0
+    assert "below" in result.output
+
+
+def test_check_decisions_skips_binary_files(git_repo):
+    """check-decisions skips binary files (shown as '-' in numstat)."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged = MagicMock()
+    staged.stdout = "assets/image.png\n"
+
+    numstat = MagicMock()
+    numstat.stdout = "-\t-\tassets/image.png\n"
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", side_effect=[staged, numstat]):
+                result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 0
+
+
+def test_check_decisions_empty_staged(git_repo):
+    """check-decisions handles no staged files gracefully."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged = MagicMock()
+    staged.stdout = ""
+
+    numstat = MagicMock()
+    numstat.stdout = ""
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", side_effect=[staged, numstat]):
+                result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# install-hook tests
+# ---------------------------------------------------------------------------
+
+
+def test_install_hook_not_a_git_repo(tmp_path):
+    """install-hook exits 1 when not in a git repo."""
+    runner = CliRunner()
+    from unittest.mock import patch
+
+    with patch("logmind.cli.is_git_repo", return_value=False):
+        result = runner.invoke(main, ["install-hook"])
+
+    assert result.exit_code == 1
+    assert "Error" in result.output
+
+
+def test_install_hook_creates_new_hook(git_repo):
+    """install-hook creates .git/hooks/pre-commit when it doesn't exist."""
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        result = runner.invoke(main, ["install-hook"])
+
+    assert result.exit_code == 0
+    assert "Installed" in result.output
+
+    hook_path = git_repo / ".git" / "hooks" / "pre-commit"
+    assert hook_path.exists()
+    content = hook_path.read_text()
+    assert "logmind check-decisions" in content
+    assert "#!/bin/sh" in content
+
+
+def test_install_hook_is_executable(git_repo):
+    """install-hook makes the pre-commit file executable."""
+    import os
+
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        runner.invoke(main, ["install-hook"])
+
+    hook_path = git_repo / ".git" / "hooks" / "pre-commit"
+    assert os.access(hook_path, os.X_OK)
+
+
+def test_install_hook_already_installed(git_repo):
+    """install-hook exits 0 with message when already installed."""
+    runner = CliRunner()
+
+    hook_path = git_repo / ".git" / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path.write_text("#!/bin/sh\nlogmind check-decisions\n")
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        result = runner.invoke(main, ["install-hook"])
+
+    assert result.exit_code == 0
+    assert "already installed" in result.output
+
+
+def test_install_hook_existing_hook_without_force(git_repo):
+    """install-hook exits 1 when hook exists and --force not given."""
+    runner = CliRunner()
+
+    hook_path = git_repo / ".git" / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path.write_text("#!/bin/sh\necho 'existing hook'\n")
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        result = runner.invoke(main, ["install-hook"])
+
+    assert result.exit_code == 1
+    assert "already exists" in result.output
+
+
+def test_install_hook_existing_hook_with_force(git_repo):
+    """install-hook appends to existing hook when --force is given."""
+    runner = CliRunner()
+
+    hook_path = git_repo / ".git" / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path.write_text("#!/bin/sh\necho 'existing hook'\n")
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        result = runner.invoke(main, ["install-hook", "--force"])
+
+    assert result.exit_code == 0
+    assert "Added" in result.output
+
+    content = hook_path.read_text()
+    assert "existing hook" in content
+    assert "logmind check-decisions" in content

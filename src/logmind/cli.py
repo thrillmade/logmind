@@ -641,6 +641,142 @@ def config_set(key: str, value: str):
     click.secho(f"Set {key} = {parsed_value}", fg="green")
 
 
+@main.command("check-decisions")
+@click.option(
+    "--threshold",
+    "-t",
+    default=20,
+    type=int,
+    help="Minimum lines changed to require a decision log entry (default: 20)",
+)
+@click.option(
+    "--no-fail",
+    is_flag=True,
+    help="Warn but exit with code 0 (don't block the commit)",
+)
+def check_decisions(threshold: int, no_fail: bool):
+    """
+    Check that significant code changes have corresponding decision logs.
+
+    Designed for use as a git pre-commit hook. Exits with code 1 if staged
+    changes exceed the line threshold without an update to docs/decisions.md.
+
+    To install as a pre-commit hook, run: logmind install-hook
+
+    Examples:
+        logmind check-decisions
+        logmind check-decisions --threshold 50
+        logmind check-decisions --no-fail
+    """
+    import subprocess
+
+    if not is_git_repo():
+        click.echo("Not a git repository, skipping check.")
+        return
+
+    # Get list of staged files
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        capture_output=True,
+        text=True,
+    )
+    staged_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+
+    # If decisions.md is staged, changes are documented
+    if any("decisions.md" in f for f in staged_files):
+        click.secho("✓ docs/decisions.md is staged — changes are documented.", fg="green")
+        return
+
+    # Count lines changed outside of docs/
+    numstat = subprocess.run(
+        ["git", "diff", "--cached", "--numstat"],
+        capture_output=True,
+        text=True,
+    )
+
+    total_lines = 0
+    for line in numstat.stdout.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        added, removed, filepath = parts
+        # Skip docs/ files and binary files (shown as "-")
+        if filepath.startswith("docs/") or added == "-":
+            continue
+        try:
+            total_lines += int(added) + int(removed)
+        except ValueError:
+            pass
+
+    if total_lines >= threshold:
+        click.secho(
+            f"⚠  {total_lines} lines changed without updating docs/decisions.md.\n"
+            f"   Log this decision: logmind log \"Your decision here\"\n"
+            f"   To skip this check: git commit --no-verify",
+            fg="yellow",
+        )
+        if not no_fail:
+            sys.exit(1)
+    else:
+        click.secho(
+            f"✓ {total_lines} lines changed (below {threshold}-line threshold).",
+            fg="green",
+        )
+
+
+@main.command("install-hook")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Add logmind to an existing pre-commit hook without prompting",
+)
+def install_hook(force: bool):
+    """
+    Install logmind check-decisions as a git pre-commit hook.
+
+    Creates or appends to .git/hooks/pre-commit so that every commit
+    is checked for undocumented decisions.
+    """
+    import subprocess
+
+    if not is_git_repo():
+        click.secho("Error: not a git repository.", fg="red")
+        sys.exit(1)
+
+    # Use git to find the actual repository root (handles subdirectory invocation)
+    root_result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+    )
+    root_path = Path(root_result.stdout.strip())
+    hook_path = root_path / ".git" / "hooks" / "pre-commit"
+    hook_line = "logmind check-decisions\n"
+
+    if hook_path.exists():
+        content = hook_path.read_text()
+        if "logmind check-decisions" in content:
+            click.echo("✓ logmind hook already installed.")
+            return
+        if not force:
+            click.secho(
+                "A pre-commit hook already exists. Use --force to append logmind to it.",
+                fg="yellow",
+            )
+            sys.exit(1)
+        hook_path.write_text(content.rstrip("\n") + "\n" + hook_line)
+        click.secho(
+            "✓ Added logmind check-decisions to existing pre-commit hook.", fg="green"
+        )
+    else:
+        hook_path.parent.mkdir(parents=True, exist_ok=True)
+        hook_path.write_text("#!/bin/sh\n" + hook_line)
+        hook_path.chmod(0o755)
+        click.secho("✓ Installed logmind pre-commit hook.", fg="green")
+
+
 @main.command()
 def update():
     """
