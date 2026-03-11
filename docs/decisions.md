@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 14:28 - Add Cline and OpenAI Codex (AGENTS.md) to supported agents
-
-**Reasoning:** Cline is a major VS Code agent using .clinerules; AGENTS.md is an emerging universal standard supported by OpenAI Codex, Cursor, Windsurf, and others under the Linux Foundation
-
-**Alternatives considered:** Only add Cline, Only add AGENTS.md, Wait for more adoption
-
-**Implications:**
-- Now support 11 AI agents total
-- AGENTS.md provides cross-tool compatibility
-
----
 ## 2026-01-17 14:28 - Implement logmind agents CLI command group with list, add, remove subcommands
 
 **Reasoning:** Provides visibility into configured agents, easy setup without manual file creation, and project-level agent control
@@ -229,5 +218,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - homebrew-tap/Formula/logmind.rb contains the Homebrew formula
 - SHA256 is a placeholder — will be updated when published to PyPI
 - Install via: brew tap thrillmot/logmind && brew install logmind
+
+---
+## 2026-03-11 00:21 - Add custom integrations documentation
+
+**Reasoning:** Roadmap item: self-service guide lowers barrier for contributors building framework integrations
+
+**Alternatives considered:** Auto-generated API docs only, Wiki page
+
+**Implications:**
+- docs/custom-integrations.md covers BaseIntegration API, full examples, testing, and publishing
+- Includes CrewAI, AutoGen, opt-in logging, and context-aware patterns
 
 ---

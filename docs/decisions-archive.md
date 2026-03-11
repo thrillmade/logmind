@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 14:28 - Add Cline and OpenAI Codex (AGENTS.md) to supported agents
+
+**Reasoning:** Cline is a major VS Code agent using .clinerules; AGENTS.md is an emerging universal standard supported by OpenAI Codex, Cursor, Windsurf, and others under the Linux Foundation
+
+**Alternatives considered:** Only add Cline, Only add AGENTS.md, Wait for more adoption
+
+**Implications:**
+- Now support 11 AI agents total
+- AGENTS.md provides cross-tool compatibility
+
+---
+
 ## 2025-10-20 07:12 - Make decisions-archive.md optional reference, not required reading
 
 **Reasoning:** Archive is a searchable reference for historical context, not something AI agents must read upfront. Only recent decisions (docs/decisions.md) are required.
