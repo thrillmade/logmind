@@ -5,6 +5,19 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 16:06 - Merge plan archive into plan.md Development History section
+
+**Reasoning:** Consolidate documentation - archive had valuable phase completion details that were missing from plan.md
+
+**Alternatives considered:** Keep archive as separate file, Delete archive without merging
+
+**Implications:**
+- Added detailed Phase 1-3 checklists to plan.md
+- Included test progression history (65 to 160+ tests)
+- Deleted docs/plan-archive-2025-01.md
+
+---
+
 ## 2026-01-17 16:05 - Create Homebrew tap structure for distribution
 
 **Reasoning:** Homebrew is preferred installation method for macOS/Linux CLI tools

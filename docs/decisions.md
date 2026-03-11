@@ -3,18 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 16:06 - Merge plan archive into plan.md Development History section
-
-**Reasoning:** Consolidate documentation - archive had valuable phase completion details that were missing from plan.md
-
-**Alternatives considered:** Keep archive as separate file, Delete archive without merging
-
-**Implications:**
-- Added detailed Phase 1-3 checklists to plan.md
-- Included test progression history (65 to 160+ tests)
-- Deleted docs/plan-archive-2025-01.md
-
----
 ## 2026-01-17 16:28 - Update documentation to reflect Phase 3 completion
 
 **Reasoning:** README.md and docs/logmind-readme.md were out of date - showed Phase 2 and missing agents/update commands
@@ -218,5 +206,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 **Implications:**
 - Clear checklist for publishing to PyPI, creating Homebrew tap repo, and enabling logmind update
+
+---
+## 2026-03-11 02:20 - Add 52 missing tests for bulletproof coverage
+
+**Reasoning:** Audit via subagents revealed parser.py at 0% coverage, no CLI tests for search command, and gaps in git_handler/logger/cli edge cases
+
+**Alternatives considered:** Leave gaps as-is, Add only critical gaps
+
+**Implications:**
+- Test count: 301 -> 353 passing
+- New test_parser.py covers DECISION_HEADER regex and iter_decisions fully
+- Search CLI, git_add_all, _archive_oldest_decision, log --no-push, agents remove confirmation now all tested
 
 ---

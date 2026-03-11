@@ -9,6 +9,7 @@ from logmind.core.git_handler import (
     GitError,
     commit_and_push,
     git_add,
+    git_add_all,
     git_commit,
     git_push,
     is_git_repo,
@@ -120,3 +121,20 @@ def test_git_add_nonexistent_file_raises_error(git_repo):
     """Test that adding nonexistent file raises error."""
     with pytest.raises(GitError, match="Failed to add files"):
         git_add(["nonexistent.txt"], git_repo)
+
+
+def test_git_add_all_stages_all_files(git_repo):
+    """Test that git_add_all stages all untracked files."""
+    (git_repo / "alpha.txt").write_text("alpha content")
+    (git_repo / "beta.txt").write_text("beta content")
+
+    git_add_all(git_repo)
+
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert "A  alpha.txt" in result.stdout or "A alpha.txt" in result.stdout
+    assert "A  beta.txt" in result.stdout or "A beta.txt" in result.stdout
