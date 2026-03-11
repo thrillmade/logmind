@@ -44,6 +44,9 @@ dev = [
     "black>=23.0.0",
     "mypy>=1.0.0",
 ]
+langchain = [
+    "langchain-core>=0.1.0",
+]
 
 [project.scripts]
 logmind = "logmind.cli:main"

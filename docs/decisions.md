@@ -3,140 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Attempt risky operation
-
----
-## 2025-10-19 20:26 - Implement Phase 3 decorators for automatic decision logging
-
-**Reasoning:** Enable developers to log decisions automatically using @log_decision and @log_choice decorators. Supports template strings with function arguments, alternatives, implications, and all standard logmind features.
-
-**Alternatives considered:** Manual logging only, Aspect-oriented programming approach
-
-**Implications:**
-- Users can decorate functions to auto-log decisions
-- Template strings support {arg_name} placeholders
-- @log_choice decorator for return-value-based decisions
-- 15 comprehensive tests, 110 total tests passing
-
----
-## 2025-10-19 20:28 - Add decorator documentation to README and update plan
-
-**Reasoning:** Users need clear examples of how to use the new @log_decision and @log_choice decorators. README should showcase Phase 3 features.
-
-**Implications:**
-- README shows decorator usage examples
-- Plan.md updated to show Phase 3 progress (33% complete)
-- Clear path forward for remaining Phase 3 features
-
----
-## 2025-10-19 20:46 - Prepare package for PyPI publishing
-
-**Reasoning:** Package built and validated. Added LICENSE, MANIFEST.in, updated pyproject.toml with proper metadata, created CHANGELOG. Ready for upload to PyPI.
-
-**Implications:**
-- Built packages in dist/ folder (wheel and tar.gz)
-- All twine checks pass
-- Templates included correctly
-- Package name: logmind v0.1.0
-
----
-## 2025-10-20 07:07 - Add logmind-readme.md to docs folder for AI agents
-
-**Reasoning:** AI agents need easy access to logmind documentation without navigating to repository root. Creates docs/logmind-readme.md during init by copying README.md content.
-
-**Implications:**
-- CLAUDE.md and other AI instruction files now link to docs/logmind-readme.md
-- AI agents can read complete logmind instructions directly from docs folder
-- Template files updated: logmind-section.md and CLAUDE.md.template
-
----
-## 2025-10-20 07:12 - Make decisions-archive.md optional reference, not required reading
-
-**Reasoning:** Archive is a searchable reference for historical context, not something AI agents must read upfront. Only recent decisions (docs/decisions.md) are required.
-
-**Implications:**
-- decisions-archive.md moved to 'Additional Reference' section
-- Reduces cognitive load for AI agents - focus on recent 20 decisions
-- Template files updated: logmind-section.md and CLAUDE.md.template
-
----
-## 2026-01-17 14:28 - Add Cline and OpenAI Codex (AGENTS.md) to supported agents
-
-**Reasoning:** Cline is a major VS Code agent using .clinerules; AGENTS.md is an emerging universal standard supported by OpenAI Codex, Cursor, Windsurf, and others under the Linux Foundation
-
-**Alternatives considered:** Only add Cline, Only add AGENTS.md, Wait for more adoption
-
-**Implications:**
-- Now support 11 AI agents total
-- AGENTS.md provides cross-tool compatibility
-
----
-## 2026-01-17 14:28 - Implement logmind agents CLI command group with list, add, remove subcommands
-
-**Reasoning:** Provides visibility into configured agents, easy setup without manual file creation, and project-level agent control
-
-**Alternatives considered:** Single 'agents' command that does everything, Separate commands like 'list-agents', 'add-agent'
-
-**Implications:**
-- Users can manage agents via CLI instead of manually creating files
-- Follows Click subcommand pattern for extensibility
-
----
-## 2026-01-17 14:28 - Add --agents and --all-agents flags to init command
-
-**Reasoning:** Allows explicit control over which agent files are created during initialization, supports CI/CD scripted setup
-
-**Alternatives considered:** Auto-detect and create all found agents, Interactive prompt to select agents
-
-**Implications:**
-- logmind init --agents claude,cursor creates only specified files
-- logmind init --all-agents creates all 11 agent files
-
----
-## 2026-01-17 14:29 - Rename claude-md-insertion.md to ai-agent-files.md
-
-**Reasoning:** Original name was Claude-specific but we now support 11 AI agents; generic name better reflects scope
-
-**Alternatives considered:** Keep original name, Name it agent-instruction-files.md
-
-**Implications:**
-- Updated all doc links in README.md and logmind-readme.md
-
----
-## 2026-01-17 14:30 - Use AGENT_REGISTRY dict as single source of truth for agent metadata
-
-**Reasoning:** Centralizes agent definitions (file path, display name, is_json) in one place; makes adding new agents trivial
-
-**Alternatives considered:** Separate config files per agent, Hardcoded if/elif chains
-
-**Implications:**
-- Adding a new agent requires only one dict entry plus template function update
-- All agent functions derive from registry automatically
-
----
-## 2026-01-17 16:00 - Implement config-driven agent file sync
-
-**Reasoning:** User wants to configure agents in config.yml and have files auto-created/updated on any logmind command
-
-**Alternatives considered:** Only sync on init, Require explicit sync command
-
-**Implications:**
-- sync_agent_files_from_config() added to inserter.py
-- Called from log, show, search, and agents list commands
-
----
-## 2026-01-17 16:05 - Enable both Claude and Cursor as default agents
-
-**Reasoning:** Most users will want Claude Code and Cursor configured by default - the two most popular AI coding assistants
-
-**Alternatives considered:** Only Claude enabled by default, No agents enabled by default
-
-**Implications:**
-- config.py DEFAULT_CONFIG updated: cursor: True
-- config.yml.template updated: cursor: true
-- Init command now creates both CLAUDE.md and .cursorrules by default
-
----
 ## 2026-01-17 16:05 - Add logmind update command for self-upgrade
 
 **Reasoning:** Users need easy way to upgrade logmind without remembering pip commands
@@ -211,5 +77,155 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - agents_remove now behaves consistently with agents_add
 - All changes are pushed to remote automatically
+
+---
+## 2026-03-10 23:35 - Add LangChain callback integration and BaseIntegration pattern
+
+**Reasoning:** First framework integration as specified in Phase 4 roadmap - enables zero-friction decision logging from LangChain agent runs
+
+**Alternatives considered:** Require langchain as mandatory dependency, Use monkey-patching instead of inheritance
+
+**Implications:**
+- langchain is now an optional dependency: pip install logmind[langchain]
+- Users subclass BaseIntegration to build custom integrations
+- 22 new tests added
+
+---
+## 2026-03-10 23:40 - Add check-decisions and install-hook CLI commands
+
+**Reasoning:** Implements git pre-commit hook support from roadmap — enforces decision logging at commit time
+
+**Alternatives considered:** External hook script with no CLI support, Only a check command with no install helper
+
+**Implications:**
+- logmind check-decisions exits 1 when >20 lines staged without decisions.md update
+- logmind install-hook creates or appends to .git/hooks/pre-commit
+- 15 new tests added
+
+---
+## 2026-03-10 23:46 - Add decision templates with --template flag and logmind templates command
+
+**Reasoning:** Roadmap item: pre-built templates for common patterns speed up logging and enforce consistent structure
+
+**Alternatives considered:** Config-file-based templates, Interactive prompts
+
+**Implications:**
+- 7 built-in templates: database, api, architecture, security, performance, library, deployment
+- logmind log --template <name> pre-fills reasoning, alternatives, implications; explicit flags override
+- logmind templates lists all available templates
+- 23 new tests added
+
+---
+## 2026-03-11 00:00 - Add analytics dashboard with logmind stats command
+
+**Reasoning:** Roadmap item: visualize decision patterns, frequency, and trends without adding heavy dependencies
+
+**Alternatives considered:** External visualization library (matplotlib, rich), Web dashboard
+
+**Implications:**
+- logmind stats shows total counts, monthly ASCII bar chart, velocity trend, and top keywords
+- analytics.py parses decisions from both decisions.md and archive
+- No new dependencies — pure Python with ASCII bar chart
+- 37 new tests added
+
+---
+## 2026-03-11 00:14 - Add multi-project aggregation with logmind aggregate command
+
+**Reasoning:** Roadmap item: view and search decisions across multiple repos in one place
+
+**Alternatives considered:** Centralized database for cross-project storage, Separate aggregation service
+
+**Implications:**
+- logmind aggregate <path1> <path2> shows unified feed sorted newest-first
+- logmind aggregate --summary shows per-project decision counts
+- --limit, --no-archive flags control output scope
+- 26 new tests added
+
+---
+## 2026-03-11 00:18 - Add Homebrew tap formula for logmind distribution
+
+**Reasoning:** Roadmap item: lower adoption barrier by enabling brew install logmind for non-Python developers
+
+**Alternatives considered:** Only distribute via pip/pipx, Docker image
+
+**Implications:**
+- homebrew-tap/Formula/logmind.rb contains the Homebrew formula
+- SHA256 is a placeholder — will be updated when published to PyPI
+- Install via: brew tap thrillmot/logmind && brew install logmind
+
+---
+## 2026-03-11 00:21 - Add custom integrations documentation
+
+**Reasoning:** Roadmap item: self-service guide lowers barrier for contributors building framework integrations
+
+**Alternatives considered:** Auto-generated API docs only, Wiki page
+
+**Implications:**
+- docs/custom-integrations.md covers BaseIntegration API, full examples, testing, and publishing
+- Includes CrewAI, AutoGen, opt-in logging, and context-aware patterns
+
+---
+## 2026-03-11 00:31 - Complete all roadmap items from plan.md
+
+**Reasoning:** All planned features implemented, tested, committed, and pushed in a single session
+
+**Implications:**
+- 301 tests passing
+- 7 new CLI commands: check-decisions, install-hook, templates, stats, aggregate, and supporting subcommands
+- Homebrew tap formula and custom integrations docs added
+
+---
+## 2026-03-11 00:36 - Update all markdown docs to reflect Phase 4 completion
+
+**Reasoning:** README, logmind-readme, plan.md, and CHANGELOG were all missing new commands and features added this session
+
+**Implications:**
+- README and logmind-readme: added stats, aggregate, check-decisions, install-hook, templates, --template, integrations section
+- plan.md: architecture updated with new modules, all roadmap items marked complete, test count updated to 301
+- CHANGELOG: new [Unreleased] section listing all Phase 4 additions
+- All docs have backlinks — no orphaned files
+
+---
+## 2026-03-11 00:53 - Add Claude PR review GitHub Action
+
+**Reasoning:** Article at madewithlove.com shows Claude outperforms BugBot at half the cost — focused prompt on critical issues only beats generic review
+
+**Alternatives considered:** Keep BugBot only, Use both BugBot and Claude review
+
+**Implications:**
+- Triggers on PR opened and synchronize only — avoids repeat reviews
+- Prompt scoped to bugs, security, performance, missing tests, git integration — skips style nits
+- Requires ANTHROPIC_API_KEY secret in GitHub repo settings
+
+---
+## 2026-03-11 00:56 - Extract shared decision parsing into core/parser.py
+
+**Reasoning:** BugBot flagged duplicated _DECISION_HEADER regex and parsing loops in analytics.py and aggregator.py — single change point now if format ever changes
+
+**Alternatives considered:** Keep duplication, accept maintenance risk
+
+**Implications:**
+- parser.py exports DECISION_HEADER regex and iter_decisions() generator
+- analytics.py and aggregator.py now both import from parser.py
+
+---
+## 2026-03-11 00:57 - Add BugBot and Claude PR review to logmind repo
+
+**Reasoning:** BugBot catches bugs on PRs automatically; Claude review action provides deeper analysis at lower cost per madewithlove.com article
+
+**Alternatives considered:** BugBot only, Claude review only
+
+**Implications:**
+- .github/workflows/claude-review.yml triggers on PR open and synchronize
+- BugBot enabled via Cursor settings — no repo config needed
+- BugBot immediately caught duplicated parsing logic across analytics.py and aggregator.py
+
+---
+## 2026-03-11 00:58 - Fix Claude review action: add id-token write permission
+
+**Reasoning:** Action failed with OIDC token error — anthropics/claude-code-action@v1 requires id-token: write to authenticate
+
+**Implications:**
+- Also requires ANTHROPIC_API_KEY secret set in GitHub repo settings
 
 ---
