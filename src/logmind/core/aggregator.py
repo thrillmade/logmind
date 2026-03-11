@@ -1,12 +1,10 @@
 """Multi-project decision aggregation for logmind."""
 
-import re
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional
 from datetime import datetime
 
-
-_DECISION_HEADER = re.compile(r"^## (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) - (.+)$")
+from logmind.core.parser import iter_decisions
 
 
 class AggregatedEntry(NamedTuple):
@@ -39,25 +37,16 @@ def load_project_decisions(
         files.append(("archive", docs_path / "decisions-archive.md"))
 
     for source, path in files:
-        if not path.exists():
-            continue
-        for line in path.read_text().splitlines():
-            m = _DECISION_HEADER.match(line)
-            if m:
-                date_str, time_str, title = m.group(1), m.group(2), m.group(3)
-                try:
-                    dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-                    entries.append(
-                        AggregatedEntry(
-                            date=dt,
-                            title=title,
-                            project=name,
-                            project_path=project_path,
-                            source=source,
-                        )
-                    )
-                except ValueError:
-                    pass
+        for dt, title in iter_decisions(path):
+            entries.append(
+                AggregatedEntry(
+                    date=dt,
+                    title=title,
+                    project=name,
+                    project_path=project_path,
+                    source=source,
+                )
+            )
 
     return entries
 

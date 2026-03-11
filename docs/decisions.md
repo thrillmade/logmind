@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 14:30 - Use AGENT_REGISTRY dict as single source of truth for agent metadata
-
-**Reasoning:** Centralizes agent definitions (file path, display name, is_json) in one place; makes adding new agents trivial
-
-**Alternatives considered:** Separate config files per agent, Hardcoded if/elif chains
-
-**Implications:**
-- Adding a new agent requires only one dict entry plus template function update
-- All agent functions derive from registry automatically
-
----
 ## 2026-01-17 16:00 - Implement config-driven agent file sync
 
 **Reasoning:** User wants to configure agents in config.yml and have files auto-created/updated on any logmind command
@@ -230,5 +219,16 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Triggers on PR opened and synchronize only — avoids repeat reviews
 - Prompt scoped to bugs, security, performance, missing tests, git integration — skips style nits
 - Requires ANTHROPIC_API_KEY secret in GitHub repo settings
+
+---
+## 2026-03-11 00:56 - Extract shared decision parsing into core/parser.py
+
+**Reasoning:** BugBot flagged duplicated _DECISION_HEADER regex and parsing loops in analytics.py and aggregator.py — single change point now if format ever changes
+
+**Alternatives considered:** Keep duplication, accept maintenance risk
+
+**Implications:**
+- parser.py exports DECISION_HEADER regex and iter_decisions() generator
+- analytics.py and aggregator.py now both import from parser.py
 
 ---

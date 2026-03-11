@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 14:30 - Use AGENT_REGISTRY dict as single source of truth for agent metadata
+
+**Reasoning:** Centralizes agent definitions (file path, display name, is_json) in one place; makes adding new agents trivial
+
+**Alternatives considered:** Separate config files per agent, Hardcoded if/elif chains
+
+**Implications:**
+- Adding a new agent requires only one dict entry plus template function update
+- All agent functions derive from registry automatically
+
+---
+
 ## 2026-01-17 14:29 - Rename claude-md-insertion.md to ai-agent-files.md
 
 **Reasoning:** Original name was Claude-specific but we now support 11 AI agents; generic name better reflects scope

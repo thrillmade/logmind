@@ -1,13 +1,12 @@
 """Analytics for logmind decision logs."""
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
-
-_DECISION_HEADER = re.compile(r"^## (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) - (.+)$")
+from logmind.core.parser import iter_decisions
 
 
 class DecisionEntry(NamedTuple):
@@ -25,17 +24,8 @@ def parse_decisions(docs_path: Path, include_archive: bool = True) -> List[Decis
         files.append(("archive", docs_path / "decisions-archive.md"))
 
     for source, path in files:
-        if not path.exists():
-            continue
-        for line in path.read_text().splitlines():
-            m = _DECISION_HEADER.match(line)
-            if m:
-                date_str, time_str, title = m.group(1), m.group(2), m.group(3)
-                try:
-                    dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-                    entries.append(DecisionEntry(date=dt, title=title, source=source))
-                except ValueError:
-                    pass
+        for dt, title in iter_decisions(path):
+            entries.append(DecisionEntry(date=dt, title=title, source=source))
 
     return sorted(entries, key=lambda e: e.date)
 
