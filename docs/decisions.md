@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 16:00 - Implement config-driven agent file sync
-
-**Reasoning:** User wants to configure agents in config.yml and have files auto-created/updated on any logmind command
-
-**Alternatives considered:** Only sync on init, Require explicit sync command
-
-**Implications:**
-- sync_agent_files_from_config() added to inserter.py
-- Called from log, show, search, and agents list commands
-
----
 ## 2026-01-17 16:05 - Enable both Claude and Cursor as default agents
 
 **Reasoning:** Most users will want Claude Code and Cursor configured by default - the two most popular AI coding assistants
@@ -230,5 +219,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - parser.py exports DECISION_HEADER regex and iter_decisions() generator
 - analytics.py and aggregator.py now both import from parser.py
+
+---
+## 2026-03-11 00:57 - Add BugBot and Claude PR review to logmind repo
+
+**Reasoning:** BugBot catches bugs on PRs automatically; Claude review action provides deeper analysis at lower cost per madewithlove.com article
+
+**Alternatives considered:** BugBot only, Claude review only
+
+**Implications:**
+- .github/workflows/claude-review.yml triggers on PR open and synchronize
+- BugBot enabled via Cursor settings — no repo config needed
+- BugBot immediately caught duplicated parsing logic across analytics.py and aggregator.py
 
 ---

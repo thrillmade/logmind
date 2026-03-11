@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 16:00 - Implement config-driven agent file sync
+
+**Reasoning:** User wants to configure agents in config.yml and have files auto-created/updated on any logmind command
+
+**Alternatives considered:** Only sync on init, Require explicit sync command
+
+**Implications:**
+- sync_agent_files_from_config() added to inserter.py
+- Called from log, show, search, and agents list commands
+
+---
+
 ## 2026-01-17 14:30 - Use AGENT_REGISTRY dict as single source of truth for agent metadata
 
 **Reasoning:** Centralizes agent definitions (file path, display name, is_json) in one place; makes adding new agents trivial
