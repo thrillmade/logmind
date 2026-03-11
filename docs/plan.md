@@ -205,7 +205,7 @@ AI agents read files for full project context:
 - Phase 1: 65 tests
 - Phase 2: 95 tests
 - Phase 3: 110 tests
-- Current: 160+ tests (all passing)
+- Current: 178 tests (all passing)
 
 ## Completed Features
 
@@ -295,6 +295,19 @@ logmind check-decisions
 - **Code review aid** - Reviewers see decision context
 - **Quality gate** - Ensures documentation stays current
 - **Team accountability** - Everyone logs decisions
+
+### Homebrew Tap
+
+Distribute logmind via Homebrew for non-Python users.
+
+```bash
+brew install logmind/tap/logmind
+```
+
+**Benefits:**
+- **Accessibility** - No Python or pip required to install
+- **Adoption** - Lower barrier for developers outside the Python ecosystem
+- **Discoverability** - Listed in Homebrew search results
 
 ### Phase 4: Advanced Features (Future)
 

@@ -3,9 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2025-10-19 18:42 - Attempt risky operation
-
----
 ## 2025-10-19 20:26 - Implement Phase 3 decorators for automatic decision logging
 
 **Reasoning:** Enable developers to log decisions automatically using @log_decision and @log_choice decorators. Supports template strings with function arguments, alternatives, implications, and all standard logmind features.
@@ -211,5 +208,17 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 **Implications:**
 - agents_remove now behaves consistently with agents_add
 - All changes are pushed to remote automatically
+
+---
+## 2026-03-10 23:35 - Add LangChain callback integration and BaseIntegration pattern
+
+**Reasoning:** First framework integration as specified in Phase 4 roadmap - enables zero-friction decision logging from LangChain agent runs
+
+**Alternatives considered:** Require langchain as mandatory dependency, Use monkey-patching instead of inheritance
+
+**Implications:**
+- langchain is now an optional dependency: pip install logmind[langchain]
+- Users subclass BaseIntegration to build custom integrations
+- 22 new tests added
 
 ---
