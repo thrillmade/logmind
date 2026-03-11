@@ -3,17 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 16:05 - Add logmind update command for self-upgrade
-
-**Reasoning:** Users need easy way to upgrade logmind without remembering pip commands
-
-**Alternatives considered:** Only document pip upgrade in README, Add version check on every command
-
-**Implications:**
-- Runs pip install --upgrade logmind
-- Shows before/after version comparison
-
----
 ## 2026-01-17 16:05 - Create Homebrew tap structure for distribution
 
 **Reasoning:** Homebrew is preferred installation method for macOS/Linux CLI tools
@@ -227,5 +216,10 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 **Implications:**
 - Also requires ANTHROPIC_API_KEY secret set in GitHub repo settings
+
+---
+## 2026-03-11 01:05 - Trigger automated code review scan
+
+**Reasoning:** Opening PR to run BugBot and Claude review across full codebase
 
 ---

@@ -5,6 +5,18 @@ This file contains historical decisions that have been archived from [decisions.
 Decisions are listed in reverse chronological order (newest first).
 
 ---
+## 2026-01-17 16:05 - Add logmind update command for self-upgrade
+
+**Reasoning:** Users need easy way to upgrade logmind without remembering pip commands
+
+**Alternatives considered:** Only document pip upgrade in README, Add version check on every command
+
+**Implications:**
+- Runs pip install --upgrade logmind
+- Shows before/after version comparison
+
+---
+
 ## 2026-01-17 16:05 - Enable both Claude and Cursor as default agents
 
 **Reasoning:** Most users will want Claude Code and Cursor configured by default - the two most popular AI coding assistants
