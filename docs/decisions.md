@@ -3,16 +3,6 @@
 This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
 
 ---
-## 2026-01-17 18:24 - Add CLI tests for config commands
-
-**Reasoning:** Config CLI commands (list, get, set) had no test coverage
-
-**Alternatives considered:** Only test Python API, Skip CLI tests
-
-**Implications:**
-- 6 new tests cover list, get, set, error handling, nested keys, and type conversion
-
----
 ## 2026-01-19 21:26 - Fix agents_remove to push after commit
 
 **Reasoning:** Bug found by bugbot: agents_remove used raw subprocess for git add/commit but never pushed to remote, unlike agents_add which uses commit_and_push(push=True)
@@ -213,5 +203,10 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 **Implications:**
 - Test now asserts exit 0 and exact 'No matches found for:' message
+
+---
+## 2026-03-11 03:01 - Rename test to match actual assertion: exit_zero not exit_nonzero
+
+**Reasoning:** BugBot caught that test name said nonzero but assertion checked exit_code == 0 — misleading for anyone reading test names to understand CLI behavior
 
 ---

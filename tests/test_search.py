@@ -399,7 +399,7 @@ def test_search_cli_exit_code_zero_on_match(git_repo):
     assert result.exit_code == 0
 
 
-def test_search_cli_exit_code_nonzero_on_no_match(git_repo):
+def test_search_cli_exit_zero_on_no_match(git_repo):
     """Search with no results exits 0 and prints a 'no matches' message."""
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=git_repo):
