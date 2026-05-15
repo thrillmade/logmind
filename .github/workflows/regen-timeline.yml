@@ -37,8 +37,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install logmind
-        run: pip install logmind
+      - name: Install logmind from source
+        # Dogfood workflow inside the logmind repo itself — install the
+        # current source tree so the `timeline` CLI is available even
+        # before v0.2 lands on PyPI. The shipped template
+        # (templates/github/regen-timeline.yml.template) uses
+        # `pip install logmind` for downstream users.
+        run: pip install -e .
 
       - name: Regenerate derived docs (timeline + file-structure)
         run: |
