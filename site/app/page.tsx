@@ -309,12 +309,15 @@ export default function Home() {
                 aria-label="thrllmt (thrillmot.com)"
                 className="opacity-60 hover:opacity-100 transition-opacity inline-flex items-center"
               >
+                {/* Sized relative to the surrounding text's em so the logo
+                    scales proportionally with the marginalia at every
+                    viewport. 0.85em matches the cap-height of the adjacent
+                    uppercase glyphs. w-auto preserves SVG aspect ratio. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src="/thrllmt.svg"
                   alt="thrllmt"
-                  height={12}
-                  className="block h-[12px] w-auto"
+                  className="block h-[0.85em] w-auto"
                 />
               </a>
             </div>
