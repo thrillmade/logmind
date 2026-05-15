@@ -32,6 +32,9 @@ html, body {
   color: var(--foreground);
   font-family: var(--font-fraunces), Georgia, "Times New Roman", serif;
   font-feature-settings: "ss01", "ss02";
+  /* Belt-and-suspenders: no inner element should ever push the document
+     wide. overflow-x: clip (vs hidden) keeps position: sticky working. */
+  overflow-x: clip;
 }
 
 /* Subtle paper-grain — SVG noise inlined as data URI; ships once. */
@@ -99,4 +102,13 @@ html { scroll-padding-top: 6rem; }
   content: "";
   flex: 1;
   border-top: 1px solid var(--rule);
+}
+/* On narrow viewports, drop the side rules — they sit too close to the
+   section's own border-t and read as a doubled divider. The section
+   border-t + the label still convey "new section." */
+@media (max-width: 640px) {
+  .ornament::before,
+  .ornament::after {
+    display: none;
+  }
 }
