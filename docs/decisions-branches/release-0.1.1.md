@@ -25,3 +25,12 @@
 - logmind-skill repo gets the updated SKILL.md as a follow-up commit
 
 ---
+## 2026-05-15 02:46 - Site: by thrllmt attribution + locally-hosted logo from thrillmot.com
+
+**Reasoning:** User asked for a by-thrllmt mark linking to thrillmot.com using the thrillmot logo. Pulled the SVG (thrllmt.svg) from thrillmot.com and hosted it locally in site/public/ to avoid hot-link dependency. Added a small attribution line in the footer with the logo + link.
+
+**Implications:**
+- Footer now has logmind. wordmark + version + by thrllmt logo + skills.sh badge stacked
+- Vercel auto-deploys on push
+
+---

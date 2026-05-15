@@ -297,6 +297,24 @@ export default function Home() {
             <div className="marginalia normal-case tracking-normal mt-1 text-xs text-foreground/50">
               v0.1 · MIT licensed · made for things you’d miss if forgotten.
             </div>
+            <div className="mt-3 flex items-center gap-3">
+              <span className="marginalia text-foreground/55">by</span>
+              <a
+                href="https://thrillmot.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="thrllmt (thrillmot.com)"
+                className="opacity-60 hover:opacity-100 transition-opacity"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/thrllmt.svg"
+                  alt="thrllmt"
+                  height={14}
+                  className="block h-[14px] w-auto"
+                />
+              </a>
+            </div>
             <a
               href="https://skills.sh/thrillmot/logmind-skill"
               target="_blank"
