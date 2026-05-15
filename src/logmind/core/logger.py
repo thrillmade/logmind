@@ -225,6 +225,7 @@ def log(
     auto_commit: Optional[bool] = None,
     auto_push: Optional[bool] = None,
     stage: str = "scoped",
+    extra_scoped_paths: Optional[List[str]] = None,
 ) -> None:
     """
     Log a decision to the decision log.
@@ -293,11 +294,30 @@ def log(
         _archive_oldest_decision(decisions_path)
         archive_rotated = True
 
-    # Update file structure (if configured)
+    # Update file structure (if configured) — but skip on feature branches.
+    # Each PR would regenerate against its own working tree, guaranteeing
+    # a merge conflict against main. Per v0.1.3, the aggregator workflow
+    # regenerates file-structure.md on main after each PR merge, so
+    # per-branch regeneration is no longer needed.
+    #
+    # Project root is the parent of docs/ — check git there, NOT in cwd,
+    # so this works correctly when called from tests or other working dirs.
+    # Regenerate when: not a git repo OR HEAD is the default branch.
+    # Skip only when: in a git repo AND on a non-default branch.
+    project_root = docs_path.parent
     file_structure_updated = False
     if config.auto_update_file_structure:
-        update_file_structure(docs_path)
-        file_structure_updated = True
+        skip_regen = False
+        try:
+            if is_git_repo(project_root):
+                cur = current_branch(project_root)
+                if cur is not None and cur != default_branch(project_root):
+                    skip_regen = True
+        except Exception:
+            skip_regen = False
+        if not skip_regen:
+            update_file_structure(docs_path)
+            file_structure_updated = True
 
     # Commit and push if requested
     if auto_commit and is_git_repo():
@@ -313,6 +333,8 @@ def log(
                 scoped.append(str(docs_path / "file-structure.md"))
             if archive_rotated:
                 scoped.append(str(docs_path / "decisions-archive.md"))
+            if extra_scoped_paths:
+                scoped.extend(extra_scoped_paths)
             git_add(scoped)
 
         # Use configured commit message template
