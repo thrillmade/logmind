@@ -85,18 +85,13 @@ export default function Home() {
           </h1>
 
           <div className="rise mt-12 grid grid-cols-1 sm:grid-cols-12 gap-8 sm:gap-12" style={{ animationDelay: "0.18s" }}>
-            <div className="sm:col-span-1 marginalia hidden sm:block pt-2">
-              <span className="block">¶ 01</span>
-              <span className="block text-muted/60">brief</span>
-            </div>
-            <p className="lead sm:col-span-7 text-lg leading-[1.55] text-foreground/85">
+            <p className="lead sm:col-span-8 text-lg leading-[1.55] text-foreground/85">
               <span className="text-accent">Capture decisions while you work.</span> One CLI
-              command per choice — no quarterly ADR backlog. Every new
+              command per choice — no after-the-fact writeup. Every new
               agent (Claude Code, Cursor, Codex, Cline) gets the full
               <em> why-behind-the-code </em>in one read. Markdown links between
-              docs are checked on every PR; the project tree is regenerated on
-              every log; tests stay green. Documentation that can&apos;t go stale,
-              context that scales with your team.
+              docs are checked on every PR; the project tree regenerates on
+              every log. Documentation that can&apos;t go stale.
             </p>
             <aside className="sm:col-span-4 sm:border-l sm:border-rule sm:pl-6 marginalia space-y-3 self-start pt-2">
               <div>
@@ -108,7 +103,7 @@ export default function Home() {
               <div>
                 <span className="block">replaces</span>
                 <span className="block text-foreground/85 normal-case tracking-normal">
-                  end-of-quarter ADRs that nobody reads
+                  decisions that lived in someone&apos;s head
                 </span>
               </div>
               <div>
@@ -142,9 +137,9 @@ export default function Home() {
       {/* what — three principles */}
       <section className="px-6 sm:px-10 lg:px-16 py-20 border-t border-rule">
         <div className="max-w-6xl mx-auto w-full">
-          <div className="ornament marginalia mb-12">
-            <span>three principles</span>
-          </div>
+          <h2 className="display text-4xl sm:text-5xl font-light leading-tight mb-12">
+            principles<span className="text-accent">.</span>
+          </h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-10 gap-y-12">
             {[
@@ -157,10 +152,9 @@ export default function Home() {
                     <code className="font-mono text-foreground text-[0.85em]">
                       logmind log
                     </code>{" "}
-                    per architectural choice — written, committed, and routed
-                    to the right per-branch file in a single command. No
-                    after-the-fact ADR-writing meetings. The reasoning lives
-                    next to the code, in git, the moment the call is made.
+                    per choice — written, committed, and routed to the right
+                    branch file in one command. Reasoning lives next to the
+                    code, in git.
                   </>
                 ),
               },
@@ -169,14 +163,13 @@ export default function Home() {
                 title: "auto-documentation",
                 body: (
                   <>
-                    AGENTS.md is canonical; CLAUDE.md, .cursorrules,
-                    .windsurfrules become 2-line stubs. Every relative{" "}
+                    AGENTS.md is canonical; per-tool files become two-line
+                    stubs pointing at it. Every relative{" "}
                     <code className="font-mono text-foreground text-[0.85em]">
                       [link](path.md)
                     </code>{" "}
                     is verified on every PR. The project tree regenerates on
-                    every log. Docs <em>can&apos;t</em> drift out of sync — CI
-                    fails the moment they try.
+                    every log.
                   </>
                 ),
               },
@@ -189,10 +182,9 @@ export default function Home() {
                     <code className="font-mono text-foreground text-[0.85em]">
                       AGENTS.md
                     </code>{" "}
-                    instantly inherits everything: the decision history, the
-                    file tree, the why-behind-the-code. Onboarding a new agent
-                    takes <em>one read</em>. Every agent in your stack works
-                    from the same source of truth.
+                    inherits the decision history, the tree, the
+                    why-behind-the-code. Onboarding a new agent takes{" "}
+                    <em>one read</em>.
                   </>
                 ),
               },
@@ -222,7 +214,6 @@ export default function Home() {
       >
         <div className="max-w-6xl mx-auto w-full grid grid-cols-1 sm:grid-cols-12 gap-8">
           <div className="sm:col-span-4">
-            <div className="marginalia mb-3">section ii</div>
             <h2 className="display text-4xl sm:text-5xl font-light leading-tight">
               install<span className="text-accent">.</span>
             </h2>
@@ -250,7 +241,6 @@ export default function Home() {
         <div className="max-w-6xl mx-auto w-full">
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-8 mb-8">
             <div className="sm:col-span-4">
-              <div className="marginalia mb-3">section iii</div>
               <h2 className="display text-4xl sm:text-5xl font-light leading-tight">
                 <span className="italic font-normal">quick</span>start
                 <span className="text-accent">.</span>

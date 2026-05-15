@@ -91,24 +91,6 @@ body::before {
 
 html { scroll-padding-top: 6rem; }
 
-/* Anchored ornament rule, used as section divider. */
-.ornament {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-.ornament::before,
-.ornament::after {
-  content: "";
-  flex: 1;
-  border-top: 1px solid var(--rule);
-}
-/* On narrow viewports, drop the side rules — they sit too close to the
-   section's own border-t and read as a doubled divider. The section
-   border-t + the label still convey "new section." */
-@media (max-width: 640px) {
-  .ornament::before,
-  .ornament::after {
-    display: none;
-  }
-}
+/* (The .ornament side-rule decoration is intentionally removed —
+   sections now lead with a proper H2 heading; the section's own
+   border-t is the sole divider, no doubling.) */
