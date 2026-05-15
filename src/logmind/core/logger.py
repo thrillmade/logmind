@@ -5,8 +5,54 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from logmind.core.config import load_config
-from logmind.core.git_handler import commit_and_push, is_git_repo, git_add_all, git_commit, git_push
+from logmind.core.git_handler import (
+    commit_and_push,
+    current_branch,
+    default_branch,
+    git_add_all,
+    git_commit,
+    git_push,
+    is_git_repo,
+)
 from logmind.core.tree_gen import update_file_structure
+
+
+def _sanitize_branch(name: str) -> str:
+    """Make a branch name safe to use as a filename component."""
+    return name.replace("/", "__").replace("\\", "__").replace(":", "_")
+
+
+def _resolve_decisions_path(docs_path: Path, config) -> Path:
+    """
+    Resolve which decisions log file the next entry should be appended to.
+
+    On the default branch, in non-git directories, on detached HEAD, or when
+    branch_aware is disabled, returns docs/decisions.md. Otherwise returns
+    docs/decisions-branches/<sanitized-branch>.md (creating the directory).
+
+    The repo root is inferred from ``docs_path.parent`` so the resolver works
+    regardless of the caller's cwd (important for tests and library usage).
+    """
+    decisions_path = docs_path / "decisions.md"
+    repo_path = docs_path.parent
+
+    if not config.branch_aware or not is_git_repo(repo_path):
+        return decisions_path
+
+    branch = current_branch(repo_path)
+    if branch is None or branch == default_branch(repo_path):
+        return decisions_path
+
+    branch_dir = docs_path / "decisions-branches"
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    return branch_dir / f"{_sanitize_branch(branch)}.md"
+
+
+def _archive_path_for(decisions_path: Path) -> Path:
+    """Return the archive file paired with a given decisions log file."""
+    if decisions_path.name == "decisions.md":
+        return decisions_path.parent / "decisions-archive.md"
+    return decisions_path.parent / f"{decisions_path.stem}-archive.md"
 
 
 def _format_decision(
@@ -113,15 +159,22 @@ def _extract_oldest_decision(content: str) -> tuple[str, str]:
     return oldest_decision, remaining_content
 
 
-def _archive_oldest_decision(docs_path: Path) -> None:
+def _archive_oldest_decision(decisions_path: Path) -> None:
     """
-    Move the oldest decision from decisions.md to decisions-archive.md.
+    Move the oldest decision from a decisions log file into its paired archive.
 
     Args:
-        docs_path: Path to docs directory
+        decisions_path: Path to the decisions log file. The archive is derived
+            via :func:`_archive_path_for` (e.g. ``decisions.md`` →
+            ``decisions-archive.md``; ``decisions-branches/foo.md`` →
+            ``decisions-branches/foo-archive.md``).
     """
-    decisions_path = docs_path / "decisions.md"
-    archive_path = docs_path / "decisions-archive.md"
+    # Backwards-compat: callers used to pass docs_dir. If we got a directory,
+    # assume the canonical decisions.md inside it.
+    if decisions_path.is_dir():
+        decisions_path = decisions_path / "decisions.md"
+
+    archive_path = _archive_path_for(decisions_path)
 
     # Read current decisions
     decisions_content = decisions_path.read_text()
@@ -216,8 +269,8 @@ def log(
     # Format the decision
     decision_entry = _format_decision(decision, reasoning, alternatives, implications)
 
-    # Append to decisions.md
-    decisions_path = docs_path / "decisions.md"
+    # Resolve target file based on current branch
+    decisions_path = _resolve_decisions_path(docs_path, config)
     current_content = decisions_path.read_text() if decisions_path.exists() else ""
 
     # Append new decision
@@ -228,7 +281,7 @@ def log(
     decision_count = _count_decisions(updated_content)
     max_recent = config.max_recent_decisions
     if decision_count > max_recent:
-        _archive_oldest_decision(docs_path)
+        _archive_oldest_decision(decisions_path)
 
     # Update file structure (if configured)
     if config.auto_update_file_structure:

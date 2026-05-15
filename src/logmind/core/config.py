@@ -19,6 +19,10 @@ DEFAULT_CONFIG = {
     },
     "decisions": {
         "max_recent": 20,
+        # When True (default), feature-branch decisions are routed to
+        # docs/decisions-branches/<branch>.md instead of decisions.md.
+        # The default branch always writes to decisions.md.
+        "branch_aware": True,
     },
     "file_structure": {
         "auto_update": True,
@@ -189,6 +193,11 @@ class Config:
     def max_recent_decisions(self) -> int:
         """Maximum number of recent decisions to keep."""
         return self.get("decisions.max_recent", 20)
+
+    @property
+    def branch_aware(self) -> bool:
+        """Route feature-branch decisions to per-branch files."""
+        return self.get("decisions.branch_aware", True)
 
     @property
     def auto_update_file_structure(self) -> bool:

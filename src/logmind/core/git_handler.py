@@ -147,6 +147,113 @@ def git_push(path: Optional[Path] = None) -> None:
         raise GitError(f"Failed to push: {e.stderr}")
 
 
+def current_branch(path: Optional[Path] = None) -> Optional[str]:
+    """
+    Return the current git branch name.
+
+    Returns None if the path is not a git repo or HEAD is detached.
+    Works on freshly-init'd repos with no commits yet (returns the
+    unborn-branch name from `git symbolic-ref HEAD`).
+
+    Args:
+        path: Repository root. Defaults to current directory.
+    """
+    if path is None:
+        path = Path.cwd()
+
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            cwd=path,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        branch = result.stdout.strip()
+        return branch or None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def default_branch(path: Optional[Path] = None) -> str:
+    """
+    Return the repo's default branch name.
+
+    Resolution order:
+      1. `refs/remotes/origin/HEAD` (set by `git clone` or `git remote set-head`)
+      2. Local `main` if it exists, else local `master`
+      3. If exactly one local branch exists, use it
+      4. `git config init.defaultBranch`
+      5. Hard fallback: "main"
+
+    Args:
+        path: Repository root. Defaults to current directory.
+    """
+    if path is None:
+        path = Path.cwd()
+
+    # 1. origin/HEAD
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=path,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        ref = result.stdout.strip()
+        prefix = "refs/remotes/origin/"
+        if ref.startswith(prefix):
+            return ref[len(prefix):]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    # 2. Local main / master
+    for candidate in ("main", "master"):
+        try:
+            subprocess.run(
+                ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}"],
+                cwd=path,
+                check=True,
+                capture_output=True,
+            )
+            return candidate
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+
+    # 3. Single-branch repo: that branch IS the default by definition
+    try:
+        result = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+            cwd=path,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        local_branches = [b for b in result.stdout.split() if b]
+        if len(local_branches) == 1:
+            return local_branches[0]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    # 4. init.defaultBranch
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "init.defaultBranch"],
+            cwd=path,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        configured = result.stdout.strip()
+        if configured:
+            return configured
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    return "main"
+
+
 def commit_and_push(files: List[str], message: str, path: Optional[Path] = None, push: bool = True) -> None:
     """
     Add files, commit, and optionally push in one operation.

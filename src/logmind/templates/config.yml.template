@@ -19,6 +19,11 @@ decisions:
   # Older decisions are moved to decisions-archive.md
   max_recent: 20
 
+  # Route feature-branch decisions to docs/decisions-branches/<branch>.md
+  # The default branch always writes to docs/decisions.md.
+  # Set to false to log every branch into the same file (legacy behavior).
+  branch_aware: true
+
 # File structure generation
 file_structure:
   # Update file-structure.md on every log
