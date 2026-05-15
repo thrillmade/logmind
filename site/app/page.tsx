@@ -56,15 +56,17 @@ export default function Home() {
   return (
     <div className="relative z-10 flex flex-col min-h-screen">
       {/* nav */}
-      <header className="px-6 sm:px-10 lg:px-16 py-6 flex items-center justify-between">
-        <a href="/" className="display text-xl tracking-tight">
-          logmind<span className="text-accent">.</span>
-        </a>
-        <nav className="flex items-center gap-6 sm:gap-8">
-          <NavLink href="https://github.com/thrillmot/logmind">github</NavLink>
-          <NavLink href="https://pypi.org/project/logmind/">pypi</NavLink>
-          <NavLink href="https://skills.sh/thrillmot/logmind-skill">skill</NavLink>
-        </nav>
+      <header className="px-6 sm:px-10 lg:px-16 py-6">
+        <div className="max-w-6xl mx-auto w-full flex items-center justify-between">
+          <a href="/" className="display text-xl tracking-tight">
+            logmind<span className="text-accent">.</span>
+          </a>
+          <nav className="flex items-center gap-6 sm:gap-8">
+            <NavLink href="https://github.com/thrillmot/logmind">github</NavLink>
+            <NavLink href="https://pypi.org/project/logmind/">pypi</NavLink>
+            <NavLink href="https://skills.sh/thrillmot/logmind-skill">skill</NavLink>
+          </nav>
+        </div>
       </header>
 
       {/* hero */}
@@ -82,7 +84,7 @@ export default function Home() {
             <span className="text-muted">you ever hire.</span>
           </h1>
 
-          <div className="rise mt-12 grid sm:grid-cols-12 gap-8 sm:gap-12" style={{ animationDelay: "0.18s" }}>
+          <div className="rise mt-12 grid grid-cols-1 sm:grid-cols-12 gap-8 sm:gap-12" style={{ animationDelay: "0.18s" }}>
             <div className="sm:col-span-1 marginalia hidden sm:block pt-2">
               <span className="block">¶ 01</span>
               <span className="block text-muted/60">brief</span>
@@ -118,18 +120,18 @@ export default function Home() {
             </aside>
           </div>
 
-          <div className="rise mt-12 flex items-center gap-4 text-sm" style={{ animationDelay: "0.32s" }}>
+          <div className="rise mt-12 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 text-sm" style={{ animationDelay: "0.32s" }}>
             <a
               href="https://github.com/thrillmot/logmind"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-mono uppercase tracking-[0.18em] px-5 py-3 bg-paper text-background hover:bg-accent hover:text-paper transition-colors"
+              className="font-mono uppercase tracking-[0.18em] px-5 py-3 bg-paper text-background hover:bg-accent hover:text-paper transition-colors text-center whitespace-nowrap"
             >
               read the source →
             </a>
             <a
               href="#install"
-              className="font-mono uppercase tracking-[0.18em] px-5 py-3 border border-rule hover:border-accent hover:text-accent transition-colors"
+              className="font-mono uppercase tracking-[0.18em] px-5 py-3 border border-rule hover:border-accent hover:text-accent transition-colors text-center whitespace-nowrap"
             >
               install ↓
             </a>
@@ -144,7 +146,7 @@ export default function Home() {
             <span>three principles</span>
           </div>
 
-          <div className="grid sm:grid-cols-3 gap-x-10 gap-y-12">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-10 gap-y-12">
             {[
               {
                 n: "i.",
@@ -218,7 +220,7 @@ export default function Home() {
         id="install"
         className="px-6 sm:px-10 lg:px-16 py-20 border-t border-rule"
       >
-        <div className="max-w-6xl mx-auto w-full grid sm:grid-cols-12 gap-8">
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 sm:grid-cols-12 gap-8">
           <div className="sm:col-span-4">
             <div className="marginalia mb-3">section ii</div>
             <h2 className="display text-4xl sm:text-5xl font-light leading-tight">
@@ -246,7 +248,7 @@ export default function Home() {
       {/* quickstart */}
       <section className="px-6 sm:px-10 lg:px-16 py-20 border-t border-rule">
         <div className="max-w-6xl mx-auto w-full">
-          <div className="grid sm:grid-cols-12 gap-8 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-8 mb-8">
             <div className="sm:col-span-4">
               <div className="marginalia mb-3">section iii</div>
               <h2 className="display text-4xl sm:text-5xl font-light leading-tight">
@@ -264,9 +266,18 @@ export default function Home() {
                   <span className="marginalia">~ ⁄ feat__auth</span>
                   <CopyButton text={QUICKSTART} label="Copy quickstart" />
                 </div>
-                <pre className="px-4 py-4 text-sm overflow-x-auto whitespace-pre leading-[1.7] font-mono text-foreground/90">
-                  <code>{QUICKSTART}</code>
-                </pre>
+                <div className="relative">
+                  <pre className="px-4 py-4 text-[11px] sm:text-sm overflow-x-auto whitespace-pre leading-[1.7] font-mono text-foreground/90">
+                    <code>{QUICKSTART}</code>
+                  </pre>
+                  {/* Right-edge fade as a visual cue that the block scrolls
+                      horizontally on narrow viewports. pointer-events-none
+                      so it doesn't block the swipe. */}
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-code-bg to-transparent sm:hidden"
+                  />
+                </div>
               </div>
             </div>
           </div>
