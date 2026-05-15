@@ -12,3 +12,11 @@
 - logmind agents update will refresh existing v0.1.1 AGENTS.md blocks to the v2 marker version (new URL) on next run
 
 ---
+## 2026-05-15 10:29 - refresh AGENTS.md to v2 marker block (new agent-skills URL)
+
+**Reasoning:** auto-refresh during the previous logmind log ran post-commit; rolling this up as evidence that find_outdated_marker_blocks correctly detects v1-slim → v2-slim and rewrites the URL in place
+
+**Implications:**
+- v0.1.1 users running 'logmind agents update' (or any 'logmind log') under v0.1.2 will get the same in-place URL refresh
+
+---
