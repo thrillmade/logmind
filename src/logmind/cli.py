@@ -39,7 +39,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.1.3", prog_name="logmind")
+@click.version_option(version="0.1.4", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -343,6 +343,23 @@ def init(
             f"  npx skills add -g {DEFAULT_SKILL_SOURCE} --skill logmind",
             fg="cyan",
         )
+
+    click.echo()
+    click.echo(
+        "Tip: if your default branch has required status checks (clud-bug, "
+        "check-decisions, etc.), set a LOGMIND_BOT_PAT secret so the "
+        "aggregator workflow's fallback PRs can satisfy them:"
+    )
+    click.secho(
+        "  gh secret set LOGMIND_BOT_PAT --body \"<your-fine-grained-PAT>\"",
+        fg="cyan",
+    )
+    click.echo(
+        "  (Fine-grained PAT scoped to this repo, Contents:write + "
+        "Pull-requests:write. Without it, aggregator PRs open but their "
+        "required checks never trigger — see logmind-aggregate.yml's env "
+        "comment.)"
+    )
 
 
 def _show_skill_recommendation(flag: Optional[bool]) -> None:
