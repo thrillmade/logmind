@@ -78,9 +78,7 @@ def collect_entries(docs_path: Path) -> List[TimelineEntry]:
                 TimelineEntry(
                     date=dt,
                     title=title,
-                    source_path=main_md.relative_to(root.parent)
-                    if root.parent.exists()
-                    else Path("docs/decisions.md"),
+                    source_path=Path("decisions.md"),
                     source_label="main",
                 )
             )
@@ -92,9 +90,7 @@ def collect_entries(docs_path: Path) -> List[TimelineEntry]:
                 TimelineEntry(
                     date=dt,
                     title=title,
-                    source_path=archive_md.relative_to(root.parent)
-                    if root.parent.exists()
-                    else Path("docs/decisions-archive.md"),
+                    source_path=Path("decisions-archive.md"),
                     source_label="archive",
                 )
             )
@@ -108,9 +104,7 @@ def collect_entries(docs_path: Path) -> List[TimelineEntry]:
                     TimelineEntry(
                         date=dt,
                         title=title,
-                        source_path=branch_file.relative_to(root.parent)
-                        if root.parent.exists()
-                        else Path("docs/decisions-branches") / branch_file.name,
+                        source_path=Path("decisions-branches") / branch_file.name,
                         source_label=label,
                     )
                 )
