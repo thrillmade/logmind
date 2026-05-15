@@ -96,6 +96,9 @@ jobs:
           # if a major dependency bumps.
           git config --global user.name "homebrew-bump"
           git config --global user.email "homebrew-bump@users.noreply.github.com"
+          # Configure git to use GH_TOKEN for all github.com HTTPS auth so
+          # `git push` against the tap remote works without prompting.
+          gh auth setup-git
 
           gh repo clone thrillmot/homebrew-logmind tap -- --quiet
           cd tap
