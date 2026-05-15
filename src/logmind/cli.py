@@ -8,6 +8,7 @@ import click
 
 from logmind.core.config import load_config
 from logmind.core.git_handler import commit_and_push, is_git_repo
+from logmind.core.gitignore import ensure_block as ensure_gitignore_block
 from logmind.core.inserter import (
     AGENT_REGISTRY,
     create_agent_file,
@@ -179,6 +180,12 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool, github_acti
         for wf in installed_workflows:
             click.echo(f"✓ Created {wf}")
 
+    # Ensure logmind block in .gitignore (idempotent; preserves user content)
+    gitignore_path = root_path / ".gitignore"
+    gitignore_changed = ensure_gitignore_block(gitignore_path)
+    if gitignore_changed:
+        click.echo("✓ Added logmind block to .gitignore")
+
     # Log first decision
     log_first_decision(docs_path)
     click.echo("✓ Logged first decision: \"Initialize logmind decision tracking\"")
@@ -213,6 +220,10 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool, github_acti
 
             # GH Action workflows installed during this init
             files_to_commit.extend(installed_workflows)
+
+            # .gitignore (if logmind block was added)
+            if gitignore_changed:
+                files_to_commit.append(".gitignore")
 
             commit_and_push(
                 files_to_commit,
