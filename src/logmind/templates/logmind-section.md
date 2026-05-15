@@ -54,8 +54,7 @@ logmind search "database" --no-archive
 ### Required Reading
 
 **READ THESE FILES FIRST** before starting any work:
-- **[docs/logmind-readme.md](docs/logmind-readme.md)** - Complete logmind documentation and usage guide (REQUIRED)
-- **[docs/decisions.md](docs/decisions.md)** - 20 most recent decisions (REQUIRED)
+- **[docs/decisions.md](docs/decisions.md)** - 20 most recent decisions on the default branch (REQUIRED)
 - **[docs/file-structure.md](docs/file-structure.md)** - Current project structure (REQUIRED)
 
 These files contain critical context about why the project is structured the way it is.
@@ -63,6 +62,7 @@ These files contain critical context about why the project is structured the way
 ### Additional Reference
 
 - **[docs/decisions-archive.md](docs/decisions-archive.md)** - Historical decisions (searchable reference, not required reading)
+- **docs/decisions-branches/** - Per-branch decision logs from in-flight feature work
 
 **Use `logmind search "keyword"` to find relevant past decisions quickly.**
 <!-- logmind-end -->

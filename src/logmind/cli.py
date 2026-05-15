@@ -170,12 +170,9 @@ def init(
     update_file_structure(docs_path)
     click.echo("✓ Created docs/file-structure.md")
 
-    # Copy README.md to docs/logmind-readme.md if it exists
-    readme_path = root_path / "README.md"
-    if readme_path.exists():
-        logmind_readme_path = docs_path / "logmind-readme.md"
-        logmind_readme_path.write_text(readme_path.read_text())
-        click.echo("✓ Created docs/logmind-readme.md")
+    # (logmind-readme.md was a copy of README.md kept under docs/ for legacy
+    # CLAUDE.md links; AGENTS.md now links to README.md at the root directly,
+    # so the copy is redundant and no longer created during init.)
 
     # Create .logmind directory and config file
     logmind_dir = root_path / ".logmind"
@@ -220,11 +217,6 @@ def init(
                 "docs/file-structure.md",
                 ".logmind/config.yml",
             ]
-
-            # Add logmind-readme.md if it was created
-            logmind_readme_path = docs_path / "logmind-readme.md"
-            if logmind_readme_path.exists():
-                files_to_commit.append("docs/logmind-readme.md")
 
             # Add any created AI instruction files
             for agent_name in (agents or ["claude"]):
