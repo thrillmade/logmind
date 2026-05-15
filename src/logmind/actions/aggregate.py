@@ -19,6 +19,7 @@ from typing import Optional
 
 from logmind.core.logger import _sanitize_branch
 from logmind.core.parser import iter_decisions
+from logmind.core.tree_gen import update_file_structure
 
 
 def aggregate(
@@ -62,6 +63,17 @@ def aggregate(
     decisions_path = docs_path / "decisions.md"
     existing = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
     decisions_path.write_text(existing + entry, encoding="utf-8")
+
+    # Regenerate file-structure.md on main as part of the aggregation commit.
+    # `logmind log` on feature branches no longer touches this file (v0.1.3),
+    # so per-PR conflicts can't happen — main alone owns the tree snapshot.
+    try:
+        update_file_structure(docs_path)
+    except Exception:
+        # Don't fail aggregation if tree regen blows up — the decision entry
+        # is the load-bearing part.
+        pass
+
     return decisions_path
 
 

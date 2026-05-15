@@ -1,5 +1,6 @@
 """Command-line interface for logmind."""
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -38,10 +39,55 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.1.2", prog_name="logmind")
+@click.version_option(version="0.1.3", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
+
+
+_AGENT_FILE_CANDIDATES = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".cursorrules",
+    ".windsurfrules",
+    ".continuerules",
+    ".clinerules",
+    ".aiderrules",
+    "CONVENTIONS.md",
+    ".github/copilot-instructions.md",
+    ".amazonq/rules.md",
+    ".sourcegraph/cody.json",
+    ".zed/settings.json",
+)
+
+
+def _changed_agent_files(root_path: Optional[Path] = None) -> list:
+    """Return agent files that are currently modified or untracked.
+
+    Used by `logmind log` (v0.1.3+) so the agent-file sync that ran just
+    before the commit can include refreshed files in the scoped staging
+    instead of leaving the working tree dirty after the commit.
+    """
+    if root_path is None:
+        root_path = Path.cwd()
+    changed: list = []
+    for rel in _AGENT_FILE_CANDIDATES:
+        path = root_path / rel
+        if not path.exists():
+            continue
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain", "--", rel],
+                cwd=root_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+        if result.stdout.strip():
+            changed.append(rel)
+    return changed
 
 
 def _install_github_action_templates(root_path: Path) -> list:
@@ -500,6 +546,19 @@ def log(
     should_push = config.auto_push if not no_push else False
 
     try:
+        # v0.1.3: run agent-file sync BEFORE the commit so refreshed AGENTS.md
+        # / CLAUDE.md / etc. are included in the scoped staging instead of
+        # left as dirty working-tree changes after the commit.
+        sync_messages = sync_agent_files_from_config()
+        for msg in sync_messages:
+            click.echo(msg)
+
+        # Snapshot agent files that the sync left modified so log_decision
+        # can include them in the scoped commit. We list a fixed set of
+        # known agent files (broader than the AGENTS.md auto-refresh, since
+        # other agents may have stubs).
+        extra_scoped_paths = _changed_agent_files()
+
         log_decision(
             decision=decision,
             reasoning=reasoning,
@@ -509,6 +568,7 @@ def log(
             auto_commit=should_commit,
             auto_push=should_push,
             stage=stage,
+            extra_scoped_paths=extra_scoped_paths,
         )
 
         click.secho(f"✓ Logged decision: \"{decision}\"", fg="green")
@@ -518,11 +578,6 @@ def log(
                 click.echo("✓ Committed and pushed changes")
             else:
                 click.echo("✓ Committed changes (push disabled)")
-
-        # Sync agent files from config
-        sync_messages = sync_agent_files_from_config()
-        for msg in sync_messages:
-            click.echo(msg)
 
     except Exception as e:
         click.secho(f"Error: {e}", fg="red")
