@@ -224,6 +224,11 @@ def test_timeline_cli_check_fails_when_stale(tmp_path, monkeypatch):
     )
     assert result.exit_code == 1
     assert "stale" in result.output.lower() or "re-run" in result.output.lower()
+    # Regression: the remediation hint must interpolate the actual path,
+    # not print literal `{write_path}` (caught the f-string concat bug
+    # flagged in clud-bug review of PR #36).
+    assert str(target) in result.output
+    assert "{write_path}" not in result.output
 
 
 def test_timeline_cli_check_passes_when_fresh(tmp_path, monkeypatch):

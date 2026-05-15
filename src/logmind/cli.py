@@ -236,6 +236,14 @@ def init(
     update_file_structure(docs_path)
     click.echo("✓ Created docs/file-structure.md")
 
+    # timeline.md — v0.2+ derived artifact. AGENTS.md links to it, so seed
+    # it now to avoid a broken link on the freshly-initialized repo's first
+    # CI run. Subsequent PRs will regenerate it via regen-timeline.yml.
+    from logmind.core.timeline import write_timeline
+
+    write_timeline(docs_path / "timeline.md", docs_path)
+    click.echo("✓ Created docs/timeline.md")
+
     # (logmind-readme.md was a copy of README.md kept under docs/ for legacy
     # CLAUDE.md links; AGENTS.md now links to README.md at the root directly,
     # so the copy is redundant and no longer created during init.)
@@ -281,6 +289,7 @@ def init(
                 "docs/decisions.md",
                 "docs/decisions-archive.md",
                 "docs/file-structure.md",
+                "docs/timeline.md",
                 ".logmind/config.yml",
             ]
 
@@ -1401,7 +1410,7 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
         if existing != rendered:
             click.secho(
                 f"✗ {write_path} is stale — re-run "
-                "`logmind timeline --write {write_path}` and commit.",
+                f"`logmind timeline --write {write_path}` and commit.",
                 fg="yellow",
             )
             sys.exit(1)

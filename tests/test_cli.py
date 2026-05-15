@@ -88,6 +88,23 @@ def test_init_does_not_install_aggregator_workflow(temp_dir):
         assert regen.exists(), "regen-timeline workflow must replace it"
 
 
+def test_init_seeds_timeline_md(temp_dir):
+    """v0.2: AGENTS.md template links docs/timeline.md, and check-doc-links
+    runs on first push. `logmind init` must seed timeline.md so the link
+    isn't broken until the first PR triggers regen-timeline.yml.
+    Caught by clud-bug review of PR #36 (issue #3, three review rounds)."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git", "--no-skill-install"])
+        assert result.exit_code == 0
+        timeline = Path("docs/timeline.md")
+        assert timeline.exists(), \
+            "logmind init must create docs/timeline.md to keep AGENTS.md link valid"
+        # And it should be a valid timeline file, not just a placeholder
+        content = timeline.read_text(encoding="utf-8")
+        assert "Decision Timeline" in content
+
+
 def test_init_command_already_initialized(git_repo):
     """Test init when already initialized."""
     runner = CliRunner()
