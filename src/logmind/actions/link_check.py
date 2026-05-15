@@ -156,8 +156,15 @@ def format_report(broken: List[str], orphans: List[str]) -> str:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """Entry point for ``logmind check-links`` and the GH Action."""
-    repo_root = Path(os.environ.get("GITHUB_WORKSPACE") or os.getcwd())
+    """Entry point for ``logmind check-links`` and the GH Action.
+
+    Always operates on the current working directory. GH Actions runs
+    ``run:`` steps with cwd set to ``$GITHUB_WORKSPACE`` automatically, so
+    we don't need to special-case it (and reading the env var would
+    actually defeat tests that monkeypatch.chdir into a temp dir while
+    running on a CI runner that has GITHUB_WORKSPACE pointed elsewhere).
+    """
+    repo_root = Path(os.getcwd())
 
     # Optional config overrides via .logmind/config.yml
     allow_orphans = list(DEFAULT_ALLOW_ORPHANS)
