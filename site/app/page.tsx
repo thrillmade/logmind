@@ -74,12 +74,12 @@ export default function Home() {
             v0.1 ⁄ released 2026-05-15 ⁄ MIT
           </div>
           <h1 className="rise display text-[12vw] sm:text-[8.5vw] leading-[0.92] font-light max-w-[16ch]" style={{ animationDelay: "0.05s" }}>
-            Decisions,
-            <br />
-            <span className="italic font-normal">captured</span>
+            Infinite context
             <span className="text-accent">.</span>
             <br />
-            <span className="text-muted">while you work.</span>
+            <span className="italic font-normal text-muted">For every agent</span>
+            <br />
+            <span className="text-muted">you ever hire.</span>
           </h1>
 
           <div className="rise mt-12 grid sm:grid-cols-12 gap-8 sm:gap-12" style={{ animationDelay: "0.18s" }}>
@@ -88,23 +88,31 @@ export default function Home() {
               <span className="block text-muted/60">brief</span>
             </div>
             <p className="lead sm:col-span-7 text-lg leading-[1.55] text-foreground/85">
-              An opinionated decision log for AI-assisted development. One CLI
-              command per architectural choice. Branch-aware by default.
-              <span className="text-accent"> AGENTS.md </span>
-              canonical. Plugs into the agents you already use — Claude Code,
-              Cursor, Codex, Cline, Continue — with no per-tool drift.
+              <span className="text-accent">Capture decisions while you work.</span> One CLI
+              command per choice — no quarterly ADR backlog. Every new
+              agent (Claude Code, Cursor, Codex, Cline) gets the full
+              <em> why-behind-the-code </em>in one read. Markdown links between
+              docs are checked on every PR; the project tree is regenerated on
+              every log; tests stay green. Documentation that can&apos;t go stale,
+              context that scales with your team.
             </p>
             <aside className="sm:col-span-4 sm:border-l sm:border-rule sm:pl-6 marginalia space-y-3 self-start pt-2">
               <div>
                 <span className="block">made for</span>
                 <span className="block text-foreground/85 normal-case tracking-normal">
-                  developers shipping with AI agents
+                  teams shipping with AI agents
                 </span>
               </div>
               <div>
-                <span className="block">opposite of</span>
+                <span className="block">replaces</span>
                 <span className="block text-foreground/85 normal-case tracking-normal">
-                  ADRs you write at the end of the quarter
+                  end-of-quarter ADRs that nobody reads
+                </span>
+              </div>
+              <div>
+                <span className="block">onboards</span>
+                <span className="block text-foreground/85 normal-case tracking-normal">
+                  new agents in one read
                 </span>
               </div>
             </aside>
@@ -140,46 +148,49 @@ export default function Home() {
             {[
               {
                 n: "i.",
-                title: "branch-aware",
+                title: "captured while you work",
                 body: (
                   <>
-                    Decisions on a feature branch land in{" "}
-                    <code className="font-mono text-accent text-[0.85em]">
-                      docs/decisions-branches/&lt;branch&gt;.md
-                    </code>
-                    . On PR merge, an action appends a one-line summary to{" "}
+                    One{" "}
                     <code className="font-mono text-foreground text-[0.85em]">
-                      docs/decisions.md
+                      logmind log
                     </code>{" "}
-                    with the PR link. No more conflicts on the shared file.
+                    per architectural choice — written, committed, and routed
+                    to the right per-branch file in a single command. No
+                    after-the-fact ADR-writing meetings. The reasoning lives
+                    next to the code, in git, the moment the call is made.
                   </>
                 ),
               },
               {
                 n: "ii.",
-                title: "agents.md-first",
+                title: "auto-documentation",
                 body: (
                   <>
-                    A single canonical instruction file. CLAUDE.md, .cursorrules,
-                    .windsurfrules, .clinerules, AGENTS.md — nine of them become
-                    <em> two-line stubs</em> pointing at the canonical source.
-                    No drift, no duplication.
+                    AGENTS.md is canonical; CLAUDE.md, .cursorrules,
+                    .windsurfrules become 2-line stubs. Every relative{" "}
+                    <code className="font-mono text-foreground text-[0.85em]">
+                      [link](path.md)
+                    </code>{" "}
+                    is verified on every PR. The project tree regenerates on
+                    every log. Docs <em>can&apos;t</em> drift out of sync — CI
+                    fails the moment they try.
                   </>
                 ),
               },
               {
                 n: "iii.",
-                title: "link integrity",
+                title: "infinite context for agents",
                 body: (
                   <>
-                    A GitHub Action ships with{" "}
-                    <code className="font-mono text-foreground text-[0.85em]">logmind init</code>
-                    : every relative{" "}
+                    Any agent that supports{" "}
                     <code className="font-mono text-foreground text-[0.85em]">
-                      [link](path.md)
+                      AGENTS.md
                     </code>{" "}
-                    between docs is verified on every PR. A rename can never
-                    silently orphan an agent's context again.
+                    instantly inherits everything: the decision history, the
+                    file tree, the why-behind-the-code. Onboarding a new agent
+                    takes <em>one read</em>. Every agent in your stack works
+                    from the same source of truth.
                   </>
                 ),
               },
@@ -266,12 +277,13 @@ export default function Home() {
       <section className="px-6 sm:px-10 lg:px-16 py-24 border-t border-rule">
         <div className="max-w-6xl mx-auto w-full">
           <p className="display italic text-2xl sm:text-3xl text-foreground/85 leading-snug max-w-3xl">
-            “The why behind the code disappears faster than the what. logmind
-            makes that disappearance{" "}
-            <span className="text-accent not-italic">expensive</span> on
-            purpose.”
+            “Every agent you’ve ever onboarded asked the same questions
+            because the answers lived in someone’s head. logmind moves them
+            into git, into AGENTS.md, into the{" "}
+            <span className="text-accent not-italic">tests that run on every PR</span>
+            — so the next agent never has to ask.”
           </p>
-          <div className="marginalia mt-6">— project README</div>
+          <div className="marginalia mt-6">— design intent</div>
         </div>
       </section>
 

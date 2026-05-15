@@ -18,13 +18,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "logmind — branch-aware AI decision logging",
+  title: "logmind — infinite context for every agent you ever hire",
   description:
-    "An opinionated decision log for AI-assisted development. One CLI command per architectural choice. Branch-aware. AGENTS.md-canonical.",
+    "Capture AI decisions while you work. Every new agent gets the full why-behind-the-code in one read. AGENTS.md canonical, link integrity on every PR, project tree always current.",
   metadataBase: new URL("https://logmind.dev"),
   openGraph: {
     title: "logmind",
-    description: "Branch-aware AI decision logging for development projects.",
+    description: "Infinite context for every agent. Captured while you work.",
     url: "https://logmind.dev",
     siteName: "logmind",
     type: "website",
@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "logmind",
-    description: "Branch-aware AI decision logging for development projects.",
+    description: "Infinite context for every agent. Captured while you work.",
   },
 };
 
