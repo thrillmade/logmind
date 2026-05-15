@@ -43,6 +43,9 @@ dev = [
     "pytest>=7.0.0",
     "black>=23.0.0",
     "mypy>=1.0.0",
+    "ruff>=0.5.0",
+    "pre-commit>=3.5.0",
+    "build>=1.0.0",
 ]
 langchain = [
     "langchain-core>=0.1.0",
@@ -56,19 +59,36 @@ Homepage = "https://github.com/thrillmot/logmind"
 Documentation = "https://github.com/thrillmot/logmind#readme"
 Repository = "https://github.com/thrillmot/logmind"
 "Bug Tracker" = "https://github.com/thrillmot/logmind/issues"
+Changelog = "https://github.com/thrillmot/logmind/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-logmind = ["templates/*.template", "templates/*.md"]
+logmind = [
+    "templates/*.template",
+    "templates/*.md",
+    "templates/github/*.template",
+]
 
 [tool.black]
 line-length = 100
 target-version = ['py38']
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # line length handled by black
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]  # allow asserts
 
 [tool.mypy]
 python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+ignore_missing_imports = true

@@ -219,49 +219,118 @@ AI agents read files for full project context:
 - [x] Homebrew tap formula (`homebrew-tap/Formula/logmind.rb`)
 - [x] Test suite expanded to 301 tests (all passing)
 
-### Phase 5: Publication & Distribution 🔲 IN PROGRESS
+### Phase 5: Branch-aware decision storage 🔲 IN PROGRESS
 
-Goal: make `pip install logmind` and `brew install logmind` work publicly, and enable `logmind update` to self-upgrade in any repo.
+Goal: support multi-developer / multi-branch workflows without merge-conflict churn on `docs/decisions.md`.
 
-- [ ] Build distribution artifacts
-  ```bash
-  python -m build   # produces dist/logmind-x.x.x.tar.gz and .whl
-  ```
-- [ ] Publish to PyPI
-  ```bash
-  twine upload dist/*
-  # Requires: PyPI account + API token stored as PYPI_API_TOKEN
-  ```
-- [ ] Verify public install works
-  ```bash
-  pip install logmind
-  logmind --version
-  ```
-- [ ] Create GitHub Release with tag `v0.1.0` and upload the `.tar.gz` artifact
-- [ ] Create separate `homebrew-logmind` GitHub repo (Homebrew tap convention requires `homebrew-<name>`)
-  - Copy `homebrew-tap/Formula/logmind.rb` into `Formula/logmind.rb` in that repo
-- [ ] Compute real SHA256 for the published PyPI tarball
-  ```bash
-  curl -sL https://files.pythonhosted.org/packages/source/l/logmind/logmind-0.1.0.tar.gz | shasum -a 256
-  ```
-- [ ] Update formula `sha256 "PLACEHOLDER_SHA256"` with the real value and push to tap repo
-- [ ] Verify Homebrew install works end-to-end
-  ```bash
-  brew tap thrillmot/logmind
-  brew install logmind
-  logmind --version
-  ```
-- [ ] Verify `logmind update` self-upgrades correctly in another repo
-  ```bash
-  logmind update
-  ```
-- [ ] Add GitHub Actions workflow to auto-publish to PyPI on release tag push (`on: push: tags: ['v*']`)
+- [ ] `git_handler.current_branch()` and `git_handler.default_branch()` helpers
+- [ ] `logger.log()` resolves write target by branch:
+  - Default branch (or non-git repo) → `docs/decisions.md`
+  - Other branches → `docs/decisions-branches/<sanitized-branch>.md`
+- [ ] `_archive_oldest_decision()` operates on whichever file was just written
+- [ ] New config knob `decisions.branch_aware: true` (default) — opt-out preserves legacy behaviour
+- [ ] `tests/test_branch_aware_logging.py` covers default-branch, feature-branch, opt-out, archival, non-git-repo cases
+
+### Phase 6: PR-merge aggregation GitHub Action 🔲 IN PROGRESS
+
+Goal: when a feature branch merges, append a one-line entry to `docs/decisions.md` linking the PR + the per-branch detail file.
+
+- [ ] `src/logmind/actions/aggregate.py` reads merged-branch file and appends merge entry
+- [ ] `src/logmind/templates/github/logmind-aggregate.yml.template` triggers on `pull_request: closed && merged`
+- [ ] `logmind init` copies the workflow into `.github/workflows/`
+- [ ] `tests/test_action_aggregate.py` exercises the aggregator against a mock PR payload
+
+### Phase 7: Markdown link integrity CI 🔲 IN PROGRESS
+
+Goal: ship a `logmind check-links` command + GitHub Action that fails CI on broken or orphaned `.md` links — links are how agents stay in context.
+
+- [ ] `src/logmind/actions/link_check.py` walks README + docs/, reports broken + orphan links
+- [ ] `logmind check-links` CLI subcommand
+- [ ] `src/logmind/templates/github/check-doc-links.yml.template` runs the checker on every PR
+- [ ] Config: `linkcheck.allow_orphans` and `linkcheck.roots` in `.logmind/config.yml`
+- [ ] `tests/test_link_check.py`
+
+### Phase 8: AGENTS.md as canonical, others as stubs 🔲 IN PROGRESS
+
+Goal: collapse 11 duplicated agent-instruction files to one canonical AGENTS.md + 2-line stubs.
+
+- [ ] `src/logmind/templates/AGENTS.md.template` — full canonical template
+- [ ] `src/logmind/templates/agent-stub.md` — 2-line "see AGENTS.md" stub
+- [ ] `inserter.py` writes canonical content to AGENTS.md, stubs to other agent files
+- [ ] `logmind agents migrate` command — merges existing per-agent content into AGENTS.md, replaces with stub
+- [ ] `tests/test_agents_consolidation.py`
+
+### Phase 9: Tree generation hardening + .gitignore management 🔲 IN PROGRESS
+
+Goal: deterministic tree output and a managed `.gitignore` block written by `logmind init`.
+
+- [ ] `tree_gen.py` fallback: stable sort, gitignore-aware, byte-identical across platforms
+- [ ] `logmind tree` CLI subcommand for on-demand regeneration
+- [ ] `src/logmind/core/gitignore.py` with `ensure_block()` helper (idempotent, preserves manual edits inside the marker block)
+- [ ] `logmind init` writes a `# logmind` block to `.gitignore` (`.logmind/cache/`, `.logmind/.lock`)
+- [ ] `tests/test_file_structure_updates.py` and `tests/test_gitignore_management.py`
+
+### Phase 10: `logmind` agent skill + install offer 🔲 IN PROGRESS
+
+Goal: publish a skills.sh skill so any AI agent in any project knows how to use logmind, and have `logmind init` offer to install it globally.
+
+- [ ] Author SKILL.md (separate `logmind-skill` repo, scaffolded under this branch but pushed at release time)
+- [ ] `src/logmind/core/skill_install.py` with `is_skills_available()` and `install_globally()`
+- [ ] `logmind init` prompts (and accepts `--skill-install/--no-skill-install`)
+- [ ] Submit skill to the skills.sh registry
+
+### Phase 11: Publication & open-source readiness 🔲 IN PROGRESS
+
+Goal: make `pip install logmind` and `brew install logmind` work publicly, meet open-source quality bars (CI matrix, contribution docs, security policy), and enable `logmind update` to self-upgrade in any repo.
+
+**11a. Repository hygiene files**
+
+- [ ] `CONTRIBUTING.md` — dev setup, test command, code style, PR checklist
+- [ ] `CODE_OF_CONDUCT.md` — Contributor Covenant 2.1
+- [ ] `SECURITY.md` — vulnerability reporting, supported versions
+- [ ] `.github/ISSUE_TEMPLATE/{bug_report,feature_request,config}.{md,yml}`
+- [ ] `.github/PULL_REQUEST_TEMPLATE.md`
+- [ ] `CHANGELOG.md` — Keep-a-Changelog header, full v0.1.0 entry
+
+**11b. CI matrix workflow**
+
+- [ ] `.github/workflows/test.yml` — pytest on Python 3.8 / 3.10 / 3.12 / 3.13 (Ubuntu) + 3.12 (macOS, Windows smoke)
+- [ ] Workflow also runs `logmind check-links` against the repo's own docs
+
+**11c. Quality gates**
+
+- [ ] `pyproject.toml` `[tool.ruff]`, `[tool.black]`, `[tool.mypy]` config
+- [ ] `.pre-commit-config.yaml` — ruff, black, mypy, link checker, file hygiene
+- [ ] `.github/dependabot.yml` — weekly pip + github-actions updates
+
+**11d. Discoverability**
+
+- [ ] `pyproject.toml` `[project.urls]`, `keywords`, `classifiers`
+- [ ] README badges (PyPI, CI, license, Python versions)
+- [ ] GitHub repo description + topics (manual)
+
+**11e. Release automation**
+
+- [ ] `.github/workflows/publish.yml` — tag-triggered build + PyPI publish via OIDC (Trusted Publisher)
+- [ ] Workflow also creates a GitHub Release with the artifacts and CHANGELOG excerpt
+
+**11f. PyPI / Homebrew publish**
+
+- [ ] Build distribution artifacts (`python -m build`)
+- [ ] First publish to PyPI (`twine upload dist/*` or auto via tag)
+- [ ] Verify `pip install logmind && logmind --version`
+- [ ] Create GitHub Release with tag `v0.1.0`
+- [ ] Create separate `homebrew-logmind` GitHub repo (tap convention: `homebrew-<name>`)
+- [ ] Compute real SHA256 from PyPI tarball; update formula
+- [ ] Verify `brew tap thrillmot/logmind && brew install logmind && logmind --version`
+- [ ] Verify `logmind update` self-upgrades in another repo
 
 ### Test Progression
 - Phase 1: 65 tests
 - Phase 2: 95 tests
 - Phase 3: 178 tests
-- Phase 4: 301 tests (all passing)
+- Phase 4: 301 tests
+- Phases 5–10 (this branch): targeting 400+ tests with new branch-aware, aggregator, link-check, agents-consolidation, gitignore, tree, and skill-install suites
 
 ## Completed Features
 
@@ -271,7 +340,8 @@ See [README.md](../README.md) for usage documentation.
 - **Phase 2**: Configuration system, search functionality
 - **Phase 3**: Decorators (`@log_decision`, `@log_choice`) + Universal agent support (11 agents)
 - **Phase 4**: Framework integrations, pre-commit hook, templates, analytics, aggregation, Homebrew
-- **Phase 5**: Publication & distribution (in progress — see checklist above)
+- **Phases 5–10** (in progress — current branch `virtual-kurzweil`): branch-aware decision storage, PR-merge aggregator GH Action, markdown link-integrity CI, AGENTS.md consolidation, tree/`.gitignore` hardening, `logmind` skill on skills.sh
+- **Phase 11**: Open-source publication readiness + PyPI / Homebrew publish
 
 ### Supported AI Agents
 

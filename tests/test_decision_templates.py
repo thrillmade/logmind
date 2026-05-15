@@ -109,9 +109,9 @@ def _setup_docs(path: Path) -> Path:
     """Create docs directory with required files at path."""
     docs = path / "docs"
     docs.mkdir(exist_ok=True)
-    (docs / "decisions.md").write_text("# Decision Log\n\n---\n")
-    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n")
-    (docs / "file-structure.md").write_text("# File Structure\n\n```\n.\n```\n")
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n", encoding="utf-8")
+    (docs / "file-structure.md").write_text("# File Structure\n\n```\n.\n```\n", encoding="utf-8")
     return docs
 
 
@@ -125,7 +125,7 @@ def test_log_with_template_prefills_reasoning(git_repo):
             main, ["log", "--template", "database", "Use PostgreSQL", "--no-commit"]
         )
         assert result.exit_code == 0, result.output
-        decisions = (Path(".") / "docs" / "decisions.md").read_text()
+        decisions = (Path(".") / "docs" / "decisions.md").read_text(encoding="utf-8")
 
     assert "Evaluated data model" in decisions
 
@@ -140,7 +140,7 @@ def test_log_with_template_prefills_alternatives(git_repo):
             main, ["log", "--template", "database", "Use PostgreSQL", "--no-commit"]
         )
         assert result.exit_code == 0, result.output
-        decisions = (Path(".") / "docs" / "decisions.md").read_text()
+        decisions = (Path(".") / "docs" / "decisions.md").read_text(encoding="utf-8")
 
     assert "PostgreSQL" in decisions or "MySQL" in decisions
 
@@ -155,7 +155,7 @@ def test_log_with_template_prefills_implications(git_repo):
             main, ["log", "--template", "database", "Use PostgreSQL", "--no-commit"]
         )
         assert result.exit_code == 0, result.output
-        decisions = (Path(".") / "docs" / "decisions.md").read_text()
+        decisions = (Path(".") / "docs" / "decisions.md").read_text(encoding="utf-8")
 
     assert "Connection pooling" in decisions or "migration" in decisions.lower()
 
@@ -176,7 +176,7 @@ def test_log_explicit_reasoning_overrides_template(git_repo):
             ],
         )
         assert result.exit_code == 0, result.output
-        decisions = (Path(".") / "docs" / "decisions.md").read_text()
+        decisions = (Path(".") / "docs" / "decisions.md").read_text(encoding="utf-8")
 
     assert "My custom reasoning" in decisions
     assert "Evaluated data model" not in decisions
@@ -198,7 +198,7 @@ def test_log_explicit_alternatives_override_template(git_repo):
             ],
         )
         assert result.exit_code == 0, result.output
-        decisions = (Path(".") / "docs" / "decisions.md").read_text()
+        decisions = (Path(".") / "docs" / "decisions.md").read_text(encoding="utf-8")
 
     assert "CockroachDB" in decisions
 
@@ -219,7 +219,7 @@ def test_log_explicit_implications_override_template(git_repo):
             ],
         )
         assert result.exit_code == 0, result.output
-        decisions = (Path(".") / "docs" / "decisions.md").read_text()
+        decisions = (Path(".") / "docs" / "decisions.md").read_text(encoding="utf-8")
 
     assert "Custom implication here" in decisions
 
@@ -277,6 +277,6 @@ def test_log_api_template(git_repo):
             main, ["log", "--template", "api", "Use REST API", "--no-commit"]
         )
         assert result.exit_code == 0, result.output
-        decisions = (Path(".") / "docs" / "decisions.md").read_text()
+        decisions = (Path(".") / "docs" / "decisions.md").read_text(encoding="utf-8")
 
     assert "REST" in decisions or "GraphQL" in decisions

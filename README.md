@@ -1,12 +1,26 @@
 # logmind
 
-AI decision logging system for development projects.
+[![PyPI](https://img.shields.io/pypi/v/logmind.svg)](https://pypi.org/project/logmind/)
+[![Python versions](https://img.shields.io/pypi/pyversions/logmind.svg)](https://pypi.org/project/logmind/)
+[![CI](https://github.com/thrillmot/logmind/actions/workflows/test.yml/badge.svg)](https://github.com/thrillmot/logmind/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Overview
+AI decision logging for development projects — branch-aware by default.
 
-logmind automatically tracks decisions made during AI-assisted development, maintains up-to-date documentation, and provides rich context for AI agents.
+## Why logmind
 
-**Key concept:** Install once, init anywhere, log everything.
+Codebases lose the *why* behind their code faster than the *what*. logmind
+captures architectural and implementation decisions as you make them,
+attaches them to the relevant git branch, and surfaces them to the next
+human or AI that works in the repo. One CLI command per decision; the
+package handles the docs, the branch routing, and the merge-time
+aggregation.
+
+**Key concept:** Install once, init anywhere, log everything. Feature
+branches get their own decision file; on PR merge a GitHub Action appends
+a one-line summary to `docs/decisions.md` linking the PR + the branch
+detail. AGENTS.md is the canonical agent-instruction file; per-tool files
+(CLAUDE.md, .cursorrules, ...) are 2-line stubs pointing to it.
 
 ## Installation
 

@@ -47,7 +47,7 @@ def test_init_command_in_git_repo(git_repo):
         assert (cwd / "CLAUDE.md").exists()
 
         # Check first decision was logged
-        content = (cwd / "docs" / "decisions.md").read_text()
+        content = (cwd / "docs" / "decisions.md").read_text(encoding="utf-8")
         assert "Initialize logmind decision tracking" in content
 
 
@@ -103,7 +103,7 @@ def test_log_command_basic(git_repo):
         assert "Logged decision" in result.output
 
         # Check decision was added
-        content = (Path.cwd() / "docs" / "decisions.md").read_text()
+        content = (Path.cwd() / "docs" / "decisions.md").read_text(encoding="utf-8")
         assert "Test decision" in content
 
 
@@ -118,7 +118,7 @@ def test_log_command_with_reasoning(git_repo):
 
         assert result.exit_code == 0
 
-        content = (Path.cwd() / "docs" / "decisions.md").read_text()
+        content = (Path.cwd() / "docs" / "decisions.md").read_text(encoding="utf-8")
         assert "Test decision" in content
         assert "Because reasons" in content
 
@@ -136,7 +136,7 @@ def test_log_command_with_alternatives(git_repo):
 
         assert result.exit_code == 0
 
-        content = (Path.cwd() / "docs" / "decisions.md").read_text()
+        content = (Path.cwd() / "docs" / "decisions.md").read_text(encoding="utf-8")
         assert "Option A" in content
         assert "Option B" in content
 
@@ -154,7 +154,7 @@ def test_log_command_with_implications(git_repo):
 
         assert result.exit_code == 0
 
-        content = (Path.cwd() / "docs" / "decisions.md").read_text()
+        content = (Path.cwd() / "docs" / "decisions.md").read_text(encoding="utf-8")
         assert "Impact 1" in content
         assert "Impact 2" in content
 
@@ -353,7 +353,7 @@ def test_agents_add_existing_file(temp_dir):
 
     with runner.isolated_filesystem(temp_dir=temp_dir):
         # Create existing file without logmind section
-        (Path.cwd() / ".cursorrules").write_text("# Existing rules\n")
+        (Path.cwd() / ".cursorrules").write_text("# Existing rules\n", encoding="utf-8")
 
         result = runner.invoke(main, ["agents", "add", "cursor", "--no-commit"])
 
@@ -367,7 +367,7 @@ def test_agents_remove_command(temp_dir):
 
     with runner.isolated_filesystem(temp_dir=temp_dir):
         # Create the file first
-        (Path.cwd() / ".cursorrules").write_text("rules\n")
+        (Path.cwd() / ".cursorrules").write_text("rules\n", encoding="utf-8")
 
         result = runner.invoke(main, ["agents", "remove", "cursor", "--force", "--no-commit"])
 
@@ -430,7 +430,7 @@ def test_init_with_all_agents_flag(temp_dir):
 
 
 def test_init_with_windsurf(temp_dir):
-    """Test init with windsurf agent."""
+    """Init with windsurf creates a stub .windsurfrules + canonical AGENTS.md."""
     runner = CliRunner()
 
     with runner.isolated_filesystem(temp_dir=temp_dir):
@@ -438,8 +438,10 @@ def test_init_with_windsurf(temp_dir):
 
         assert result.exit_code == 0
         assert (Path.cwd() / ".windsurfrules").exists()
-        content = (Path.cwd() / ".windsurfrules").read_text()
-        assert "<!-- logmind-start -->" in content
+        assert "<!-- logmind-stub:" in (Path.cwd() / ".windsurfrules").read_text(encoding="utf-8")
+        # AGENTS.md is canonical and contains the actual logmind block
+        assert (Path.cwd() / "AGENTS.md").exists()
+        assert "<!-- logmind-start -->" in (Path.cwd() / "AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_init_with_unknown_agent_warns(temp_dir):
@@ -496,9 +498,9 @@ def test_show_command_syncs_agent_files(temp_dir):
 
         # Manually enable cursor in config
         config_path = Path.cwd() / ".logmind" / "config.yml"
-        config_content = config_path.read_text()
+        config_content = config_path.read_text(encoding="utf-8")
         config_content = config_content.replace("cursor: false", "cursor: true")
-        config_path.write_text(config_content)
+        config_path.write_text(config_content, encoding="utf-8")
 
         # Run show (should sync and create .cursorrules)
         result = runner.invoke(show)
@@ -517,9 +519,9 @@ def test_log_command_syncs_agent_files(git_repo):
 
         # Manually enable windsurf in config
         config_path = Path.cwd() / ".logmind" / "config.yml"
-        config_content = config_path.read_text()
+        config_content = config_path.read_text(encoding="utf-8")
         config_content = config_content.replace("windsurf: false", "windsurf: true")
-        config_path.write_text(config_content)
+        config_path.write_text(config_content, encoding="utf-8")
 
         # Run log (should sync and create .windsurfrules)
         result = runner.invoke(log, ["Test decision", "--no-commit"])
@@ -530,22 +532,27 @@ def test_log_command_syncs_agent_files(git_repo):
 
 
 def test_init_creates_default_agents(temp_dir):
-    """Test that init creates both CLAUDE.md and .cursorrules by default."""
+    """Init creates AGENTS.md (canonical) plus stub CLAUDE.md and .cursorrules."""
     runner = CliRunner()
 
     with runner.isolated_filesystem(temp_dir=temp_dir):
         result = runner.invoke(init, ["--no-git"])
 
         assert result.exit_code == 0
-        # Both claude and cursor are enabled by default
+        # Canonical doc + per-agent stubs
+        assert (Path.cwd() / "AGENTS.md").exists()
         assert (Path.cwd() / "CLAUDE.md").exists()
         assert (Path.cwd() / ".cursorrules").exists()
 
-        # Verify they have logmind sections
-        claude_content = (Path.cwd() / "CLAUDE.md").read_text()
-        cursor_content = (Path.cwd() / ".cursorrules").read_text()
-        assert "<!-- logmind-start -->" in claude_content
-        assert "<!-- logmind-start -->" in cursor_content
+        agents_content = (Path.cwd() / "AGENTS.md").read_text(encoding="utf-8")
+        claude_content = (Path.cwd() / "CLAUDE.md").read_text(encoding="utf-8")
+        cursor_content = (Path.cwd() / ".cursorrules").read_text(encoding="utf-8")
+
+        # Logmind block lives in AGENTS.md only
+        assert "<!-- logmind-start -->" in agents_content
+        # Per-agent files are stubs that point at AGENTS.md
+        assert "<!-- logmind-stub:" in claude_content
+        assert "<!-- logmind-stub:" in cursor_content
 
 
 def test_default_config_enables_claude_and_cursor(temp_dir):
@@ -556,7 +563,7 @@ def test_default_config_enables_claude_and_cursor(temp_dir):
         runner.invoke(init, ["--no-git"])
 
         config_path = Path.cwd() / ".logmind" / "config.yml"
-        config_content = config_path.read_text()
+        config_content = config_path.read_text(encoding="utf-8")
 
         # Verify defaults
         assert "claude: true" in config_content
@@ -901,7 +908,7 @@ def test_install_hook_creates_new_hook(git_repo):
 
     hook_path = git_repo / ".git" / "hooks" / "pre-commit"
     assert hook_path.exists()
-    content = hook_path.read_text()
+    content = hook_path.read_text(encoding="utf-8")
     assert "logmind check-decisions" in content
     assert "#!/bin/sh" in content
 
@@ -925,7 +932,7 @@ def test_install_hook_already_installed(git_repo):
 
     hook_path = git_repo / ".git" / "hooks" / "pre-commit"
     hook_path.parent.mkdir(parents=True, exist_ok=True)
-    hook_path.write_text("#!/bin/sh\nlogmind check-decisions\n")
+    hook_path.write_text("#!/bin/sh\nlogmind check-decisions\n", encoding="utf-8")
 
     with runner.isolated_filesystem(temp_dir=git_repo):
         result = runner.invoke(main, ["install-hook"])
@@ -940,7 +947,7 @@ def test_install_hook_existing_hook_without_force(git_repo):
 
     hook_path = git_repo / ".git" / "hooks" / "pre-commit"
     hook_path.parent.mkdir(parents=True, exist_ok=True)
-    hook_path.write_text("#!/bin/sh\necho 'existing hook'\n")
+    hook_path.write_text("#!/bin/sh\necho 'existing hook'\n", encoding="utf-8")
 
     with runner.isolated_filesystem(temp_dir=git_repo):
         result = runner.invoke(main, ["install-hook"])
@@ -955,7 +962,7 @@ def test_install_hook_existing_hook_with_force(git_repo):
 
     hook_path = git_repo / ".git" / "hooks" / "pre-commit"
     hook_path.parent.mkdir(parents=True, exist_ok=True)
-    hook_path.write_text("#!/bin/sh\necho 'existing hook'\n")
+    hook_path.write_text("#!/bin/sh\necho 'existing hook'\n", encoding="utf-8")
 
     with runner.isolated_filesystem(temp_dir=git_repo):
         result = runner.invoke(main, ["install-hook", "--force"])
@@ -963,7 +970,7 @@ def test_install_hook_existing_hook_with_force(git_repo):
     assert result.exit_code == 0
     assert "Added" in result.output
 
-    content = hook_path.read_text()
+    content = hook_path.read_text(encoding="utf-8")
     assert "existing hook" in content
     assert "logmind check-decisions" in content
 
@@ -1012,7 +1019,7 @@ def test_agents_remove_without_force_prompts(temp_dir):
 
     with runner.isolated_filesystem(temp_dir=temp_dir):
         # Create the agent file so removal can proceed past the "not configured" check
-        (Path.cwd() / ".cursorrules").write_text("# rules\n")
+        (Path.cwd() / ".cursorrules").write_text("# rules\n", encoding="utf-8")
 
         # Provide "n" so the confirmation prompt cancels the removal
         result = runner.invoke(main, ["agents", "remove", "cursor"], input="n\n")

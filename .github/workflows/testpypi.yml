@@ -1,0 +1,63 @@
+name: testpypi
+
+# Manual TestPyPI publish — same mechanics as publish.yml but targets the
+# TestPyPI sandbox so we can validate packaging without burning a real
+# version number. Trigger via:
+#   gh workflow run testpypi.yml --ref virtual-kurzweil
+#
+# Pre-requisites (one-time):
+#   1. Register at https://test.pypi.org/account/register/
+#   2. https://test.pypi.org/manage/account/publishing/ → add a Trusted
+#      Publisher with: owner=thrillmot, repo=logmind, workflow=testpypi.yml,
+#      environment=testpypi
+#   3. Project name on TestPyPI may be "logmind" or "logmind-test" depending
+#      on availability; set [project.name] in pyproject.toml here only if
+#      retargeting is needed.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/logmind
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # Don't fail if a version exists already — TestPyPI gets re-uploaded a lot.
+          skip-existing: true

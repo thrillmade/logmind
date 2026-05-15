@@ -8,6 +8,13 @@ import click
 
 from logmind.core.config import load_config
 from logmind.core.git_handler import commit_and_push, is_git_repo
+from logmind.core.gitignore import ensure_block as ensure_gitignore_block
+from logmind.core.skill_install import (
+    DEFAULT_SKILL_NAME,
+    DEFAULT_SKILL_SOURCE,
+    install_globally as install_logmind_skill,
+    is_skills_available,
+)
 from logmind.core.inserter import (
     AGENT_REGISTRY,
     create_agent_file,
@@ -16,6 +23,7 @@ from logmind.core.inserter import (
     get_all_agent_names,
     insert_into_all_ai_files,
     insert_logmind_section,
+    migrate_to_agents_md,
     remove_agent_file,
     sync_agent_files_from_config,
 )
@@ -32,6 +40,32 @@ from logmind.core.tree_gen import update_file_structure
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
+
+
+def _install_github_action_templates(root_path: Path) -> list:
+    """
+    Copy every ``templates/github/*.yml.template`` into
+    ``<root>/.github/workflows/<name>.yml``. Existing workflow files with the
+    same name are NOT overwritten — logmind treats user-customised workflows
+    as canonical.
+
+    Returns a list of relative paths that were newly created.
+    """
+    template_root = Path(__file__).parent / "templates" / "github"
+    if not template_root.exists():
+        return []
+    workflows_dir = root_path / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    created = []
+    suffix = ".template"
+    for tmpl in sorted(template_root.glob("*.yml.template")):
+        target_name = tmpl.name[: -len(suffix)]
+        target = workflows_dir / target_name
+        if target.exists():
+            continue
+        target.write_text(tmpl.read_text(encoding="utf-8"))
+        created.append(str(target.relative_to(root_path)))
+    return created
 
 
 @main.command()
@@ -51,7 +85,27 @@ def main():
     is_flag=True,
     help="Configure all supported AI agents",
 )
-def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
+@click.option(
+    "--github-actions/--no-github-actions",
+    default=True,
+    help="Install logmind GitHub Actions (decision aggregator, link checker). Default on.",
+)
+@click.option(
+    "--skill-install/--no-skill-install",
+    "skill_install_flag",
+    default=None,
+    help=(
+        "Install the logmind agent skill globally via skills.sh. "
+        "Default: prompt interactively when stdin is a TTY."
+    ),
+)
+def init(
+    no_git: bool,
+    agents_list: Optional[str],
+    all_agents: bool,
+    github_actions: bool,
+    skill_install_flag: Optional[bool],
+):
     """
     Initialize logmind in the current project.
 
@@ -103,31 +157,28 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
     template_dir = Path(__file__).parent / "templates"
 
     # decisions.md
-    decisions_template = (template_dir / "decisions.md.template").read_text()
-    (docs_path / "decisions.md").write_text(decisions_template)
+    decisions_template = (template_dir / "decisions.md.template").read_text(encoding="utf-8")
+    (docs_path / "decisions.md").write_text(decisions_template, encoding="utf-8")
     click.echo("✓ Created docs/decisions.md")
 
     # decisions-archive.md
-    archive_template = (template_dir / "decisions-archive.md.template").read_text()
-    (docs_path / "decisions-archive.md").write_text(archive_template)
+    archive_template = (template_dir / "decisions-archive.md.template").read_text(encoding="utf-8")
+    (docs_path / "decisions-archive.md").write_text(archive_template, encoding="utf-8")
     click.echo("✓ Created docs/decisions-archive.md")
 
     # file-structure.md (will be generated with actual tree)
     update_file_structure(docs_path)
     click.echo("✓ Created docs/file-structure.md")
 
-    # Copy README.md to docs/logmind-readme.md if it exists
-    readme_path = root_path / "README.md"
-    if readme_path.exists():
-        logmind_readme_path = docs_path / "logmind-readme.md"
-        logmind_readme_path.write_text(readme_path.read_text())
-        click.echo("✓ Created docs/logmind-readme.md")
+    # (logmind-readme.md was a copy of README.md kept under docs/ for legacy
+    # CLAUDE.md links; AGENTS.md now links to README.md at the root directly,
+    # so the copy is redundant and no longer created during init.)
 
     # Create .logmind directory and config file
     logmind_dir = root_path / ".logmind"
     logmind_dir.mkdir(exist_ok=True)
-    config_template = (template_dir / "config.yml.template").read_text()
-    (logmind_dir / "config.yml").write_text(config_template)
+    config_template = (template_dir / "config.yml.template").read_text(encoding="utf-8")
+    (logmind_dir / "config.yml").write_text(config_template, encoding="utf-8")
     click.echo("✓ Created .logmind/config.yml")
 
     # If no agents specified, use config defaults (claude + cursor enabled by default)
@@ -139,6 +190,19 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
     messages = insert_into_all_ai_files(root_path, agents=agents)
     for msg in messages:
         click.echo(msg)
+
+    # Install GitHub Action templates (decision aggregator, link checker)
+    installed_workflows: list = []
+    if github_actions:
+        installed_workflows = _install_github_action_templates(root_path)
+        for wf in installed_workflows:
+            click.echo(f"✓ Created {wf}")
+
+    # Ensure logmind block in .gitignore (idempotent; preserves user content)
+    gitignore_path = root_path / ".gitignore"
+    gitignore_changed = ensure_gitignore_block(gitignore_path)
+    if gitignore_changed:
+        click.echo("✓ Added logmind block to .gitignore")
 
     # Log first decision
     log_first_decision(docs_path)
@@ -154,11 +218,6 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
                 ".logmind/config.yml",
             ]
 
-            # Add logmind-readme.md if it was created
-            logmind_readme_path = docs_path / "logmind-readme.md"
-            if logmind_readme_path.exists():
-                files_to_commit.append("docs/logmind-readme.md")
-
             # Add any created AI instruction files
             for agent_name in (agents or ["claude"]):
                 file_path = get_agent_file_path(agent_name, root_path)
@@ -172,6 +231,13 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
             if claude_path.exists() and "CLAUDE.md" not in files_to_commit:
                 files_to_commit.append("CLAUDE.md")
 
+            # GH Action workflows installed during this init
+            files_to_commit.extend(installed_workflows)
+
+            # .gitignore (if logmind block was added)
+            if gitignore_changed:
+                files_to_commit.append(".gitignore")
+
             commit_and_push(
                 files_to_commit,
                 "logmind: Initialize decision tracking",
@@ -181,12 +247,55 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
         except Exception as e:
             click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
 
+    # Optionally install the logmind agent skill globally via skills.sh
+    _maybe_install_skill(skill_install_flag)
+
     click.echo()
     click.secho("logmind initialized successfully!", fg="green")
     click.echo()
     click.echo("Start logging decisions with:")
     click.echo("  from logmind import log")
     click.echo("  log(\"Your decision here\")")
+
+
+def _maybe_install_skill(flag: Optional[bool]) -> None:
+    """
+    Offer to install the logmind agent skill globally via skills.sh.
+
+    flag=True  → install without prompting
+    flag=False → skip without prompting
+    flag=None  → prompt only when stdin is a TTY (else skip silently)
+    """
+    if flag is False:
+        return
+
+    if not is_skills_available():
+        if flag is True:
+            click.secho(
+                "skills CLI not found on PATH (install Node.js / npx, "
+                "then re-run with --skill-install).",
+                fg="yellow",
+            )
+        return
+
+    if flag is None:
+        if not sys.stdin.isatty():
+            return
+        if not click.confirm(
+            "Install the logmind agent skill globally so all your AI agents "
+            "know how to log decisions?",
+            default=True,
+        ):
+            return
+
+    click.echo(f"Installing logmind skill ({DEFAULT_SKILL_SOURCE} → {DEFAULT_SKILL_NAME})...")
+    rc, output = install_logmind_skill()
+    if rc == 0:
+        click.secho("✓ logmind skill installed globally", fg="green")
+    else:
+        click.secho(
+            f"Skill install exited {rc}. Output:\n{output.strip()}", fg="yellow"
+        )
 
 
 @main.command()
@@ -334,7 +443,7 @@ def show(show_all: bool):
         click.secho("No decisions logged yet.", fg="yellow")
         return
 
-    click.echo(decisions_path.read_text())
+    click.echo(decisions_path.read_text(encoding="utf-8"))
 
     if show_all:
         archive_path = docs_path / "decisions-archive.md"
@@ -342,7 +451,7 @@ def show(show_all: bool):
             click.echo("\n" + "=" * 80)
             click.echo("ARCHIVED DECISIONS")
             click.echo("=" * 80 + "\n")
-            click.echo(archive_path.read_text())
+            click.echo(archive_path.read_text(encoding="utf-8"))
 
 
 @main.command()
@@ -774,6 +883,50 @@ def agents_remove(agent_name: str, no_commit: bool, force: bool):
         sys.exit(1)
 
 
+@agents.command("migrate")
+@click.option(
+    "--no-commit",
+    is_flag=True,
+    help="Don't commit the migration changes",
+)
+def agents_migrate(no_commit: bool):
+    """
+    Consolidate per-agent files into AGENTS.md and replace each with a stub.
+
+    For each existing markdown agent file (CLAUDE.md, .cursorrules, etc.):
+      - Strip the logmind marker block.
+      - Append any remaining user content under "## From <name>" in AGENTS.md.
+      - Replace the file with a 2-line stub pointing at AGENTS.md.
+
+    Idempotent — re-running on an already-migrated tree is a no-op.
+    """
+    root_path = Path.cwd()
+
+    messages = migrate_to_agents_md(root_path)
+    if not messages:
+        click.secho("No agent files to migrate (already consolidated).", fg="yellow")
+        return
+
+    for msg in messages:
+        click.echo(msg)
+
+    if not no_commit and is_git_repo():
+        try:
+            commit_and_push(
+                ["AGENTS.md"]
+                + [
+                    pattern
+                    for _, (pattern, _, json_) in AGENT_REGISTRY.items()
+                    if not json_ and (root_path / pattern).exists()
+                ],
+                "logmind: Consolidate AI agent files into AGENTS.md",
+                push=True,
+            )
+            click.echo("✓ Committed migration")
+        except Exception as e:
+            click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
+
+
 # Config command group
 @main.group()
 def config():
@@ -925,6 +1078,46 @@ def check_decisions(threshold: int, no_fail: bool):
         )
 
 
+@main.command("tree")
+def tree_cmd():
+    """
+    Regenerate docs/file-structure.md with the current project tree.
+
+    Equivalent to the side-effect that runs after every ``logmind log`` when
+    ``file_structure.auto_update: true`` is set in ``.logmind/config.yml``.
+    Useful as a pre-commit hook step or when an agent has just written
+    several files and wants the docs/ snapshot to reflect them immediately.
+    """
+    docs_path = Path.cwd() / "docs"
+    if not docs_path.exists():
+        click.secho(
+            "Error: docs/ directory not found. Run 'logmind init' first.",
+            fg="red",
+        )
+        sys.exit(1)
+    update_file_structure(docs_path)
+    click.secho("✓ Updated docs/file-structure.md", fg="green")
+
+
+@main.command("check-links")
+def check_links():
+    """
+    Verify all relative markdown links resolve and no docs/*.md is orphaned.
+
+    Walks README.md, AGENTS.md, CLAUDE.md, and the entire docs/ tree by
+    default. Configure roots and orphan allowlist via .logmind/config.yml:
+
+        linkcheck:
+          roots: [README.md, docs]
+          allow_orphans: [docs/legacy.md]
+
+    Exits 0 on a clean run, 1 if any broken or orphan links are found.
+    """
+    from logmind.actions.link_check import main as _link_check_main
+
+    sys.exit(_link_check_main())
+
+
 @main.command("install-hook")
 @click.option(
     "--force",
@@ -955,7 +1148,7 @@ def install_hook(force: bool):
     hook_line = "logmind check-decisions\n"
 
     if hook_path.exists():
-        content = hook_path.read_text()
+        content = hook_path.read_text(encoding="utf-8")
         if "logmind check-decisions" in content:
             click.echo("✓ logmind hook already installed.")
             return
@@ -965,13 +1158,13 @@ def install_hook(force: bool):
                 fg="yellow",
             )
             sys.exit(1)
-        hook_path.write_text(content.rstrip("\n") + "\n" + hook_line)
+        hook_path.write_text(content.rstrip("\n") + "\n" + hook_line, encoding="utf-8")
         click.secho(
             "✓ Added logmind check-decisions to existing pre-commit hook.", fg="green"
         )
     else:
         hook_path.parent.mkdir(parents=True, exist_ok=True)
-        hook_path.write_text("#!/bin/sh\n" + hook_line)
+        hook_path.write_text("#!/bin/sh\n" + hook_line, encoding="utf-8")
         hook_path.chmod(0o755)
         click.secho("✓ Installed logmind pre-commit hook.", fg="green")
 

@@ -56,7 +56,7 @@ This file contains the 20 most recent decisions.
 """
 
     decisions_path = docs_path / "decisions.md"
-    decisions_path.write_text(decisions_content)
+    decisions_path.write_text(decisions_content, encoding="utf-8")
 
     return docs_path
 
@@ -76,7 +76,7 @@ def sample_with_archive(sample_decisions_file):
 """
 
     archive_path = sample_decisions_file / "decisions-archive.md"
-    archive_path.write_text(archive_content)
+    archive_path.write_text(archive_content, encoding="utf-8")
 
     return sample_decisions_file
 
@@ -301,8 +301,8 @@ def _make_docs(decisions_content=SAMPLE_DECISIONS_MD_CLI, archive_content=SAMPLE
     """Create docs/ with decisions.md and decisions-archive.md under cwd."""
     docs = Path(".") / "docs"
     docs.mkdir(exist_ok=True)
-    (docs / "decisions.md").write_text(decisions_content)
-    (docs / "decisions-archive.md").write_text(archive_content)
+    (docs / "decisions.md").write_text(decisions_content, encoding="utf-8")
+    (docs / "decisions-archive.md").write_text(archive_content, encoding="utf-8")
 
 
 def test_search_cli_finds_match(git_repo):

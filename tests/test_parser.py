@@ -77,7 +77,7 @@ class TestIterDecisionsMissingAndEmpty:
 
     def test_empty_file_returns_empty(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("")
+        f.write_text("", encoding="utf-8")
         result = list(iter_decisions(f))
         assert result == []
 
@@ -88,7 +88,7 @@ class TestIterDecisionsMissingAndEmpty:
             "Some introductory text.\n"
             "**Reasoning:** We chose this because it is simple.\n"
             "---\n"
-        )
+        , encoding="utf-8")
         result = list(iter_decisions(f))
         assert result == []
 
@@ -100,20 +100,20 @@ class TestIterDecisionsParsing:
             "## 2026-01-10 09:00 - First\n"
             "## 2026-01-20 14:30 - Second\n"
             "## 2026-02-05 11:00 - Third\n"
-        )
+        , encoding="utf-8")
         result = list(iter_decisions(f))
         assert len(result) == 3
 
     def test_yields_datetime_title_tuples(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-01-10 09:00 - Use PostgreSQL\n")
+        f.write_text("## 2026-01-10 09:00 - Use PostgreSQL\n", encoding="utf-8")
         dt, title = list(iter_decisions(f))[0]
         assert isinstance(dt, datetime)
         assert isinstance(title, str)
 
     def test_parses_date_correctly(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-01-10 09:00 - Title\n")
+        f.write_text("## 2026-01-10 09:00 - Title\n", encoding="utf-8")
         dt, _ = list(iter_decisions(f))[0]
         assert dt.year == 2026
         assert dt.month == 1
@@ -121,33 +121,33 @@ class TestIterDecisionsParsing:
 
     def test_parses_time_correctly(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-01-10 14:30 - Title\n")
+        f.write_text("## 2026-01-10 14:30 - Title\n", encoding="utf-8")
         dt, _ = list(iter_decisions(f))[0]
         assert dt.hour == 14
         assert dt.minute == 30
 
     def test_parses_title_correctly(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-01-10 09:00 - Use PostgreSQL for database\n")
+        f.write_text("## 2026-01-10 09:00 - Use PostgreSQL for database\n", encoding="utf-8")
         _, title = list(iter_decisions(f))[0]
         assert title == "Use PostgreSQL for database"
 
     def test_preserves_title_with_hyphens_and_special_chars(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-03-11 12:00 - Use FastAPI -- async support\n")
+        f.write_text("## 2026-03-11 12:00 - Use FastAPI -- async support\n", encoding="utf-8")
         _, title = list(iter_decisions(f))[0]
         assert title == "Use FastAPI -- async support"
 
     def test_boundary_date_end_of_year(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2025-12-31 23:59 - End of year\n")
+        f.write_text("## 2025-12-31 23:59 - End of year\n", encoding="utf-8")
         dt, title = list(iter_decisions(f))[0]
         assert dt == datetime(2025, 12, 31, 23, 59)
         assert title == "End of year"
 
     def test_boundary_date_start_of_year(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-01-01 00:00 - Start of year\n")
+        f.write_text("## 2026-01-01 00:00 - Start of year\n", encoding="utf-8")
         dt, title = list(iter_decisions(f))[0]
         assert dt == datetime(2026, 1, 1, 0, 0)
         assert title == "Start of year"
@@ -156,32 +156,32 @@ class TestIterDecisionsParsing:
 class TestIterDecisionsFiltering:
     def test_skips_invalid_month_13(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2025-13-01 09:00 - Bad month\n")
+        f.write_text("## 2025-13-01 09:00 - Bad month\n", encoding="utf-8")
         result = list(iter_decisions(f))
         assert result == []
 
     def test_skips_invalid_day_32(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2025-01-32 09:00 - Bad day\n")
+        f.write_text("## 2025-01-32 09:00 - Bad day\n", encoding="utf-8")
         result = list(iter_decisions(f))
         assert result == []
 
     def test_skips_line_missing_double_hash(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("# 2026-01-10 09:00 - Single hash\n")
+        f.write_text("# 2026-01-10 09:00 - Single hash\n", encoding="utf-8")
         result = list(iter_decisions(f))
         assert result == []
 
     def test_skips_line_with_wrong_spacing(self, tmp_path):
         f = tmp_path / "decisions.md"
         # Two spaces between ## and date
-        f.write_text("##  2026-01-10 09:00 - Extra space\n")
+        f.write_text("##  2026-01-10 09:00 - Extra space\n", encoding="utf-8")
         result = list(iter_decisions(f))
         assert result == []
 
     def test_skips_line_missing_dash_separator(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-01-10 09:00 Missing separator\n")
+        f.write_text("## 2026-01-10 09:00 Missing separator\n", encoding="utf-8")
         result = list(iter_decisions(f))
         assert result == []
 
@@ -191,7 +191,7 @@ class TestIterDecisionsFiltering:
             "## 2025-13-01 09:00 - Invalid month\n"
             "## 2026-01-10 09:00 - Valid entry\n"
             "# 2026-02-01 10:00 - Wrong hash count\n"
-        )
+        , encoding="utf-8")
         result = list(iter_decisions(f))
         assert len(result) == 1
         assert result[0][1] == "Valid entry"
@@ -213,7 +213,7 @@ class TestIterDecisionsMixed:
             "## 2026-02-05 11:00 - Use Redis for caching\n"
             "**Reasoning:** Fast session storage\n"
             "---\n"
-        )
+        , encoding="utf-8")
         result = list(iter_decisions(f))
         assert len(result) == 2
 
@@ -224,7 +224,7 @@ class TestIterDecisionsMixed:
             "**Reasoning:** ACID compliance needed\n"
             "## 2026-02-05 11:00 - Use Redis for caching\n"
             "**Reasoning:** Fast session storage\n"
-        )
+        , encoding="utf-8")
         _, titles = zip(*iter_decisions(f))
         assert "Use PostgreSQL for database" in titles
         assert "Use Redis for caching" in titles
@@ -234,7 +234,7 @@ class TestIterDecisionsMixed:
         f.write_text(
             "## 2026-01-10 09:00 - Real decision\n"
             "This line is just prose and should be ignored.\n"
-        )
+        , encoding="utf-8")
         result = list(iter_decisions(f))
         assert len(result) == 1
 
@@ -242,7 +242,7 @@ class TestIterDecisionsMixed:
 class TestIterDecisionsGenerator:
     def test_returns_generator(self, tmp_path):
         f = tmp_path / "decisions.md"
-        f.write_text("## 2026-01-10 09:00 - Title\n")
+        f.write_text("## 2026-01-10 09:00 - Title\n", encoding="utf-8")
         result = iter_decisions(f)
         assert inspect.isgenerator(result)
 

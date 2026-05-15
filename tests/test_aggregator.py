@@ -60,8 +60,8 @@ def project_a(tmp_path):
     proj.mkdir()
     docs = proj / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(DECISIONS_A)
-    (docs / "decisions-archive.md").write_text(ARCHIVE_A)
+    (docs / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
+    (docs / "decisions-archive.md").write_text(ARCHIVE_A, encoding="utf-8")
     return proj
 
 
@@ -72,7 +72,7 @@ def project_b(tmp_path):
     proj.mkdir()
     docs = proj / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(DECISIONS_B)
+    (docs / "decisions.md").write_text(DECISIONS_B, encoding="utf-8")
     return proj
 
 
@@ -204,8 +204,8 @@ def test_aggregate_shows_decisions(tmp_path):
     proj.mkdir()
     docs = proj / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(DECISIONS_A)
-    (docs / "decisions-archive.md").write_text("")
+    (docs / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("", encoding="utf-8")
 
     result = runner.invoke(main, ["aggregate", str(proj)])
     assert result.exit_code == 0
@@ -220,7 +220,7 @@ def test_aggregate_shows_project_name(tmp_path):
     proj.mkdir()
     docs = proj / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(DECISIONS_A)
+    (docs / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
 
     result = runner.invoke(main, ["aggregate", str(proj)])
     assert result.exit_code == 0
@@ -234,8 +234,8 @@ def test_aggregate_limit_option(tmp_path):
     proj.mkdir()
     docs = proj / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(DECISIONS_A)
-    (docs / "decisions-archive.md").write_text(ARCHIVE_A)
+    (docs / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
+    (docs / "decisions-archive.md").write_text(ARCHIVE_A, encoding="utf-8")
 
     result = runner.invoke(main, ["aggregate", "--limit", "1", str(proj)])
     assert result.exit_code == 0
@@ -251,8 +251,8 @@ def test_aggregate_summary_flag(tmp_path):
     proj.mkdir()
     docs = proj / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(DECISIONS_A)
-    (docs / "decisions-archive.md").write_text(ARCHIVE_A)
+    (docs / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
+    (docs / "decisions-archive.md").write_text(ARCHIVE_A, encoding="utf-8")
 
     result = runner.invoke(main, ["aggregate", "--summary", str(proj)])
     assert result.exit_code == 0
@@ -267,8 +267,8 @@ def test_aggregate_no_archive_flag(tmp_path):
     proj.mkdir()
     docs = proj / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(DECISIONS_A)
-    (docs / "decisions-archive.md").write_text(ARCHIVE_A)
+    (docs / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
+    (docs / "decisions-archive.md").write_text(ARCHIVE_A, encoding="utf-8")
 
     result_with = runner.invoke(main, ["aggregate", str(proj)])
     result_without = runner.invoke(main, ["aggregate", "--no-archive", str(proj)])
@@ -285,7 +285,7 @@ def test_aggregate_skips_missing_docs(tmp_path):
     proj_valid = tmp_path / "valid"
     proj_valid.mkdir()
     (proj_valid / "docs").mkdir()
-    (proj_valid / "docs" / "decisions.md").write_text(DECISIONS_A)
+    (proj_valid / "docs" / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
 
     proj_invalid = tmp_path / "invalid"
     proj_invalid.mkdir()
@@ -302,12 +302,12 @@ def test_aggregate_multiple_projects(tmp_path):
     proj_a = tmp_path / "project-a"
     proj_a.mkdir()
     (proj_a / "docs").mkdir()
-    (proj_a / "docs" / "decisions.md").write_text(DECISIONS_A)
+    (proj_a / "docs" / "decisions.md").write_text(DECISIONS_A, encoding="utf-8")
 
     proj_b = tmp_path / "project-b"
     proj_b.mkdir()
     (proj_b / "docs").mkdir()
-    (proj_b / "docs" / "decisions.md").write_text(DECISIONS_B)
+    (proj_b / "docs" / "decisions.md").write_text(DECISIONS_B, encoding="utf-8")
 
     result = runner.invoke(main, ["aggregate", str(proj_a), str(proj_b)])
     assert result.exit_code == 0

@@ -1,0 +1,49 @@
+name: logmind decision aggregator
+
+# When a PR is merged, append a one-line summary entry to docs/decisions.md
+# linking the PR and the per-branch decision log written during the feature
+# branch. Installed by `logmind init`.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  aggregate:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install logmind
+        run: pip install logmind
+
+      - name: Aggregate merged-branch decisions
+        env:
+          BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: python -m logmind.actions.aggregate
+
+      - name: Commit and push
+        run: |
+          if git diff --quiet docs/decisions.md; then
+            echo "No aggregation changes to commit."
+            exit 0
+          fi
+          git config user.name "logmind-bot"
+          git config user.email "logmind@users.noreply.github.com"
+          git add docs/decisions.md
+          git commit -m "logmind: aggregate decisions from #${{ github.event.pull_request.number }}"
+          git push

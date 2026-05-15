@@ -58,8 +58,8 @@ def docs_with_decisions(tmp_path):
     """Create a docs dir with sample decisions and archive."""
     docs = tmp_path / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD)
-    (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD)
+    (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD, encoding="utf-8")
+    (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD, encoding="utf-8")
     return docs
 
 
@@ -68,8 +68,8 @@ def empty_docs(tmp_path):
     """Create a docs dir with empty decision files."""
     docs = tmp_path / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text("# Decision Log\n\n---\n")
-    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n")
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n", encoding="utf-8")
     return docs
 
 
@@ -304,8 +304,8 @@ def test_stats_command_no_decisions(git_repo):
     with runner.isolated_filesystem(temp_dir=git_repo):
         docs = Path(".") / "docs"
         docs.mkdir()
-        (docs / "decisions.md").write_text("# Decision Log\n\n---\n")
-        (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n")
+        (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+        (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n", encoding="utf-8")
         result = runner.invoke(main, ["stats"])
     assert result.exit_code == 0
     assert "No decisions" in result.output
@@ -317,8 +317,8 @@ def test_stats_command_shows_total(git_repo):
     with runner.isolated_filesystem(temp_dir=git_repo):
         docs = Path(".") / "docs"
         docs.mkdir()
-        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD)
-        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD)
+        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD, encoding="utf-8")
+        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD, encoding="utf-8")
         result = runner.invoke(main, ["stats"])
     assert result.exit_code == 0
     assert "5" in result.output
@@ -331,8 +331,8 @@ def test_stats_command_shows_chart(git_repo):
     with runner.isolated_filesystem(temp_dir=git_repo):
         docs = Path(".") / "docs"
         docs.mkdir()
-        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD)
-        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD)
+        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD, encoding="utf-8")
+        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD, encoding="utf-8")
         result = runner.invoke(main, ["stats"])
     assert result.exit_code == 0
     assert "█" in result.output
@@ -344,8 +344,8 @@ def test_stats_command_shows_keywords(git_repo):
     with runner.isolated_filesystem(temp_dir=git_repo):
         docs = Path(".") / "docs"
         docs.mkdir()
-        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD)
-        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD)
+        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD, encoding="utf-8")
+        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD, encoding="utf-8")
         result = runner.invoke(main, ["stats"])
     assert result.exit_code == 0
     assert "keyword" in result.output.lower()
@@ -357,7 +357,7 @@ def test_stats_command_months_option(git_repo):
     with runner.isolated_filesystem(temp_dir=git_repo):
         docs = Path(".") / "docs"
         docs.mkdir()
-        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD)
-        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD)
+        (docs / "decisions.md").write_text(SAMPLE_DECISIONS_MD, encoding="utf-8")
+        (docs / "decisions-archive.md").write_text(SAMPLE_ARCHIVE_MD, encoding="utf-8")
         result = runner.invoke(main, ["stats", "--months", "1"])
     assert result.exit_code == 0
