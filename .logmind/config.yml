@@ -1,0 +1,34 @@
+git:
+  auto_commit: true
+  auto_push: true
+  commit_message_template: 'logmind: {decision}'
+decisions:
+  max_recent: 20
+file_structure:
+  auto_update: true
+  ignore_patterns:
+  - __pycache__
+  - .git
+  - node_modules
+  - venv
+  - .venv
+  - env
+  - .env
+  - '*.pyc'
+  - .pytest_cache
+  - .mypy_cache
+  - dist
+  - build
+  - '*.egg-info'
+agents:
+  claude: true
+  cursor: true
+  copilot: false
+  windsurf: false
+  aider: false
+  continue: false
+  cody: false
+  zed: false
+  amazonq: false
+  cline: false
+  codex: false

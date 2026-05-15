@@ -1,0 +1,37 @@
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request for critical issues only. Focus on:
+            - Bugs, logic errors, or incorrect behaviour
+            - Security vulnerabilities
+            - Performance problems
+            - Broken or missing test coverage for new code
+            - Git integration issues (commit/push logic in git_handler.py)
+            - Correct use of Click for CLI commands (exit codes, error messages)
+
+            Skip style suggestions, minor naming issues, or anything that
+            doesn't affect correctness, security, or performance.
+
+            This is a Python CLI package (logmind). Key things to know:
+            - Core logic is in src/logmind/core/
+            - CLI commands are in src/logmind/cli.py
+            - Tests use pytest with Click's CliRunner
+            - Every logmind log() call should commit and push via git_handler.py
