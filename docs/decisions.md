@@ -17,3 +17,10 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - **Detail:** [decisions-branches/footer-polish.md](decisions-branches/footer-polish.md)
 
 ---
+## 2026-05-15 18:56 - Merged: footer-polish (#34)
+
+- **PR:** https://github.com/thrillmot/logmind/pull/34
+- **Decisions:** 1 from this branch
+- **Detail:** [decisions-branches/footer-polish.md](decisions-branches/footer-polish.md)
+
+---
