@@ -34,3 +34,11 @@
 - Vercel auto-deploys on push
 
 ---
+## 2026-05-15 02:52 - Test: assert against __version__ instead of hardcoded 0.1.0
+
+**Reasoning:** test_cli_version was asserting the literal string '0.1.0' which immediately fails after any version bump. Now imports __version__ from the package and asserts that string is in the output — single source of truth, won't fail on future bumps.
+
+**Implications:**
+- No more test-fix-on-every-release ritual
+
+---
