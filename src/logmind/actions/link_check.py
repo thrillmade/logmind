@@ -97,9 +97,9 @@ def check(
             resolved = (source.parent / stripped).resolve()
             if not resolved.exists():
                 try:
-                    rel_source = source.relative_to(repo_root)
+                    rel_source = source.relative_to(repo_root).as_posix()
                 except ValueError:
-                    rel_source = source
+                    rel_source = source.as_posix()
                 broken.append(f"{rel_source}: missing -> {target}")
                 continue
             if resolved.suffix == ".md" and resolved in incoming:
@@ -116,7 +116,7 @@ def check(
         if _is_allowed_orphan(rel, allow_orphans):
             continue
         if not sources:
-            orphans.append(str(rel))
+            orphans.append(rel.as_posix())
 
     return sorted(broken), sorted(orphans)
 
@@ -126,9 +126,10 @@ def _is_allowed_orphan(rel_path: Path, allow_orphans: Iterable[str]) -> bool:
 
     Directory prefixes are signalled by a trailing ``/`` in the entry, but
     we also tolerate plain dir paths (no slash) by checking the exact match
-    against parents.
+    against parents. Comparison is done in POSIX form so this works on
+    Windows where Path renders with backslashes.
     """
-    s = str(rel_path)
+    s = rel_path.as_posix()
     for entry in allow_orphans:
         e = entry.rstrip("/")
         if s == e:
