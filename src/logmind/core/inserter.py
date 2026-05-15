@@ -197,6 +197,36 @@ def get_stub_template() -> str:
     return template_path.read_text(encoding="utf-8")
 
 
+def find_outdated_marker_blocks(
+    root_path: Optional[Path] = None,
+) -> List[Tuple[Path, str, str]]:
+    """
+    Return [(file_path, current_block_body, fresh_block_body), ...] for every
+    tracked agent file whose installed logmind marker block differs from the
+    current template's block.
+
+    Only AGENTS.md is checked — the canonical instruction file. Per-tool
+    stubs don't carry a marker block and JSON agents (cody, zed) don't use
+    the marker system.
+    """
+    if root_path is None:
+        root_path = Path.cwd()
+
+    outdated: List[Tuple[Path, str, str]] = []
+
+    agents_path = root_path / "AGENTS.md"
+    if agents_path.exists():
+        content = agents_path.read_text(encoding="utf-8")
+        installed = _extract_marker_block(content)
+        if installed is not None:
+            template = get_agents_md_template()
+            fresh = _extract_marker_block(template)
+            if fresh is not None and installed.strip() != fresh.strip():
+                outdated.append((agents_path, installed, fresh))
+
+    return outdated
+
+
 def get_logmind_section() -> str:
     """
     Get the logmind section to insert.

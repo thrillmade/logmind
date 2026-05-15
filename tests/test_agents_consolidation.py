@@ -275,6 +275,86 @@ def test_sync_does_not_trample_existing_stubs(tmp_path):
     assert is_stub((tmp_path / "CLAUDE.md").read_text(encoding="utf-8"))
 
 
+def test_find_outdated_returns_empty_when_no_agents_md(tmp_path):
+    from logmind.core.inserter import find_outdated_marker_blocks
+
+    assert find_outdated_marker_blocks(tmp_path) == []
+
+
+def test_find_outdated_returns_empty_when_current(tmp_path):
+    from logmind.core.inserter import find_outdated_marker_blocks
+
+    (tmp_path / "AGENTS.md").write_text(get_agents_md_template(), encoding="utf-8")
+    assert find_outdated_marker_blocks(tmp_path) == []
+
+
+def test_find_outdated_detects_stale_block(tmp_path):
+    from logmind.core.inserter import (
+        LOGMIND_END_MARKER,
+        LOGMIND_START_MARKER,
+        find_outdated_marker_blocks,
+    )
+
+    (tmp_path / "AGENTS.md").write_text(
+        "# AGENTS.md\n\n"
+        f"{LOGMIND_START_MARKER}\nOLD CONTENT\n{LOGMIND_END_MARKER}\n",
+        encoding="utf-8",
+    )
+    out = find_outdated_marker_blocks(tmp_path)
+    assert len(out) == 1
+    file_path, current, fresh = out[0]
+    assert file_path == tmp_path / "AGENTS.md"
+    assert "OLD CONTENT" in current
+    assert "OLD CONTENT" not in fresh
+
+
+def test_agents_update_cli_dry_run_reports_without_writing(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from logmind.cli import main as cli_main
+    from logmind.core.inserter import LOGMIND_END_MARKER, LOGMIND_START_MARKER
+
+    user_above = "# AGENTS.md\n\nMy header.\n\n"
+    (tmp_path / "AGENTS.md").write_text(
+        user_above + f"{LOGMIND_START_MARKER}\nSTALE\n{LOGMIND_END_MARKER}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli_main, ["agents", "update"])
+    assert result.exit_code == 0
+    assert "stale logmind block" in result.output
+    assert "Dry-run" in result.output
+    # File NOT rewritten
+    assert "STALE" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_agents_update_cli_apply_rewrites_and_preserves_user_content(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from logmind.cli import main as cli_main
+    from logmind.core.inserter import LOGMIND_END_MARKER, LOGMIND_START_MARKER
+
+    user_above = "# AGENTS.md\n\nMy header.\n\n"
+    user_below = "\n## My section\nMy body.\n"
+    (tmp_path / "AGENTS.md").write_text(
+        user_above + f"{LOGMIND_START_MARKER}\nSTALE\n{LOGMIND_END_MARKER}" + user_below,
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli_main, ["agents", "update", "--apply"])
+    assert result.exit_code == 0
+    assert "Refreshed" in result.output
+
+    content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert "My header." in content  # preserved above
+    assert "My section" in content  # preserved below
+    assert "STALE" not in content  # rewritten
+
+    # Second invocation is a no-op
+    result2 = CliRunner().invoke(cli_main, ["agents", "update"])
+    assert "All agent files are current" in result2.output
+
+
 def test_migrate_skips_json_agents(tmp_path):
     # Set up a JSON agent file with content
     (tmp_path / ".sourcegraph").mkdir()
