@@ -7,3 +7,12 @@
 - Homebrew formula needs separate update with new url + sha256
 
 ---
+## 2026-05-15 02:43 - Fix two missed 0.1.0 version strings + always-run clud-bug
+
+**Reasoning:** clud-bug review on PR #21 caught a release blocker: src/logmind/__init__.py and src/logmind/cli.py had hardcoded '0.1.0' strings the bump missed. Users who pip install --upgrade and check logmind.__version__ or 'logmind --version' would see 0.1.0 even though importlib.metadata reports 0.1.1. Fixed both. Separately: user asked clud-bug should never be skipped — reverted the if: github.actor != 'dependabot[bot]' filter so clud-bug runs on every PR regardless of author.
+
+**Implications:**
+- Single source of truth for the version stays in pyproject.toml; the two hardcoded copies are unfortunate but live across the duration of the release cycle until I migrate cli.py to importlib.metadata
+- clud-bug now runs on Dependabot/Renovate PRs too; expect a no-comment exit when the fork-PR-secrets-missing path triggers, which clud-bug handles gracefully
+
+---
