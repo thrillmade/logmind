@@ -1196,9 +1196,21 @@ def check_decisions(threshold: int, no_fail: bool):
     )
     staged_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
 
-    # If decisions.md is staged, changes are documented
-    if any("decisions.md" in f for f in staged_files):
-        click.secho("✓ docs/decisions.md is staged — changes are documented.", fg="green")
+    # If decisions.md OR a per-branch decision file is staged, changes are
+    # documented. Branch-aware mode (the default) routes feature-branch logs
+    # to docs/decisions-branches/<branch>.md, so we must accept either.
+    def _is_decision_file(path: str) -> bool:
+        return (
+            path == "docs/decisions.md"
+            or path.endswith("/decisions.md")
+            or path.startswith("docs/decisions-branches/")
+        )
+
+    if any(_is_decision_file(f) for f in staged_files):
+        click.secho(
+            "✓ A decision log file is staged — changes are documented.",
+            fg="green",
+        )
         return
 
     # Count lines changed outside of docs/
