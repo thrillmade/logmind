@@ -62,32 +62,100 @@ jobs:
           echo "::error::PyPI did not surface logmind ${VERSION} within 5 minutes."
           exit 1
 
-      - name: Install Homebrew
-        uses: Homebrew/actions/setup-homebrew@master
-
-      - name: Open bump PR on homebrew-logmind
+      - name: Compute new tarball URL + SHA from PyPI
+        id: pkg
         env:
-          # Brew uses this for both auth (gh API calls + PR creation) and
-          # git push. PAT must have Contents+PR write on the tap repo.
-          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
-          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          # Tap the formula locally so `bump-formula-pr` can find it.
-          brew tap thrillmot/logmind https://github.com/thrillmot/homebrew-logmind
-          # --no-pip-resources: skip the Python-resource auto-update path
-          # that fails on fresh PyPI uploads (homebrew's `--uploaded-prior-to`
-          # safety refuses to look at packages <24h old). The formula's
-          # `click` + `pyyaml` resources rarely change between logmind patch
-          # releases, so a follow-up PR can refresh them if needed.
-          # --no-fork: push directly to the tap (HOMEBREW_TAP_PAT has write).
-          # --no-browse: don't try to open a browser on the CI runner.
-          # --no-audit: skip the full audit; tap CI (if any) re-runs it.
-          brew bump-formula-pr \
-            --no-pip-resources \
-            --no-fork \
-            --no-browse \
-            --no-audit \
-            --version="${VERSION}" \
-            thrillmot/logmind/logmind
+          DATA=$(curl -fsS "https://pypi.org/pypi/logmind/${VERSION}/json")
+          URL=$(printf '%s' "$DATA" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(f['url'] for f in d['urls'] if f['packagetype']=='sdist'))")
+          SHA=$(printf '%s' "$DATA" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(f['digests']['sha256'] for f in d['urls'] if f['packagetype']=='sdist'))")
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Resolved tarball:"
+          echo "  url=${URL}"
+          echo "  sha=${SHA}"
+
+      - name: Open bump PR on homebrew-logmind
+        env:
+          # PAT scoped to the tap repo with Contents+PR write.
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          NEW_URL: ${{ steps.pkg.outputs.url }}
+          NEW_SHA: ${{ steps.pkg.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # We deliberately don't use `brew bump-formula-pr` here. That
+          # command always runs a pip dry-install to refresh the formula's
+          # Python resources, and pip enforces `--uploaded-prior-to=24h-ago`
+          # as a supply-chain safety — so freshly-published PyPI packages
+          # get rejected for 24 hours after upload. Direct edit avoids the
+          # whole pip path. Resource blocks (click, pyyaml) rarely change
+          # between logmind patch releases; refresh them in a follow-up PR
+          # if a major dependency bumps.
+          git config --global user.name "homebrew-bump"
+          git config --global user.email "homebrew-bump@users.noreply.github.com"
+
+          gh repo clone thrillmot/homebrew-logmind tap -- --quiet
+          cd tap
+
+          BRANCH="bump-${VERSION}"
+          git checkout -b "${BRANCH}"
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          new_url = os.environ["NEW_URL"]
+          new_sha = os.environ["NEW_SHA"]
+
+          p = Path("Formula/logmind.rb")
+          text = p.read_text(encoding="utf-8")
+
+          # Replace top-level url (first occurrence; resource blocks come later)
+          text, n_url = re.subn(
+              r'(^\s*url\s+)"[^"]*logmind-[0-9.]+\.tar\.gz"',
+              lambda m: f'{m.group(1)}"{new_url}"',
+              text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if n_url != 1:
+              raise SystemExit("Failed to find top-level url line in Formula/logmind.rb")
+
+          # Replace the first sha256 line (paired with the top-level url just above)
+          text, n_sha = re.subn(
+              r'(^\s*sha256\s+)"[a-f0-9]{64}"',
+              lambda m: f'{m.group(1)}"{new_sha}"',
+              text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if n_sha != 1:
+              raise SystemExit("Failed to find top-level sha256 line in Formula/logmind.rb")
+
+          p.write_text(text, encoding="utf-8")
+          print(f"Bumped Formula/logmind.rb to {version}")
+          PY
+
+          git add Formula/logmind.rb
+          git diff --cached --stat
+          git commit -m "logmind ${VERSION}
+
+          PyPI tarball: ${NEW_URL}
+          sha256: ${NEW_SHA}
+
+          Auto-bumped by .github/workflows/homebrew-bump.yml on tag push.
+          Python resource blocks (click, pyyaml) were NOT refreshed; open a
+          follow-up PR if a major dependency rev'd between releases."
+          git push -u origin "${BRANCH}"
+
+          gh pr create \
+            --repo thrillmot/homebrew-logmind \
+            --base main \
+            --head "${BRANCH}" \
+            --title "logmind ${VERSION}" \
+            --body "Auto-bumped from logmind tag \`v${VERSION}\`. PyPI tarball SHA verified against pypi.org. Resource blocks not refreshed (rarely changes between patch releases — open a follow-up if needed)."
