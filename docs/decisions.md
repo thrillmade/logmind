@@ -10,3 +10,10 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - **Detail:** [decisions-branches/dogfood-workflows.md](decisions-branches/dogfood-workflows.md)
 
 ---
+## 2026-05-15 17:34 - Merged: footer-polish (#32)
+
+- **PR:** https://github.com/thrillmot/logmind/pull/32
+- **Decisions:** 1 from this branch
+- **Detail:** [decisions-branches/footer-polish.md](decisions-branches/footer-polish.md)
+
+---
