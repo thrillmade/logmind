@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# QA screenshots (Chrome DevTools MCP / Playwright captures)
+.*.png
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

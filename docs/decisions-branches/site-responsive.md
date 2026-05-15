@@ -8,3 +8,11 @@
 - Hero CTAs now stack vertically on mobile (full-width) and side-by-side from sm: breakpoint
 
 ---
+## 2026-05-15 09:41 - Site: gitignore screenshots; remove the accidentally-committed PNGs
+
+**Reasoning:** logmind log's git add . swept ~12MB of QA screenshots into the previous commit. Adding site/.*.png to site/.gitignore so future audits don't leak. Removing the already-committed PNGs in this commit.
+
+**Implications:**
+- site/ stays slim again; binary diff churn doesn't bloat git history
+
+---
