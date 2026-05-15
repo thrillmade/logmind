@@ -7,13 +7,15 @@ name: doc link integrity
 
 on:
   pull_request:
-    paths:
-      - "**/*.md"
-      - ".logmind/config.yml"
   push:
     branches: [main]
-    paths:
-      - "**/*.md"
+
+# Note: previously this workflow had a `paths: ["**/*.md", ...]` filter
+# to skip runs when no markdown changed. That interacts badly with
+# `required_status_checks` in the branch ruleset — GitHub treats a
+# filter-skipped check as "expected but missing" and blocks the merge
+# forever. Running unconditionally is cheap (~15s end-to-end) and keeps
+# the gate predictable.
 
 jobs:
   check-links:
