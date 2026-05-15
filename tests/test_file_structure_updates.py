@@ -24,17 +24,18 @@ from logmind.core.tree_gen import (
 
 def test_read_gitignore_skips_comments_and_blanks(tmp_path):
     (tmp_path / ".gitignore").write_text(
-        "# header\n\nfoo\n# inline\nbar/\n!keep_me\n/baz\n"
-    , encoding="utf-8")
-    out = _read_gitignore_patterns(tmp_path)
-    assert "foo" in out
-    assert "bar" in out  # trailing slash stripped
-    assert "baz" in out  # leading slash stripped
-    assert "keep_me" not in out  # negation dropped (out of scope)
+        "# header\n\nfoo\n# inline\nbar/\n!keep_me\n/baz\n",
+        encoding="utf-8",
+    )
+    ignore, negate = _read_gitignore_patterns(tmp_path)
+    assert "foo" in ignore
+    assert "bar" in ignore  # trailing slash stripped
+    assert "baz" in ignore  # leading slash stripped
+    assert "keep_me" in negate  # negation collected for precedence-aware match
 
 
 def test_read_gitignore_returns_empty_when_missing(tmp_path):
-    assert _read_gitignore_patterns(tmp_path) == []
+    assert _read_gitignore_patterns(tmp_path) == ([], [])
 
 
 def test_resolve_ignore_includes_defaults_plus_gitignore(tmp_path):
@@ -44,6 +45,40 @@ def test_resolve_ignore_includes_defaults_plus_gitignore(tmp_path):
     assert "*.log" in out
     for default in DEFAULT_IGNORES:
         assert default in out
+
+
+# ---------------------------------------------------------------------------
+# Path-aware ignore matching (regression for v0.1.1 bug: site/.next/ in tree)
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_tree_honors_path_pattern_from_gitignore(tmp_path):
+    """A .gitignore entry like ``site/.next/`` should skip the nested
+    ``site/.next/cache/...`` tree, not just basename-match ``.next``.
+    Regression for v0.1.1 where 280 lines of Next.js build cache landed
+    in docs/file-structure.md."""
+    site = tmp_path / "site"
+    cache = site / ".next" / "cache"
+    cache.mkdir(parents=True)
+    (cache / "chunk_abc123.js").write_text("", encoding="utf-8")
+    (site / "page.tsx").write_text("", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("site/.next/\n", encoding="utf-8")
+
+    tree = _generate_fallback_tree(tmp_path)
+    assert "page.tsx" in tree
+    assert ".next" not in tree
+    assert "chunk_abc123.js" not in tree
+
+
+def test_fallback_tree_honors_gitignore_negation(tmp_path):
+    """``!keep.log`` after ``*.log`` should re-include keep.log."""
+    (tmp_path / "noisy.log").write_text("", encoding="utf-8")
+    (tmp_path / "keep.log").write_text("", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("*.log\n!keep.log\n", encoding="utf-8")
+
+    tree = _generate_fallback_tree(tmp_path)
+    assert "noisy.log" not in tree
+    assert "keep.log" in tree
 
 
 # ---------------------------------------------------------------------------

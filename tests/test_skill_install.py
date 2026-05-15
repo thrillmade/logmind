@@ -17,8 +17,24 @@ from logmind.core.skill_install import (
 
 
 def test_default_constants_match_published_skill():
-    assert DEFAULT_SKILL_SOURCE == "thrillmot/logmind-skill"
+    # v0.1.2 — collection layout at thrillmot/agent-skills (full URL form
+    # so `skills add` recognizes it as a collection install).
+    assert DEFAULT_SKILL_SOURCE == "https://github.com/thrillmot/agent-skills"
     assert DEFAULT_SKILL_NAME == "logmind"
+
+
+def test_install_globally_passes_collection_url_and_skill_name(monkeypatch):
+    """Default install argv must reference the agent-skills collection URL
+    and pass --skill logmind so skills.sh picks the right entry."""
+    monkeypatch.setattr(skill_install.shutil, "which", lambda name: "/usr/bin/skills")
+    captured = {}
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    install_globally(runner=fake_run)
+    assert "https://github.com/thrillmot/agent-skills" in captured["argv"]
+    skill_idx = captured["argv"].index("--skill")
+    assert captured["argv"][skill_idx + 1] == "logmind"
 
 
 def test_build_install_argv_npx_mode():

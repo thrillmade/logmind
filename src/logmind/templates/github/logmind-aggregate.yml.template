@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write   # for the gh pr create fallback below
 
 jobs:
   aggregate:
@@ -36,8 +37,13 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: python -m logmind.actions.aggregate
 
-      - name: Commit and push
+      - name: Commit and push (with PR fallback under branch protection)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
+          set -uo pipefail
           if git diff --quiet docs/decisions.md; then
             echo "No aggregation changes to commit."
             exit 0
@@ -45,5 +51,31 @@ jobs:
           git config user.name "logmind-bot"
           git config user.email "logmind@users.noreply.github.com"
           git add docs/decisions.md
-          git commit -m "logmind: aggregate decisions from #${{ github.event.pull_request.number }}"
-          git push
+          git commit -m "logmind: aggregate decisions from #${PR_NUMBER}"
+
+          # Try direct push first (works on unprotected branches).
+          push_stderr=$(git push 2>&1) && exit 0 || true
+          echo "${push_stderr}"
+
+          # Fall back to opening a PR if push was rejected by branch protection.
+          # Covers classic branch protection ("protected branch hook declined")
+          # and rulesets (GH013) plus required-status-check rejections.
+          if echo "${push_stderr}" | grep -qE 'protected branch hook declined|GH013|required status check'; then
+            BRANCH="logmind/aggregate-${PR_NUMBER}"
+            git checkout -b "${BRANCH}"
+            git push -u origin "${BRANCH}"
+            if ! gh pr create \
+                  --base "${BASE_REF}" \
+                  --head "${BRANCH}" \
+                  --title "logmind: aggregate decisions from #${PR_NUMBER}" \
+                  --body "Automated decision aggregation. Direct push to \`${BASE_REF}\` was blocked by branch protection."; then
+              echo "::warning::Aggregation PR could not be created. Check 'Settings → Actions → General → Allow GitHub Actions to create and approve pull requests'."
+              exit 0
+            fi
+            echo "Opened aggregation PR for #${PR_NUMBER}."
+            exit 0
+          fi
+
+          # Some other push failure — surface it.
+          echo "::error::git push failed: ${push_stderr}"
+          exit 1

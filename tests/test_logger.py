@@ -1,5 +1,6 @@
 """Tests for core/logger.py."""
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -251,3 +252,86 @@ def test_archive_oldest_decision_creates_archive_if_missing(docs_dir):
     assert archive_path.exists()
     archive_content = archive_path.read_text(encoding="utf-8")
     assert "Another old decision" in archive_content
+
+
+# ---------------------------------------------------------------------------
+# Scoped staging — v0.1.2
+# `logmind log` defaults to staging only decision-related files; --stage all
+# is the opt-in for the pre-v0.1.2 "stage everything" behavior. Regression
+# for the bot-reviewer finding that auto_push + git add . silently published
+# unrelated working-tree changes alongside the decision commit.
+# ---------------------------------------------------------------------------
+
+
+def _git_init(path: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=path, check=True, capture_output=True)
+    # Need an initial commit so we have a HEAD for diff-cached checks
+    (path / ".keep").write_text("", encoding="utf-8")
+    subprocess.run(["git", "add", ".keep"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=path, check=True, capture_output=True)
+
+
+def _staged_files(path: Path) -> set:
+    out = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return {line for line in out.stdout.split() if line}
+
+
+def test_log_scoped_stage_excludes_unrelated_working_tree_changes(tmp_path, monkeypatch):
+    """Default `logmind log` should NOT stage random untracked files in the
+    working tree. v0.1.1 used `git add .` which swept them up."""
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Archive\n\n---\n", encoding="utf-8")
+
+    # Unrelated working-tree noise that v0.1.1 would have swept up
+    (tmp_path / "screenshot-debug.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (tmp_path / "notes.txt").write_text("scratch", encoding="utf-8")
+
+    log("Scoped staging test", reasoning="check git add scope", docs_path=docs,
+        auto_commit=True, auto_push=False, stage="scoped")
+
+    # The most recent commit should contain ONLY decision-related files.
+    out = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    committed = {line for line in out.stdout.split() if line}
+    assert "docs/decisions.md" in committed
+    assert "screenshot-debug.png" not in committed
+    assert "notes.txt" not in committed
+
+
+def test_log_stage_all_preserves_v011_behavior(tmp_path, monkeypatch):
+    """`--stage all` opts into the v0.1.1 behavior of staging the entire
+    working tree alongside the decision commit."""
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+
+    (tmp_path / "feature.py").write_text("def new(): pass\n", encoding="utf-8")
+
+    log("Stage-all test", reasoning="opt back in", docs_path=docs,
+        auto_commit=True, auto_push=False, stage="all")
+
+    out = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    committed = {line for line in out.stdout.split() if line}
+    assert "docs/decisions.md" in committed
+    assert "feature.py" in committed

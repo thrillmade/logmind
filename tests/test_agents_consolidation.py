@@ -107,7 +107,7 @@ def test_get_agents_md_template_returns_slim_when_skills_available(monkeypatch):
 
     monkeypatch.setattr(skill_install, "is_skills_available", lambda: True)
     slim = get_agents_md_template()
-    assert "logmind-block-version: v1-slim" in slim
+    assert "logmind-block-version: v2-slim" in slim
     assert "see the `logmind` skill" in slim
 
 
@@ -117,7 +117,7 @@ def test_get_agents_md_template_returns_full_when_skills_absent(monkeypatch):
 
     monkeypatch.setattr(skill_install, "is_skills_available", lambda: False)
     full = get_agents_md_template()
-    assert "logmind-block-version: v1" in full
+    assert "logmind-block-version: v2" in full
     # Full template carries the inline procedure
     assert "When you MUST log" in full or "REQUIREMENT" in full or "skill is also embedded" in full
 
