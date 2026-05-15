@@ -39,7 +39,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.1.4", prog_name="logmind")
+@click.version_option(version="0.2.0", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -346,19 +346,22 @@ def init(
 
     click.echo()
     click.echo(
-        "Tip: if your default branch has required status checks (clud-bug, "
-        "check-decisions, etc.), set a LOGMIND_BOT_PAT secret so the "
-        "aggregator workflow's fallback PRs can satisfy them:"
+        "Tip: for docs/timeline.md to auto-regenerate cleanly, your repo needs:"
     )
     click.secho(
-        "  gh secret set LOGMIND_BOT_PAT --body \"<your-fine-grained-PAT>\"",
+        "  • Branch ruleset on main: \"Require branches to be up to date "
+        "before merging\" (strict status checks)",
+        fg="cyan",
+    )
+    click.secho(
+        "  • Settings → Actions → General → Workflow permissions: "
+        "\"Read and write permissions\"",
         fg="cyan",
     )
     click.echo(
-        "  (Fine-grained PAT scoped to this repo, Contents:write + "
-        "Pull-requests:write. Without it, aggregator PRs open but their "
-        "required checks never trigger — see logmind-aggregate.yml's env "
-        "comment.)"
+        "  Without these, two concurrent PRs editing docs/timeline.md may "
+        "produce a merge conflict, OR the regen step may fail to push back "
+        "to the PR branch."
     )
 
 
@@ -1343,6 +1346,77 @@ def check_decisions(threshold: int, no_fail: bool):
             f"✓ {total_lines} lines changed (below {threshold}-line threshold).",
             fg="green",
         )
+
+
+@main.command("timeline")
+@click.option(
+    "--write",
+    "write_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write the rendered timeline to PATH (typically docs/timeline.md). "
+    "Without this flag, prints to stdout.",
+)
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Exit nonzero if writing would change the file. Used in CI to fail "
+    "the build before regen so the auto-commit step runs and updates the PR.",
+)
+def timeline_cmd(write_path: Optional[Path], check: bool):
+    """
+    Print or regenerate the high-level decision timeline.
+
+    Reads docs/decisions.md, docs/decisions-archive.md, and every
+    docs/decisions-branches/*.md as sources; renders a chronological
+    timeline grouped by year-month. Sources are never modified.
+
+    Examples:
+        logmind timeline                              # print to stdout
+        logmind timeline --write docs/timeline.md     # regenerate file
+        logmind timeline --write docs/timeline.md --check  # CI gate
+    """
+    from logmind.core.timeline import generate_timeline, write_timeline
+
+    docs_path = Path.cwd() / "docs"
+    if not docs_path.exists():
+        click.secho(
+            "Error: docs/ directory not found. Run 'logmind init' first.",
+            fg="red",
+        )
+        sys.exit(1)
+
+    if check:
+        if write_path is None:
+            click.secho(
+                "Error: --check requires --write PATH to compare against.",
+                fg="red",
+            )
+            sys.exit(2)
+        rendered = generate_timeline(docs_path)
+        existing = (
+            write_path.read_text(encoding="utf-8") if write_path.exists() else ""
+        )
+        if existing != rendered:
+            click.secho(
+                f"✗ {write_path} is stale — re-run "
+                "`logmind timeline --write {write_path}` and commit.",
+                fg="yellow",
+            )
+            sys.exit(1)
+        click.secho(f"✓ {write_path} is up to date", fg="green")
+        return
+
+    if write_path is None:
+        click.echo(generate_timeline(docs_path), nl=False)
+        return
+
+    changed = write_timeline(write_path, docs_path)
+    if changed:
+        click.secho(f"✓ Regenerated {write_path}", fg="green")
+    else:
+        click.echo(f"  {write_path} already up to date")
 
 
 @main.command("tree")

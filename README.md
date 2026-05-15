@@ -37,6 +37,29 @@ brew install logmind
 pip install logmind
 ```
 
+## Required repo settings
+
+`logmind init` ships GitHub Actions workflows that regenerate
+`docs/timeline.md` and `docs/file-structure.md` on every PR. For those
+to land cleanly, your repo needs:
+
+1. **Workflow write permissions** —
+   `Settings → Actions → General → Workflow permissions = Read and write permissions`.
+   The regen workflow needs to push its commit back to the PR branch via
+   `GITHUB_TOKEN`. Default on new repos may be read-only; flip it once.
+
+2. **Strict required status checks on `main`** —
+   `Settings → Branches → Branch protection rule (or Ruleset)` →
+   *"Require branches to be up to date before merging"*. This forces a
+   PR to be rebased on latest `main` before merge, which is what makes
+   the derived files (`docs/timeline.md`, `docs/file-structure.md`)
+   conflict-free between concurrent PRs.
+
+Without (1), the regen step fails to push and your `docs/timeline.md`
+stays stale. Without (2), two concurrent PRs editing `docs/timeline.md`
+can produce a merge conflict the bot can't resolve. Both settings are
+one-time toggles per repo.
+
 ## Quick Start
 
 ```bash

@@ -60,58 +60,11 @@ def test_check_decisions_no_renames():
 
 
 # ---------------------------------------------------------------------------
-# logmind-aggregate.yml: PR fallback under branch protection
+# v0.1.2 aggregator-template tests removed in v0.2 — the entire aggregator
+# template is gone, replaced by docs/timeline.md as a derived artifact.
+# See tests/test_timeline.py for the new regression suite + the
+# test_aggregator_template_no_longer_shipped guard that this stays gone.
 # ---------------------------------------------------------------------------
-
-
-def test_aggregate_pr_fallback_present():
-    """Direct push to a protected base ref fails with GITHUB_TOKEN; the
-    template must fall back to opening a PR (bug #4 in v0.1.1)."""
-    content = _read("github/logmind-aggregate.yml.template")
-    assert "gh pr create" in content
-    assert "pull-requests: write" in content
-    assert "GH013" in content
-    assert "protected branch hook declined" in content
-
-
-def test_aggregate_preserves_recursion_guard():
-    """The early-exit `git diff --quiet docs/decisions.md` must remain so
-    the fallback-PR-merge re-trigger is a no-op."""
-    content = _read("github/logmind-aggregate.yml.template")
-    assert "git diff --quiet docs/decisions.md" in content
-
-
-def test_aggregate_handles_disabled_actions_pr_creation():
-    """When 'Allow GitHub Actions to create PRs' is off, gh pr create fails.
-    Template should surface a ::warning:: and exit 0, not fail the run."""
-    content = _read("github/logmind-aggregate.yml.template")
-    assert "::warning::" in content
-
-
-# ---------------------------------------------------------------------------
-# v0.1.4 — LOGMIND_BOT_PAT fallback for aggregator PRs
-# ---------------------------------------------------------------------------
-
-
-def test_aggregate_template_uses_bot_pat_fallback():
-    """v0.1.4: aggregator must prefer LOGMIND_BOT_PAT and fall back to
-    GITHUB_TOKEN. Without the fallback, users with required status checks
-    on their base ref get permanently-unmergeable aggregator PRs because
-    GITHUB_TOKEN-opened PRs can't trigger downstream workflows."""
-    content = _read("github/logmind-aggregate.yml.template")
-    assert "secrets.LOGMIND_BOT_PAT || secrets.GITHUB_TOKEN" in content
-
-
-def test_aggregate_template_warns_when_no_bot_pat():
-    """If the fallback PR opens without LOGMIND_BOT_PAT set, the workflow
-    must emit a ::warning:: explaining why required checks won't fire and
-    how to fix it (set the secret)."""
-    content = _read("github/logmind-aggregate.yml.template")
-    assert "HAS_BOT_PAT" in content
-    # The warning must name the secret so users know what to set
-    assert "LOGMIND_BOT_PAT" in content
-    # And mention the consequence so the warning is actionable
-    assert "Required status checks" in content or "required checks" in content
 
 
 # ---------------------------------------------------------------------------

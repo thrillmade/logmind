@@ -1,0 +1,61 @@
+name: regen derived docs
+
+# Derived-file architecture (v0.2+): docs/timeline.md AND
+# docs/file-structure.md are derived artifacts, regenerated from sources
+# on every PR commit. Conflicts on either file are impossible by
+# construction — same inputs produce the same output, and the
+# strict-required-status-checks branch-protection rule forces PRs to be
+# up-to-date with main before merge.
+#
+# Replaces the v0.1.x `logmind-aggregate.yml` workflow which opened a
+# bookkeeping PR after every feature-merge. The new design needs no
+# follow-up PR, no LOGMIND_BOT_PAT, no branch-protection bypass.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  # Need write to push the regen commit back to the PR's feature branch.
+  # Requires repo setting: Settings → Actions → General → Workflow
+  # permissions = "Read and write permissions" (off by default on some repos).
+  contents: write
+
+jobs:
+  regen-timeline:
+    runs-on: ubuntu-latest
+    # Don't fight ourselves on PRs from forks (they don't have write tokens).
+    if: github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install logmind
+        run: pip install logmind
+
+      - name: Regenerate derived docs (timeline + file-structure)
+        run: |
+          set -euo pipefail
+          mkdir -p docs
+          logmind timeline --write docs/timeline.md
+          logmind tree   # regenerates docs/file-structure.md
+          changed=0
+          git diff --quiet docs/timeline.md       || changed=1
+          git diff --quiet docs/file-structure.md || changed=1
+          if [ "$changed" = "0" ]; then
+            echo "All derived docs already up to date."
+            exit 0
+          fi
+          git config user.name "logmind-regen"
+          git config user.email "logmind-regen@users.noreply.github.com"
+          git add docs/timeline.md docs/file-structure.md
+          git commit -m "logmind: regen derived docs"
+          git push
+          echo "::notice::Pushed regenerated derived docs to ${{ github.event.pull_request.head.ref }}."
