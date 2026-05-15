@@ -269,10 +269,12 @@ def test_aggregator_template_no_longer_shipped():
     assert (template_root / "regen-timeline.yml.template").exists()
 
 
-def test_regen_timeline_template_uses_github_token_only():
-    """The new regen workflow must not depend on LOGMIND_BOT_PAT (the
-    secret name may appear in comments explaining what we DON'T need; check
-    for token usage in env/with blocks only)."""
+def test_regen_timeline_template_is_fail_fast_not_autocommit():
+    """v0.2 final design: the workflow VERIFIES timeline.md is current and
+    fails red if not — it does NOT auto-commit. Auto-committing via
+    GITHUB_TOKEN doesn't trigger downstream workflows (GitHub anti-recursion
+    safety), which leaves required status checks stuck on "Expected" forever.
+    The fail-fast pattern (same as Prettier/ESLint) avoids the entire issue."""
     template = (
         Path(__file__).parent.parent
         / "src"
@@ -281,8 +283,12 @@ def test_regen_timeline_template_uses_github_token_only():
         / "github"
         / "regen-timeline.yml.template"
     ).read_text(encoding="utf-8")
-    # The secret must NOT be referenced in any `secrets.LOGMIND_BOT_PAT` ${{...}} expression
+    # Must NOT depend on LOGMIND_BOT_PAT
     assert "secrets.LOGMIND_BOT_PAT" not in template
-    assert "GITHUB_TOKEN" in template
-    # And it pushes to the PR branch (head.ref), never to base
-    assert "head.ref" in template
+    # Must NOT push a commit back to the branch (the failure mode we're
+    # avoiding). The previous auto-commit design used `git push` here.
+    assert "git push" not in template
+    # Must use `::error::` to surface the failure clearly
+    assert "::error::" in template
+    # Must guide the user to the fix command
+    assert "logmind timeline --write docs/timeline.md" in template
