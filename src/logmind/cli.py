@@ -34,6 +34,32 @@ def main():
     pass
 
 
+def _install_github_action_templates(root_path: Path) -> list:
+    """
+    Copy every ``templates/github/*.yml.template`` into
+    ``<root>/.github/workflows/<name>.yml``. Existing workflow files with the
+    same name are NOT overwritten — logmind treats user-customised workflows
+    as canonical.
+
+    Returns a list of relative paths that were newly created.
+    """
+    template_root = Path(__file__).parent / "templates" / "github"
+    if not template_root.exists():
+        return []
+    workflows_dir = root_path / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    created = []
+    suffix = ".template"
+    for tmpl in sorted(template_root.glob("*.yml.template")):
+        target_name = tmpl.name[: -len(suffix)]
+        target = workflows_dir / target_name
+        if target.exists():
+            continue
+        target.write_text(tmpl.read_text())
+        created.append(str(target.relative_to(root_path)))
+    return created
+
+
 @main.command()
 @click.option(
     "--no-git",
@@ -51,7 +77,12 @@ def main():
     is_flag=True,
     help="Configure all supported AI agents",
 )
-def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
+@click.option(
+    "--github-actions/--no-github-actions",
+    default=True,
+    help="Install logmind GitHub Actions (decision aggregator, link checker). Default on.",
+)
+def init(no_git: bool, agents_list: Optional[str], all_agents: bool, github_actions: bool):
     """
     Initialize logmind in the current project.
 
@@ -140,6 +171,13 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
     for msg in messages:
         click.echo(msg)
 
+    # Install GitHub Action templates (decision aggregator, link checker)
+    installed_workflows: list = []
+    if github_actions:
+        installed_workflows = _install_github_action_templates(root_path)
+        for wf in installed_workflows:
+            click.echo(f"✓ Created {wf}")
+
     # Log first decision
     log_first_decision(docs_path)
     click.echo("✓ Logged first decision: \"Initialize logmind decision tracking\"")
@@ -171,6 +209,9 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool):
             claude_path = root_path / "CLAUDE.md"
             if claude_path.exists() and "CLAUDE.md" not in files_to_commit:
                 files_to_commit.append("CLAUDE.md")
+
+            # GH Action workflows installed during this init
+            files_to_commit.extend(installed_workflows)
 
             commit_and_push(
                 files_to_commit,

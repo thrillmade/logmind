@@ -61,7 +61,11 @@ Repository = "https://github.com/thrillmot/logmind"
 where = ["src"]
 
 [tool.setuptools.package-data]
-logmind = ["templates/*.template", "templates/*.md"]
+logmind = [
+    "templates/*.template",
+    "templates/*.md",
+    "templates/github/*.template",
+]
 
 [tool.black]
 line-length = 100
