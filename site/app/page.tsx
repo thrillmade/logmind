@@ -289,61 +289,73 @@ export default function Home() {
       </section>
 
       {/* footer */}
-      <footer className="mt-auto px-6 sm:px-10 lg:px-16 py-10 border-t border-rule">
-        <div className="max-w-6xl mx-auto w-full flex flex-col sm:flex-row items-start sm:items-end justify-between gap-6">
+      <footer className="mt-auto px-6 sm:px-10 lg:px-16 py-16 border-t border-rule">
+        <div className="max-w-6xl mx-auto w-full flex flex-col sm:flex-row sm:items-end justify-between gap-8">
           <div>
             <a href="/" className="display text-2xl tracking-tight">
               logmind<span className="text-accent">.</span>
             </a>
-            <div className="marginalia normal-case tracking-normal mt-1 text-xs text-foreground/50">
-              v0.1 · MIT licensed · made for things you’d miss if forgotten.
-            </div>
-            <div className="mt-3 flex items-center gap-3">
-              <span className="marginalia text-foreground/55">by</span>
+            <div className="marginalia normal-case tracking-normal mt-2 text-xs text-foreground/55 flex flex-wrap items-center gap-x-2 gap-y-1">
+              {/* keep version in sync with pyproject.toml */}
+              <span>v0.1.4</span>
+              <span>·</span>
+              <span>MIT licensed</span>
+              <span>·</span>
+              <span>by</span>
               <a
                 href="https://thrillmot.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="thrllmt (thrillmot.com)"
-                className="opacity-60 hover:opacity-100 transition-opacity"
+                className="opacity-60 hover:opacity-100 transition-opacity inline-flex items-center"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src="/thrllmt.svg"
                   alt="thrllmt"
-                  height={14}
-                  className="block h-[14px] w-auto"
+                  height={12}
+                  className="block h-[12px] w-auto"
                 />
               </a>
             </div>
+          </div>
+          <div className="flex flex-col sm:items-end gap-4">
             <a
-              href="https://skills.sh/thrillmot/logmind-skill"
+              href="https://www.skills.sh/thrillmot/agent-skills"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-block mt-3"
-              aria-label="logmind on skills.sh"
+              aria-label="thrillmot/agent-skills collection on skills.sh"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="https://skills.sh/b/thrillmot/logmind-skill"
-                alt="skills.sh install count"
+                src="https://skills.sh/b/thrillmot/agent-skills"
+                alt="skills.sh skill count"
                 height={20}
               />
             </a>
-          </div>
-          <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
-            <NavLink href="https://github.com/thrillmot/logmind/blob/main/CHANGELOG.md">
-              changelog
-            </NavLink>
-            <NavLink href="https://github.com/thrillmot/logmind/blob/main/CONTRIBUTING.md">
-              contributing
-            </NavLink>
-            <NavLink href="https://github.com/thrillmot/logmind/issues">
-              issues
-            </NavLink>
-            <NavLink href="https://github.com/thrillmot/logmind/security/policy">
-              security
-            </NavLink>
+            {/*
+              Nav row. At sm:+ (640px), force single-line via whitespace-nowrap
+              + inline flow — no wrap, all four dot-separated links on one
+              row. At <640px, switch to flex-wrap so links break at element
+              boundaries instead of overflowing the viewport.
+            */}
+            <nav className="text-sm flex flex-wrap items-center gap-y-1 sm:block sm:whitespace-nowrap sm:text-right">
+              <NavLink href="https://github.com/thrillmot/logmind/blob/main/CHANGELOG.md">
+                changelog
+              </NavLink>
+              <span aria-hidden className="mx-2 text-foreground/30">·</span>
+              <NavLink href="https://github.com/thrillmot/logmind/blob/main/CONTRIBUTING.md">
+                contributing
+              </NavLink>
+              <span aria-hidden className="mx-2 text-foreground/30">·</span>
+              <NavLink href="https://github.com/thrillmot/logmind/issues">
+                issues
+              </NavLink>
+              <span aria-hidden className="mx-2 text-foreground/30">·</span>
+              <NavLink href="https://github.com/thrillmot/logmind/security/policy">
+                security
+              </NavLink>
+            </nav>
           </div>
         </div>
       </footer>
