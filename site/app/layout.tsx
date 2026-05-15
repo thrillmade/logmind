@@ -22,18 +22,48 @@ export const metadata: Metadata = {
   description:
     "Capture AI decisions while you work. Every new agent gets the full why-behind-the-code in one read. AGENTS.md canonical, link integrity on every PR, project tree always current.",
   metadataBase: new URL("https://logmind.dev"),
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     title: "logmind",
     description: "Infinite context for every agent. Captured while you work.",
     url: "https://logmind.dev",
     siteName: "logmind",
     type: "website",
+    locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
     title: "logmind",
     description: "Infinite context for every agent. Captured while you work.",
+    creator: "@thrillmot",
   },
+  authors: [{ name: "thrillmot", url: "https://github.com/thrillmot" }],
+  creator: "thrillmot",
+  publisher: "thrillmot",
+  keywords: [
+    "logmind",
+    "ai decision logging",
+    "agents.md",
+    "claude code",
+    "cursor",
+    "codex",
+    "developer tools",
+    "documentation",
+    "ai agents",
+  ],
+  robots: {
+    index: true,
+    follow: true,
+  },
+  category: "developer tools",
+};
+
+export const viewport = {
+  themeColor: "#0e0c0a",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
