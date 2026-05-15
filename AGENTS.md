@@ -7,69 +7,35 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-## Decision Logging (logmind)
+<!-- logmind-block-version: v1-slim -->
+## Decision logging — see the `logmind` skill
 
-**IMPORTANT:** This project uses [logmind](https://github.com/logmind/logmind) for decision tracking.
+This project uses [logmind](https://logmind.dev). The full procedure
+(when to log, how to log, what counts as a decision, branch routing) lives
+in the **`logmind` agent skill** which your runtime should auto-load.
 
-### REQUIREMENT: AI Agents MUST Log All Decisions
-
-**You MUST log a decision whenever you:**
-- Make architectural or design choices
-- Choose between alternative approaches
-- Write significant new code (>20 lines)
-- Modify existing functionality
-- Add dependencies or libraries
-- Make security or performance decisions
-
-**BEFORE writing code, ask yourself: "Should this be logged?" If yes, log it IMMEDIATELY.**
-
-### How to Log Decisions
-
-**Python API:**
-```python
-from logmind import log
-
-log("Decision summary",
-    reasoning="Why this approach",
-    alternatives=["Option A", "Option B"],
-    implications=["Impact 1", "Impact 2"])
-```
-
-**CLI:**
-```bash
-logmind log "Use PostgreSQL for database" \
-  -r "Need ACID compliance" \
-  -a "MongoDB" -a "SQLite" \
-  -i "Need connection pooling"
-```
-
-### Branch-aware logging
-
-When you log on a feature branch, the entry is written to
-`docs/decisions-branches/<branch>.md` rather than `docs/decisions.md`. On PR
-merge, a workflow appends a one-line summary linking the PR + the per-branch
-file to `docs/decisions.md`. Run `logmind show` and `logmind search` as usual
-— they read both.
-
-### Viewing Past Decisions
+If the skill isn't loaded for some reason, install it once globally:
 
 ```bash
-logmind show                  # recent decisions on current branch
-logmind show --all            # include archive
-logmind search "postgres"     # search across both files
+npx skills add -g thrillmot/logmind-skill
 ```
 
-### Required Reading
+### Project-specific paths
 
-Before starting work in this repo, read:
-- **[docs/decisions.md](docs/decisions.md)** — 20 most recent decisions on the default branch
-- **[docs/file-structure.md](docs/file-structure.md)** — current project structure
+- Recent decisions on the default branch: **[docs/decisions.md](docs/decisions.md)**
+- Per-branch decisions (in-flight feature work): **docs/decisions-branches/**
+- Archived decisions: **[docs/decisions-archive.md](docs/decisions-archive.md)**
+- Project tree (auto-regenerated on every log): **[docs/file-structure.md](docs/file-structure.md)**
 
-### Additional Reference
+### Quick reference
 
-- **[docs/decisions-archive.md](docs/decisions-archive.md)** — historical decisions (searchable reference)
-- **docs/decisions-branches/** — per-branch decision logs written during feature work
-- **README.md** at the repo root — project overview, if present
+```bash
+logmind log "decision summary" -r "why" -a "alternative" -i "implication"
+logmind show               # recent decisions on the current branch
+logmind search "keyword"   # full-text across recent + archive
+```
+
+**Read `docs/decisions.md` and the matching `docs/decisions-branches/<branch>.md` (if any) before starting any non-trivial task.** The team has likely already decided things you'd otherwise re-litigate.
 <!-- logmind-end -->
 
 ## Project Overview

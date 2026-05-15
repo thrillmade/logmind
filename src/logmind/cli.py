@@ -17,7 +17,9 @@ from logmind.core.skill_install import (
 )
 from logmind.core.inserter import (
     AGENT_REGISTRY,
+    _replace_marker_block,
     create_agent_file,
+    find_outdated_marker_blocks,
     get_agent_file_path,
     get_agent_status,
     get_all_agent_names,
@@ -99,12 +101,23 @@ def _install_github_action_templates(root_path: Path) -> list:
         "Default: prompt interactively when stdin is a TTY."
     ),
 )
+@click.option(
+    "--install-hook",
+    is_flag=True,
+    help=(
+        "Also run `logmind install-hook` to set up a local pre-commit hook "
+        "that fails commits with >threshold lines changed without a decision "
+        "log update. Note: hooks live in .git/hooks/ and are NOT committed, "
+        "so each contributor must run this once on their machine."
+    ),
+)
 def init(
     no_git: bool,
     agents_list: Optional[str],
     all_agents: bool,
     github_actions: bool,
     skill_install_flag: Optional[bool],
+    install_hook: bool,
 ):
     """
     Initialize logmind in the current project.
@@ -125,6 +138,11 @@ def init(
         click.echo()
         click.secho("logmind is already initialized in this project.", fg="yellow")
         return
+
+    # Surface the skill recommendation prominently BEFORE we write any files,
+    # so the user sees it in a single uninterrupted prompt rather than buried
+    # after pages of "✓ Created ..." output.
+    _show_skill_recommendation(skill_install_flag)
 
     # Check if we're in a git repo
     if not no_git and not is_git_repo():
@@ -247,8 +265,19 @@ def init(
         except Exception as e:
             click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
 
-    # Optionally install the logmind agent skill globally via skills.sh
+    # Act on the skill-install decision captured at the start of init.
     _maybe_install_skill(skill_install_flag)
+
+    # Optionally install the local pre-commit hook (opt-in flag only;
+    # hooks aren't committed, so we never prompt — only install when asked).
+    if install_hook and is_git_repo():
+        try:
+            from logmind.cli import install_hook as install_hook_cmd  # type: ignore
+            # Programmatic invocation: call the Click command's callback
+            ctx = click.Context(install_hook_cmd)
+            ctx.invoke(install_hook_cmd, force=True)
+        except Exception as e:
+            click.secho(f"Warning: --install-hook failed: {e}", fg="yellow")
 
     click.echo()
     click.secho("logmind initialized successfully!", fg="green")
@@ -256,6 +285,72 @@ def init(
     click.echo("Start logging decisions with:")
     click.echo("  from logmind import log")
     click.echo("  log(\"Your decision here\")")
+    click.echo()
+    if skill_install_flag is False or (skill_install_flag is None and not is_skills_available()):
+        click.echo(
+            "Tip: install the logmind agent skill once globally so every AI "
+            "agent in every project picks up the procedure automatically:"
+        )
+        click.secho(f"  npx skills add -g {DEFAULT_SKILL_SOURCE}", fg="cyan")
+
+
+def _show_skill_recommendation(flag: Optional[bool]) -> None:
+    """
+    Print a prominent prompt about the logmind agent skill BEFORE any files
+    are written, so the user sees the recommendation up-front rather than
+    buried in init output.
+
+    Side effect: if interactive + flag is None + user confirms, we ALSO
+    note the decision so the later _maybe_install_skill call actually
+    installs. We do this by mutating sys.stdin signal? No — simplest is to
+    write to a module-level flag... actually cleanest: the existing
+    _maybe_install_skill already prompts; calling this function just shows
+    the framing up-front and defers the actual prompt to the later call.
+
+    For non-interactive runs the recommendation prints as a static note.
+    """
+    available = is_skills_available()
+
+    # Make the box bright + bordered so it's visible without ANSI being weird.
+    rule = "═" * 64
+    click.secho(rule, fg="cyan")
+    click.secho("  logmind agent skill — recommended", fg="cyan", bold=True)
+    click.secho(rule, fg="cyan")
+    click.echo()
+    click.echo(
+        "  Skills install the logmind decision-logging procedure into every"
+    )
+    click.echo(
+        "  AI agent that supports skills.sh (Claude Code, Cursor, Codex, Cline,"
+    )
+    click.echo(
+        "  Continue, ...). Install it once globally and any project that uses"
+    )
+    click.echo(
+        "  logmind picks up the procedure automatically — no per-project setup."
+    )
+    click.echo()
+    if available:
+        if flag is False:
+            click.secho(
+                "  --no-skill-install was passed; skipping install.",
+                fg="yellow",
+            )
+        elif flag is True:
+            click.echo("  --skill-install passed; will install after files are written.")
+        else:
+            click.echo(
+                "  skills CLI detected on your machine. You'll be prompted "
+                "after files are written."
+            )
+    else:
+        click.secho(
+            "  skills CLI not detected. Install Node.js / npx to enable, then re-run:",
+            fg="yellow",
+        )
+        click.secho(f"    npx skills add -g {DEFAULT_SKILL_SOURCE}", fg="cyan")
+    click.secho(rule, fg="cyan")
+    click.echo()
 
 
 def _maybe_install_skill(flag: Optional[bool]) -> None:
@@ -883,6 +978,73 @@ def agents_remove(agent_name: str, no_commit: bool, force: bool):
         sys.exit(1)
 
 
+@agents.command("update")
+@click.option(
+    "--apply",
+    "do_apply",
+    is_flag=True,
+    help="Rewrite stale marker blocks in place. Default is dry-run.",
+)
+@click.option(
+    "--commit",
+    is_flag=True,
+    help="git-commit the refreshed files after applying. Requires --apply.",
+)
+def agents_update(do_apply: bool, commit: bool):
+    """
+    Refresh outdated logmind marker blocks in AGENTS.md.
+
+    Sync (which runs on every `logmind log/show/search/agents list`) does
+    this automatically and silently. This command exposes it explicitly
+    for users who want a dry-run preview or a one-shot upgrade after
+    `pip install -U logmind`.
+
+    Dry-run (default): reports which files have stale blocks.
+    `--apply`:         rewrites the block body in place, preserving
+                        everything above and below the markers.
+    `--commit`:        also git-commits the refresh (requires --apply).
+    """
+    root_path = Path.cwd()
+    outdated = find_outdated_marker_blocks(root_path)
+
+    if not outdated:
+        click.secho("✓ All agent files are current.", fg="green")
+        return
+
+    click.echo(f"Found {len(outdated)} file(s) with stale logmind block(s):")
+    for file_path, _old, _new in outdated:
+        rel = file_path.relative_to(root_path)
+        click.echo(f"  - {rel}")
+
+    if not do_apply:
+        click.echo()
+        click.secho(
+            "Dry-run. Re-run with --apply to refresh.",
+            fg="yellow",
+        )
+        return
+
+    refreshed_paths: list = []
+    for file_path, _old, fresh in outdated:
+        content = file_path.read_text(encoding="utf-8")
+        new_content = _replace_marker_block(content, fresh)
+        file_path.write_text(new_content, encoding="utf-8")
+        rel = file_path.relative_to(root_path)
+        refreshed_paths.append(str(rel))
+        click.secho(f"✓ Refreshed {rel}", fg="green")
+
+    if commit and is_git_repo():
+        try:
+            commit_and_push(
+                refreshed_paths,
+                "logmind: refresh AGENTS.md marker block to current template",
+                push=False,
+            )
+            click.secho("✓ Committed changes (push disabled)", fg="green")
+        except Exception as e:
+            click.secho(f"Warning: commit failed: {e}", fg="yellow")
+
+
 @agents.command("migrate")
 @click.option(
     "--no-commit",
@@ -1034,9 +1196,21 @@ def check_decisions(threshold: int, no_fail: bool):
     )
     staged_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
 
-    # If decisions.md is staged, changes are documented
-    if any("decisions.md" in f for f in staged_files):
-        click.secho("✓ docs/decisions.md is staged — changes are documented.", fg="green")
+    # If decisions.md OR a per-branch decision file is staged, changes are
+    # documented. Branch-aware mode (the default) routes feature-branch logs
+    # to docs/decisions-branches/<branch>.md, so we must accept either.
+    def _is_decision_file(path: str) -> bool:
+        return (
+            path == "docs/decisions.md"
+            or path.endswith("/decisions.md")
+            or path.startswith("docs/decisions-branches/")
+        )
+
+    if any(_is_decision_file(f) for f in staged_files):
+        click.secho(
+            "✓ A decision log file is staged — changes are documented.",
+            fg="green",
+        )
         return
 
     # Count lines changed outside of docs/

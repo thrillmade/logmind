@@ -736,6 +736,26 @@ def test_check_decisions_passes_when_decisions_md_staged(git_repo):
     assert "staged" in result.output
 
 
+def test_check_decisions_passes_when_branch_decisions_file_staged(git_repo):
+    """Regression: in branch_aware mode (the default), decisions go to
+    docs/decisions-branches/<branch>.md — check-decisions must accept that
+    as a documented change, not just docs/decisions.md."""
+    runner = CliRunner()
+    from unittest.mock import patch, MagicMock
+
+    staged_output = "docs/decisions-branches/feat__auth.md\nsrc/foo.py\n"
+    mock_result = MagicMock()
+    mock_result.stdout = staged_output
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        with patch("logmind.cli.is_git_repo", return_value=True):
+            with patch("subprocess.run", return_value=mock_result):
+                result = runner.invoke(main, ["check-decisions"])
+
+    assert result.exit_code == 0
+    assert "staged" in result.output
+
+
 def test_check_decisions_passes_below_threshold(git_repo):
     """check-decisions exits 0 when lines changed are below the threshold."""
     runner = CliRunner()

@@ -297,6 +297,20 @@ export default function Home() {
             <div className="marginalia normal-case tracking-normal mt-1 text-xs text-foreground/50">
               v0.1 · MIT licensed · made for things you’d miss if forgotten.
             </div>
+            <a
+              href="https://skills.sh/thrillmot/logmind-skill"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block mt-3"
+              aria-label="logmind on skills.sh"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="https://skills.sh/b/thrillmot/logmind-skill"
+                alt="skills.sh install count"
+                height={20}
+              />
+            </a>
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
             <NavLink href="https://github.com/thrillmot/logmind/blob/main/CHANGELOG.md">
