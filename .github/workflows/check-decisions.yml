@@ -43,7 +43,8 @@ jobs:
             # Binary diffs render added/removed as "-"; skip them.
             [ "$added" = "-" ] && continue
             total=$((total + added + removed))
-          done < <(git diff --numstat "$BASE_SHA...$HEAD_SHA")
+            # --no-renames so a src→docs rename isn't double-counted as src.
+          done < <(git diff --numstat --no-renames "$BASE_SHA...$HEAD_SHA")
 
           # Did the PR add a decision log update?
           decision_touched=0
@@ -57,7 +58,12 @@ jobs:
           echo "Decision log touched: $decision_touched"
 
       - name: Enforce
-        if: steps.diff.outputs.total_lines >= 20 && steps.diff.outputs.decision_touched == '0'
+        # Gate trips when the PR exceeds THRESHOLD non-docs lines without
+        # touching a decision log. `[skip-logmind]` in the PR title bypasses
+        # the gate for one-off overrides (handled by maintainers).
+        if: steps.diff.outputs.total_lines >= fromJSON(env.THRESHOLD) && steps.diff.outputs.decision_touched == '0' && !contains(github.event.pull_request.title, '[skip-logmind]')
+        env:
+          THRESHOLD: "20"
         run: |
           echo "::error::This PR changes ${{ steps.diff.outputs.total_lines }} lines of non-docs code without updating docs/decisions.md or docs/decisions-branches/<branch>.md."
           echo "::error::Log a decision with: logmind log \"summary\" -r \"reasoning\" -a \"alternative\" -i \"implication\""
