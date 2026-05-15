@@ -9,6 +9,12 @@ import click
 from logmind.core.config import load_config
 from logmind.core.git_handler import commit_and_push, is_git_repo
 from logmind.core.gitignore import ensure_block as ensure_gitignore_block
+from logmind.core.skill_install import (
+    DEFAULT_SKILL_NAME,
+    DEFAULT_SKILL_SOURCE,
+    install_globally as install_logmind_skill,
+    is_skills_available,
+)
 from logmind.core.inserter import (
     AGENT_REGISTRY,
     create_agent_file,
@@ -84,7 +90,22 @@ def _install_github_action_templates(root_path: Path) -> list:
     default=True,
     help="Install logmind GitHub Actions (decision aggregator, link checker). Default on.",
 )
-def init(no_git: bool, agents_list: Optional[str], all_agents: bool, github_actions: bool):
+@click.option(
+    "--skill-install/--no-skill-install",
+    "skill_install_flag",
+    default=None,
+    help=(
+        "Install the logmind agent skill globally via skills.sh. "
+        "Default: prompt interactively when stdin is a TTY."
+    ),
+)
+def init(
+    no_git: bool,
+    agents_list: Optional[str],
+    all_agents: bool,
+    github_actions: bool,
+    skill_install_flag: Optional[bool],
+):
     """
     Initialize logmind in the current project.
 
@@ -234,12 +255,55 @@ def init(no_git: bool, agents_list: Optional[str], all_agents: bool, github_acti
         except Exception as e:
             click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
 
+    # Optionally install the logmind agent skill globally via skills.sh
+    _maybe_install_skill(skill_install_flag)
+
     click.echo()
     click.secho("logmind initialized successfully!", fg="green")
     click.echo()
     click.echo("Start logging decisions with:")
     click.echo("  from logmind import log")
     click.echo("  log(\"Your decision here\")")
+
+
+def _maybe_install_skill(flag: Optional[bool]) -> None:
+    """
+    Offer to install the logmind agent skill globally via skills.sh.
+
+    flag=True  → install without prompting
+    flag=False → skip without prompting
+    flag=None  → prompt only when stdin is a TTY (else skip silently)
+    """
+    if flag is False:
+        return
+
+    if not is_skills_available():
+        if flag is True:
+            click.secho(
+                "skills CLI not found on PATH (install Node.js / npx, "
+                "then re-run with --skill-install).",
+                fg="yellow",
+            )
+        return
+
+    if flag is None:
+        if not sys.stdin.isatty():
+            return
+        if not click.confirm(
+            "Install the logmind agent skill globally so all your AI agents "
+            "know how to log decisions?",
+            default=True,
+        ):
+            return
+
+    click.echo(f"Installing logmind skill ({DEFAULT_SKILL_SOURCE} → {DEFAULT_SKILL_NAME})...")
+    rc, output = install_logmind_skill()
+    if rc == 0:
+        click.secho("✓ logmind skill installed globally", fg="green")
+    else:
+        click.secho(
+            f"Skill install exited {rc}. Output:\n{output.strip()}", fg="yellow"
+        )
 
 
 @main.command()
