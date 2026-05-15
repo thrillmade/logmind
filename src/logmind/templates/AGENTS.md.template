@@ -42,6 +42,13 @@ that don't get logged are exactly how teams lose context. If you're
 unsure, log it — a 30-second log is cheap; recovering missing context
 months later is not.
 
+**Use `logmind log` for the commit, not `git add` + `git commit`.** The
+`log` command writes the decision file, stages everything in the working
+tree, and creates the commit in one step. Bypassing it (manual
+`git commit -m "..."`) means the decision either isn't logged or gets
+logged in a separate commit, both of which lose the value of having the
+reasoning attached to the code change.
+
 ### How to log
 
 **CLI (preferred):**

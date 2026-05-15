@@ -35,6 +35,11 @@ logmind show               # recent decisions on the current branch
 logmind search "keyword"   # full-text across recent + archive
 ```
 
+**Use `logmind log` for the commit, not `git add` + `git commit`.** The
+`log` command writes the decision file, stages everything in the working
+tree, and creates the commit in one step. Bypassing it means the
+decision either isn't logged or gets logged in a separate commit.
+
 **Read `docs/decisions.md` and the matching `docs/decisions-branches/<branch>.md` (if any) before starting any non-trivial task.** The team has likely already decided things you'd otherwise re-litigate.
 <!-- logmind-end -->
 

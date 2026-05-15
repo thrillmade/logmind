@@ -21,12 +21,14 @@ def test_cli_help():
 
 
 def test_cli_version():
-    """Test version flag."""
+    """`logmind --version` matches the package version (no drift)."""
+    from logmind import __version__
+
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
 
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert __version__ in result.output
 
 
 def test_init_command_in_git_repo(git_repo):

@@ -6,11 +6,11 @@ on:
 
 jobs:
   clud-bug-review:
-    # Skip Dependabot / Renovate PRs — GitHub doesn't pass ANTHROPIC_API_KEY
-    # to workflows triggered by bot-authored PRs by default, so the job would
-    # fail with no-key and just add noise. Routine dep bumps don't need an
-    # AI review anyway.
-    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
+    # clud-bug always runs. Even on Dependabot/Renovate PRs that lack
+    # secrets — the action gracefully degrades to a no-comment exit, and
+    # the upside (catching real bugs in dependency-graph changes that
+    # downstream maintainers DO want eyes on) outweighs the occasional
+    # silent run.
     runs-on: ubuntu-latest
     permissions:
       contents: read
