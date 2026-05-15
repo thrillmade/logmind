@@ -38,7 +38,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.1.1", prog_name="logmind")
+@click.version_option(version="0.1.2", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -291,7 +291,10 @@ def init(
             "Tip: install the logmind agent skill once globally so every AI "
             "agent in every project picks up the procedure automatically:"
         )
-        click.secho(f"  npx skills add -g {DEFAULT_SKILL_SOURCE}", fg="cyan")
+        click.secho(
+            f"  npx skills add -g {DEFAULT_SKILL_SOURCE} --skill logmind",
+            fg="cyan",
+        )
 
 
 def _show_skill_recommendation(flag: Optional[bool]) -> None:
@@ -348,7 +351,10 @@ def _show_skill_recommendation(flag: Optional[bool]) -> None:
             "  skills CLI not detected. Install Node.js / npx to enable, then re-run:",
             fg="yellow",
         )
-        click.secho(f"    npx skills add -g {DEFAULT_SKILL_SOURCE}", fg="cyan")
+        click.secho(
+            f"    npx skills add -g {DEFAULT_SKILL_SOURCE} --skill logmind",
+            fg="cyan",
+        )
     click.secho(rule, fg="cyan")
     click.echo()
 
@@ -425,6 +431,17 @@ def _maybe_install_skill(flag: Optional[bool]) -> None:
     default=None,
     help="Pre-fill from a built-in template (database, api, architecture, security, performance, library, deployment)",
 )
+@click.option(
+    "--stage",
+    type=click.Choice(["scoped", "all"]),
+    default="scoped",
+    show_default=True,
+    help=(
+        "What to stage in the decision commit. 'scoped' stages only the "
+        "decision log + file-structure + archive (if rotated). 'all' stages "
+        "everything in the working tree (pre-v0.1.2 behavior)."
+    ),
+)
 def log(
     decision: str,
     reasoning: Optional[str],
@@ -433,6 +450,7 @@ def log(
     no_commit: bool,
     no_push: bool,
     template: Optional[str],
+    stage: str,
 ):
     """
     Log a decision to the decision log.
@@ -488,6 +506,7 @@ def log(
             docs_path=docs_path,
             auto_commit=should_commit,
             auto_push=should_push,
+            stage=stage,
         )
 
         click.secho(f"✓ Logged decision: \"{decision}\"", fg="green")

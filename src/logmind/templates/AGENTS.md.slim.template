@@ -7,17 +7,17 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v1-slim -->
+<!-- logmind-block-version: v2-slim -->
 ## Decision logging — see the `logmind` skill
 
 This project uses [logmind](https://logmind.dev). The full procedure
 (when to log, how to log, what counts as a decision, branch routing) lives
 in the **`logmind` agent skill** which your runtime should auto-load.
 
-If the skill isn't loaded for some reason, install it once globally:
+If the skill isn't loaded for some reason, install it once:
 
 ```bash
-npx skills add -g thrillmot/logmind-skill
+npx skills add https://github.com/thrillmot/agent-skills --skill logmind
 ```
 
 ### Project-specific paths
@@ -36,9 +36,9 @@ logmind search "keyword"   # full-text across recent + archive
 ```
 
 **Use `logmind log` for the commit, not `git add` + `git commit`.** The
-`log` command writes the decision file, stages everything in the working
-tree, and creates the commit in one step. Bypassing it means the
-decision either isn't logged or gets logged in a separate commit.
+`log` command writes the decision file, stages the decision log + its
+companion files, and creates the commit in one step. Use
+`--stage all` to also stage the rest of the working tree.
 
 **Read `docs/decisions.md` and the matching `docs/decisions-branches/<branch>.md` (if any) before starting any non-trivial task.** The team has likely already decided things you'd otherwise re-litigate.
 <!-- logmind-end -->

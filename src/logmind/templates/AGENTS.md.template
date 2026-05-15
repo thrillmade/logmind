@@ -7,18 +7,18 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v1 -->
+<!-- logmind-block-version: v2 -->
 ## Decision Logging (logmind)
 
 **This project uses [logmind](https://logmind.dev). Logging is part of the work, not after it.**
 
 > **Tip:** the canonical procedure for *when / how / why* lives in the
-> [`logmind` skill](https://github.com/thrillmot/logmind-skill) on
-> skills.sh. If your agent runtime supports skills, install the skill
-> once globally and you can keep the project-local section here lean:
+> [`logmind` skill](https://github.com/thrillmot/agent-skills/tree/main/skills/logmind)
+> on skills.sh. If your agent runtime supports skills, install it once
+> and you can keep the project-local section here lean:
 >
 > ```bash
-> npx skills add -g thrillmot/logmind-skill
+> npx skills add https://github.com/thrillmot/agent-skills --skill logmind
 > ```
 >
 > The full procedure is also embedded below as a fallback when the
@@ -43,11 +43,13 @@ unsure, log it — a 30-second log is cheap; recovering missing context
 months later is not.
 
 **Use `logmind log` for the commit, not `git add` + `git commit`.** The
-`log` command writes the decision file, stages everything in the working
-tree, and creates the commit in one step. Bypassing it (manual
-`git commit -m "..."`) means the decision either isn't logged or gets
-logged in a separate commit, both of which lose the value of having the
-reasoning attached to the code change.
+`log` command writes the decision file, stages the decision log + its
+companion files (file-structure, archive if rotated), and creates the
+commit in one step. Use `logmind log ... --stage all` if you want to
+stage everything in the working tree alongside the decision. Bypassing
+`logmind log` (manual `git commit -m "..."`) means the decision either
+isn't logged or gets logged in a separate commit — both of which lose
+the value of having the reasoning attached to the code change.
 
 ### How to log
 

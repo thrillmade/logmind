@@ -11,6 +11,7 @@ from logmind.core.git_handler import (
     commit_and_push,
     current_branch,
     default_branch,
+    git_add,
     git_add_all,
     git_commit,
     git_push,
@@ -223,6 +224,7 @@ def log(
     docs_path: Optional[Path] = None,
     auto_commit: Optional[bool] = None,
     auto_push: Optional[bool] = None,
+    stage: str = "scoped",
 ) -> None:
     """
     Log a decision to the decision log.
@@ -241,6 +243,10 @@ def log(
         docs_path: Path to docs directory. Defaults to ./docs
         auto_commit: Whether to auto-commit. If None, uses config value.
         auto_push: Whether to auto-push. If None, uses config value.
+        stage: ``"scoped"`` (default) stages only the decision log and its
+            companion files (file-structure.md, decisions-archive.md if
+            rotated). ``"all"`` stages the entire working tree (pre-v0.1.2
+            behavior, opt-in via ``logmind log ... --stage all``).
 
     Raises:
         FileNotFoundError: If docs/ doesn't exist (run logmind init first)
@@ -282,17 +288,32 @@ def log(
     # Check if we need to archive (use config value)
     decision_count = _count_decisions(updated_content)
     max_recent = config.max_recent_decisions
+    archive_rotated = False
     if decision_count > max_recent:
         _archive_oldest_decision(decisions_path)
+        archive_rotated = True
 
     # Update file structure (if configured)
+    file_structure_updated = False
     if config.auto_update_file_structure:
         update_file_structure(docs_path)
+        file_structure_updated = True
 
     # Commit and push if requested
     if auto_commit and is_git_repo():
-        # Add ALL changed files (not just docs)
-        git_add_all()
+        if stage == "all":
+            # Pre-v0.1.2 behavior: stage everything in the working tree.
+            # Use sparingly — it sweeps unrelated changes into the commit.
+            git_add_all()
+        else:
+            # Default: stage only files logmind itself touched. Unrelated
+            # working-tree changes don't piggyback on the decision commit.
+            scoped: List[str] = [str(decisions_path)]
+            if file_structure_updated:
+                scoped.append(str(docs_path / "file-structure.md"))
+            if archive_rotated:
+                scoped.append(str(docs_path / "decisions-archive.md"))
+            git_add(scoped)
 
         # Use configured commit message template
         commit_message = config.commit_message_template.format(decision=decision)

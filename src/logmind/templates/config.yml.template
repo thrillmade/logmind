@@ -3,10 +3,14 @@
 
 # Git integration
 git:
-  # Automatically commit after logging a decision
+  # Auto-commit the decision after `logmind log`. Stages ONLY the decision
+  # log and its companion files (file-structure.md, decisions-archive.md
+  # if rotated). Use `logmind log ... --stage all` to stage everything in
+  # the working tree (the pre-v0.1.2 behavior).
   auto_commit: true
 
-  # Automatically push after committing
+  # Push automatically after committing. Safe with scoped staging above —
+  # unrelated working-tree changes do not piggyback on the decision commit.
   auto_push: true
 
   # Commit message template
@@ -29,11 +33,12 @@ file_structure:
   # Update file-structure.md on every log
   auto_update: true
 
-  # Directories to ignore in tree output
+  # Directories and files to ignore in tree output.
+  # logmind also reads the project's .gitignore and unions these patterns.
   ignore_patterns:
+    # Python
     - __pycache__
     - .git
-    - node_modules
     - venv
     - .venv
     - env
@@ -44,6 +49,19 @@ file_structure:
     - dist
     - build
     - "*.egg-info"
+    # Node / Next.js / Vercel / Turbo
+    - node_modules
+    - .next
+    - .vercel
+    - .turbo
+    - out
+    - .cache
+    - .nyc_output
+    - coverage
+    - "*.tsbuildinfo"
+    # General
+    - .DS_Store
+    - "*.log"
 
 # AI Agent configuration
 # Set to true to enable an agent, false to disable
