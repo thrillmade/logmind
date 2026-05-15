@@ -62,13 +62,32 @@ jobs:
           echo "::error::PyPI did not surface logmind ${VERSION} within 5 minutes."
           exit 1
 
+      - name: Install Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
       - name: Open bump PR on homebrew-logmind
-        uses: dawidd6/action-homebrew-bump-formula@v5
-        with:
-          token: ${{ secrets.HOMEBREW_TAP_PAT }}
-          tap: thrillmot/homebrew-logmind
-          formula: logmind
-          tag: ${{ steps.tag.outputs.tag }}
-          revision: ""   # let the action resolve to the tag's commit
-          force: false   # don't overwrite an existing open PR
-          livecheck: false
+        env:
+          # Brew uses this for both auth (gh API calls + PR creation) and
+          # git push. PAT must have Contents+PR write on the tap repo.
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Tap the formula locally so `bump-formula-pr` can find it.
+          brew tap thrillmot/logmind https://github.com/thrillmot/homebrew-logmind
+          # --no-pip-resources: skip the Python-resource auto-update path
+          # that fails on fresh PyPI uploads (homebrew's `--uploaded-prior-to`
+          # safety refuses to look at packages <24h old). The formula's
+          # `click` + `pyyaml` resources rarely change between logmind patch
+          # releases, so a follow-up PR can refresh them if needed.
+          # --no-fork: push directly to the tap (HOMEBREW_TAP_PAT has write).
+          # --no-browse: don't try to open a browser on the CI runner.
+          # --no-audit: skip the full audit; tap CI (if any) re-runs it.
+          brew bump-formula-pr \
+            --no-pip-resources \
+            --no-fork \
+            --no-browse \
+            --no-audit \
+            --version="${VERSION}" \
+            thrillmot/logmind/logmind
