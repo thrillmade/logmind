@@ -16,3 +16,12 @@
 - clud-bug now runs on Dependabot/Renovate PRs too; expect a no-comment exit when the fork-PR-secrets-missing path triggers, which clud-bug handles gracefully
 
 ---
+## 2026-05-15 02:45 - Docs: be explicit that agents should use logmind log not git commit
+
+**Reasoning:** User asked whether our docs make it clear agents should invoke logmind log instead of git add/commit. The existing AGENTS.md template said 'logging is part of the work' but didn't explicitly tell agents not to bypass via git directly — a subtle but consequential gap. Adds an explicit do-not-bypass note to: AGENTS.md.template (full variant), AGENTS.md.slim.template, and SKILL.md (Don'ts section).
+
+**Implications:**
+- Both AGENTS.md variants and the published SKILL.md now carry the no-bypass guidance
+- logmind-skill repo gets the updated SKILL.md as a follow-up commit
+
+---
