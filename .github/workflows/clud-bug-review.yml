@@ -1,0 +1,77 @@
+name: Clud Bug 🐛 Crawls Your Code
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  clud-bug-review:
+    # Skip Dependabot / Renovate PRs — GitHub doesn't pass ANTHROPIC_API_KEY
+    # to workflows triggered by bot-authored PRs by default, so the job would
+    # fail with no-key and just add noise. Routine dep bumps don't need an
+    # AI review anyway.
+    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          track_progress: true
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api graphql:*),Bash(gh api repos/:*)"
+          prompt: |
+            This project is "logmind". Decision logging for AI-assisted development - automatic tracking, git integration, and context for AI agents. It's primarily python using click, pytest.
+
+            Review this pull request for critical issues only. Focus on:
+            - Bugs, logic errors, or incorrect behaviour
+            - Security vulnerabilities
+            - Performance problems
+            - Broken or missing test coverage for new code
+            - TypeScript type safety issues (unsafe casts, missing types, incorrect generics)
+            - Incorrect ESM/CJS module usage
+            - Improper async/await or Promise handling (unhandled rejections, missing awaits)
+            - Incorrect use of common Node.js patterns
+            
+
+            Skip style suggestions, minor naming issues, or anything that
+            doesn't affect correctness, security, or performance.
+
+            Any project-specific skills loaded from .claude/skills/ should
+            shape your review — defer to their guidance over generic advice.
+
+            When you finish, post your review as a single PR comment.
+            The comment body MUST start with this exact line so the
+            project's identity is visible (the bot account will say
+            claude[bot], but the comment header brands it as Clud Bug):
+
+              ## 🐛 Clud Bug review
+
+            Post it via:
+              gh pr comment "$PR_NUMBER" --body "<your review>"
+
+            If you previously reviewed this PR (you'll see prior claude[bot]
+            comments starting with "## 🐛 Clud Bug review"), resolve your
+            prior unresolved inline review threads where the flagged issue
+            is fixed in the current diff. List threads:
+
+              gh api graphql -f query='{ repository(owner: "${{ github.repository_owner }}", name: "${{ github.event.repository.name }}") { pullRequest(number: '"$PR_NUMBER"') { reviewThreads(first: 30) { nodes { id isResolved comments(first: 1) { nodes { body author { login } } } } } } } }'
+
+            For each unresolved thread you (claude[bot]) authored where the
+            issue is now addressed:
+
+              gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } } }'
+
+            Only resolve threads where the fix is verifiable in the diff.
+            Leave unresolved any thread whose issue still stands.
+            For line-specific issues, use the github_inline_comment MCP tool
+            with confirmed: true.
+            If there are no critical issues, post a one-line comment saying so.
