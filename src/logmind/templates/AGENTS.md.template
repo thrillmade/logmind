@@ -64,12 +64,12 @@ logmind search "postgres"     # search across both files
 Before starting work in this repo, read:
 - **[docs/decisions.md](docs/decisions.md)** — 20 most recent decisions on the default branch
 - **[docs/file-structure.md](docs/file-structure.md)** — current project structure
-- **[docs/logmind-readme.md](docs/logmind-readme.md)** — full logmind usage guide
 
 ### Additional Reference
 
 - **[docs/decisions-archive.md](docs/decisions-archive.md)** — historical decisions (searchable reference)
-- **[docs/decisions-branches/](docs/decisions-branches)** — per-branch decision logs (if any open feature branches)
+- **docs/decisions-branches/** — per-branch decision logs written during feature work
+- **README.md** at the repo root — project overview, if present
 <!-- logmind-end -->
 
 ## Project Overview

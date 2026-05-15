@@ -603,18 +603,21 @@ def sync_agent_files_from_config(root_path: Optional[Path] = None) -> List[str]:
             if not is_agent_json(agent_name):
                 try:
                     content = file_path.read_text()
-                    if not has_logmind_section(content):
-                        # Insert logmind section
+                    # Stubs and files with the logmind block are already
+                    # configured. Don't trample stub files by inserting a
+                    # logmind block into them — that would defeat the
+                    # AGENTS.md-as-canonical model.
+                    if not has_logmind_section(content) and not is_stub(content):
                         inserted = insert_logmind_section(file_path)
                         if inserted:
                             messages.append(f"✓ Added logmind section to {file_path.name}")
                 except Exception:
                     pass
-            # JSON files and already-configured files: skip silently
+            # JSON files, stubs, and already-configured files: skip silently
         else:
-            # File doesn't exist - create it
+            # File doesn't exist - create it (stub or canonical depending on agent)
             created = create_agent_file(agent_name, root_path)
             if created:
-                messages.append(f"✓ Created {created.name} with logmind section")
+                messages.append(f"✓ Created {created.name}")
 
     return messages

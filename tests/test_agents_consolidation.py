@@ -18,6 +18,7 @@ from logmind.core.inserter import (
     insert_into_all_ai_files,
     is_stub,
     migrate_to_agents_md,
+    sync_agent_files_from_config,
 )
 
 
@@ -201,6 +202,26 @@ def test_migrate_idempotent_on_already_stubbed_tree(tmp_path):
     # First migration is a no-op (everything already a stub from init flow)
     msgs = migrate_to_agents_md(tmp_path)
     assert msgs == []
+
+
+def test_sync_does_not_trample_existing_stubs(tmp_path):
+    """Regression: sync_agent_files_from_config must not insert a logmind block
+    into a stub file (it would defeat the AGENTS.md-canonical model)."""
+    # Init the project so the config file exists
+    insert_into_all_ai_files(tmp_path, agents=["claude", "cursor"])
+    (tmp_path / ".logmind").mkdir(exist_ok=True)
+    (tmp_path / ".logmind" / "config.yml").write_text(
+        "agents:\n  claude: true\n  cursor: true\n"
+    )
+    stub_before = (tmp_path / "CLAUDE.md").read_text()
+
+    msgs = sync_agent_files_from_config(tmp_path)
+
+    # Sync is a silent no-op for stubs (no insertion message)
+    assert all("Added logmind section to CLAUDE.md" not in m for m in msgs)
+    # File still exactly the stub
+    assert (tmp_path / "CLAUDE.md").read_text() == stub_before
+    assert is_stub((tmp_path / "CLAUDE.md").read_text())
 
 
 def test_migrate_skips_json_agents(tmp_path):

@@ -25,6 +25,10 @@ DEFAULT_ALLOW_ORPHANS = (
     "docs/decisions.md",
     "docs/decisions-archive.md",
     "docs/file-structure.md",
+    # The whole branch-decisions tree is aggregator-managed: files appear
+    # during a feature branch's lifetime and are linked into decisions.md
+    # only on PR merge. Trailing slash → directory prefix (any .md under it).
+    "docs/decisions-branches/",
 )
 
 DEFAULT_ROOTS = ("README.md", "AGENTS.md", "CLAUDE.md", "docs")
@@ -101,21 +105,37 @@ def check(
             if resolved.suffix == ".md" and resolved in incoming:
                 incoming[resolved].add(source)
 
-    allowed = {(repo_root / a).resolve() for a in allow_orphans}
     orphans: List[str] = []
     for md, sources in incoming.items():
-        if md in allowed:
-            continue
         try:
             rel = md.relative_to(repo_root)
         except ValueError:
             continue
         if not rel.parts or rel.parts[0] != "docs":
             continue
+        if _is_allowed_orphan(rel, allow_orphans):
+            continue
         if not sources:
             orphans.append(str(rel))
 
     return sorted(broken), sorted(orphans)
+
+
+def _is_allowed_orphan(rel_path: Path, allow_orphans: Iterable[str]) -> bool:
+    """An entry matches if it equals rel_path OR is a parent directory of it.
+
+    Directory prefixes are signalled by a trailing ``/`` in the entry, but
+    we also tolerate plain dir paths (no slash) by checking the exact match
+    against parents.
+    """
+    s = str(rel_path)
+    for entry in allow_orphans:
+        e = entry.rstrip("/")
+        if s == e:
+            return True
+        if s.startswith(e + "/"):
+            return True
+    return False
 
 
 def format_report(broken: List[str], orphans: List[str]) -> str:
