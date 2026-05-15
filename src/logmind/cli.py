@@ -63,7 +63,7 @@ def _install_github_action_templates(root_path: Path) -> list:
         target = workflows_dir / target_name
         if target.exists():
             continue
-        target.write_text(tmpl.read_text())
+        target.write_text(tmpl.read_text(encoding="utf-8"))
         created.append(str(target.relative_to(root_path)))
     return created
 
@@ -157,13 +157,13 @@ def init(
     template_dir = Path(__file__).parent / "templates"
 
     # decisions.md
-    decisions_template = (template_dir / "decisions.md.template").read_text()
-    (docs_path / "decisions.md").write_text(decisions_template)
+    decisions_template = (template_dir / "decisions.md.template").read_text(encoding="utf-8")
+    (docs_path / "decisions.md").write_text(decisions_template, encoding="utf-8")
     click.echo("✓ Created docs/decisions.md")
 
     # decisions-archive.md
-    archive_template = (template_dir / "decisions-archive.md.template").read_text()
-    (docs_path / "decisions-archive.md").write_text(archive_template)
+    archive_template = (template_dir / "decisions-archive.md.template").read_text(encoding="utf-8")
+    (docs_path / "decisions-archive.md").write_text(archive_template, encoding="utf-8")
     click.echo("✓ Created docs/decisions-archive.md")
 
     # file-structure.md (will be generated with actual tree)
@@ -177,8 +177,8 @@ def init(
     # Create .logmind directory and config file
     logmind_dir = root_path / ".logmind"
     logmind_dir.mkdir(exist_ok=True)
-    config_template = (template_dir / "config.yml.template").read_text()
-    (logmind_dir / "config.yml").write_text(config_template)
+    config_template = (template_dir / "config.yml.template").read_text(encoding="utf-8")
+    (logmind_dir / "config.yml").write_text(config_template, encoding="utf-8")
     click.echo("✓ Created .logmind/config.yml")
 
     # If no agents specified, use config defaults (claude + cursor enabled by default)
@@ -443,7 +443,7 @@ def show(show_all: bool):
         click.secho("No decisions logged yet.", fg="yellow")
         return
 
-    click.echo(decisions_path.read_text())
+    click.echo(decisions_path.read_text(encoding="utf-8"))
 
     if show_all:
         archive_path = docs_path / "decisions-archive.md"
@@ -451,7 +451,7 @@ def show(show_all: bool):
             click.echo("\n" + "=" * 80)
             click.echo("ARCHIVED DECISIONS")
             click.echo("=" * 80 + "\n")
-            click.echo(archive_path.read_text())
+            click.echo(archive_path.read_text(encoding="utf-8"))
 
 
 @main.command()
@@ -1148,7 +1148,7 @@ def install_hook(force: bool):
     hook_line = "logmind check-decisions\n"
 
     if hook_path.exists():
-        content = hook_path.read_text()
+        content = hook_path.read_text(encoding="utf-8")
         if "logmind check-decisions" in content:
             click.echo("✓ logmind hook already installed.")
             return
@@ -1158,13 +1158,13 @@ def install_hook(force: bool):
                 fg="yellow",
             )
             sys.exit(1)
-        hook_path.write_text(content.rstrip("\n") + "\n" + hook_line)
+        hook_path.write_text(content.rstrip("\n") + "\n" + hook_line, encoding="utf-8")
         click.secho(
             "✓ Added logmind check-decisions to existing pre-commit hook.", fg="green"
         )
     else:
         hook_path.parent.mkdir(parents=True, exist_ok=True)
-        hook_path.write_text("#!/bin/sh\n" + hook_line)
+        hook_path.write_text("#!/bin/sh\n" + hook_line, encoding="utf-8")
         hook_path.chmod(0o755)
         click.secho("✓ Installed logmind pre-commit hook.", fg="green")
 

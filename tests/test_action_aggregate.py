@@ -15,14 +15,14 @@ def _seed_branch_file(docs: Path, sanitized: str, decisions: list[str]) -> Path:
     body = ["# Decision Log\n", "---\n"]
     for i, d in enumerate(decisions):
         body.append(f"## 2026-05-14 12:0{i} - {d}\n\n**Reasoning:** test\n\n---\n")
-    p.write_text("\n".join(body))
+    p.write_text("\n".join(body), encoding="utf-8")
     return p
 
 
 def _make_docs(root: Path) -> Path:
     docs = root / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text("# Decision Log\n\n---\n")
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
     return docs
 
 
@@ -39,7 +39,7 @@ def test_aggregate_appends_merge_entry(tmp_path):
     )
 
     assert out == docs / "decisions.md"
-    content = out.read_text()
+    content = out.read_text(encoding="utf-8")
     assert "Merged: feat/x (#42)" in content
     assert "https://github.com/owner/repo/pull/42" in content
     assert "decisions-branches/feat__x.md" in content
@@ -51,7 +51,7 @@ def test_aggregate_returns_none_when_branch_file_missing(tmp_path):
     out = aggregate("missing-branch", 1, "url", docs)
     assert out is None
     # decisions.md untouched (no merge entry)
-    assert "Merged" not in (docs / "decisions.md").read_text()
+    assert "Merged" not in (docs / "decisions.md").read_text(encoding="utf-8")
 
 
 def test_aggregate_returns_none_when_branch_file_has_no_decisions(tmp_path):
@@ -72,7 +72,7 @@ def test_aggregate_uses_sanitized_branch_for_link(tmp_path):
         docs_path=docs,
     )
 
-    content = (docs / "decisions.md").read_text()
+    content = (docs / "decisions.md").read_text(encoding="utf-8")
     assert "[decisions-branches/user__jane__feature.md]" in content
     assert "Merged: user/jane/feature (#99)" in content
 
@@ -89,7 +89,7 @@ def test_main_uses_env_vars(tmp_path, monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "appended merge summary for feat/y" in out
-    assert "Merged: feat/y (#11)" in (docs / "decisions.md").read_text()
+    assert "Merged: feat/y (#11)" in (docs / "decisions.md").read_text(encoding="utf-8")
 
 
 def test_main_errors_when_env_missing(monkeypatch, capsys):

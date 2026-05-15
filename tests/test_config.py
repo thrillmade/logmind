@@ -31,7 +31,7 @@ git:
 
 decisions:
   max_recent: 30
-""")
+""", encoding="utf-8")
 
     config = Config(config_file)
 
@@ -107,7 +107,7 @@ def test_config_merges_with_defaults(temp_dir):
     config_file.write_text("""
 git:
   auto_push: false
-""")
+""", encoding="utf-8")
 
     config = Config(config_file)
 
@@ -128,7 +128,7 @@ def test_load_config_helper(temp_dir):
     config_file.write_text("""
 git:
   auto_commit: false
-""")
+""", encoding="utf-8")
 
     # Change to temp dir
     import os
@@ -147,7 +147,7 @@ def test_config_handles_corrupt_yaml(temp_dir):
     config_dir.mkdir()
 
     config_file = config_dir / "config.yml"
-    config_file.write_text("invalid: yaml: content: ][")
+    config_file.write_text("invalid: yaml: content: ][", encoding="utf-8")
 
     config = Config(config_file)
 
@@ -211,7 +211,7 @@ agents:
   cursor: true
   copilot: false
   windsurf: true
-""")
+""", encoding="utf-8")
 
     config = Config(config_file)
     enabled = config.get_enabled_agents()

@@ -34,7 +34,7 @@ def ensure_block(
     Returns True if the file was created or modified, False if the block
     was already present (manual edits inside it preserved).
     """
-    existing = path.read_text() if path.exists() else ""
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if LOGMIND_GITIGNORE_START in existing:
         return False
 
@@ -50,11 +50,11 @@ def ensure_block(
         existing += "\n"
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(existing + block)
+    path.write_text(existing + block, encoding="utf-8")
     return True
 
 
 def has_block(path: Path) -> bool:
     if not path.exists():
         return False
-    return LOGMIND_GITIGNORE_START in path.read_text()
+    return LOGMIND_GITIGNORE_START in path.read_text(encoding="utf-8")

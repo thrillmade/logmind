@@ -134,7 +134,7 @@ def get_agent_status(root_path: Optional[Path] = None) -> Dict[str, Dict]:
 
         if exists and not is_json:
             try:
-                content = file_path.read_text()
+                content = file_path.read_text(encoding="utf-8")
                 # A stub is fully "configured" because it points at AGENTS.md.
                 has_logmind = has_logmind_section(content) or is_stub(content)
             except Exception:
@@ -172,13 +172,13 @@ def is_stub(content: str) -> bool:
 def get_agents_md_template() -> str:
     """Return the canonical AGENTS.md template content."""
     template_path = Path(__file__).parent.parent / "templates" / "AGENTS.md.template"
-    return template_path.read_text()
+    return template_path.read_text(encoding="utf-8")
 
 
 def get_stub_template() -> str:
     """Return the per-agent AGENTS.md-pointer stub content."""
     template_path = Path(__file__).parent.parent / "templates" / "agent-stub.md"
-    return template_path.read_text()
+    return template_path.read_text(encoding="utf-8")
 
 
 def get_logmind_section() -> str:
@@ -189,7 +189,7 @@ def get_logmind_section() -> str:
         Logmind section content
     """
     template_path = Path(__file__).parent.parent / "templates" / "logmind-section.md"
-    return template_path.read_text()
+    return template_path.read_text(encoding="utf-8")
 
 
 def get_full_claude_template() -> str:
@@ -200,7 +200,7 @@ def get_full_claude_template() -> str:
         Full CLAUDE.md template content
     """
     template_path = Path(__file__).parent.parent / "templates" / "CLAUDE.md.template"
-    return template_path.read_text()
+    return template_path.read_text(encoding="utf-8")
 
 
 def get_agent_template(agent_name: str) -> str:
@@ -267,7 +267,7 @@ def insert_logmind_section(file_path: Path) -> bool:
     Returns:
         True if insertion was performed, False if already present
     """
-    content = file_path.read_text()
+    content = file_path.read_text(encoding="utf-8")
 
     # Check if already initialized
     if has_logmind_section(content):
@@ -296,7 +296,7 @@ def insert_logmind_section(file_path: Path) -> bool:
     lines.insert(insert_index, logmind_section)
 
     # Write back
-    file_path.write_text("\n".join(lines))
+    file_path.write_text("\n".join(lines), encoding="utf-8")
     return True
 
 
@@ -326,7 +326,7 @@ def create_agent_file(agent_name: str, root_path: Optional[Path] = None) -> Opti
 
     # Get template and write
     template = get_agent_template(agent_name)
-    file_path.write_text(template)
+    file_path.write_text(template, encoding="utf-8")
 
     return file_path
 
@@ -367,7 +367,7 @@ def create_claude_md(file_path: Optional[Path] = None) -> Path:
         file_path = Path.cwd() / "CLAUDE.md"
 
     template = get_full_claude_template()
-    file_path.write_text(template)
+    file_path.write_text(template, encoding="utf-8")
 
     return file_path
 
@@ -389,10 +389,10 @@ def ensure_agents_md(root_path: Optional[Path] = None) -> Optional[str]:
     agents_path = root_path / "AGENTS.md"
 
     if not agents_path.exists():
-        agents_path.write_text(get_agents_md_template())
+        agents_path.write_text(get_agents_md_template(), encoding="utf-8")
         return "Created AGENTS.md (canonical agent instructions)"
 
-    content = agents_path.read_text()
+    content = agents_path.read_text(encoding="utf-8")
     if has_logmind_section(content):
         return None
     insert_logmind_section(agents_path)
@@ -447,7 +447,7 @@ def insert_into_all_ai_files(
                 if is_agent_json(agent_name):
                     messages.append(f"✓ {file_path.name} exists (JSON format)")
                     continue
-                content = file_path.read_text()
+                content = file_path.read_text(encoding="utf-8")
                 if is_stub(content) or has_logmind_section(content):
                     messages.append(
                         f"✓ {file_path.name} already configured"
@@ -477,7 +477,7 @@ def insert_into_all_ai_files(
                 continue
             if file_path.name == "AGENTS.md":
                 continue  # handled by ensure_agents_md
-            content = file_path.read_text()
+            content = file_path.read_text(encoding="utf-8")
             if is_stub(content) or has_logmind_section(content):
                 messages.append(f"✓ {file_path.name} already configured")
                 continue
@@ -533,7 +533,7 @@ def migrate_to_agents_md(root_path: Optional[Path] = None) -> List[str]:
         file_path = root_path / file_pattern
         if not file_path.exists():
             continue
-        content = file_path.read_text()
+        content = file_path.read_text(encoding="utf-8")
         if is_stub(content):
             continue  # already migrated
 
@@ -544,12 +544,12 @@ def migrate_to_agents_md(root_path: Optional[Path] = None) -> List[str]:
                 f"✓ Migrated {display_name} ({file_path.name}) content into AGENTS.md"
             )
 
-        file_path.write_text(get_stub_template())
+        file_path.write_text(get_stub_template(), encoding="utf-8")
         messages.append(f"✓ {file_path.name} replaced with stub")
 
     if appended_blocks:
-        existing = agents_path.read_text().rstrip()
-        agents_path.write_text(existing + "\n\n" + "\n".join(appended_blocks))
+        existing = agents_path.read_text(encoding="utf-8").rstrip()
+        agents_path.write_text(existing + "\n\n" + "\n".join(appended_blocks), encoding="utf-8")
 
     return messages
 
@@ -602,7 +602,7 @@ def sync_agent_files_from_config(root_path: Optional[Path] = None) -> List[str]:
             # File exists - check if it needs logmind section
             if not is_agent_json(agent_name):
                 try:
-                    content = file_path.read_text()
+                    content = file_path.read_text(encoding="utf-8")
                     # Stubs and files with the logmind block are already
                     # configured. Don't trample stub files by inserting a
                     # logmind block into them — that would defeat the

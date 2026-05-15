@@ -42,8 +42,8 @@ def docs_dir(temp_dir):
     docs.mkdir()
 
     # Create template files
-    (docs / "decisions.md").write_text("# Decision Log\n\n---\n")
-    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n")
-    (docs / "file-structure.md").write_text("# File Structure\n\n```\n.\n```\n")
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n", encoding="utf-8")
+    (docs / "file-structure.md").write_text("# File Structure\n\n```\n.\n```\n", encoding="utf-8")
 
     return docs

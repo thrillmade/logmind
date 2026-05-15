@@ -29,7 +29,7 @@ def test_is_git_repo_false(temp_dir):
 def test_git_add_single_file(git_repo):
     """Test adding a single file."""
     test_file = git_repo / "test.txt"
-    test_file.write_text("test content")
+    test_file.write_text("test content", encoding="utf-8")
 
     git_add(["test.txt"], git_repo)
 
@@ -45,8 +45,8 @@ def test_git_add_single_file(git_repo):
 
 def test_git_add_multiple_files(git_repo):
     """Test adding multiple files."""
-    (git_repo / "file1.txt").write_text("test")
-    (git_repo / "file2.txt").write_text("test")
+    (git_repo / "file1.txt").write_text("test", encoding="utf-8")
+    (git_repo / "file2.txt").write_text("test", encoding="utf-8")
 
     git_add(["file1.txt", "file2.txt"], git_repo)
 
@@ -68,7 +68,7 @@ def test_git_add_empty_list(git_repo):
 def test_git_commit_with_message(git_repo):
     """Test committing with a message."""
     test_file = git_repo / "test.txt"
-    test_file.write_text("test")
+    test_file.write_text("test", encoding="utf-8")
 
     git_add(["test.txt"], git_repo)
     git_commit("Test commit message", git_repo)
@@ -97,7 +97,7 @@ def test_git_push_no_remote(git_repo):
 def test_commit_and_push(git_repo):
     """Test combined commit and push operation."""
     test_file = git_repo / "test.txt"
-    test_file.write_text("test")
+    test_file.write_text("test", encoding="utf-8")
 
     commit_and_push(["test.txt"], "Test commit", git_repo, push=False)
 
@@ -125,8 +125,8 @@ def test_git_add_nonexistent_file_raises_error(git_repo):
 
 def test_git_add_all_stages_all_files(git_repo):
     """Test that git_add_all stages all untracked files."""
-    (git_repo / "alpha.txt").write_text("alpha content")
-    (git_repo / "beta.txt").write_text("beta content")
+    (git_repo / "alpha.txt").write_text("alpha content", encoding="utf-8")
+    (git_repo / "beta.txt").write_text("beta content", encoding="utf-8")
 
     git_add_all(git_repo)
 

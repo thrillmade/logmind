@@ -179,7 +179,7 @@ def _archive_oldest_decision(decisions_path: Path) -> None:
     archive_path = _archive_path_for(decisions_path)
 
     # Read current decisions
-    decisions_content = decisions_path.read_text()
+    decisions_content = decisions_path.read_text(encoding="utf-8")
 
     # Extract oldest decision
     oldest_decision, remaining_content = _extract_oldest_decision(decisions_content)
@@ -188,14 +188,14 @@ def _archive_oldest_decision(decisions_path: Path) -> None:
         return
 
     # Write remaining decisions back
-    decisions_path.write_text(remaining_content)
+    decisions_path.write_text(remaining_content, encoding="utf-8")
 
     # Read archive (or create if doesn't exist)
     if archive_path.exists():
-        archive_content = archive_path.read_text()
+        archive_content = archive_path.read_text(encoding="utf-8")
     else:
         template_path = Path(__file__).parent.parent / "templates" / "decisions-archive.md.template"
-        archive_content = template_path.read_text()
+        archive_content = template_path.read_text(encoding="utf-8")
 
     # Insert oldest decision at the end of archive (after header)
     archive_lines = archive_content.split("\n")
@@ -212,7 +212,7 @@ def _archive_oldest_decision(decisions_path: Path) -> None:
     archive_lines.insert(insert_idx + 1, "")
 
     # Write back to archive
-    archive_path.write_text("\n".join(archive_lines))
+    archive_path.write_text("\n".join(archive_lines), encoding="utf-8")
 
 
 def log(
@@ -273,11 +273,11 @@ def log(
 
     # Resolve target file based on current branch
     decisions_path = _resolve_decisions_path(docs_path, config)
-    current_content = decisions_path.read_text() if decisions_path.exists() else ""
+    current_content = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
 
     # Append new decision
     updated_content = current_content + decision_entry
-    decisions_path.write_text(updated_content)
+    decisions_path.write_text(updated_content, encoding="utf-8")
 
     # Check if we need to archive (use config value)
     decision_count = _count_decisions(updated_content)

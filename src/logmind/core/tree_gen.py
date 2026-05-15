@@ -40,7 +40,7 @@ def _read_gitignore_patterns(repo_root: Path) -> List[str]:
     if not gi.exists():
         return []
     patterns: List[str] = []
-    for raw in gi.read_text().splitlines():
+    for raw in gi.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or line.startswith("!"):
             continue
@@ -197,7 +197,7 @@ def update_file_structure(docs_path: Optional[Path] = None) -> None:
 
     # Read template
     template_path = Path(__file__).parent.parent / "templates" / "file-structure.md.template"
-    template = template_path.read_text()
+    template = template_path.read_text(encoding="utf-8")
 
     # Fill template
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -205,4 +205,4 @@ def update_file_structure(docs_path: Optional[Path] = None) -> None:
 
     # Write file
     file_structure_path = docs_path / "file-structure.md"
-    file_structure_path.write_text(content)
+    file_structure_path.write_text(content, encoding="utf-8")

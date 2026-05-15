@@ -23,7 +23,7 @@ def _init_repo_on_branch(path: Path, branch: str = "main") -> None:
     _git(["init", "-b", branch], path)
     _git(["config", "user.name", "Test"], path)
     _git(["config", "user.email", "test@example.com"], path)
-    (path / "README").write_text("seed\n")
+    (path / "README").write_text("seed\n", encoding="utf-8")
     _git(["add", "."], path)
     _git(["commit", "-m", "init"], path)
 
@@ -156,7 +156,7 @@ def test_resolve_path_opt_out(tmp_path, monkeypatch):
     (tmp_path / ".logmind").mkdir()
     (tmp_path / ".logmind" / "config.yml").write_text(
         "decisions:\n  branch_aware: false\n"
-    )
+    , encoding="utf-8")
 
     from logmind.core.config import load_config
 
@@ -173,9 +173,9 @@ def test_resolve_path_opt_out(tmp_path, monkeypatch):
 def _make_docs_dir(root: Path) -> Path:
     docs = root / "docs"
     docs.mkdir()
-    (docs / "decisions.md").write_text("# Decision Log\n\n---\n")
-    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n")
-    (docs / "file-structure.md").write_text("# File Structure\n\n```\n.\n```\n")
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Decision Archive\n\n---\n", encoding="utf-8")
+    (docs / "file-structure.md").write_text("# File Structure\n\n```\n.\n```\n", encoding="utf-8")
     return docs
 
 
@@ -186,7 +186,7 @@ def test_log_on_default_branch_writes_to_decisions_md(tmp_path, monkeypatch):
 
     log("Default-branch entry", reasoning="r", docs_path=docs, auto_commit=False)
 
-    assert "Default-branch entry" in (docs / "decisions.md").read_text()
+    assert "Default-branch entry" in (docs / "decisions.md").read_text(encoding="utf-8")
     assert not (docs / "decisions-branches").exists()
 
 
@@ -200,9 +200,9 @@ def test_log_on_feature_branch_writes_to_per_branch_file(tmp_path, monkeypatch):
 
     branch_file = docs / "decisions-branches" / "feat__x.md"
     assert branch_file.exists()
-    assert "Feature-branch entry" in branch_file.read_text()
+    assert "Feature-branch entry" in branch_file.read_text(encoding="utf-8")
     # Untouched
-    assert "Feature-branch entry" not in (docs / "decisions.md").read_text()
+    assert "Feature-branch entry" not in (docs / "decisions.md").read_text(encoding="utf-8")
 
 
 def test_log_branch_aware_disabled_still_uses_decisions_md(tmp_path, monkeypatch):
@@ -214,11 +214,11 @@ def test_log_branch_aware_disabled_still_uses_decisions_md(tmp_path, monkeypatch
     (tmp_path / ".logmind").mkdir()
     (tmp_path / ".logmind" / "config.yml").write_text(
         "decisions:\n  branch_aware: false\n"
-    )
+    , encoding="utf-8")
 
     log("Legacy single-file entry", reasoning="r", docs_path=docs, auto_commit=False)
 
-    assert "Legacy single-file entry" in (docs / "decisions.md").read_text()
+    assert "Legacy single-file entry" in (docs / "decisions.md").read_text(encoding="utf-8")
     assert not (docs / "decisions-branches").exists()
 
 
@@ -233,7 +233,7 @@ def test_archival_on_branch_file_uses_paired_archive(tmp_path, monkeypatch):
     (tmp_path / ".logmind").mkdir()
     (tmp_path / ".logmind" / "config.yml").write_text(
         "decisions:\n  max_recent: 2\n  branch_aware: true\n"
-    )
+    , encoding="utf-8")
 
     log("first", docs_path=docs, auto_commit=False)
     log("second", docs_path=docs, auto_commit=False)
@@ -243,9 +243,9 @@ def test_archival_on_branch_file_uses_paired_archive(tmp_path, monkeypatch):
     branch_archive = docs / "decisions-branches" / "feat__y-archive.md"
 
     assert branch_archive.exists(), "branch-paired archive should be created"
-    assert "first" in branch_archive.read_text()
+    assert "first" in branch_archive.read_text(encoding="utf-8")
     # Main archive untouched
-    assert "first" not in (docs / "decisions-archive.md").read_text()
+    assert "first" not in (docs / "decisions-archive.md").read_text(encoding="utf-8")
 
 
 def test_log_outside_git_repo_falls_back_to_decisions_md(tmp_path, monkeypatch):
@@ -254,4 +254,4 @@ def test_log_outside_git_repo_falls_back_to_decisions_md(tmp_path, monkeypatch):
 
     log("No git here", reasoning="r", docs_path=docs, auto_commit=False)
 
-    assert "No git here" in (docs / "decisions.md").read_text()
+    assert "No git here" in (docs / "decisions.md").read_text(encoding="utf-8")

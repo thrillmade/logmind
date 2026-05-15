@@ -60,8 +60,8 @@ def aggregate(
     )
 
     decisions_path = docs_path / "decisions.md"
-    existing = decisions_path.read_text() if decisions_path.exists() else ""
-    decisions_path.write_text(existing + entry)
+    existing = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
+    decisions_path.write_text(existing + entry, encoding="utf-8")
     return decisions_path
 
 

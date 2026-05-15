@@ -115,7 +115,7 @@ def test_log_creates_decision_file(docs_dir):
     log("Test decision", reasoning="Test reasoning", docs_path=docs_dir, auto_commit=False)
 
     decisions_file = docs_dir / "decisions.md"
-    content = decisions_file.read_text()
+    content = decisions_file.read_text(encoding="utf-8")
 
     assert "Test decision" in content
     assert "Test reasoning" in content
@@ -131,7 +131,7 @@ def test_log_with_alternatives_and_implications(docs_dir):
         auto_commit=False,
     )
 
-    content = (docs_dir / "decisions.md").read_text()
+    content = (docs_dir / "decisions.md").read_text(encoding="utf-8")
 
     assert "A" in content
     assert "B" in content
@@ -144,8 +144,8 @@ def test_log_archives_after_20_decisions(docs_dir):
     for i in range(21):
         log(f"Decision {i}", docs_path=docs_dir, auto_commit=False)
 
-    decisions_content = (docs_dir / "decisions.md").read_text()
-    archive_content = (docs_dir / "decisions-archive.md").read_text()
+    decisions_content = (docs_dir / "decisions.md").read_text(encoding="utf-8")
+    archive_content = (docs_dir / "decisions-archive.md").read_text(encoding="utf-8")
 
     # Should have exactly 20 in decisions.md
     assert _count_decisions(decisions_content) == 20
@@ -165,7 +165,7 @@ def test_log_updates_file_structure(docs_dir):
     file_structure = docs_dir / "file-structure.md"
     assert file_structure.exists()
 
-    content = file_structure.read_text()
+    content = file_structure.read_text(encoding="utf-8")
     assert "Last updated:" in content
 
 
@@ -179,7 +179,7 @@ def test_log_first_decision(docs_dir):
     """Test logging the first initialization decision."""
     log_first_decision(docs_path=docs_dir)
 
-    content = (docs_dir / "decisions.md").read_text()
+    content = (docs_dir / "decisions.md").read_text(encoding="utf-8")
 
     assert "Initialize logmind decision tracking" in content
     assert "AI agents" in content
@@ -196,7 +196,7 @@ def test_log_with_string_alternatives_and_implications(docs_dir):
         auto_commit=False,
     )
 
-    content = (docs_dir / "decisions.md").read_text()
+    content = (docs_dir / "decisions.md").read_text(encoding="utf-8")
 
     assert "Single alternative" in content
     assert "Single implication" in content
@@ -218,12 +218,12 @@ def test_archive_oldest_decision_moves_entry(docs_dir):
         "\n"
     )
     decisions_path = docs_dir / "decisions.md"
-    decisions_path.write_text("# Decision Log\n\n---\n" + decision_block)
+    decisions_path.write_text("# Decision Log\n\n---\n" + decision_block, encoding="utf-8")
 
     _archive_oldest_decision(docs_dir)
 
-    decisions_content = decisions_path.read_text()
-    archive_content = (docs_dir / "decisions-archive.md").read_text()
+    decisions_content = decisions_path.read_text(encoding="utf-8")
+    archive_content = (docs_dir / "decisions-archive.md").read_text(encoding="utf-8")
 
     assert "Old decision" not in decisions_content
     assert "Old decision" in archive_content
@@ -244,10 +244,10 @@ def test_archive_oldest_decision_creates_archive_if_missing(docs_dir):
         "\n"
     )
     decisions_path = docs_dir / "decisions.md"
-    decisions_path.write_text("# Decision Log\n\n---\n" + decision_block)
+    decisions_path.write_text("# Decision Log\n\n---\n" + decision_block, encoding="utf-8")
 
     _archive_oldest_decision(docs_dir)
 
     assert archive_path.exists()
-    archive_content = archive_path.read_text()
+    archive_content = archive_path.read_text(encoding="utf-8")
     assert "Another old decision" in archive_content

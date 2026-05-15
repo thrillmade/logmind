@@ -106,7 +106,7 @@ def test_find_ai_instruction_files_empty(temp_dir):
 
 def test_find_ai_instruction_files_claude(temp_dir):
     """Test finding CLAUDE.md."""
-    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n")
+    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n", encoding="utf-8")
 
     files = find_ai_instruction_files(temp_dir)
 
@@ -117,7 +117,7 @@ def test_find_ai_instruction_files_claude(temp_dir):
 
 def test_find_ai_instruction_files_cursor(temp_dir):
     """Test finding .cursorrules."""
-    (temp_dir / ".cursorrules").write_text("rules\n")
+    (temp_dir / ".cursorrules").write_text("rules\n", encoding="utf-8")
 
     files = find_ai_instruction_files(temp_dir)
 
@@ -130,7 +130,7 @@ def test_find_ai_instruction_files_copilot(temp_dir):
     """Test finding copilot instructions."""
     github_dir = temp_dir / ".github"
     github_dir.mkdir()
-    (github_dir / "copilot-instructions.md").write_text("# Instructions\n")
+    (github_dir / "copilot-instructions.md").write_text("# Instructions\n", encoding="utf-8")
 
     files = find_ai_instruction_files(temp_dir)
 
@@ -141,7 +141,7 @@ def test_find_ai_instruction_files_copilot(temp_dir):
 
 def test_find_ai_instruction_files_windsurf(temp_dir):
     """Test finding .windsurfrules."""
-    (temp_dir / ".windsurfrules").write_text("rules\n")
+    (temp_dir / ".windsurfrules").write_text("rules\n", encoding="utf-8")
 
     files = find_ai_instruction_files(temp_dir)
 
@@ -152,7 +152,7 @@ def test_find_ai_instruction_files_windsurf(temp_dir):
 
 def test_find_ai_instruction_files_aider(temp_dir):
     """Test finding CONVENTIONS.md."""
-    (temp_dir / "CONVENTIONS.md").write_text("# Conventions\n")
+    (temp_dir / "CONVENTIONS.md").write_text("# Conventions\n", encoding="utf-8")
 
     files = find_ai_instruction_files(temp_dir)
 
@@ -163,9 +163,9 @@ def test_find_ai_instruction_files_aider(temp_dir):
 
 def test_find_ai_instruction_files_multiple(temp_dir):
     """Test finding multiple AI instruction files."""
-    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n")
-    (temp_dir / ".cursorrules").write_text("rules\n")
-    (temp_dir / ".windsurfrules").write_text("rules\n")
+    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n", encoding="utf-8")
+    (temp_dir / ".cursorrules").write_text("rules\n", encoding="utf-8")
+    (temp_dir / ".windsurfrules").write_text("rules\n", encoding="utf-8")
 
     files = find_ai_instruction_files(temp_dir)
 
@@ -192,9 +192,9 @@ def test_get_agent_status_empty(temp_dir):
 def test_get_agent_status_with_files(temp_dir):
     """Test agent status with some files present."""
     # Create CLAUDE.md with logmind section
-    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n\n<!-- logmind-start -->\nContent\n<!-- logmind-end -->\n")
+    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n\n<!-- logmind-start -->\nContent\n<!-- logmind-end -->\n", encoding="utf-8")
     # Create .cursorrules without logmind section
-    (temp_dir / ".cursorrules").write_text("rules only\n")
+    (temp_dir / ".cursorrules").write_text("rules only\n", encoding="utf-8")
 
     status = get_agent_status(temp_dir)
 
@@ -295,12 +295,12 @@ def test_get_agent_template_zed_json():
 def test_insert_logmind_section_new_file(temp_dir):
     """Test inserting logmind section into new file."""
     claude_file = temp_dir / "CLAUDE.md"
-    claude_file.write_text("# CLAUDE.md\n\nExisting content\n")
+    claude_file.write_text("# CLAUDE.md\n\nExisting content\n", encoding="utf-8")
 
     result = insert_logmind_section(claude_file)
 
     assert result is True
-    content = claude_file.read_text()
+    content = claude_file.read_text(encoding="utf-8")
     assert "<!-- logmind-start -->" in content
     assert "Existing content" in content  # Should preserve existing
 
@@ -308,7 +308,7 @@ def test_insert_logmind_section_new_file(temp_dir):
 def test_insert_logmind_section_already_exists(temp_dir):
     """Test that inserting again returns False."""
     claude_file = temp_dir / "CLAUDE.md"
-    claude_file.write_text("# CLAUDE.md\n\n<!-- logmind-start -->\nAlready here\n<!-- logmind-end -->\n")
+    claude_file.write_text("# CLAUDE.md\n\n<!-- logmind-start -->\nAlready here\n<!-- logmind-end -->\n", encoding="utf-8")
 
     result = insert_logmind_section(claude_file)
 
@@ -318,11 +318,11 @@ def test_insert_logmind_section_already_exists(temp_dir):
 def test_insert_logmind_section_after_heading(temp_dir):
     """Test that logmind section is inserted after first heading."""
     claude_file = temp_dir / "CLAUDE.md"
-    claude_file.write_text("# CLAUDE.md\n\nThis is guidance.\n\n## Section 2\n\nMore content\n")
+    claude_file.write_text("# CLAUDE.md\n\nThis is guidance.\n\n## Section 2\n\nMore content\n", encoding="utf-8")
 
     insert_logmind_section(claude_file)
 
-    content = claude_file.read_text()
+    content = claude_file.read_text(encoding="utf-8")
     lines = content.split("\n")
 
     # Find where logmind section starts
@@ -349,7 +349,7 @@ def test_create_claude_md(temp_dir):
     assert result == claude_file
     assert claude_file.exists()
 
-    content = claude_file.read_text()
+    content = claude_file.read_text(encoding="utf-8")
     assert "# CLAUDE.md" in content
     assert "<!-- logmind-start -->" in content
 
@@ -361,7 +361,7 @@ def test_create_agent_file_cursor(temp_dir):
     assert result == temp_dir / ".cursorrules"
     assert result.exists()
 
-    content = result.read_text()
+    content = result.read_text(encoding="utf-8")
     assert "<!-- logmind-stub:" in content
     assert "AGENTS.md" in content
 
@@ -373,7 +373,7 @@ def test_create_agent_file_windsurf(temp_dir):
     assert result == temp_dir / ".windsurfrules"
     assert result.exists()
 
-    content = result.read_text()
+    content = result.read_text(encoding="utf-8")
     assert "<!-- logmind-stub:" in content
     assert "AGENTS.md" in content
 
@@ -394,7 +394,7 @@ def test_create_agent_file_cody_json(temp_dir):
     assert result == temp_dir / ".sourcegraph" / "cody.json"
     assert result.exists()
 
-    content = result.read_text()
+    content = result.read_text(encoding="utf-8")
     assert '"logmind"' in content
 
 
@@ -412,7 +412,7 @@ def test_create_agent_file_unknown(temp_dir):
 def test_remove_agent_file(temp_dir):
     """Test removing agent file."""
     # Create file first
-    (temp_dir / ".cursorrules").write_text("rules\n")
+    (temp_dir / ".cursorrules").write_text("rules\n", encoding="utf-8")
 
     result = remove_agent_file("cursor", temp_dir)
 
@@ -448,14 +448,14 @@ def test_insert_into_all_ai_files_creates_agents_md(temp_dir):
 
 def test_insert_into_all_ai_files_existing_file(temp_dir):
     """Existing per-agent file with user content gets a logmind block inserted in place."""
-    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n\nContent\n")
+    (temp_dir / "CLAUDE.md").write_text("# CLAUDE.md\n\nContent\n", encoding="utf-8")
 
     messages = insert_into_all_ai_files(temp_dir)
 
     joined = "\n".join(messages)
     assert "Added logmind instructions" in joined
 
-    content = (temp_dir / "CLAUDE.md").read_text()
+    content = (temp_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert "<!-- logmind-start -->" in content
     assert "Content" in content  # Preserved
 
@@ -464,7 +464,7 @@ def test_insert_into_all_ai_files_already_initialized(temp_dir):
     """An already-initialised CLAUDE.md is treated as configured."""
     (temp_dir / "CLAUDE.md").write_text(
         "# CLAUDE.md\n\n<!-- logmind-start -->\nAlready done\n<!-- logmind-end -->\n"
-    )
+    , encoding="utf-8")
 
     messages = insert_into_all_ai_files(temp_dir)
 
@@ -492,7 +492,7 @@ def test_insert_into_all_ai_files_specific_agents(temp_dir):
     assert (temp_dir / ".windsurfrules").exists()
     # Each per-agent file is a stub
     for f in (temp_dir / "CLAUDE.md", temp_dir / ".cursorrules", temp_dir / ".windsurfrules"):
-        assert "<!-- logmind-stub:" in f.read_text()
+        assert "<!-- logmind-stub:" in f.read_text(encoding="utf-8")
 
 
 def test_insert_into_all_ai_files_unknown_agent(temp_dir):
@@ -516,7 +516,7 @@ def test_create_agent_file_cline(temp_dir):
     assert result == temp_dir / ".clinerules"
     assert result.exists()
 
-    content = result.read_text()
+    content = result.read_text(encoding="utf-8")
     assert "<!-- logmind-stub:" in content
     assert "AGENTS.md" in content
 
@@ -528,7 +528,7 @@ def test_create_agent_file_codex(temp_dir):
     assert result == temp_dir / "AGENTS.md"
     assert result.exists()
 
-    content = result.read_text()
+    content = result.read_text(encoding="utf-8")
     assert "# AGENTS.md" in content
     assert "<!-- logmind-start -->" in content
 
@@ -552,8 +552,8 @@ def test_json_templates_are_valid():
 
 def test_find_cline_and_codex(temp_dir):
     """Test finding Cline and Codex files."""
-    (temp_dir / ".clinerules").write_text("# Cline rules\n")
-    (temp_dir / "AGENTS.md").write_text("# AGENTS.md\n")
+    (temp_dir / ".clinerules").write_text("# Cline rules\n", encoding="utf-8")
+    (temp_dir / "AGENTS.md").write_text("# AGENTS.md\n", encoding="utf-8")
 
     files = find_ai_instruction_files(temp_dir)
 
@@ -565,11 +565,11 @@ def test_find_cline_and_codex(temp_dir):
 def test_insert_preserves_unicode(temp_dir):
     """Test that insertion preserves unicode characters."""
     claude_file = temp_dir / "CLAUDE.md"
-    claude_file.write_text("# CLAUDE.md\n\n## Japanese: \u65e5\u672c\u8a9e\n\n## Emoji: \U0001F680\n")
+    claude_file.write_text("# CLAUDE.md\n\n## Japanese: \u65e5\u672c\u8a9e\n\n## Emoji: \U0001F680\n", encoding="utf-8")
 
     insert_logmind_section(claude_file)
 
-    content = claude_file.read_text()
+    content = claude_file.read_text(encoding="utf-8")
     assert "\u65e5\u672c\u8a9e" in content  # Japanese text preserved
     assert "\U0001F680" in content  # Emoji preserved
     assert "<!-- logmind-start -->" in content
@@ -578,24 +578,24 @@ def test_insert_preserves_unicode(temp_dir):
 def test_insert_into_empty_file(temp_dir):
     """Test inserting into an empty file."""
     claude_file = temp_dir / "CLAUDE.md"
-    claude_file.write_text("")
+    claude_file.write_text("", encoding="utf-8")
 
     result = insert_logmind_section(claude_file)
 
     assert result is True
-    content = claude_file.read_text()
+    content = claude_file.read_text(encoding="utf-8")
     assert "<!-- logmind-start -->" in content
 
 
 def test_insert_into_file_no_heading(temp_dir):
     """Test inserting into file with no heading."""
     claude_file = temp_dir / "CLAUDE.md"
-    claude_file.write_text("Some content without heading\n\nMore content\n")
+    claude_file.write_text("Some content without heading\n\nMore content\n", encoding="utf-8")
 
     result = insert_logmind_section(claude_file)
 
     assert result is True
-    content = claude_file.read_text()
+    content = claude_file.read_text(encoding="utf-8")
     assert "<!-- logmind-start -->" in content
     assert "Some content without heading" in content
 
@@ -622,7 +622,7 @@ agents:
   cursor: true
   windsurf: true
 """
-    (logmind_dir / "config.yml").write_text(config_content)
+    (logmind_dir / "config.yml").write_text(config_content, encoding="utf-8")
 
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)
@@ -645,10 +645,10 @@ agents:
   claude: false
   cursor: true
 """
-    (logmind_dir / "config.yml").write_text(config_content)
+    (logmind_dir / "config.yml").write_text(config_content, encoding="utf-8")
 
     # Create existing .cursorrules without logmind section
-    (temp_dir / ".cursorrules").write_text("# Existing rules\n\nSome rules here\n")
+    (temp_dir / ".cursorrules").write_text("# Existing rules\n\nSome rules here\n", encoding="utf-8")
 
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)
@@ -657,7 +657,7 @@ agents:
     assert len(messages) == 1
     assert "Added logmind section" in messages[0]
 
-    content = (temp_dir / ".cursorrules").read_text()
+    content = (temp_dir / ".cursorrules").read_text(encoding="utf-8")
     assert "<!-- logmind-start -->" in content
     assert "Existing rules" in content
 
@@ -672,12 +672,12 @@ agents:
   claude: false
   cursor: true
 """
-    (logmind_dir / "config.yml").write_text(config_content)
+    (logmind_dir / "config.yml").write_text(config_content, encoding="utf-8")
 
     # Create .cursorrules WITH logmind section
     (temp_dir / ".cursorrules").write_text(
         "# Cursor Rules\n\n<!-- logmind-start -->\nContent\n<!-- logmind-end -->\n"
-    )
+    , encoding="utf-8")
 
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)
@@ -696,7 +696,7 @@ agents:
   claude: false
   cursor: false
 """
-    (logmind_dir / "config.yml").write_text(config_content)
+    (logmind_dir / "config.yml").write_text(config_content, encoding="utf-8")
 
     messages = sync_agent_files_from_config(temp_dir)
     assert messages == []
@@ -713,7 +713,7 @@ agents:
   cursor: false
   copilot: true
 """
-    (logmind_dir / "config.yml").write_text(config_content)
+    (logmind_dir / "config.yml").write_text(config_content, encoding="utf-8")
 
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)

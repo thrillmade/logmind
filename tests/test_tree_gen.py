@@ -8,12 +8,12 @@ from logmind.core.tree_gen import _generate_fallback_tree, generate_tree, update
 def test_generate_fallback_tree(temp_dir):
     """Test fallback tree generation."""
     # Create some test files
-    (temp_dir / "file1.txt").write_text("test")
-    (temp_dir / "file2.py").write_text("test")
+    (temp_dir / "file1.txt").write_text("test", encoding="utf-8")
+    (temp_dir / "file2.py").write_text("test", encoding="utf-8")
 
     subdir = temp_dir / "subdir"
     subdir.mkdir()
-    (subdir / "nested.txt").write_text("test")
+    (subdir / "nested.txt").write_text("test", encoding="utf-8")
 
     tree = _generate_fallback_tree(temp_dir)
 
@@ -33,7 +33,7 @@ def test_generate_fallback_tree_ignores_common_dirs(temp_dir):
     (temp_dir / "venv").mkdir()
 
     # Create a file that should be shown
-    (temp_dir / "visible.txt").write_text("test")
+    (temp_dir / "visible.txt").write_text("test", encoding="utf-8")
 
     tree = _generate_fallback_tree(temp_dir)
 
@@ -46,7 +46,7 @@ def test_generate_fallback_tree_ignores_common_dirs(temp_dir):
 
 def test_generate_tree_basic(temp_dir):
     """Test basic tree generation."""
-    (temp_dir / "test.txt").write_text("test")
+    (temp_dir / "test.txt").write_text("test", encoding="utf-8")
 
     tree = generate_tree(temp_dir)
 
@@ -60,14 +60,14 @@ def test_update_file_structure(temp_dir):
     docs_dir = temp_dir / "docs"
     docs_dir.mkdir()
 
-    (temp_dir / "test.txt").write_text("test")
+    (temp_dir / "test.txt").write_text("test", encoding="utf-8")
 
     update_file_structure(docs_dir)
 
     file_structure = docs_dir / "file-structure.md"
     assert file_structure.exists()
 
-    content = file_structure.read_text()
+    content = file_structure.read_text(encoding="utf-8")
     assert "# File Structure" in content
     assert "Last updated:" in content
     assert "```" in content
@@ -91,7 +91,7 @@ def test_generate_fallback_tree_max_depth(temp_dir):
     for i in range(5):
         current = current / f"level{i}"
         current.mkdir()
-        (current / f"file{i}.txt").write_text("test")
+        (current / f"file{i}.txt").write_text("test", encoding="utf-8")
 
     tree = _generate_fallback_tree(temp_dir, max_depth=2)
 

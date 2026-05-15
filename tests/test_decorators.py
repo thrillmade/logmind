@@ -36,7 +36,7 @@ def test_log_decision_basic(init_logmind):
 
     # Check that decision was logged
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Test decision" in content
     assert "Test reasoning" in content
 
@@ -59,7 +59,7 @@ def test_log_decision_with_args(init_logmind):
 
     # Check formatted decision
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Use oauth authentication" in content
     assert "Security for /api/data" in content
 
@@ -80,7 +80,7 @@ def test_log_decision_with_kwargs(init_logmind):
     assert result == "db.example.com:3306"
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Connect to db.example.com:3306" in content
 
 
@@ -101,7 +101,7 @@ def test_log_decision_with_defaults(init_logmind):
     assert result == "redis"
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Cache backend: redis" in content
 
 
@@ -123,7 +123,7 @@ def test_log_decision_with_alternatives(init_logmind):
     assert result == "FastAPI"
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Use FastAPI" in content
     assert "Django" in content
     assert "Flask" in content
@@ -146,7 +146,7 @@ def test_log_decision_with_template_alternatives(init_logmind):
     assert result == "AWS"
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Deploy to AWS" in content
     assert "AWS eu-west-1" in content  # Template filled
 
@@ -171,7 +171,7 @@ def test_log_decision_with_implications(init_logmind):
     assert result is True
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Enable dark_mode" in content
     assert "Users will see new UI" in content
     assert "Backend load may increase" in content
@@ -206,7 +206,7 @@ def test_log_decision_with_multiple_calls(init_logmind):
     process("item3")
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Process item1" in content
     assert "Process item2" in content
     assert "Process item3" in content
@@ -231,7 +231,7 @@ def test_log_choice_basic(init_logmind):
     assert result == "redis"
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Use Redis for caching" in content
 
 
@@ -255,7 +255,7 @@ def test_log_choice_with_reasoning(init_logmind):
     assert result == "postgres"
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Use PostgreSQL" in content
     assert "Selected postgres based on requirements" in content
 
@@ -278,7 +278,7 @@ def test_log_choice_unknown_choice(init_logmind):
     assert result == "memcached"
 
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Unknown choice: memcached" in content
 
 
@@ -318,7 +318,7 @@ def test_log_decision_with_exceptions(init_logmind):
 
     # Decision should still be logged before exception
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Attempt risky operation" in content
 
 
@@ -388,5 +388,5 @@ def test_log_decision_with_complex_types(init_logmind):
 
     # Check that decision was logged with correct source
     decisions_path = init_logmind / "decisions.md"
-    content = decisions_path.read_text()
+    content = decisions_path.read_text(encoding="utf-8")
     assert "Process items from API" in content
