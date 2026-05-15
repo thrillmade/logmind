@@ -39,7 +39,20 @@ jobs:
 
       - name: Commit and push (with PR fallback under branch protection)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # If LOGMIND_BOT_PAT is set, the aggregator PR opens under that
+          # identity and downstream workflows (required checks, etc.) fire
+          # normally. Without it, the PR opens via GITHUB_TOKEN, which
+          # GitHub deliberately blocks from triggering other workflows
+          # (anti-recursion safety).
+          #
+          # If your base ref has required status checks (clud-bug, etc.),
+          # set LOGMIND_BOT_PAT to a fine-grained PAT scoped to this repo
+          # with Contents:write + Pull-requests:write. The aggregator PR
+          # will then be mergeable. Without it, the PR opens but its
+          # required checks will never run, and the PR will sit
+          # unmergeable. The workflow emits a ::warning:: in that case.
+          GH_TOKEN: ${{ secrets.LOGMIND_BOT_PAT || secrets.GITHUB_TOKEN }}
+          HAS_BOT_PAT: ${{ secrets.LOGMIND_BOT_PAT != '' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -71,6 +84,9 @@ jobs:
                   --body "Automated decision aggregation. Direct push to \`${BASE_REF}\` was blocked by branch protection."; then
               echo "::warning::Aggregation PR could not be created. Check 'Settings → Actions → General → Allow GitHub Actions to create and approve pull requests'."
               exit 0
+            fi
+            if [ "${HAS_BOT_PAT}" != "true" ]; then
+              echo "::warning::Aggregator PR opened via GITHUB_TOKEN. Required status checks on '${BASE_REF}' will NOT trigger on this PR (GitHub anti-recursion safety). Set the LOGMIND_BOT_PAT repo secret to a fine-grained PAT (Contents:write + Pull-requests:write on this repo) so the PR can satisfy required checks. See the workflow file's env comment for details."
             fi
             echo "Opened aggregation PR for #${PR_NUMBER}."
             exit 0

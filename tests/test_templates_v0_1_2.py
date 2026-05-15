@@ -89,6 +89,32 @@ def test_aggregate_handles_disabled_actions_pr_creation():
 
 
 # ---------------------------------------------------------------------------
+# v0.1.4 — LOGMIND_BOT_PAT fallback for aggregator PRs
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_template_uses_bot_pat_fallback():
+    """v0.1.4: aggregator must prefer LOGMIND_BOT_PAT and fall back to
+    GITHUB_TOKEN. Without the fallback, users with required status checks
+    on their base ref get permanently-unmergeable aggregator PRs because
+    GITHUB_TOKEN-opened PRs can't trigger downstream workflows."""
+    content = _read("github/logmind-aggregate.yml.template")
+    assert "secrets.LOGMIND_BOT_PAT || secrets.GITHUB_TOKEN" in content
+
+
+def test_aggregate_template_warns_when_no_bot_pat():
+    """If the fallback PR opens without LOGMIND_BOT_PAT set, the workflow
+    must emit a ::warning:: explaining why required checks won't fire and
+    how to fix it (set the secret)."""
+    content = _read("github/logmind-aggregate.yml.template")
+    assert "HAS_BOT_PAT" in content
+    # The warning must name the secret so users know what to set
+    assert "LOGMIND_BOT_PAT" in content
+    # And mention the consequence so the warning is actionable
+    assert "Required status checks" in content or "required checks" in content
+
+
+# ---------------------------------------------------------------------------
 # AGENTS.md templates: new agent-skills collection URL
 # ---------------------------------------------------------------------------
 
