@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 
-from logmind.actions.aggregate import aggregate
 from logmind.core.logger import log
 
 
@@ -100,37 +99,11 @@ def test_log_on_default_branch_does_regenerate_file_structure(tmp_path, monkeypa
 
 
 # ---------------------------------------------------------------------------
-# Bug #1 continued: aggregator regenerates file-structure.md on main
+# v0.1.3's "aggregator regenerates file-structure.md on main" test was
+# deleted in v0.2: the aggregator is gone. The replacement behavior
+# (regen-timeline.yml workflow regenerates BOTH timeline.md AND
+# file-structure.md on PR commits) is covered in tests/test_timeline.py.
 # ---------------------------------------------------------------------------
-
-
-def test_aggregate_regenerates_file_structure(tmp_path):
-    """Aggregator output should include a fresh file-structure.md so main
-    catches up with whatever shape the merged branch left."""
-    docs = tmp_path / "docs"
-    branch_dir = docs / "decisions-branches"
-    branch_dir.mkdir(parents=True)
-    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
-
-    # Per-branch file with a real decision the aggregator needs to summarise.
-    # Parser requires "## YYYY-MM-DD HH:MM - title" header form.
-    (branch_dir / "feat__x.md").write_text(
-        "# feat/x\n\n---\n## 2026-05-15 10:00 - decided\n\n**Reasoning:** r\n\n---\n",
-        encoding="utf-8",
-    )
-
-    # Marker file that should appear in the regenerated tree
-    (tmp_path / "fresh-thing.txt").write_text("hi", encoding="utf-8")
-
-    result = aggregate(
-        branch="feat/x", pr_number=42, pr_url="https://example/pr/42",
-        docs_path=docs,
-    )
-    assert result == docs / "decisions.md"
-
-    fs_path = docs / "file-structure.md"
-    assert fs_path.exists()
-    assert "fresh-thing.txt" in fs_path.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

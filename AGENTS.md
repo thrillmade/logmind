@@ -7,7 +7,7 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v2-slim -->
+<!-- logmind-block-version: v3-slim -->
 ## Decision logging — see the `logmind` skill
 
 This project uses [logmind](https://logmind.dev). The full procedure
@@ -22,10 +22,11 @@ npx skills add https://github.com/thrillmot/agent-skills --skill logmind
 
 ### Project-specific paths
 
+- **[docs/timeline.md](docs/timeline.md)** — auto-generated chronological overview across all branches; start here.
 - Recent decisions on the default branch: **[docs/decisions.md](docs/decisions.md)**
 - Per-branch decisions (in-flight feature work): **docs/decisions-branches/**
 - Archived decisions: **[docs/decisions-archive.md](docs/decisions-archive.md)**
-- Project tree (auto-regenerated on every log): **[docs/file-structure.md](docs/file-structure.md)**
+- Project tree (regenerated on main-branch logs + post-PR-merge): **[docs/file-structure.md](docs/file-structure.md)**
 
 ### Quick reference
 

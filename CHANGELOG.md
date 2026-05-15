@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-15
+
+### Changed (BREAKING — see migration below)
+- **Aggregator removed.** The per-merge `logmind-aggregate.yml` workflow that opened a bookkeeping PR after every feature merge is gone. Replaced by a derived-file architecture: `docs/timeline.md` is now an auto-regenerated chronological view computed from per-branch logs + `docs/decisions.md` + archive on every PR commit. Two PRs in flight can't conflict on the derived file (same inputs → same output).
+- **New CLI:** `logmind timeline` prints the unified timeline; `--write PATH` regenerates a file; `--check` exits nonzero if the file is stale (CI gate).
+- **New workflow template:** `regen-timeline.yml` runs `logmind timeline --write docs/timeline.md` + `logmind tree` on every PR push, commits the result to the PR branch via `GITHUB_TOKEN` (no PAT needed).
+- **AGENTS.md template bumped to v3 / v3-slim.** Adds `docs/timeline.md` to the required reading list as the high-level entry point.
+- **`LOGMIND_BOT_PAT` is now vestigial.** The secret is no longer needed anywhere in the v0.2 install footprint. Existing secrets can stay (harmless) or be removed.
+
+### Migration from v0.1.x
+1. Delete `.github/workflows/logmind-aggregate.yml` from your repo.
+2. Run `logmind init` again to install `regen-timeline.yml` (it skips files that already exist, so other workflows are untouched).
+3. Verify branch protection on `main` has "Require branches to be up to date before merging" enabled (strict status checks). Without it, two concurrent PRs editing `docs/timeline.md` may still merge-conflict.
+4. Verify `Settings → Actions → General → Workflow permissions = Read and write`. The regen workflow needs to push to PR branches.
+5. Run `logmind agents update` to refresh `AGENTS.md` / `CLAUDE.md` / etc. to the v3 marker block.
+6. Optional: remove the `LOGMIND_BOT_PAT` repo secret (no longer used).
+
+### Removed
+- `src/logmind/templates/github/logmind-aggregate.yml.template`
+- `src/logmind/actions/aggregate.py`
+- `tests/test_action_aggregate.py`
+- LOGMIND_BOT_PAT init-time tip (replaced by the workflow-permissions + strict-status-checks tip)
+
+## [0.1.4] - 2026-05-15
+### Added
+- Optional `LOGMIND_BOT_PAT` fallback for aggregator PRs under required-check rulesets (made vestigial by v0.2).
+
+## [0.1.3] - 2026-05-15
+### Fixed
+- file-structure.md regen skipped on feature branches; only regenerates on default branch or in aggregator (replaced by v0.2 regen-timeline workflow).
+- `logmind log` now syncs agent files BEFORE the commit so refreshes don't leave dirty trees.
+
+## [0.1.2] - 2026-05-15
+### Fixed (from clud-bug PR #21 review)
+- Richer default `ignore_patterns` in config.yml (Node/Next.js + general patterns).
+- Path-aware `.gitignore` matching in `tree_gen.py`.
+- `check-decisions.yml`: `[skip-logmind]` PR-title override actually wired; `THRESHOLD` env threaded; `--no-renames` on `git diff --numstat`.
+- `logmind-aggregate.yml`: PR fallback under branch protection (removed entirely in v0.2).
+- Scoped staging in `logmind log` (`--stage scoped` default).
+- Skill repo restructure to `thrillmot/agent-skills` collection layout.
+
 ## [0.1.1] - 2026-05-15
 
 ### Added — v0.1.1 polish (Phase 13)

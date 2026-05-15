@@ -75,18 +75,34 @@ def test_init_command_with_no_git_flag(temp_dir):
         assert "logmind initialized successfully" in result.output
 
 
-def test_init_prints_bot_pat_tip(temp_dir):
-    """v0.1.4: init output must include a tip about LOGMIND_BOT_PAT so
-    users with required-check rulesets know how to make aggregator PRs
-    mergeable."""
+def test_init_does_not_install_aggregator_workflow(temp_dir):
+    """v0.2: aggregator is gone; init must not scaffold logmind-aggregate.yml
+    (deleted in v0.2). The new regen-timeline.yml replaces it."""
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=temp_dir):
         result = runner.invoke(init, ["--no-git", "--no-skill-install"])
         assert result.exit_code == 0
-        assert "LOGMIND_BOT_PAT" in result.output
-        assert "gh secret set" in result.output
-        # Make sure we're calling out the gotcha so the tip is actionable
-        assert "required" in result.output.lower()
+        agg = Path(".github/workflows/logmind-aggregate.yml")
+        regen = Path(".github/workflows/regen-timeline.yml")
+        assert not agg.exists(), "aggregator workflow should not be installed in v0.2"
+        assert regen.exists(), "regen-timeline workflow must replace it"
+
+
+def test_init_seeds_timeline_md(temp_dir):
+    """v0.2: AGENTS.md template links docs/timeline.md, and check-doc-links
+    runs on first push. `logmind init` must seed timeline.md so the link
+    isn't broken until the first PR triggers regen-timeline.yml.
+    Caught by clud-bug review of PR #36 (issue #3, three review rounds)."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git", "--no-skill-install"])
+        assert result.exit_code == 0
+        timeline = Path("docs/timeline.md")
+        assert timeline.exists(), \
+            "logmind init must create docs/timeline.md to keep AGENTS.md link valid"
+        # And it should be a valid timeline file, not just a placeholder
+        content = timeline.read_text(encoding="utf-8")
+        assert "Decision Timeline" in content
 
 
 def test_init_command_already_initialized(git_repo):
