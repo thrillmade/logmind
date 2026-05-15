@@ -1011,6 +1011,27 @@ def check_decisions(threshold: int, no_fail: bool):
         )
 
 
+@main.command("tree")
+def tree_cmd():
+    """
+    Regenerate docs/file-structure.md with the current project tree.
+
+    Equivalent to the side-effect that runs after every ``logmind log`` when
+    ``file_structure.auto_update: true`` is set in ``.logmind/config.yml``.
+    Useful as a pre-commit hook step or when an agent has just written
+    several files and wants the docs/ snapshot to reflect them immediately.
+    """
+    docs_path = Path.cwd() / "docs"
+    if not docs_path.exists():
+        click.secho(
+            "Error: docs/ directory not found. Run 'logmind init' first.",
+            fg="red",
+        )
+        sys.exit(1)
+    update_file_structure(docs_path)
+    click.secho("✓ Updated docs/file-structure.md", fg="green")
+
+
 @main.command("check-links")
 def check_links():
     """
