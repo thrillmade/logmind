@@ -430,7 +430,7 @@ def test_init_with_all_agents_flag(temp_dir):
 
 
 def test_init_with_windsurf(temp_dir):
-    """Test init with windsurf agent."""
+    """Init with windsurf creates a stub .windsurfrules + canonical AGENTS.md."""
     runner = CliRunner()
 
     with runner.isolated_filesystem(temp_dir=temp_dir):
@@ -438,8 +438,10 @@ def test_init_with_windsurf(temp_dir):
 
         assert result.exit_code == 0
         assert (Path.cwd() / ".windsurfrules").exists()
-        content = (Path.cwd() / ".windsurfrules").read_text()
-        assert "<!-- logmind-start -->" in content
+        assert "<!-- logmind-stub:" in (Path.cwd() / ".windsurfrules").read_text()
+        # AGENTS.md is canonical and contains the actual logmind block
+        assert (Path.cwd() / "AGENTS.md").exists()
+        assert "<!-- logmind-start -->" in (Path.cwd() / "AGENTS.md").read_text()
 
 
 def test_init_with_unknown_agent_warns(temp_dir):
@@ -530,22 +532,27 @@ def test_log_command_syncs_agent_files(git_repo):
 
 
 def test_init_creates_default_agents(temp_dir):
-    """Test that init creates both CLAUDE.md and .cursorrules by default."""
+    """Init creates AGENTS.md (canonical) plus stub CLAUDE.md and .cursorrules."""
     runner = CliRunner()
 
     with runner.isolated_filesystem(temp_dir=temp_dir):
         result = runner.invoke(init, ["--no-git"])
 
         assert result.exit_code == 0
-        # Both claude and cursor are enabled by default
+        # Canonical doc + per-agent stubs
+        assert (Path.cwd() / "AGENTS.md").exists()
         assert (Path.cwd() / "CLAUDE.md").exists()
         assert (Path.cwd() / ".cursorrules").exists()
 
-        # Verify they have logmind sections
+        agents_content = (Path.cwd() / "AGENTS.md").read_text()
         claude_content = (Path.cwd() / "CLAUDE.md").read_text()
         cursor_content = (Path.cwd() / ".cursorrules").read_text()
-        assert "<!-- logmind-start -->" in claude_content
-        assert "<!-- logmind-start -->" in cursor_content
+
+        # Logmind block lives in AGENTS.md only
+        assert "<!-- logmind-start -->" in agents_content
+        # Per-agent files are stubs that point at AGENTS.md
+        assert "<!-- logmind-stub:" in claude_content
+        assert "<!-- logmind-stub:" in cursor_content
 
 
 def test_default_config_enables_claude_and_cursor(temp_dir):

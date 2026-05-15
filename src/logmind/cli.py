@@ -16,6 +16,7 @@ from logmind.core.inserter import (
     get_all_agent_names,
     insert_into_all_ai_files,
     insert_logmind_section,
+    migrate_to_agents_md,
     remove_agent_file,
     sync_agent_files_from_config,
 )
@@ -813,6 +814,50 @@ def agents_remove(agent_name: str, no_commit: bool, force: bool):
     else:
         click.secho(f"Error: Failed to remove {file_path.name}", fg="red")
         sys.exit(1)
+
+
+@agents.command("migrate")
+@click.option(
+    "--no-commit",
+    is_flag=True,
+    help="Don't commit the migration changes",
+)
+def agents_migrate(no_commit: bool):
+    """
+    Consolidate per-agent files into AGENTS.md and replace each with a stub.
+
+    For each existing markdown agent file (CLAUDE.md, .cursorrules, etc.):
+      - Strip the logmind marker block.
+      - Append any remaining user content under "## From <name>" in AGENTS.md.
+      - Replace the file with a 2-line stub pointing at AGENTS.md.
+
+    Idempotent — re-running on an already-migrated tree is a no-op.
+    """
+    root_path = Path.cwd()
+
+    messages = migrate_to_agents_md(root_path)
+    if not messages:
+        click.secho("No agent files to migrate (already consolidated).", fg="yellow")
+        return
+
+    for msg in messages:
+        click.echo(msg)
+
+    if not no_commit and is_git_repo():
+        try:
+            commit_and_push(
+                ["AGENTS.md"]
+                + [
+                    pattern
+                    for _, (pattern, _, json_) in AGENT_REGISTRY.items()
+                    if not json_ and (root_path / pattern).exists()
+                ],
+                "logmind: Consolidate AI agent files into AGENTS.md",
+                push=True,
+            )
+            click.echo("✓ Committed migration")
+        except Exception as e:
+            click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
 
 
 # Config command group
