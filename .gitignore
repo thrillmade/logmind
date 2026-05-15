@@ -61,3 +61,9 @@ Thumbs.db
 # skills.sh tooling (project-scoped lockfile, not for main repo)
 skills-lock.json
 .agents/
+
+# Intentionally untracked: live in separate repos (homebrew-logmind tap)
+# or are superseded by pytest + CONTRIBUTING.md verification block.
+homebrew-logmind/
+homebrew-tap/
+verify_logmind.sh
