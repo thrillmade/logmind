@@ -627,12 +627,12 @@ agents:
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)
 
-    # Should create .cursorrules and .windsurfrules
-    assert len(messages) == 2
+    # Should create .cursorrules and .windsurfrules (plus AGENTS.md auto-ensured)
     assert any(".cursorrules" in msg for msg in messages)
     assert any(".windsurfrules" in msg for msg in messages)
     assert (temp_dir / ".cursorrules").exists()
     assert (temp_dir / ".windsurfrules").exists()
+    assert (temp_dir / "AGENTS.md").exists()  # auto-ensured by sync
 
 
 def test_sync_agent_files_inserts_into_existing(temp_dir):
@@ -653,9 +653,8 @@ agents:
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)
 
-    # Should insert into existing file
-    assert len(messages) == 1
-    assert "Added logmind section" in messages[0]
+    # Should insert into existing file (AGENTS.md is also auto-ensured)
+    assert any("Added logmind section to .cursorrules" in m for m in messages)
 
     content = (temp_dir / ".cursorrules").read_text(encoding="utf-8")
     assert "<!-- logmind-start -->" in content
@@ -682,8 +681,9 @@ agents:
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)
 
-    # Should return empty (file already configured)
-    assert messages == []
+    # The .cursorrules file is already configured — no message about it.
+    # AGENTS.md may be auto-created with the canonical block, that's fine.
+    assert not any(".cursorrules" in m for m in messages)
 
 
 def test_sync_agent_files_no_enabled_agents(temp_dir):
@@ -718,6 +718,6 @@ agents:
     # Run sync
     messages = sync_agent_files_from_config(temp_dir)
 
-    # Should create .github/copilot-instructions.md
-    assert len(messages) == 1
+    # Should create .github/copilot-instructions.md (AGENTS.md auto-ensured too)
     assert (temp_dir / ".github" / "copilot-instructions.md").exists()
+    assert any("copilot-instructions" in m for m in messages)

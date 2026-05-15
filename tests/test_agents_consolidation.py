@@ -71,6 +71,57 @@ def test_ensure_agents_md_noop_when_already_canonical(tmp_path):
     assert ensure_agents_md(tmp_path) is None
 
 
+def test_ensure_agents_md_auto_refreshes_stale_marker_block(tmp_path):
+    """If the marker block exists but its body differs from the current
+    template's, ensure_agents_md silently rewrites the body in-place,
+    preserving content above and below the markers."""
+    from logmind.core.inserter import LOGMIND_END_MARKER, LOGMIND_START_MARKER
+
+    stale_body = "\n## Old version of the logmind block\nThis is outdated.\n"
+    user_above = "# AGENTS.md\n\nMy project lead-in.\n\n"
+    user_below = "\n## Project Overview\n\nMy custom content.\n"
+    (tmp_path / "AGENTS.md").write_text(
+        user_above + LOGMIND_START_MARKER + stale_body + LOGMIND_END_MARKER + user_below,
+        encoding="utf-8",
+    )
+
+    msg = ensure_agents_md(tmp_path)
+    assert msg is not None and "Refreshed" in msg
+
+    new_content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    # User content above + below preserved
+    assert "My project lead-in." in new_content
+    assert "My custom content." in new_content
+    # Old block content gone
+    assert "Old version of the logmind block" not in new_content
+    # New canonical block content present
+    assert LOGMIND_START_MARKER in new_content
+    assert LOGMIND_END_MARKER in new_content
+    # And the second call is a no-op
+    assert ensure_agents_md(tmp_path) is None
+
+
+def test_get_agents_md_template_returns_slim_when_skills_available(monkeypatch):
+    """When skills.sh is detected, template adapts to the slim variant."""
+    from logmind.core import skill_install
+
+    monkeypatch.setattr(skill_install, "is_skills_available", lambda: True)
+    slim = get_agents_md_template()
+    assert "logmind-block-version: v1-slim" in slim
+    assert "see the `logmind` skill" in slim
+
+
+def test_get_agents_md_template_returns_full_when_skills_absent(monkeypatch):
+    """Without skills.sh, the full template ships the procedure inline."""
+    from logmind.core import skill_install
+
+    monkeypatch.setattr(skill_install, "is_skills_available", lambda: False)
+    full = get_agents_md_template()
+    assert "logmind-block-version: v1" in full
+    # Full template carries the inline procedure
+    assert "When you MUST log" in full or "REQUIREMENT" in full or "skill is also embedded" in full
+
+
 # ---------------------------------------------------------------------------
 # create_agent_file (new behaviour)
 # ---------------------------------------------------------------------------

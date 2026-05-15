@@ -169,9 +169,25 @@ def is_stub(content: str) -> bool:
     return LOGMIND_STUB_MARKER in content
 
 
-def get_agents_md_template() -> str:
-    """Return the canonical AGENTS.md template content."""
-    template_path = Path(__file__).parent.parent / "templates" / "AGENTS.md.template"
+def get_agents_md_template(prefer_slim: Optional[bool] = None) -> str:
+    """Return the canonical AGENTS.md template content.
+
+    Adaptive: if the user has skills.sh available (skills CLI or npx on PATH),
+    we ship the slim variant that defers to the `logmind` skill for the
+    canonical procedure. Otherwise we ship the full variant with the
+    procedure inline as a fallback.
+
+    Pass prefer_slim=True/False to force one variant; the default detects.
+    """
+    if prefer_slim is None:
+        try:
+            from logmind.core.skill_install import is_skills_available
+            prefer_slim = is_skills_available()
+        except Exception:
+            prefer_slim = False
+
+    name = "AGENTS.md.slim.template" if prefer_slim else "AGENTS.md.template"
+    template_path = Path(__file__).parent.parent / "templates" / name
     return template_path.read_text(encoding="utf-8")
 
 
@@ -372,14 +388,42 @@ def create_claude_md(file_path: Optional[Path] = None) -> Path:
     return file_path
 
 
+def _extract_marker_block(content: str) -> Optional[str]:
+    """Return the text between the logmind markers, or None if absent."""
+    start = content.find(LOGMIND_START_MARKER)
+    end = content.find(LOGMIND_END_MARKER)
+    if start == -1 or end == -1 or end < start:
+        return None
+    block_start = start + len(LOGMIND_START_MARKER)
+    return content[block_start:end]
+
+
+def _replace_marker_block(content: str, new_block_body: str) -> str:
+    """Swap the body between the existing logmind markers, preserving everything else."""
+    start = content.find(LOGMIND_START_MARKER)
+    end = content.find(LOGMIND_END_MARKER)
+    if start == -1 or end == -1:
+        return content
+    return (
+        content[: start + len(LOGMIND_START_MARKER)]
+        + new_block_body
+        + content[end:]
+    )
+
+
 def ensure_agents_md(root_path: Optional[Path] = None) -> Optional[str]:
     """
-    Make sure ``AGENTS.md`` exists at the project root with the canonical
-    logmind content.
+    Make sure ``AGENTS.md`` exists at the project root with the **current**
+    canonical logmind block.
 
-    - Missing → write the canonical template.
+    - Missing → write the canonical template (adaptive: slim if skills.sh
+      is available, full otherwise).
     - Exists without logmind markers → insert the logmind block in-place.
-    - Exists with logmind markers → no-op.
+    - Exists with logmind markers but the body is out of date (different
+      from the current template's marker body) → silently refresh the body
+      in place. Content above and below the markers is preserved.
+    - Exists with logmind markers and the body matches the current
+      template → no-op.
 
     Returns a status string when a write happened, or None for no-op.
     """
@@ -387,16 +431,30 @@ def ensure_agents_md(root_path: Optional[Path] = None) -> Optional[str]:
         root_path = Path.cwd()
 
     agents_path = root_path / "AGENTS.md"
+    template = get_agents_md_template()
 
     if not agents_path.exists():
-        agents_path.write_text(get_agents_md_template(), encoding="utf-8")
+        agents_path.write_text(template, encoding="utf-8")
         return "Created AGENTS.md (canonical agent instructions)"
 
     content = agents_path.read_text(encoding="utf-8")
-    if has_logmind_section(content):
-        return None
-    insert_logmind_section(agents_path)
-    return "Added logmind section to existing AGENTS.md"
+
+    if not has_logmind_section(content):
+        insert_logmind_section(agents_path)
+        return "Added logmind section to existing AGENTS.md"
+
+    template_block = _extract_marker_block(template)
+    installed_block = _extract_marker_block(content)
+    if (
+        template_block is not None
+        and installed_block is not None
+        and installed_block.strip() != template_block.strip()
+    ):
+        refreshed = _replace_marker_block(content, template_block)
+        agents_path.write_text(refreshed, encoding="utf-8")
+        return "Refreshed AGENTS.md logmind block to current template"
+
+    return None
 
 
 def insert_into_all_ai_files(
@@ -589,6 +647,14 @@ def sync_agent_files_from_config(root_path: Optional[Path] = None) -> List[str]:
         return []
 
     messages = []
+
+    # Auto-fix AGENTS.md if its logmind block is missing or out-of-date
+    # against the current template. ensure_agents_md is the source of truth
+    # for "what should this look like right now" and silently rewrites the
+    # marker block when needed (preserving content above + below the markers).
+    canonical_msg = ensure_agents_md(root_path)
+    if canonical_msg:
+        messages.append(f"✓ {canonical_msg}")
 
     for agent_name in enabled_agents:
         if agent_name not in AGENT_REGISTRY:
