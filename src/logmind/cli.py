@@ -65,7 +65,9 @@ def _install_github_action_templates(root_path: Path) -> list:
         target = workflows_dir / target_name
         if target.exists():
             continue
-        target.write_text(tmpl.read_text(encoding="utf-8"))
+        # Explicit utf-8 on both ends — templates use unicode (→, em-dash,
+        # etc.) and Windows' default cp1252 codec chokes without this.
+        target.write_text(tmpl.read_text(encoding="utf-8"), encoding="utf-8")
         created.append(str(target.relative_to(root_path)))
     return created
 
