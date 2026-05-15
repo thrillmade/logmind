@@ -1,0 +1,32 @@
+name: doc link integrity
+
+# Dogfood version of the workflow that `logmind init` ships into downstream
+# projects (see src/logmind/templates/github/check-doc-links.yml.template).
+# Installs logmind from the current source tree (pip install -e .) so it
+# works against logmind's own docs without depending on PyPI.
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".logmind/config.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install logmind from source
+        run: pip install -e .
+
+      - name: Check markdown link integrity
+        run: logmind check-links
