@@ -60,9 +60,9 @@ log("Decision summary",
 
 ### Context Files
 
-- **[docs/decisions.md](docs/decisions.md)** - 20 most recent decisions
-- **[docs/decisions-archive.md](docs/decisions-archive.md)** - Historical decisions
-- **[docs/file-structure.md](docs/file-structure.md)** - Current project structure
+- **[docs/decisions.md](decisions.md)** - 20 most recent decisions
+- **[docs/decisions-archive.md](decisions-archive.md)** - Historical decisions
+- **[docs/file-structure.md](file-structure.md)** - Current project structure
 
 Read these files to understand project history and architecture.
 <!-- logmind-end -->

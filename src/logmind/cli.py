@@ -966,6 +966,25 @@ def check_decisions(threshold: int, no_fail: bool):
         )
 
 
+@main.command("check-links")
+def check_links():
+    """
+    Verify all relative markdown links resolve and no docs/*.md is orphaned.
+
+    Walks README.md, AGENTS.md, CLAUDE.md, and the entire docs/ tree by
+    default. Configure roots and orphan allowlist via .logmind/config.yml:
+
+        linkcheck:
+          roots: [README.md, docs]
+          allow_orphans: [docs/legacy.md]
+
+    Exits 0 on a clean run, 1 if any broken or orphan links are found.
+    """
+    from logmind.actions.link_check import main as _link_check_main
+
+    sys.exit(_link_check_main())
+
+
 @main.command("install-hook")
 @click.option(
     "--force",

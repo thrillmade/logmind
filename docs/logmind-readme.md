@@ -148,4 +148,4 @@ See [custom-integrations.md](custom-integrations.md) for patterns, examples, and
 - **AI-friendly:** Recent decisions + file structure = complete context
 - **Automatic:** Commits and pushes on every log
 
-See [docs/plan.md](docs/plan.md) for complete architecture and roadmap.
+See [docs/plan.md](plan.md) for complete architecture and roadmap.
