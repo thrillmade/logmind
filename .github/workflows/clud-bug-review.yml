@@ -6,11 +6,6 @@ on:
 
 jobs:
   clud-bug-review:
-    # clud-bug always runs. Even on Dependabot/Renovate PRs that lack
-    # secrets — the action gracefully degrades to a no-comment exit, and
-    # the upside (catching real bugs in dependency-graph changes that
-    # downstream maintainers DO want eyes on) outweighs the occasional
-    # silent run.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,16 +13,49 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # strict-mode gate reads base ref's manifest
+
+      # Three-way guard — see workflow.yml.tmpl for full design notes.
+      - name: Guard — require ANTHROPIC_API_KEY
+        id: guard
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          IS_FORK=false; [ "$HEAD_REPO" != "$BASE_REPO" ] && IS_FORK=true
+          IS_BOT=false; case "$PR_AUTHOR" in *\[bot\]) IS_BOT=true ;; esac
+          if $IS_FORK || $IS_BOT; then
+            REASON=$($IS_BOT && echo "bot author ($PR_AUTHOR)" || echo "fork ($HEAD_REPO)")
+            EXISTING=$(gh api "repos/${BASE_REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+              --jq '[.[] | select(.user.login == "claude[bot]" and (.body | startswith("## 🐛 Clud Bug skipped")))] | length')
+            if [ "${EXISTING:-0}" = "0" ]; then
+              BODY=$(printf '## 🐛 Clud Bug skipped\n\nThis PR is from a %s. GitHub deliberately does not pass repository secrets to such workflows, so Clud Bug could not authenticate against Anthropic. Review the diff manually.' "$REASON")
+              gh pr comment "$PR_NUMBER" --body "$BODY" || true
+            fi
+            echo "::warning title=Clud Bug 🐛::Skipped — $REASON cannot access repository secrets."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error title=Clud Bug 🐛::ANTHROPIC_API_KEY secret is not set on this repository."
+          echo "::error::Set it: Settings → Secrets and variables → Actions → New repository secret."
+          exit 1
 
       - uses: anthropics/claude-code-action@v1
+        if: steps.guard.outputs.skip != 'true'
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           track_progress: true
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api graphql:*),Bash(gh api repos/:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api graphql:*),Bash(gh api repos/:*),Bash(git show:*),Bash(cat .claude/skills/.clud-bug.json)"
           prompt: |
             This project is "logmind". Decision logging for AI-assisted development - automatic tracking, git integration, and context for AI agents. It's primarily python using click, pytest.
 
@@ -45,8 +73,38 @@ jobs:
             Skip style suggestions, minor naming issues, or anything that
             doesn't affect correctness, security, or performance.
 
-            Any project-specific skills loaded from .claude/skills/ should
-            shape your review — defer to their guidance over generic advice.
+            Skills are not background context — they are review rules with
+            authority. Before flagging any finding, scan the loaded skills in
+            .claude/skills/ for relevant guidance. If a skill applies, your
+            review MUST reference it by name in the finding (e.g. "[evidence-
+            based-review]: this claim isn't anchored to a line"). Generic
+            advice that contradicts a project skill is wrong by definition.
+
+            At the end of every review, append a single-line footer:
+              Skills referenced: [skill-name-1, skill-name-2, ...]
+            If you genuinely cited none, list "[none]" and explain why no
+            installed skill applied to this diff.
+
+            Strict-mode header (opt-in): if .claude/skills/.clud-bug.json
+            contains { "strictMode": true }, the comment header you post
+            MUST signal whether you flagged a critical issue:
+              IF you flagged any critical issue (bug, security,
+                  performance, missing test coverage):
+                  ## 🐛 Clud Bug review — critical findings
+              OTHERWISE:
+                  ## 🐛 Clud Bug review — clean
+            A post-step in this workflow greps your posted comment for
+            that header and fails the check on "critical findings." The
+            gate is deterministic on top of your judgment.
+
+            If strictMode is NOT set (or absent), keep the existing
+            "## 🐛 Clud Bug review" header — strict mode is opt-in and
+            other repos use the plain header.
+
+            Tone: address the author conversationally. A concise field-naturalist
+            voice is welcome (you are Clud Bug, examining specimens of code) but
+            never at the cost of clarity, evidence, or the critical-issues-only
+            discipline. Don't perform the bit; let the precision speak.
 
             When you finish, post your review as a single PR comment.
             The comment body MUST start with this exact line so the
@@ -54,6 +112,40 @@ jobs:
             claude[bot], but the comment header brands it as Clud Bug):
 
               ## 🐛 Clud Bug review
+
+            Immediately after the H2 header — on the next non-empty
+            line — emit a status block in this exact format:
+
+              **This round:** N critical · N minor · N resolved from prior · N still open
+
+            This applies to BOTH the bare "## 🐛 Clud Bug review" header
+            and the strict-mode variants ("— critical findings" /
+            "— clean"). The status line goes on the next non-empty line
+            regardless of which header you used. Do not omit the H2
+            header variant in strict mode just to fit the status line —
+            the strict-mode gate reads the H2 line and would break.
+
+            The four counters (always include all four, even when 0 —
+            fixed format is grep-able and lets agents reading the
+            comment parse it deterministically):
+              • critical            — count of NEW critical findings
+                                      in this review (the ones strict
+                                      mode gates on)
+              • minor               — count of non-critical findings
+                                      (suggestions / nits / observations)
+              • resolved from prior — count of prior unresolved threads
+                                      YOU (claude[bot]) just resolved on
+                                      this pass via resolveReviewThread
+                                      (the loop-closing signal — this
+                                      tells the author the bot read
+                                      their fixes)
+              • still open          — count of prior unresolved threads
+                                      whose issue still stands AFTER
+                                      this pass
+
+            On a first-time review, "resolved from prior" and "still
+            open" are both 0. On follow-up reviews after a fix-push,
+            "resolved from prior" should typically be positive.
 
             Post it via:
               gh pr comment "$PR_NUMBER" --body "<your review>"
@@ -75,3 +167,24 @@ jobs:
             For line-specific issues, use the github_inline_comment MCP tool
             with confirmed: true.
             If there are no critical issues, post a one-line comment saying so.
+
+      # Strict-mode gate — see workflow.yml.tmpl for full design notes.
+      - name: Strict mode — fail check on critical findings
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BASE_MANIFEST=$(git show "origin/${{ github.base_ref }}:.claude/skills/.clud-bug.json" 2>&1) || {
+            echo "::warning::Base manifest not found on ${{ github.base_ref }} — strict mode disabled for this run."
+            exit 0
+          }
+          STRICT=$(echo "$BASE_MANIFEST" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(s).strictMode===true)}catch(e){console.log('false')}})")
+          [ "$STRICT" = "true" ] || exit 0
+          LATEST=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?sort=created&direction=desc&per_page=100" \
+            --jq '[.[] | select(.user.login == "claude[bot]" and (.body | startswith("## 🐛 Clud Bug review")))][0].body // ""')
+          if echo "$LATEST" | head -n1 | grep -q "Clud Bug review — critical findings"; then
+            echo "::error title=Clud Bug 🐛::Critical issues found and strictMode is enabled — failing this check."
+            echo "::error::See the latest Clud Bug review comment for details. Push a fix and the gate will clear on the next run."
+            exit 1
+          fi
