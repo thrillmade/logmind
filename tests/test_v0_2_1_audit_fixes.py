@@ -48,6 +48,40 @@ def test_install_github_action_templates_pins_logmind_version(temp_dir):
             assert "__LOGMIND_VERSION__" not in content
 
 
+def test_check_doc_links_template_has_no_paths_filter():
+    """v0.2.2 fix: shipped check-doc-links.yml.template must NOT have a
+    `paths:` filter. The filter (which v0.2.0/v0.2.1 shipped) causes
+    GitHub to skip the workflow on non-markdown PRs, which silently
+    blocks merges when the check is in required_status_checks (treated
+    as 'expected but never reported'). Bit clud-bug PR #52.
+
+    The fix lifts the no-filter behavior from logmind's own dogfood copy
+    into the shipped template + bumps the template marker to v2."""
+    template = (
+        Path(__file__).parent.parent
+        / "src"
+        / "logmind"
+        / "templates"
+        / "github"
+        / "check-doc-links.yml.template"
+    ).read_text(encoding="utf-8")
+
+    # The on: block must NOT contain `paths:` filter.
+    # Use a narrow check: any `paths:` line in the file means regression.
+    paths_lines = [
+        line for line in template.splitlines()
+        if line.strip().startswith("paths:")
+    ]
+    assert not paths_lines, (
+        "check-doc-links.yml.template ships a paths: filter again; this "
+        "silently blocks merges when check-links is a required status check. "
+        f"Found: {paths_lines!r}"
+    )
+
+    # Template marker must be v2 (bumped from v1)
+    assert "# logmind-template-version: v2" in template
+
+
 def test_self_update_template_is_shipped(temp_dir):
     """v0.2.x+: logmind init must install the logmind-self-update workflow
     so downstream repos get the Monday-cron PR for new releases without

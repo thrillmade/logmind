@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-18
+
+### Fixed
+- **`check-doc-links.yml.template`: removed paths filter that silently blocked merges.** The shipped template had `paths: ["**/*.md", ".logmind/config.yml"]` on both `pull_request:` and `push:` triggers. When a PR doesn't change any markdown, GitHub Actions skips the workflow — no status report. But if `check-links` is in the ruleset's `required_status_checks` list (like reporulez's `clud-bug-logmind` variant ships it), GitHub treats the missing report as **"expected but never reported"** and blocks the merge forever. Logmind's own dogfood copy fixed this months ago; the shipped template never got the backport. Bit clud-bug PR #52 today — the template-marker PR had no markdown changes and sat blocked until a CHANGELOG entry was added as a fake-trigger.
+- **Template marker bumped `v1 → v2`.** v0.2.1's idempotent refresh logic will rewrite the workflow on the next `logmind init` because the version marker differs.
+
+### Migration from v0.2.1
+Run `logmind init` in each logmind-installed repo to pick up the corrected template. v0.2.1's refresh mode auto-detects the stale v1 marker and rewrites the workflow — no manual edits needed.
+
 ## [0.2.1] - 2026-05-18
 
 ### Fixed (audit-driven)
