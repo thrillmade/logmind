@@ -48,6 +48,25 @@ def test_install_github_action_templates_pins_logmind_version(temp_dir):
             assert "__LOGMIND_VERSION__" not in content
 
 
+def test_self_update_template_is_shipped(temp_dir):
+    """v0.2.x+: logmind init must install the logmind-self-update workflow
+    so downstream repos get the Monday-cron PR for new releases without
+    manual `pip install --upgrade logmind && logmind init` each cycle."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        result = runner.invoke(init, ["--no-git", "--no-skill-install"])
+        assert result.exit_code == 0, result.output
+        wf = Path(".github/workflows/logmind-self-update.yml")
+        assert wf.exists(), "logmind init must install logmind-self-update.yml"
+        content = wf.read_text(encoding="utf-8")
+        # cron schedule on Mondays at noon UTC (mirror of clud-bug self-update)
+        assert "cron: '0 12 * * 1'" in content
+        # Reads the workflow pin to detect installed version
+        assert "regen-timeline.yml" in content
+        # Opt-out via pinVersion in .logmind/config.yml
+        assert "pinVersion" in content
+
+
 def test_install_templates_substitution_does_not_break_yaml_braces(temp_dir):
     """Confirm the placeholder substitution uses str.replace (not str.format),
     so YAML's `${{ ... }}` expressions in workflow templates survive intact.
