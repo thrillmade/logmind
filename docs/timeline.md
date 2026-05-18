@@ -15,6 +15,9 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-18** — docs: fix stale skills.sh badge URL in README *(docs/fix-skills-badge-url)* — [decisions-branches/docs__fix-skills-badge-url.md](decisions-branches/docs__fix-skills-badge-url.md)
+- **2026-05-18** — v0.2.1: audit-driven fixes — version pinning, idempotent init, atomic writes, hardened git helpers *(feat/v0.2.1-audit-fixes)* — [decisions-branches/feat__v0.2.1-audit-fixes.md](decisions-branches/feat__v0.2.1-audit-fixes.md)
+- **2026-05-18** — docs: correct README required-repo-settings for v0.2 + add reporulez one-command *(docs/readme-v0.2-corrections)* — [decisions-branches/docs__readme-v0.2-corrections.md](decisions-branches/docs__readme-v0.2-corrections.md)
 - **2026-05-15** — Merged: footer-polish (#32) *(main)* — [decisions.md](decisions.md)
 - **2026-05-15** — v0.2.0: derived-file architecture replaces per-merge aggregator *(feat/v0.2-derived-decisions-md)* — [decisions-branches/feat__v0.2-derived-decisions-md.md](decisions-branches/feat__v0.2-derived-decisions-md.md)
 - **2026-05-15** — site: footer polish — version, skill URL, breathing room, single-line nav *(footer-polish)* — [decisions-branches/footer-polish.md](decisions-branches/footer-polish.md)
