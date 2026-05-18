@@ -196,10 +196,12 @@ def write_timeline(
     Returns True if the file changed (caller can use this as a CI signal
     to know whether to commit). False if content was already up to date.
     """
+    from logmind.core.atomic_io import atomic_write_text
+
     rendered = generate_timeline(docs_path)
     existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
     if existing == rendered:
         return False
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(rendered, encoding="utf-8")
+    atomic_write_text(target_path, rendered)
     return True

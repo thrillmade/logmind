@@ -1,9 +1,10 @@
 """Command-line interface for logmind."""
 
+import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import click
 
@@ -39,7 +40,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.2.0", prog_name="logmind")
+@click.version_option(version="0.2.1", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -90,32 +91,89 @@ def _changed_agent_files(root_path: Optional[Path] = None) -> list:
     return changed
 
 
-def _install_github_action_templates(root_path: Path) -> list:
+def _render_workflow_template(template_text: str) -> str:
+    """
+    Substitute install-time placeholders in a workflow template.
+
+    Currently:
+      __LOGMIND_VERSION__ → the logmind version that ran `init`
+          (pins downstream CI's `pip install logmind==...` to a known-good
+          release rather than tracking whatever is latest on PyPI).
+
+    Uses str.replace, not str.format, so YAML's literal `${{ ... }}`
+    expressions don't conflict with Python format syntax.
+    """
+    from logmind import __version__ as logmind_version
+
+    return template_text.replace("__LOGMIND_VERSION__", logmind_version)
+
+
+_TEMPLATE_VERSION_RE = re.compile(
+    r"^#\s*logmind-template-version:\s*(\S+)\s*$", re.MULTILINE
+)
+
+
+def _extract_template_version(text: str) -> Optional[str]:
+    """Return the `# logmind-template-version: vN` value from a workflow
+    template (or an installed copy), or None if missing.
+    """
+    m = _TEMPLATE_VERSION_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _install_github_action_templates(
+    root_path: Path,
+    refresh_stale: bool = False,
+) -> Tuple[list, list]:
     """
     Copy every ``templates/github/*.yml.template`` into
-    ``<root>/.github/workflows/<name>.yml``. Existing workflow files with the
-    same name are NOT overwritten — logmind treats user-customised workflows
-    as canonical.
+    ``<root>/.github/workflows/<name>.yml``.
 
-    Returns a list of relative paths that were newly created.
+    Two modes:
+      - First-install (``refresh_stale=False``): existing workflow files
+        with the same name are NOT overwritten — logmind treats user-
+        customised workflows as canonical.
+      - Refresh (``refresh_stale=True``): if the installed file's
+        ``# logmind-template-version:`` marker is older than the
+        template's, overwrite it. User-customised workflows that have
+        had their version marker stripped are still left alone.
+
+    Returns ``(created, refreshed)`` — two lists of relative paths.
     """
     template_root = Path(__file__).parent / "templates" / "github"
     if not template_root.exists():
-        return []
+        return [], []
     workflows_dir = root_path / ".github" / "workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
-    created = []
+    created: list = []
+    refreshed: list = []
     suffix = ".template"
     for tmpl in sorted(template_root.glob("*.yml.template")):
         target_name = tmpl.name[: -len(suffix)]
         target = workflows_dir / target_name
-        if target.exists():
+        rendered = _render_workflow_template(tmpl.read_text(encoding="utf-8"))
+        if not target.exists():
+            # Explicit utf-8 — templates use unicode (→, em-dash, etc.).
+            target.write_text(rendered, encoding="utf-8")
+            created.append(str(target.relative_to(root_path)))
             continue
-        # Explicit utf-8 on both ends — templates use unicode (→, em-dash,
-        # etc.) and Windows' default cp1252 codec chokes without this.
-        target.write_text(tmpl.read_text(encoding="utf-8"), encoding="utf-8")
-        created.append(str(target.relative_to(root_path)))
-    return created
+        if not refresh_stale:
+            continue
+        installed = target.read_text(encoding="utf-8")
+        installed_version = _extract_template_version(installed)
+        template_version = _extract_template_version(rendered)
+        # Only refresh if BOTH have a marker AND they differ. A missing
+        # installed marker means the user stripped it — treat as customised
+        # and leave alone. A missing template marker means a logmind bug;
+        # skip silently rather than break user installs.
+        if (
+            installed_version is not None
+            and template_version is not None
+            and installed_version != template_version
+        ):
+            target.write_text(rendered, encoding="utf-8")
+            refreshed.append(str(target.relative_to(root_path)))
+    return created, refreshed
 
 
 @main.command()
@@ -179,12 +237,42 @@ def init(
     click.echo("Initializing logmind...")
     click.echo()
 
-    # Check if already initialized
-    if docs_path.exists() and (docs_path / "decisions.md").exists():
-        click.echo("✓ docs/ already exists")
-        click.echo("✓ decisions.md already exists")
+    # If logmind is already initialized in this repo, run in refresh mode:
+    # leave docs/ and agent files alone, but refresh workflow templates if
+    # their `# logmind-template-version:` marker is stale. Lets users run
+    # `logmind init` after a logmind upgrade to pick up new CI workflows
+    # without the mv docs /tmp + init + mv docs back dance.
+    already_initialized = (
+        docs_path.exists()
+        and (docs_path / "decisions.md").exists()
+        and (root_path / ".logmind" / "config.yml").exists()
+    )
+    if already_initialized:
+        click.secho(
+            "logmind is already initialized — running in refresh mode.",
+            fg="yellow",
+        )
         click.echo()
-        click.secho("logmind is already initialized in this project.", fg="yellow")
+        if github_actions:
+            created, refreshed = _install_github_action_templates(
+                root_path, refresh_stale=True
+            )
+            for wf in created:
+                click.echo(f"✓ Created {wf}")
+            for wf in refreshed:
+                click.echo(f"↻ Refreshed {wf} to current template")
+            if not created and not refreshed:
+                click.echo(
+                    "  All workflow templates already current."
+                )
+        # Refresh agent files (AGENTS.md marker block, etc.) — this is
+        # idempotent on the version markers in inserter.py and only
+        # rewrites the marker block when the template version changed.
+        sync_messages = sync_agent_files_from_config(root_path)
+        for msg in sync_messages:
+            click.echo(msg)
+        click.echo()
+        click.secho("Done. docs/ and .logmind/ left untouched.", fg="green")
         return
 
     # Surface the skill recommendation prominently BEFORE we write any files,
@@ -268,7 +356,7 @@ def init(
     # Install GitHub Action templates (decision aggregator, link checker)
     installed_workflows: list = []
     if github_actions:
-        installed_workflows = _install_github_action_templates(root_path)
+        installed_workflows, _ = _install_github_action_templates(root_path)
         for wf in installed_workflows:
             click.echo(f"✓ Created {wf}")
 

@@ -1,3 +1,4 @@
+# logmind-template-version: v1
 name: check derived docs
 
 # Derived-file architecture (v0.2+): docs/timeline.md is a derived
@@ -37,7 +38,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install logmind
-        run: pip install logmind
+        # Version pinned to the logmind that originally ran `logmind init`
+        # in this repo, so CI behavior matches what the maintainer tested
+        # locally. Bump after running `logmind init` against a new release.
+        run: pip install "logmind==__LOGMIND_VERSION__"
 
       - name: Verify docs/timeline.md is current
         run: |

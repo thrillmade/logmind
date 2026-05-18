@@ -303,6 +303,8 @@ def update_file_structure(docs_path: Optional[Path] = None) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     content = template.format(timestamp=timestamp, tree_output=tree_output)
 
-    # Write file
+    # Write file (atomic so concurrent regens can't truncate)
+    from logmind.core.atomic_io import atomic_write_text
+
     file_structure_path = docs_path / "file-structure.md"
-    file_structure_path.write_text(content, encoding="utf-8")
+    atomic_write_text(file_structure_path, content)
