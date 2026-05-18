@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-18
+
+### Fixed (audit-driven)
+- **P0 — workflow templates now pin the logmind version.** `logmind init` substitutes `__LOGMIND_VERSION__` → the installed `logmind.__version__` when writing each `.github/workflows/*.yml`, so downstream CI runs `pip install "logmind==<exact-version>"` instead of tracking whatever is latest on PyPI. Eliminates silent CI breakage after upstream breaking changes.
+- **P1 — `logmind init` is now idempotent on already-initialized repos.** Re-running `logmind init` after a logmind upgrade no longer hard-exits. It now runs in refresh mode: refreshes any workflow whose `# logmind-template-version:` marker is stale, runs `logmind agents update` semantics, and leaves `docs/`, `.logmind/`, and agent files untouched. No flag needed. Eliminates the `mv docs /tmp` + init + `mv docs back` dance reported by reporulez.
+- **P3a — narrowed exception handling for git failures.** `is_git_repo` and `current_branch` in `core/git_handler.py` now safely swallow `OSError`/`PermissionError` (in addition to the existing `CalledProcessError`/`FileNotFoundError`) and return False/None respectively. The unreachable bare `except Exception` in `logger.py` was removed. Pre-v0.2.1 a permission error on `.git/` would crash `logmind log`.
+- **P3b — atomic writes for all logmind-managed state files.** `decisions.md`, `decisions-archive.md`, `file-structure.md`, `timeline.md`, and per-branch decision logs now write via the temp-file + `os.replace` pattern (new `core/atomic_io.py`). Concurrent `logmind log` invocations from multiple agents in the same repo can no longer truncate one another's writes.
+
+### Added
+- `# logmind-template-version: v1` header in every workflow template (`check-decisions.yml.template`, `check-doc-links.yml.template`, `regen-timeline.yml.template`) — drives the v0.2.1 refresh-mode logic and gives future template revisions a clean migration path.
+
+### Migration from v0.2.0
+None. v0.2.1 is a strict superset; existing installs are unaffected. To pick up the workflow-version pinning + refresh-mode-on-reinit benefits, run `logmind init` again in each existing repo. Pre-existing workflows that have no `# logmind-template-version:` marker are treated as user-customized and left alone — strip your customizations and re-run init if you want the v1 baseline.
+
 ## [0.2.0] - 2026-05-15
 
 ### Changed (BREAKING — see migration below)

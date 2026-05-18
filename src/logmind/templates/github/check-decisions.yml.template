@@ -1,3 +1,4 @@
+# logmind-template-version: v1
 name: decision-log check
 
 # Fail PRs that introduce >20 lines of non-docs code changes without

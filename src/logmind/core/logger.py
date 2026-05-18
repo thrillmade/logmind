@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
+from logmind.core.atomic_io import atomic_write_text
 from logmind.core.config import load_config
 from logmind.core.git_handler import (
     commit_and_push,
@@ -189,7 +190,7 @@ def _archive_oldest_decision(decisions_path: Path) -> None:
         return
 
     # Write remaining decisions back
-    decisions_path.write_text(remaining_content, encoding="utf-8")
+    atomic_write_text(decisions_path, remaining_content)
 
     # Read archive (or create if doesn't exist)
     if archive_path.exists():
@@ -213,7 +214,7 @@ def _archive_oldest_decision(decisions_path: Path) -> None:
     archive_lines.insert(insert_idx + 1, "")
 
     # Write back to archive
-    archive_path.write_text("\n".join(archive_lines), encoding="utf-8")
+    atomic_write_text(archive_path, "\n".join(archive_lines))
 
 
 def log(
@@ -282,9 +283,9 @@ def log(
     decisions_path = _resolve_decisions_path(docs_path, config)
     current_content = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
 
-    # Append new decision
+    # Append new decision (atomic so concurrent loggers can't truncate)
     updated_content = current_content + decision_entry
-    decisions_path.write_text(updated_content, encoding="utf-8")
+    atomic_write_text(decisions_path, updated_content)
 
     # Check if we need to archive (use config value)
     decision_count = _count_decisions(updated_content)
@@ -307,14 +308,17 @@ def log(
     project_root = docs_path.parent
     file_structure_updated = False
     if config.auto_update_file_structure:
+        # is_git_repo + current_branch + default_branch all return safe
+        # defaults on OSError / CalledProcessError / FileNotFoundError
+        # (verified in git_handler.py — hardened in v0.2.1). So no
+        # try/except needed here: in the worst case is_git_repo returns
+        # False and we regenerate (the safe default behavior on
+        # not-a-git-repo, e.g. the test suite's tmp dirs).
         skip_regen = False
-        try:
-            if is_git_repo(project_root):
-                cur = current_branch(project_root)
-                if cur is not None and cur != default_branch(project_root):
-                    skip_regen = True
-        except Exception:
-            skip_regen = False
+        if is_git_repo(project_root):
+            cur = current_branch(project_root)
+            if cur is not None and cur != default_branch(project_root):
+                skip_regen = True
         if not skip_regen:
             update_file_structure(docs_path)
             file_structure_updated = True

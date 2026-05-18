@@ -31,7 +31,9 @@ def is_git_repo(path: Optional[Path] = None) -> bool:
             check=True,
         )
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        # OSError covers permission errors on .git/, unreachable network
+        # mounts, etc. Treat as "not a git repo" and let callers decide.
         return False
 
 
@@ -171,7 +173,10 @@ def current_branch(path: Optional[Path] = None) -> Optional[str]:
         )
         branch = result.stdout.strip()
         return branch or None
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        # OSError covers permission errors on .git/HEAD, etc. Caller code
+        # already handles None-as-detached-HEAD; treat permission errors
+        # the same way.
         return None
 
 

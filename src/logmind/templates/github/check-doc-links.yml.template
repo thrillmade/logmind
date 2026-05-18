@@ -1,3 +1,4 @@
+# logmind-template-version: v1
 name: doc link integrity
 
 # Fail PRs that introduce broken or orphaned markdown links so agents stay
@@ -25,7 +26,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install logmind
-        run: pip install logmind
+        # Version pinned to the logmind that originally ran `logmind init`
+        # in this repo, so CI behavior matches what the maintainer tested
+        # locally. Bump after running `logmind init` against a new release.
+        run: pip install "logmind==__LOGMIND_VERSION__"
 
       - name: Check markdown link integrity
         run: logmind check-links
