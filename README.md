@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/logmind.svg)](https://pypi.org/project/logmind/)
 [![Python versions](https://img.shields.io/pypi/pyversions/logmind.svg)](https://pypi.org/project/logmind/)
 [![CI](https://github.com/thrillmot/logmind/actions/workflows/test.yml/badge.svg)](https://github.com/thrillmot/logmind/actions/workflows/test.yml)
-[![skills.sh](https://skills.sh/b/thrillmot/logmind-skill)](https://skills.sh/thrillmot/logmind-skill)
+[![skills.sh](https://skills.sh/b/thrillmot/agent-skills)](https://www.skills.sh/thrillmot/agent-skills/logmind)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 AI decision logging for development projects — branch-aware by default.
