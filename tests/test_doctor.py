@@ -43,9 +43,16 @@ def test_offline_no_workflows_reports_clean_unknown_versions(project: Path):
     assert logmind.name == "logmind"
     assert logmind.installed_version is None
     assert logmind.latest_version is None
-    # Every shipped workflow + AGENTS.md is reported as missing
+    # Every shipped workflow + AGENTS.md + the two merge-driver probes
+    # (v0.3.0) are reported as missing. None should be `stale` — that
+    # would false-positive every fresh fixture.
     names = {w.name for w in logmind.workflows}
-    assert names == set(doctor.LOGMIND_WORKFLOWS) | {"AGENTS.md"}
+    expected = (
+        set(doctor.LOGMIND_WORKFLOWS)
+        | {"AGENTS.md"}
+        | {".gitattributes (merge driver)", "git config (merge driver)", "post-merge hook"}
+    )
+    assert names == expected
     assert all(w.drift == "missing" for w in logmind.workflows)
 
 

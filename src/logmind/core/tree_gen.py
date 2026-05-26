@@ -273,6 +273,50 @@ def _generate_fallback_tree(
     return "\n".join(line for line in lines if line)
 
 
+def generate_file_structure(repo_root: Path) -> str:
+    """Render the file-structure.md content for ``repo_root`` and return it
+    as a string (no file is written). Useful when the caller wants to
+    direct the output somewhere other than the canonical
+    ``<repo_root>/docs/file-structure.md`` — e.g. v0.3.0's custom merge
+    driver, which receives the target path from git as ``%A``.
+    """
+    tree_output = generate_tree(repo_root)
+    template_path = Path(__file__).parent.parent / "templates" / "file-structure.md.template"
+    template = template_path.read_text(encoding="utf-8")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return template.format(timestamp=timestamp, tree_output=tree_output)
+
+
+def write_file_structure(target_path: Path, repo_root: Optional[Path] = None) -> bool:
+    """Write rendered file-structure to ``target_path`` atomically. Returns
+    True if the file's content changed, False if it was already up to date.
+    Mirrors the shape of ``logmind.core.timeline.write_timeline()``.
+
+    Args:
+        target_path: where to write (e.g. docs/file-structure.md, or %A
+            when invoked by the v0.3.0 git merge driver).
+        repo_root: project root. Defaults to ``target_path.parent.parent``
+            (assumes docs/file-structure.md layout), then falls back to cwd.
+    """
+    from logmind.core.atomic_io import atomic_write_text
+
+    if repo_root is None:
+        # Heuristic: assume target_path is <repo>/docs/file-structure.md
+        # so repo_root is two levels up. Git's merge driver passes an
+        # absolute path under the worktree, which satisfies this.
+        repo_root = target_path.resolve().parent.parent
+        if not (repo_root / ".git").exists():
+            repo_root = Path.cwd()
+
+    rendered = generate_file_structure(repo_root)
+    existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+    if existing == rendered:
+        return False
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(target_path, rendered)
+    return True
+
+
 def update_file_structure(docs_path: Optional[Path] = None) -> None:
     """
     Update the file-structure.md file with current project tree.
@@ -286,25 +330,5 @@ def update_file_structure(docs_path: Optional[Path] = None) -> None:
     """
     if docs_path is None:
         docs_path = Path.cwd() / "docs"
-
     docs_path.mkdir(parents=True, exist_ok=True)
-
-    # Project root is the parent of docs/
-    repo_root = docs_path.parent
-
-    # Generate tree rooted at repo, not the caller's cwd
-    tree_output = generate_tree(repo_root)
-
-    # Read template
-    template_path = Path(__file__).parent.parent / "templates" / "file-structure.md.template"
-    template = template_path.read_text(encoding="utf-8")
-
-    # Fill template
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    content = template.format(timestamp=timestamp, tree_output=tree_output)
-
-    # Write file (atomic so concurrent regens can't truncate)
-    from logmind.core.atomic_io import atomic_write_text
-
-    file_structure_path = docs_path / "file-structure.md"
-    atomic_write_text(file_structure_path, content)
+    write_file_structure(docs_path / "file-structure.md", docs_path.parent)

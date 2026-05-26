@@ -264,6 +264,80 @@ def _probe_agents_md(project_root: Path) -> WorkflowStatus:
     )
 
 
+def _probe_merge_driver_attrs(project_root: Path) -> WorkflowStatus:
+    """v0.3.0: .gitattributes contains the logmind merge-driver block.
+
+    Reports `current` when present, `missing` when absent. We never
+    return `stale` here — the block is binary present/absent, and
+    treating absence as drift would false-positive every repo that
+    hasn't yet run `logmind init` post-v0.3.0 (or every test fixture).
+    The next `logmind init` writes the block; that's the signal flow.
+    """
+    from logmind.core.gitattributes import has_block
+
+    gitattrs = project_root / ".gitattributes"
+    if has_block(gitattrs):
+        return WorkflowStatus(
+            name=".gitattributes (merge driver)", installed=True,
+            marker="present", bundled_marker="present", drift="current",
+        )
+    return WorkflowStatus(
+        name=".gitattributes (merge driver)", installed=False,
+        marker=None, bundled_marker="present", drift="missing",
+    )
+
+
+def _probe_merge_driver_config(project_root: Path) -> WorkflowStatus:
+    """v0.3.0: per-clone git config has the merge driver definitions.
+
+    Per-clone state (lives in .git/config, not committed) — a fresh
+    checkout starts without it; `logmind init` sets it. If unset, the
+    `.gitattributes` directive does nothing because git refuses to
+    invoke an undefined driver. Reports `current` when configured,
+    `missing` otherwise (never `stale` — binary).
+    """
+    from logmind.core.gitattributes import driver_configured
+
+    if not (project_root / ".git").exists():
+        return WorkflowStatus(
+            name="git config (merge driver)", installed=False,
+            marker=None, bundled_marker=None, drift="missing",
+        )
+    if driver_configured(project_root):
+        return WorkflowStatus(
+            name="git config (merge driver)", installed=True,
+            marker="configured", bundled_marker="configured", drift="current",
+        )
+    return WorkflowStatus(
+        name="git config (merge driver)", installed=False,
+        marker=None, bundled_marker="configured", drift="missing",
+    )
+
+
+def _probe_post_merge_hook(project_root: Path) -> WorkflowStatus:
+    """v0.3.0: .git/hooks/post-merge installed by logmind. Companion to
+    the merge driver — re-regenerates derived files with the full
+    post-merge tree (the driver alone can fire before all merged-in
+    files are checked out, producing an incomplete regen).
+    """
+    from logmind.core.gitattributes import post_merge_hook_installed
+
+    if not (project_root / ".git").exists():
+        return WorkflowStatus(
+            name="post-merge hook", installed=False,
+            marker=None, bundled_marker=None, drift="missing",
+        )
+    if post_merge_hook_installed(project_root):
+        return WorkflowStatus(
+            name="post-merge hook", installed=True,
+            marker="installed", bundled_marker="installed", drift="current",
+        )
+    return WorkflowStatus(
+        name="post-merge hook", installed=False,
+        marker=None, bundled_marker="installed", drift="missing",
+    )
+
+
 def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     installed = _logmind_installed_version(project_root)
     latest: Optional[str] = None
@@ -279,6 +353,13 @@ def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     # AGENTS.md block-version is reported in the same workflows list so
     # downstream rendering / drift aggregation treats it uniformly.
     workflows.append(_probe_agents_md(project_root))
+    # v0.3.0: merge-driver config drift. Two signals:
+    #   .gitattributes block missing → committed config absent (would
+    #     reappear on next logmind init, but worth surfacing)
+    #   per-clone git config unset → driver won't fire on local rebase
+    workflows.append(_probe_merge_driver_attrs(project_root))
+    workflows.append(_probe_merge_driver_config(project_root))
+    workflows.append(_probe_post_merge_hook(project_root))
 
     # Drift = any installed workflow with a marker that's stale,
     # OR installed version != latest version (when both known).
