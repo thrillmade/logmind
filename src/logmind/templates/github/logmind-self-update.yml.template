@@ -1,4 +1,4 @@
-# logmind-template-version: v1
+# logmind-template-version: v2
 name: logmind self-update
 
 # Weekly check for a newer published logmind. If one exists, runs
@@ -52,17 +52,21 @@ jobs:
             exit 0
           fi
 
-          # Optional pin override from .logmind/config.yml.
+          # Optional pin override from .logmind/config.yml. Parsed with
+          # grep — the field is a flat top-level scalar and the workflow
+          # runner can't be relied on to have any third-party Python
+          # library available. v0.2.7 and earlier invoked a python3
+          # one-liner that depended on a third-party YAML lib being
+          # importable; when the runner lacked it the import failed
+          # before the try block could catch it, and the surrounding
+          # `2>/dev/null || echo ""` swallowed the failure into empty
+          # pin — silently breaking opt-out.
           PIN=""
           if [ -f ".logmind/config.yml" ]; then
-            PIN=$(python3 -c "
-          import yaml, sys
-          try:
-              with open('.logmind/config.yml') as f:
-                  print((yaml.safe_load(f) or {}).get('pinVersion', '') or '')
-          except Exception:
-              print('')
-          " 2>/dev/null || echo "")
+            PIN=$(grep -E '^[[:space:]]*pinVersion:[[:space:]]*' .logmind/config.yml \
+              | head -1 \
+              | sed -E 's/^[[:space:]]*pinVersion:[[:space:]]*//; s/^["'\''](.*)["'\'']$/\1/; s/[[:space:]]*$//' \
+              || echo "")
           fi
 
           LATEST=$(pip index versions logmind 2>/dev/null | grep -oE 'logmind \([0-9]+\.[0-9]+\.[0-9]+\)' | head -1 | sed 's/logmind (\(.*\))/\1/') || true
