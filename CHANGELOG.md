@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-26
+
+### Fixed
+- **`logmind init` refresh-mode now updates stale `pip install "logmind==X.Y.Z"` pins** in installed workflow templates even when the template-version marker hasn't moved. Pin drift is independent of body drift — versions like 0.2.2 → 0.2.4 didn't change any templates, so refresh-mode left the pin at 0.2.1 across multiple releases. Now: if the installed file's body is current (or markerless) but its `==X.Y.Z` doesn't match the running logmind's `__version__`, the pin line is surgically rewritten in place. One line touched; user body customizations preserved. Caught by an agent working in clud-bug whose `regen-timeline.yml` was still pinned to 0.2.1 after we shipped 0.2.4.
+
+### Migration from v0.2.4
+None — behavior-only refinement of refresh-mode. Run `logmind init` in any repo whose `logmind doctor` reports a stale `installed_version` to pick up the fresh pin.
+
 ## [0.2.4] - 2026-05-26
 
 ### Added

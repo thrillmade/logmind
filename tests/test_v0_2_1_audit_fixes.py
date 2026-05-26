@@ -166,6 +166,73 @@ def test_init_refresh_mode_regenerates_missing_workflow(temp_dir):
             "refresh mode must regenerate missing workflow files"
 
 
+def test_init_refresh_mode_updates_stale_pin_with_current_marker(temp_dir):
+    """v0.2.5 fix: when a workflow's template-version marker matches the
+    bundled template (so body refresh would skip), but its
+    `pip install "logmind==X.Y.Z"` pin is stale, refresh mode must
+    surgically update the pin line in place. Before this fix, releases
+    that didn't touch any template (0.2.3, 0.2.4) left old pins behind
+    across `logmind init` invocations.
+
+    Regression: caught by an agent on clud-bug whose regen-timeline.yml
+    still said `logmind==0.2.1` after the v0.2.4 release."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        runner.invoke(init, ["--no-git", "--no-skill-install"])
+        regen = Path(".github/workflows/regen-timeline.yml")
+        original = regen.read_text(encoding="utf-8")
+        assert f'pip install "logmind=={__version__}"' in original
+
+        # Simulate a stale-pin install: same body marker, older version pin.
+        tampered = original.replace(
+            f'pip install "logmind=={__version__}"',
+            'pip install "logmind==0.2.1"',
+            1,
+        )
+        regen.write_text(tampered, encoding="utf-8")
+        assert '"logmind==0.2.1"' in regen.read_text(encoding="utf-8")
+
+        result = runner.invoke(init, ["--no-git", "--no-skill-install"])
+        assert result.exit_code == 0
+        after = regen.read_text(encoding="utf-8")
+        # Pin must be refreshed to the running version; old pin must be gone.
+        assert f'pip install "logmind=={__version__}"' in after
+        assert '"logmind==0.2.1"' not in after
+
+
+def test_init_refresh_mode_leaves_markerless_pin_alone(temp_dir):
+    """v0.2.5: a markerless workflow (dogfood / heavily customized) keeps
+    whatever pin the user wrote, even if it doesn't match the running
+    logmind. Pin-refresh respects the same no-marker-leave-alone heuristic
+    as body-refresh."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=temp_dir):
+        runner.invoke(init, ["--no-git", "--no-skill-install"])
+        regen = Path(".github/workflows/regen-timeline.yml")
+        original = regen.read_text(encoding="utf-8")
+
+        # Strip the marker line entirely (simulates user customization)
+        # and set a stale pin.
+        markerless = re.sub(
+            r"^# logmind-template-version:.*\n",
+            "",
+            original,
+            count=1,
+            flags=re.MULTILINE,
+        ).replace(
+            f'pip install "logmind=={__version__}"',
+            'pip install "logmind==0.0.99"',
+            1,
+        )
+        regen.write_text(markerless, encoding="utf-8")
+        assert "logmind-template-version" not in regen.read_text(encoding="utf-8")
+
+        result = runner.invoke(init, ["--no-git", "--no-skill-install"])
+        assert result.exit_code == 0
+        # Pin still says 0.0.99 — markerless = user-canonical, don't touch.
+        assert '"logmind==0.0.99"' in regen.read_text(encoding="utf-8")
+
+
 def test_init_refresh_mode_refreshes_stale_workflow_by_template_version(temp_dir):
     """If a workflow has an OLDER `# logmind-template-version:` marker,
     refresh mode replaces it. If markers match, leaves it alone."""

@@ -40,7 +40,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.2.4", prog_name="logmind")
+@click.version_option(version="0.2.5", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -121,6 +121,37 @@ def _extract_template_version(text: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# Matches the install pin line in a rendered workflow, e.g.
+#   `pip install "logmind==0.2.1"`  or  `pip install 'logmind==0.2.1'`
+# Capture groups: 1 = prefix up through `==`, 2 = version string, 3 = trailing quote.
+_LOGMIND_PIN_RE = re.compile(r'(pip install\s+["\']?logmind==)([\d][\w.+\-]*)(["\']?)')
+
+
+def _maybe_refresh_pin(installed_text: str) -> Tuple[str, Optional[str]]:
+    """Surgically update the `pip install "logmind==X.Y.Z"` line if X.Y.Z
+    doesn't match the running logmind's ``__version__``.
+
+    Returns ``(new_text, previous_version_or_None)``. ``previous_version`` is
+    the old pin string when a rewrite happened, or ``None`` when nothing
+    changed (no pin line, or pin already matched). Touches one line —
+    preserves any other body customizations the user kept.
+    """
+    from logmind import __version__ as logmind_version
+
+    m = _LOGMIND_PIN_RE.search(installed_text)
+    if m is None:
+        return installed_text, None  # no pin line (dogfood / unpinned)
+    found_version = m.group(2)
+    if found_version == logmind_version:
+        return installed_text, None  # already current
+    new_text = _LOGMIND_PIN_RE.sub(
+        lambda mo: f"{mo.group(1)}{logmind_version}{mo.group(3)}",
+        installed_text,
+        count=1,
+    )
+    return new_text, found_version
+
+
 def _install_github_action_templates(
     root_path: Path,
     refresh_stale: bool = False,
@@ -137,6 +168,11 @@ def _install_github_action_templates(
         ``# logmind-template-version:`` marker is older than the
         template's, overwrite it. User-customised workflows that have
         had their version marker stripped are still left alone.
+        Additionally (v0.2.5+), the `pip install "logmind==X.Y.Z"` pin
+        is surgically refreshed to the current ``__version__`` even when
+        the template marker hasn't moved — pin drift is independent of
+        body drift, and the previous behaviour left stale pins in place
+        across versions like 0.2.1 → 0.2.4 that didn't touch templates.
 
     Returns ``(created, refreshed)`` — two lists of relative paths.
     """
@@ -162,7 +198,7 @@ def _install_github_action_templates(
         installed = target.read_text(encoding="utf-8")
         installed_version = _extract_template_version(installed)
         template_version = _extract_template_version(rendered)
-        # Only refresh if BOTH have a marker AND they differ. A missing
+        # Body refresh: only if BOTH have a marker AND they differ. A missing
         # installed marker means the user stripped it — treat as customised
         # and leave alone. A missing template marker means a logmind bug;
         # skip silently rather than break user installs.
@@ -173,6 +209,15 @@ def _install_github_action_templates(
         ):
             target.write_text(rendered, encoding="utf-8")
             refreshed.append(str(target.relative_to(root_path)))
+            continue
+        # Body is current (or markerless = user-canonical). Still check the
+        # pin line — it can drift independently of body content across
+        # logmind releases that don't touch the template.
+        if installed_version is not None:
+            new_text, prev = _maybe_refresh_pin(installed)
+            if prev is not None:
+                target.write_text(new_text, encoding="utf-8")
+                refreshed.append(str(target.relative_to(root_path)))
     return created, refreshed
 
 
