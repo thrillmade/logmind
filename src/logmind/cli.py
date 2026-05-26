@@ -709,6 +709,19 @@ def log(
     should_commit = config.auto_commit if not no_commit else False
     should_push = config.auto_push if not no_push else False
 
+    # v0.2.9: emit a visible notice when the default --stage all sweeps the
+    # working tree. Agents whose memory predates v0.2.7 keep prefixing
+    # `git add -A &&` out of habit; making the actual behavior visible in
+    # command output is the cheapest way to update that mental model
+    # without forcing them to re-read AGENTS.md mid-task.
+    if should_commit and stage == "all":
+        click.secho(
+            "ℹ Default --stage all (v0.2.7+): every working-tree change is "
+            "staged into this decision commit. Pass --stage scoped to keep "
+            "unrelated WIP unstaged.",
+            fg="cyan",
+        )
+
     try:
         # v0.1.3: run agent-file sync BEFORE the commit so refreshed AGENTS.md
         # / CLAUDE.md / etc. are included in the scoped staging instead of

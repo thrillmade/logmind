@@ -10,3 +10,15 @@
 - Future logmind PRs that don't touch site/ skip Vercel deploy automatically; site PRs still build as normal
 
 ---
+## 2026-05-26 16:42 - feat: v0.2.9 propagation-gap follow-up — visible notice in logmind log + AGENTS.md drift check in doctor
+
+**Reasoning:** Other agent in clud-bug ran v0.2.7+ but kept prefixing 'git add -A &&' from old habit. Their memory was from pre-v0.2.7 (scoped default). The skill on agent-skills + AGENTS.md template were updated when v0.2.7 shipped, but the agent's session memory is independent of those refreshes — they don't know to re-read AGENTS.md mid-task. Two fixes: (1) logmind log now prints a visible notice when --stage all sweeps the tree, so the actual behavior shows up in command output regardless of memory state; (2) doctor now reports AGENTS.md block-version drift, so agents (or CI) can detect stale embedded instructions explicitly.
+
+**Alternatives considered:** Auto-refresh AGENTS.md on every logmind log — destructive and noisy; logmind init refresh-mode is the canonical path. doctor + the new log notice are gentler, Print the notice from logger.py instead of cli.py — would also fire for library API calls, but those are typically programmatic and don't want the chatter
+
+**Implications:**
+- Agents observing logmind log output will see the v0.2.7+ behavior banner; old git-add-first habit fades within one execution
+- doctor now exits 1 on stale AGENTS.md block-version; downstream repos that haven't logmind init'd since v0.2.7 will surface in CI immediately
+- logmind doctor row count goes from 4 → 5 (added AGENTS.md alongside the 4 workflows); test fixtures updated
+
+---

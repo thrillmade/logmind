@@ -40,6 +40,14 @@ CLUD_BUG_WORKFLOWS = (
 _LOGMIND_PIN_RE = re.compile(r'pip install\s+"?logmind==([\d.]+)"?')
 _LOGMIND_MARKER_RE = re.compile(r"^# logmind-template-version:\s*(\S+)")
 _CLUD_BUG_MARKER_RE = re.compile(r"^# clud-bug-template-version:\s*(\S+)")
+# AGENTS.md ships a `<!-- logmind-block-version: vN -->` comment marking the
+# version of the embedded logmind instructions. Doctor uses it to detect when
+# an installed repo's AGENTS.md is older than what the current logmind would
+# write (the common cause: agent runtime memory cached a previous AGENTS.md
+# revision and the agent is still working from those stale instructions).
+_LOGMIND_BLOCK_VERSION_RE = re.compile(
+    r"^<!--\s*logmind-block-version:\s*(\S+)\s*-->", re.MULTILINE
+)
 
 
 @dataclass
@@ -189,6 +197,67 @@ def _logmind_installed_version(project_root: Path) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _bundled_agents_md_block_version() -> Optional[str]:
+    """Marker from the shipped AGENTS.md template that logmind init writes.
+
+    The slim variant ships when skills.sh is available; the full variant
+    ships otherwise. Both carry a `logmind-block-version` marker but with
+    different values (e.g. `v4-slim` vs `v4`). We probe both and prefer
+    the slim marker — agents most relevant to doctor (those running in
+    Claude Code / Cursor / etc.) use the slim form.
+    """
+    slim = _TEMPLATES_DIR.parent / "AGENTS.md.slim.template"
+    full = _TEMPLATES_DIR.parent / "AGENTS.md.template"
+    for path in (slim, full):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            continue
+        m = _LOGMIND_BLOCK_VERSION_RE.search(text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _probe_agents_md(project_root: Path) -> WorkflowStatus:
+    """AGENTS.md block-version vs bundled template. Reported alongside
+    workflow probes because the failure mode is identical — agents work
+    from a stale instruction set when the installed repo's AGENTS.md
+    block is older than what logmind init would currently write."""
+    agents_path = project_root / "AGENTS.md"
+    bundled = _bundled_agents_md_block_version()
+    if not agents_path.exists():
+        return WorkflowStatus(
+            name="AGENTS.md", installed=False, marker=None,
+            bundled_marker=bundled, drift="missing",
+        )
+    try:
+        text = agents_path.read_text(encoding="utf-8")
+    except OSError:
+        return WorkflowStatus(
+            name="AGENTS.md", installed=True, marker=None,
+            bundled_marker=bundled, drift="markerless",
+        )
+    m = _LOGMIND_BLOCK_VERSION_RE.search(text)
+    marker = m.group(1) if m else None
+    # Compare by marker prefix — bundled may be "v4-slim", installed may
+    # have been written by an older logmind that shipped "v3-slim". Both
+    # values start with the version family. We treat any mismatch as
+    # stale; markerless = user customized = leave alone.
+    if marker is None:
+        drift = "markerless"
+    elif bundled is None:
+        drift = "unknown"
+    elif marker == bundled:
+        drift = "current"
+    else:
+        drift = "stale"
+    return WorkflowStatus(
+        name="AGENTS.md", installed=True, marker=marker,
+        bundled_marker=bundled, drift=drift,
+    )
+
+
 def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     installed = _logmind_installed_version(project_root)
     latest: Optional[str] = None
@@ -201,6 +270,9 @@ def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
         _probe_workflow(project_root, name, _LOGMIND_MARKER_RE, _bundled_logmind_marker(name))
         for name in LOGMIND_WORKFLOWS
     ]
+    # AGENTS.md block-version is reported in the same workflows list so
+    # downstream rendering / drift aggregation treats it uniformly.
+    workflows.append(_probe_agents_md(project_root))
 
     # Drift = any installed workflow with a marker that's stale,
     # OR installed version != latest version (when both known).

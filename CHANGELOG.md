@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`vercel.json` at repo root with `ignoreCommand: git diff --quiet HEAD^ HEAD -- site/`.** Skips Vercel preview deployments on PRs that don't touch `site/`. The marketing site rebuilds were burning the deploy quota on every Python-only change — `logmind` and `agent-skills` PRs frequently get rate-limited by Vercel mid-release for this reason. The ignoreCommand exits 0 (skip) when no site/ files changed, 1 (build) otherwise.
+- **`logmind log` now emits a visible notice** when default `--stage all` sweeps the working tree: `ℹ Default --stage all (v0.2.7+): every working-tree change is staged into this decision commit. Pass --stage scoped to keep unrelated WIP unstaged.` Agents whose memory predates v0.2.7 (and who keep prefixing `git add -A &&` out of habit) now see the actual behavior in command output, no AGENTS.md re-read required.
+- **`logmind doctor` now checks `AGENTS.md` block-version drift.** Reports the embedded `<!-- logmind-block-version: vN -->` marker against the bundled template's marker, in the same table as workflow probes. Stale markers count as drift (exit 1). Markerless AGENTS.md (user customized) doesn't — same heuristic as workflow probes. This closes the propagation gap where an agent's session memory still holds pre-v0.2.7 instructions even though the repo's AGENTS.md on disk was refreshed by `logmind init`.
 
 ### Migration from v0.2.8
 Run `logmind init` in each logmind-installed repo. v0.2.1+'s refresh-mode auto-detects the bumped markers and rewrites the workflow files; `logmind doctor` reports STALE rows until the refresh runs.
