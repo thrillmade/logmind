@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-26
+
+### Added
+- **`notify-agent-skills.yml` workflow** on this repo. Mirrors the `notify-clud-bug.yml` pattern shipped on `thrillmot/agent-skills`: on every tag push (`v*`), opens an issue on `thrillmot/agent-skills` titled `logmind <tag> shipped — review skills/logmind/SKILL.md`. Closes the manual-sync gap that left the skill out of date with v0.2.3 → v0.2.5 features until someone (an agent, in this case) noticed and shipped a batch update.
+
+  - Same auth model as the agent-skills→clud-bug notifier: needs `AGENT_SKILLS_NOTIFY_PAT` repo secret (fine-grained PAT scoped to `thrillmot/agent-skills` with `Issues: write`). Without it, the notifier degrades to a `::warning::` and the release itself succeeds.
+  - Internal-only releases (refactor / CI / test additions) can close the issue as no-op; the prompt is the value.
+
+### Migration from v0.2.5
+None — this is a logmind-repo-internal workflow, not a downstream template. No `logmind init` needed in installed repos.
+
 ## [0.2.5] - 2026-05-26
 
 ### Fixed
