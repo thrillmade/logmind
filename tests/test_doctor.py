@@ -186,6 +186,39 @@ def test_agents_md_stale_block_version_triggers_drift(project: Path, monkeypatch
     assert report.overall == "DRIFT"
 
 
+def test_agents_md_full_template_marker_is_current(project: Path, monkeypatch):
+    """Regression: a repo whose AGENTS.md was written by logmind init when
+    skills.sh was NOT available carries the FULL template's marker (e.g.
+    `v4`), not the slim one (`v4-slim`). Doctor must treat that as
+    current — matching either bundled variant.
+
+    Before this fix, _bundled_agents_md_block_version() returned only the
+    slim marker; the full-template install showed up as STALE on every
+    doctor run, breaking exit-code-based CI gating for those repos.
+    """
+    slim_bundled, full_bundled = doctor._bundled_agents_md_block_versions()
+    assert slim_bundled is not None and full_bundled is not None, (
+        "this test relies on both bundled templates carrying a marker"
+    )
+    # Use the FULL marker — the variant slim agents wouldn't get
+    (project / "AGENTS.md").write_text(
+        f"# AGENTS.md\n\n"
+        f"<!-- logmind-start -->\n"
+        f"<!-- logmind-block-version: {full_bundled} -->\n"
+        f"(full-template body)\n"
+        f"<!-- logmind-end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    am = next(w for w in report.tools[0].workflows if w.name == "AGENTS.md")
+    assert am.marker == full_bundled
+    assert am.drift == "current", (
+        f"full-template install (marker={am.marker}) must not be flagged "
+        f"stale just because bundled slim marker is {slim_bundled}"
+    )
+
+
 def test_agents_md_markerless_is_not_drift(project: Path, monkeypatch):
     """Markerless AGENTS.md (user heavily customized OR predates the
     marker convention) must NOT count as drift — same heuristic as

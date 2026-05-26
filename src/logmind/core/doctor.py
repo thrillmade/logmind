@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import logmind  # for resolving the bundled templates/ directory
 
@@ -197,64 +197,70 @@ def _logmind_installed_version(project_root: Path) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def _bundled_agents_md_block_version() -> Optional[str]:
-    """Marker from the shipped AGENTS.md template that logmind init writes.
+def _bundled_agents_md_block_versions() -> Tuple[Optional[str], Optional[str]]:
+    """Return (slim_marker, full_marker) — both bundled AGENTS.md template
+    markers, since logmind init writes one OR the other depending on
+    whether skills.sh is available at install time (see inserter.py).
 
-    The slim variant ships when skills.sh is available; the full variant
-    ships otherwise. Both carry a `logmind-block-version` marker but with
-    different values (e.g. `v4-slim` vs `v4`). We probe both and prefer
-    the slim marker — agents most relevant to doctor (those running in
-    Claude Code / Cursor / etc.) use the slim form.
+    Reporting both lets doctor accept an installed marker that matches
+    EITHER variant — otherwise we'd false-positive every full-template
+    install as stale against the slim bundled marker.
     """
-    slim = _TEMPLATES_DIR.parent / "AGENTS.md.slim.template"
-    full = _TEMPLATES_DIR.parent / "AGENTS.md.template"
-    for path in (slim, full):
+    def _read_marker(path: Path) -> Optional[str]:
         try:
             text = path.read_text(encoding="utf-8")
         except (FileNotFoundError, OSError):
-            continue
+            return None
         m = _LOGMIND_BLOCK_VERSION_RE.search(text)
-        if m:
-            return m.group(1)
-    return None
+        return m.group(1) if m else None
+
+    slim = _read_marker(_TEMPLATES_DIR.parent / "AGENTS.md.slim.template")
+    full = _read_marker(_TEMPLATES_DIR.parent / "AGENTS.md.template")
+    return slim, full
 
 
 def _probe_agents_md(project_root: Path) -> WorkflowStatus:
     """AGENTS.md block-version vs bundled template. Reported alongside
     workflow probes because the failure mode is identical — agents work
     from a stale instruction set when the installed repo's AGENTS.md
-    block is older than what logmind init would currently write."""
+    block is older than what logmind init would currently write.
+
+    A repo's installed marker may match EITHER the slim or the full
+    bundled marker (logmind init writes one or the other based on
+    skills.sh availability). We treat the install as current if it
+    matches either; stale only if it matches neither.
+    """
     agents_path = project_root / "AGENTS.md"
-    bundled = _bundled_agents_md_block_version()
+    slim_bundled, full_bundled = _bundled_agents_md_block_versions()
+    # Choose one bundled marker for display (the user installed one of
+    # them, but we don't know which without reading more context). Prefer
+    # slim because it's the more common modern install path.
+    display_bundled = slim_bundled or full_bundled
     if not agents_path.exists():
         return WorkflowStatus(
             name="AGENTS.md", installed=False, marker=None,
-            bundled_marker=bundled, drift="missing",
+            bundled_marker=display_bundled, drift="missing",
         )
     try:
         text = agents_path.read_text(encoding="utf-8")
     except OSError:
         return WorkflowStatus(
             name="AGENTS.md", installed=True, marker=None,
-            bundled_marker=bundled, drift="markerless",
+            bundled_marker=display_bundled, drift="markerless",
         )
     m = _LOGMIND_BLOCK_VERSION_RE.search(text)
     marker = m.group(1) if m else None
-    # Compare by marker prefix — bundled may be "v4-slim", installed may
-    # have been written by an older logmind that shipped "v3-slim". Both
-    # values start with the version family. We treat any mismatch as
-    # stale; markerless = user customized = leave alone.
     if marker is None:
         drift = "markerless"
-    elif bundled is None:
+    elif slim_bundled is None and full_bundled is None:
         drift = "unknown"
-    elif marker == bundled:
+    elif marker == slim_bundled or marker == full_bundled:
         drift = "current"
     else:
         drift = "stale"
     return WorkflowStatus(
         name="AGENTS.md", installed=True, marker=marker,
-        bundled_marker=bundled, drift=drift,
+        bundled_marker=display_bundled, drift=drift,
     )
 
 
