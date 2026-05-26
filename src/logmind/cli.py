@@ -40,7 +40,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.2.6", prog_name="logmind")
+@click.version_option(version="0.2.7", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -643,13 +643,15 @@ def _maybe_install_skill(flag: Optional[bool]) -> None:
 )
 @click.option(
     "--stage",
-    type=click.Choice(["scoped", "all"]),
-    default="scoped",
+    type=click.Choice(["all", "scoped"]),
+    default="all",
     show_default=True,
     help=(
-        "What to stage in the decision commit. 'scoped' stages only the "
-        "decision log + file-structure + archive (if rotated) + timeline. "
-        "'all' stages everything in the working tree (pre-v0.1.2 behavior)."
+        "What to stage in the decision commit. Default 'all' stages every "
+        "change in the working tree alongside the decision — the whole "
+        "point of `logmind log` is to be a single add+commit+push primitive. "
+        "Use 'scoped' if you have unrelated WIP you want to keep unstaged "
+        "(rare for automated agents)."
     ),
 )
 def log(

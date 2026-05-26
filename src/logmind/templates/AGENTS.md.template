@@ -7,10 +7,10 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v3 -->
+<!-- logmind-block-version: v4 -->
 ## Decision Logging (logmind)
 
-**This project uses [logmind](https://logmind.dev). Logging is part of the work, not after it.**
+**This project uses [logmind](https://logmind.dev). `logmind log` is the commit primitive — it replaces `git add`, `git commit`, and `git push` for any change that carries a decision. Do not run those git commands directly when logging a decision.**
 
 > **Tip:** the canonical procedure for *when / how / why* lives in the
 > [`logmind` skill](https://github.com/thrillmot/agent-skills/tree/main/skills/logmind)
@@ -23,6 +23,22 @@ guidance lives in one place.
 >
 > The full procedure is also embedded below as a fallback when the
 > skill isn't available.
+
+### The one rule: `logmind log` does everything
+
+```bash
+logmind log "decision summary" -r "why" -a "alternative" -i "implication"
+```
+
+That single command:
+
+1. Writes the decision file (default branch → `docs/decisions.md`, feature branch → `docs/decisions-branches/<branch>.md`).
+2. Regenerates the derived docs (`docs/timeline.md` always; `docs/file-structure.md` on default branch).
+3. **`git add`** every change in the working tree (default `--stage all` since v0.2.7).
+4. **`git commit`** with message `logmind: <decision>`.
+5. **`git push`** to remote (configurable in `.logmind/config.yml`).
+
+You don't need a follow-up `git add`, `git commit`, `git push`, or `logmind timeline --write`. If you find yourself running any of those after a `logmind log`, stop — something's wrong (most likely a pre-v0.2.7 logmind; check `logmind --version`).
 
 ### When you MUST log (before, not after)
 
@@ -42,14 +58,10 @@ that don't get logged are exactly how teams lose context. If you're
 unsure, log it — a 30-second log is cheap; recovering missing context
 months later is not.
 
-**Use `logmind log` for the commit, not `git add` + `git commit`.** The
-`log` command writes the decision file, stages the decision log + its
-companion files (file-structure, archive if rotated), and creates the
-commit in one step. Use `logmind log ... --stage all` if you want to
-stage everything in the working tree alongside the decision. Bypassing
-`logmind log` (manual `git commit -m "..."`) means the decision either
-isn't logged or gets logged in a separate commit — both of which lose
-the value of having the reasoning attached to the code change.
+### When NOT to use `logmind log`
+
+- **The change has no decision worth recording** (typo fix, formatting, dependency-only patch bump) — plain `git commit` is fine for those.
+- **You have unrelated WIP in the working tree** you don't want to commit alongside the decision — pass `--stage scoped` to stage only the decision files (rare for automated agents; they should be working on one task at a time).
 
 ### How to log
 
