@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-26** — feat: v0.2.3 — logmind log auto-regenerates docs/timeline.md *(feat/v0.2.3-auto-regen-timeline)* — [decisions-branches/feat__v0.2.3-auto-regen-timeline.md](decisions-branches/feat__v0.2.3-auto-regen-timeline.md)
 - **2026-05-18** — v0.2.2: fix paths-filter bug in check-doc-links.yml.template *(fix/check-doc-links-paths-filter-v0.2.2)* — [decisions-branches/fix__check-doc-links-paths-filter-v0.2.2.md](decisions-branches/fix__check-doc-links-paths-filter-v0.2.2.md)
 - **2026-05-18** — feat: ship logmind-self-update.yml workflow template *(feat/logmind-self-update)* — [decisions-branches/feat__logmind-self-update.md](decisions-branches/feat__logmind-self-update.md)
 - **2026-05-18** — docs: fix stale skills.sh badge URL in README *(docs/fix-skills-badge-url)* — [decisions-branches/docs__fix-skills-badge-url.md](decisions-branches/docs__fix-skills-badge-url.md)

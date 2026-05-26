@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-26
+
+### Fixed
+- **`logmind log` now regenerates and stages `docs/timeline.md` automatically.** Previously the command wrote the new decision file to `docs/decisions-branches/<branch>.md` but left the derived `docs/timeline.md` index out of date, so every decision PR required an extra `logmind timeline --write docs/timeline.md` + push before `check-derived-docs` would pass. PR #42 was the last one bitten by this — the workflow caught the stale index as designed but the manual heal was friction we shouldn't be paying. Now `logmind log` produces a self-consistent commit: the new decision file, the regenerated tree, archived rotations, and the timeline index are all staged together. Timeline regen runs on every branch (not just default) because the CI gate runs on PR branches and timeline merges three-way-merge trivially.
+
+### Migration from v0.2.2
+None — this is a CLI behavior change with no template change. No `logmind init` needed in installed repos.
+
 ## [0.2.2] - 2026-05-18
 
 ### Fixed
