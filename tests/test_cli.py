@@ -139,6 +139,32 @@ def test_log_command_basic(git_repo):
         assert "Test decision" in content
 
 
+def test_log_command_regenerates_timeline(git_repo):
+    """v0.2.3: logmind log must regenerate + stage docs/timeline.md so
+    derived-docs CI doesn't catch authors out. Regression: PR #42 stalled
+    because the workflow gate caught a stale timeline.md the author hadn't
+    regenerated manually."""
+    from logmind.core.timeline import write_timeline
+
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        runner.invoke(init)
+        result = runner.invoke(log, ["Test decision"])
+        assert result.exit_code == 0, result.output
+
+        timeline_path = Path.cwd() / "docs" / "timeline.md"
+        assert timeline_path.exists(), "timeline.md should be created by logmind log"
+        assert "Test decision" in timeline_path.read_text(encoding="utf-8"), (
+            "timeline.md should reference the new decision"
+        )
+
+        # Running write_timeline again produces no diff — proves the commit
+        # is self-consistent, which is what check-derived-docs verifies.
+        changed = write_timeline(timeline_path, Path.cwd() / "docs")
+        assert changed is False, "timeline.md should already be current after logmind log"
+
+
 def test_log_command_with_reasoning(git_repo):
     """Test log command with reasoning."""
     runner = CliRunner()

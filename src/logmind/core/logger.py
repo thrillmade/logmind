@@ -18,6 +18,7 @@ from logmind.core.git_handler import (
     git_push,
     is_git_repo,
 )
+from logmind.core.timeline import write_timeline
 from logmind.core.tree_gen import update_file_structure
 
 
@@ -235,7 +236,9 @@ def log(
     1. Appends the decision to docs/decisions.md
     2. Archives oldest decision if > max_recent entries (from config)
     3. Updates docs/file-structure.md with current tree
-    4. Commits and pushes changes (based on config or parameters)
+    4. Regenerates docs/timeline.md so the derived index stays in sync
+       with the decision file it just wrote (v0.2.3+)
+    5. Commits and pushes changes (based on config or parameters)
 
     Args:
         decision: Decision summary (will be used in commit message)
@@ -247,8 +250,9 @@ def log(
         auto_push: Whether to auto-push. If None, uses config value.
         stage: ``"scoped"`` (default) stages only the decision log and its
             companion files (file-structure.md, decisions-archive.md if
-            rotated). ``"all"`` stages the entire working tree (pre-v0.1.2
-            behavior, opt-in via ``logmind log ... --stage all``).
+            rotated, timeline.md if changed). ``"all"`` stages the entire
+            working tree (pre-v0.1.2 behavior, opt-in via
+            ``logmind log ... --stage all``).
 
     Raises:
         FileNotFoundError: If docs/ doesn't exist (run logmind init first)
@@ -323,6 +327,15 @@ def log(
             update_file_structure(docs_path)
             file_structure_updated = True
 
+    # Regenerate docs/timeline.md on every branch — unlike file-structure.md,
+    # timeline conflicts are trivially three-way-mergeable (each branch
+    # appends its own dated row), and the check-derived-docs CI gate runs
+    # on PR branches, so skipping on feature branches would defeat the
+    # auto-heal. write_timeline() returns True only when content actually
+    # changed; we use that to decide whether to stage it.
+    timeline_path = docs_path / "timeline.md"
+    timeline_updated = write_timeline(timeline_path, docs_path)
+
     # Commit and push if requested
     if auto_commit and is_git_repo():
         if stage == "all":
@@ -337,6 +350,8 @@ def log(
                 scoped.append(str(docs_path / "file-structure.md"))
             if archive_rotated:
                 scoped.append(str(docs_path / "decisions-archive.md"))
+            if timeline_updated:
+                scoped.append(str(timeline_path))
             if extra_scoped_paths:
                 scoped.extend(extra_scoped_paths)
             git_add(scoped)
