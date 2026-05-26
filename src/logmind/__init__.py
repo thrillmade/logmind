@@ -1,6 +1,6 @@
 """logmind - AI decision logging system for development projects."""
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 
 from logmind.core.logger import log
 from logmind.decorators import log_choice, log_decision

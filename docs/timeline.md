@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-26** — fix: v0.2.5 — refresh-mode also updates stale version pins *(fix/v0.2.5-pin-refresh)* — [decisions-branches/fix__v0.2.5-pin-refresh.md](decisions-branches/fix__v0.2.5-pin-refresh.md)
 - **2026-05-26** — feat: v0.2.4 — new logmind doctor stack-status command *(feat/v0.2.4-doctor)* — [decisions-branches/feat__v0.2.4-doctor.md](decisions-branches/feat__v0.2.4-doctor.md)
 - **2026-05-26** — feat: v0.2.3 — logmind log auto-regenerates docs/timeline.md *(feat/v0.2.3-auto-regen-timeline)* — [decisions-branches/feat__v0.2.3-auto-regen-timeline.md](decisions-branches/feat__v0.2.3-auto-regen-timeline.md)
 - **2026-05-18** — v0.2.2: fix paths-filter bug in check-doc-links.yml.template *(fix/check-doc-links-paths-filter-v0.2.2)* — [decisions-branches/fix__check-doc-links-paths-filter-v0.2.2.md](decisions-branches/fix__check-doc-links-paths-filter-v0.2.2.md)
