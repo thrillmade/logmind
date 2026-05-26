@@ -13,9 +13,16 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
-from importlib.resources import files
 from pathlib import Path
 from typing import Dict, List, Optional
+
+import logmind  # for resolving the bundled templates/ directory
+
+
+# Bundled templates live next to the package — resolve via __file__ so this
+# works on Python 3.8 (where importlib.resources.files() is not yet available)
+# and avoids pulling in the importlib_resources backport.
+_TEMPLATES_DIR = Path(logmind.__file__).resolve().parent / "templates" / "github"
 
 
 LOGMIND_WORKFLOWS = (
@@ -105,11 +112,10 @@ def _http_get_json(url: str, timeout: float = 2.0) -> Optional[dict]:
 
 def _bundled_logmind_marker(workflow_name: str) -> Optional[str]:
     """Read the marker from the shipped template under templates/github/."""
-    template_name = f"{workflow_name}.template"
+    template_path = _TEMPLATES_DIR / f"{workflow_name}.template"
     try:
-        template = files("logmind").joinpath(f"templates/github/{template_name}")
-        text = template.read_text(encoding="utf-8")
-    except (FileNotFoundError, ModuleNotFoundError):
+        text = template_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
         return None
     first_line = text.splitlines()[0] if text else ""
     m = _LOGMIND_MARKER_RE.match(first_line)
