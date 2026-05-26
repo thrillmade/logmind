@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-05-26
+
+### Fixed
+- **`logmind-self-update.yml.template`: replace PyYAML+Python pinVersion detection with `grep`.** The previous block called `python3 -c "import yaml, sys; try: ..."` with `import yaml` OUTSIDE the try, so if the workflow runner lacked PyYAML the import raised before the try could catch it. The surrounding `2>/dev/null || echo ""` then swallowed the failure into empty pin — silently breaking opt-out via `pinVersion` whenever the runner shipped without PyYAML. Reported by clud-bug-review across multiple repos (it kept flagging the pattern on every propagation PR even when the bug was dormant on that specific install).
+
+  Replacement uses `grep -E '^[[:space:]]*pinVersion:[[:space:]]*' .logmind/config.yml` plus `sed` to strip optional quotes/whitespace. Tested against 8 input variants (quoted, unquoted, indented, trailing whitespace, absent key, key-as-substring, etc.). No Python, no YAML lib, works on every runner.
+
+- **Template marker bumped `v1 → v2`** so v0.2.7's idempotent refresh logic rewrites `logmind-self-update.yml` on the next `logmind init`.
+
+### Migration from v0.2.7
+Run `logmind init` in each logmind-installed repo to pick up the corrected template. v0.2.1+'s refresh mode auto-detects the stale v1 marker and rewrites the workflow — no manual edits needed. Doctor will report the stale marker if you forget.
+
 ## [0.2.7] - 2026-05-26
 
 ### Changed (default behavior — backwards-compatible flag still works)

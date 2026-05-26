@@ -166,6 +166,35 @@ def test_init_refresh_mode_regenerates_missing_workflow(temp_dir):
             "refresh mode must regenerate missing workflow files"
 
 
+def test_self_update_template_uses_grep_not_pyyaml():
+    """v0.2.8 fix: the shipped logmind-self-update.yml.template must NOT
+    have `import yaml` in its pinVersion detection block. The prior
+    template called `python3 -c 'import yaml, sys; try: ...'` with the
+    import OUTSIDE the try — a missing PyYAML on the runner would raise
+    before the try could catch it, the surrounding `|| echo ""` swallowed
+    the failure into empty pin, and opt-out via pinVersion silently
+    broke on any runner without PyYAML. Replaced with grep.
+
+    Also pins template-version marker = v2 so downstream refresh fires."""
+    template = (
+        Path(__file__).parent.parent
+        / "src"
+        / "logmind"
+        / "templates"
+        / "github"
+        / "logmind-self-update.yml.template"
+    ).read_text(encoding="utf-8")
+
+    assert "import yaml" not in template, (
+        "v0.2.8: logmind-self-update.yml.template must not call `import yaml` "
+        "in shell. The pinVersion detection should use grep instead."
+    )
+    # Marker must be v2 (bumped from v1)
+    assert "# logmind-template-version: v2" in template
+    # grep-based detection must be present
+    assert "grep -E '^[[:space:]]*pinVersion:" in template
+
+
 def test_init_refresh_mode_updates_stale_pin_with_current_marker(temp_dir):
     """v0.2.5 fix: when a workflow's template-version marker matches the
     bundled template (so body refresh would skip), but its
