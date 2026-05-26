@@ -196,7 +196,7 @@ def test_shipped_template_markers_match_expected():
         "regen-timeline.yml.template": "v2",
         "check-decisions.yml.template": "v2",
         "check-doc-links.yml.template": "v3",
-        "logmind-self-update.yml.template": "v3",
+        "logmind-self-update.yml.template": "v4",
     }
     templates_dir = (
         Path(__file__).parent.parent / "src" / "logmind" / "templates" / "github"
@@ -207,6 +207,42 @@ def test_shipped_template_markers_match_expected():
         assert first_line == f"# logmind-template-version: {version}", (
             f"{name}: expected marker '{version}', got first line {first_line!r}"
         )
+
+
+def test_self_update_template_no_unescaped_backticks_in_notice():
+    """v0.2.10 fix: the 'no pinned pip install' notice on the
+    pre-v0.2.1-fresh-install path had unescaped backticks around
+    `pip install`, which bash treats as command substitution. That
+    runs `pip install` (no args), prints an error to stderr, and
+    swallows the words 'pip install' from the rendered notice.
+
+    Every backtick-quoted code reference in the shell here-string must
+    be escaped (\\\\`...\\\\`) or the workflow log gets junk on the
+    older-install branch."""
+    template = (
+        Path(__file__).parent.parent
+        / "src"
+        / "logmind"
+        / "templates"
+        / "github"
+        / "logmind-self-update.yml.template"
+    ).read_text(encoding="utf-8")
+
+    # Find the notice line (only one in the file) and assert its
+    # backticks are all properly escaped.
+    notice_lines = [
+        ln for ln in template.splitlines()
+        if "Installed logmind version not detected" in ln
+    ]
+    assert len(notice_lines) == 1, "expected exactly one such notice line"
+    line = notice_lines[0]
+    # Every literal backtick in the line must be preceded by a backslash.
+    # Walk char by char and check.
+    for i, ch in enumerate(line):
+        if ch == "`":
+            assert i > 0 and line[i - 1] == "\\", (
+                f"unescaped backtick at column {i}: {line!r}"
+            )
 
 
 def test_self_update_template_uses_grep_not_pyyaml():

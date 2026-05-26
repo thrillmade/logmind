@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-05-26
+
+### Added
+- **`logmind init` refresh-mode prints CHANGELOG sections between the prior pinned version and the currently installed `__version__`.** Closes the agent-memory propagation gap from the other direction: instead of relying on agents to re-read AGENTS.md or the skill, the actual behavior changes show up inline in the init command output. When agents (or humans) observe `logmind init` after a `pip install --upgrade logmind`, they see "📋 What's new in logmind since vX.Y.Z" followed by every CHANGELOG section between old and new.
+- **`logmind.core.changelog` module** with `extract_sections_between(text, after, up_to)` (slice CHANGELOG by version range, descending) and `render_upgrade_prompt(prior_version, current_version)` (compose the printed block; returns None when no upgrade applies).
+- **CHANGELOG.md bundled in the wheel** via `pyproject.toml` `package-data`. `publish.yml` adds a build-time copy step (`cp CHANGELOG.md src/logmind/CHANGELOG.md`) since the canonical file stays at repo root for GitHub auto-rendering. Editable installs fall back to the repo-root copy via `_changelog_path()`.
+
+### Fixed
+- **`logmind-self-update.yml.template:50` — escape backticks around `pip install`.** Bug hunter caught: the `:notice::` line had ` `pip install` ` (unescaped backticks) in a double-quoted bash string, triggering command substitution. `pip install` (no args) exits non-zero, prints "ERROR: You must give at least one requirement…" to stderr, and the words `pip install` get swallowed from the rendered notice. Only fires on pre-v0.2.1 fresh-install path (no pin in regen-timeline.yml). One-character fix: `` `pip install` `` → `` \`pip install\` ``. Template marker bumped `v3 → v4` so the refresh sweeps it into downstream repos automatically.
+
+### Migration from v0.2.9
+Run `logmind init` in each logmind-installed repo. The v0.2.10 init will detect the prior pin (likely v0.2.7–v0.2.9), print the CHANGELOG since then, and refresh `logmind-self-update.yml` to the corrected `v4` marker.
+
 ## [0.2.9] - 2026-05-26
 
 ### Changed

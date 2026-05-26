@@ -40,7 +40,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.2.9", prog_name="logmind")
+@click.version_option(version="0.2.10", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -293,6 +293,15 @@ def init(
         and (root_path / ".logmind" / "config.yml").exists()
     )
     if already_initialized:
+        # v0.2.10: detect the prior pinned logmind version BEFORE refresh
+        # rewrites the workflow files. The pin lives in regen-timeline.yml's
+        # `pip install "logmind==X.Y.Z"` line. We use it to decide whether
+        # there's an upgrade-relevant CHANGELOG to print after the refresh.
+        from logmind import __version__ as current_version
+        from logmind.core.doctor import _logmind_installed_version
+
+        prior_version = _logmind_installed_version(root_path)
+
         click.secho(
             "logmind is already initialized — running in refresh mode.",
             fg="yellow",
@@ -318,6 +327,20 @@ def init(
             click.echo(msg)
         click.echo()
         click.secho("Done. docs/ and .logmind/ left untouched.", fg="green")
+
+        # v0.2.10: print the CHANGELOG sections between prior pinned and
+        # current installed version. Closes the propagation gap where
+        # agents' session memory keeps using pre-upgrade patterns even
+        # though `logmind init` refreshed the repo's instructions on disk.
+        if prior_version and prior_version != current_version:
+            from logmind.core.changelog import render_upgrade_prompt
+
+            prompt = render_upgrade_prompt(
+                prior_version=prior_version,
+                current_version=current_version,
+            )
+            if prompt:
+                click.echo(prompt)
         return
 
     # Surface the skill recommendation prominently BEFORE we write any files,

@@ -1,4 +1,4 @@
-# logmind-template-version: v3
+# logmind-template-version: v4
 name: logmind self-update
 
 # Weekly check for a newer published logmind. If one exists, runs
@@ -47,7 +47,7 @@ jobs:
             INSTALLED=$(grep -oE 'logmind==[0-9]+\.[0-9]+\.[0-9]+' "$REGEN_FILE" | head -1 | sed 's/logmind==//') || true
           fi
           if [ -z "$INSTALLED" ]; then
-            echo "::notice::Installed logmind version not detected (no pinned `pip install` in regen-timeline.yml). Re-run \`logmind init\` once locally to upgrade past pre-v0.2.1 installs, then self-update will work from then on."
+            echo "::notice::Installed logmind version not detected (no pinned \`pip install\` in regen-timeline.yml). Re-run \`logmind init\` once locally to upgrade past pre-v0.2.1 installs, then self-update will work from then on."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

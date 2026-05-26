@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-26** — feat: v0.2.10 changelog-on-upgrade + escape backticks in self-update notice *(feat/v0.2.10-changelog-on-upgrade)* — [decisions-branches/feat__v0.2.10-changelog-on-upgrade.md](decisions-branches/feat__v0.2.10-changelog-on-upgrade.md)
 - **2026-05-26** — feat: v0.2.9 propagation-gap follow-up — visible notice in logmind log + AGENTS.md drift check in doctor *(chore/v0.2.9-action-bumps-and-vercel-skip)* — [decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md](decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md)
 - **2026-05-26** — chore: v0.2.9 — bump actions to v6 across templates + dogfood; add vercel.json skip-on-non-site *(chore/v0.2.9-action-bumps-and-vercel-skip)* — [decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md](decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md)
 - **2026-05-26** — fix: v0.2.8 — replace PyYAML+Python pinVersion detection with grep *(fix/v0.2.8-pinversion-grep)* — [decisions-branches/fix__v0.2.8-pinversion-grep.md](decisions-branches/fix__v0.2.8-pinversion-grep.md)
