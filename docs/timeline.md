@@ -15,6 +15,8 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-26** — feat: v0.2.9 propagation-gap follow-up — visible notice in logmind log + AGENTS.md drift check in doctor *(chore/v0.2.9-action-bumps-and-vercel-skip)* — [decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md](decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md)
+- **2026-05-26** — chore: v0.2.9 — bump actions to v6 across templates + dogfood; add vercel.json skip-on-non-site *(chore/v0.2.9-action-bumps-and-vercel-skip)* — [decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md](decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md)
 - **2026-05-26** — fix: v0.2.8 — replace PyYAML+Python pinVersion detection with grep *(fix/v0.2.8-pinversion-grep)* — [decisions-branches/fix__v0.2.8-pinversion-grep.md](decisions-branches/fix__v0.2.8-pinversion-grep.md)
 - **2026-05-26** — feat: v0.2.7 — --stage all becomes the default; logmind log is the commit primitive *(feat/v0.2.7-stage-all-default)* — [decisions-branches/feat__v0.2.7-stage-all-default.md](decisions-branches/feat__v0.2.7-stage-all-default.md)
 - **2026-05-26** — feat: v0.2.6 — notify-agent-skills workflow closes the release→skill update gap *(feat/v0.2.6-notify-agent-skills)* — [decisions-branches/feat__v0.2.6-notify-agent-skills.md](decisions-branches/feat__v0.2.6-notify-agent-skills.md)

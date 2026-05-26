@@ -43,9 +43,9 @@ def test_offline_no_workflows_reports_clean_unknown_versions(project: Path):
     assert logmind.name == "logmind"
     assert logmind.installed_version is None
     assert logmind.latest_version is None
-    # Every shipped workflow is reported as missing
+    # Every shipped workflow + AGENTS.md is reported as missing
     names = {w.name for w in logmind.workflows}
-    assert names == set(doctor.LOGMIND_WORKFLOWS)
+    assert names == set(doctor.LOGMIND_WORKFLOWS) | {"AGENTS.md"}
     assert all(w.drift == "missing" for w in logmind.workflows)
 
 
@@ -74,17 +74,25 @@ def test_pinned_workflow_with_matching_marker_is_current(project: Path, monkeypa
 
 
 def test_stale_marker_in_workflow_triggers_drift(project: Path, monkeypatch):
-    """Marker on workflow ≠ bundled marker → stale → DRIFT."""
+    """Marker on workflow ≠ bundled marker → stale → DRIFT.
+
+    Read the bundled marker dynamically so this test doesn't have to be
+    updated every release that bumps a template version.
+    """
+    bundled = doctor._bundled_logmind_marker("check-doc-links.yml")
+    assert bundled is not None
+    # Pick a marker that's definitely different from bundled (v0 is older
+    # than any version we've ever shipped).
     _write_workflow(
         project,
         "check-doc-links.yml",
-        "# logmind-template-version: v1\nname: links\n",  # bundled is v2
+        "# logmind-template-version: v0\nname: links\n",
     )
     monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
     report = doctor.collect_status(project, offline=False)
     cdl = next(w for w in report.tools[0].workflows if w.name == "check-doc-links.yml")
-    assert cdl.marker == "v1"
-    assert cdl.bundled_marker == "v2"
+    assert cdl.marker == "v0"
+    assert cdl.bundled_marker == bundled
     assert cdl.drift == "stale"
     assert report.tools[0].drift == "stale"
     assert report.overall == "DRIFT"
@@ -153,6 +161,78 @@ def test_offline_flag_skips_network(project: Path, monkeypatch):
     assert calls == [], "no HTTP calls should happen in --offline mode"
     assert report.network_used is False
     assert report.tools[0].latest_version is None
+
+
+def test_agents_md_stale_block_version_triggers_drift(project: Path, monkeypatch):
+    """v0.2.9: doctor must flag an out-of-date `<!-- logmind-block-version:
+    vN -->` marker in AGENTS.md. Closes the propagation gap where an agent
+    keeps working from cached pre-v0.2.7 instructions even though logmind
+    init would have refreshed the block on disk.
+    """
+    (project / "AGENTS.md").write_text(
+        "# AGENTS.md\n\n"
+        "<!-- logmind-start -->\n"
+        "<!-- logmind-block-version: v0 -->\n"
+        "(stale embedded block)\n"
+        "<!-- logmind-end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    am = next(w for w in report.tools[0].workflows if w.name == "AGENTS.md")
+    assert am.marker == "v0"
+    assert am.bundled_marker is not None  # bundled template exists in this repo
+    assert am.drift == "stale"
+    assert report.overall == "DRIFT"
+
+
+def test_agents_md_full_template_marker_is_current(project: Path, monkeypatch):
+    """Regression: a repo whose AGENTS.md was written by logmind init when
+    skills.sh was NOT available carries the FULL template's marker (e.g.
+    `v4`), not the slim one (`v4-slim`). Doctor must treat that as
+    current — matching either bundled variant.
+
+    Before this fix, _bundled_agents_md_block_version() returned only the
+    slim marker; the full-template install showed up as STALE on every
+    doctor run, breaking exit-code-based CI gating for those repos.
+    """
+    slim_bundled, full_bundled = doctor._bundled_agents_md_block_versions()
+    assert slim_bundled is not None and full_bundled is not None, (
+        "this test relies on both bundled templates carrying a marker"
+    )
+    # Use the FULL marker — the variant slim agents wouldn't get
+    (project / "AGENTS.md").write_text(
+        f"# AGENTS.md\n\n"
+        f"<!-- logmind-start -->\n"
+        f"<!-- logmind-block-version: {full_bundled} -->\n"
+        f"(full-template body)\n"
+        f"<!-- logmind-end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    am = next(w for w in report.tools[0].workflows if w.name == "AGENTS.md")
+    assert am.marker == full_bundled
+    assert am.drift == "current", (
+        f"full-template install (marker={am.marker}) must not be flagged "
+        f"stale just because bundled slim marker is {slim_bundled}"
+    )
+
+
+def test_agents_md_markerless_is_not_drift(project: Path, monkeypatch):
+    """Markerless AGENTS.md (user heavily customized OR predates the
+    marker convention) must NOT count as drift — same heuristic as
+    workflow probes."""
+    (project / "AGENTS.md").write_text(
+        "# AGENTS.md\n\nCustomized — no logmind block.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    am = next(w for w in report.tools[0].workflows if w.name == "AGENTS.md")
+    assert am.marker is None
+    assert am.drift == "markerless"
+    # Other workflows are missing; drift comes from them, not from AGENTS.md.
 
 
 def test_clud_bug_absent_omitted(project: Path, monkeypatch):

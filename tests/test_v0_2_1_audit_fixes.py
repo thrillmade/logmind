@@ -78,8 +78,11 @@ def test_check_doc_links_template_has_no_paths_filter():
         f"Found: {paths_lines!r}"
     )
 
-    # Template marker must be v2 (bumped from v1)
-    assert "# logmind-template-version: v2" in template
+    # Template marker is currently v3 (v2 → v3 bumped in v0.2.9 for the
+    # actions/checkout + setup-python upgrade). The exact value is asserted
+    # against the pin manifest in test_shipped_template_markers_match_expected
+    # — here we just confirm a marker line exists.
+    assert "# logmind-template-version: v" in template
 
 
 def test_self_update_template_is_shipped(temp_dir):
@@ -166,6 +169,46 @@ def test_init_refresh_mode_regenerates_missing_workflow(temp_dir):
             "refresh mode must regenerate missing workflow files"
 
 
+def test_shipped_templates_use_current_action_versions():
+    """v0.2.9 bump: shipped templates must use actions/checkout@v6 and
+    actions/setup-python@v6 (GitHub deprecated Node 20 runtime in
+    2026-09). Catches regression where someone copy-pastes from an
+    older example into the templates dir."""
+    templates_dir = (
+        Path(__file__).parent.parent / "src" / "logmind" / "templates" / "github"
+    )
+    for tmpl in templates_dir.glob("*.yml.template"):
+        text = tmpl.read_text(encoding="utf-8")
+        assert "actions/checkout@v4" not in text, (
+            f"{tmpl.name} still uses actions/checkout@v4 — bump to @v6"
+        )
+        assert "actions/setup-python@v5" not in text, (
+            f"{tmpl.name} still uses actions/setup-python@v5 — bump to @v6"
+        )
+
+
+def test_shipped_template_markers_match_expected():
+    """v0.2.9 pin: each shipped template's marker matches the version
+    bumped in this release. Locks downstream refresh behavior so any
+    future marker change is intentional + accompanied by a test
+    update."""
+    expected = {
+        "regen-timeline.yml.template": "v2",
+        "check-decisions.yml.template": "v2",
+        "check-doc-links.yml.template": "v3",
+        "logmind-self-update.yml.template": "v3",
+    }
+    templates_dir = (
+        Path(__file__).parent.parent / "src" / "logmind" / "templates" / "github"
+    )
+    for name, version in expected.items():
+        text = (templates_dir / name).read_text(encoding="utf-8")
+        first_line = text.splitlines()[0]
+        assert first_line == f"# logmind-template-version: {version}", (
+            f"{name}: expected marker '{version}', got first line {first_line!r}"
+        )
+
+
 def test_self_update_template_uses_grep_not_pyyaml():
     """v0.2.8 fix: the shipped logmind-self-update.yml.template must NOT
     have `import yaml` in its pinVersion detection block. The prior
@@ -189,8 +232,9 @@ def test_self_update_template_uses_grep_not_pyyaml():
         "v0.2.8: logmind-self-update.yml.template must not call `import yaml` "
         "in shell. The pinVersion detection should use grep instead."
     )
-    # Marker must be v2 (bumped from v1)
-    assert "# logmind-template-version: v2" in template
+    # Marker exists (exact version is pinned in
+    # test_shipped_template_markers_match_expected; currently v3).
+    assert "# logmind-template-version: v" in template
     # grep-based detection must be present
     assert "grep -E '^[[:space:]]*pinVersion:" in template
 

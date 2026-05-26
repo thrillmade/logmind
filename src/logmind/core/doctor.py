@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import logmind  # for resolving the bundled templates/ directory
 
@@ -40,6 +40,14 @@ CLUD_BUG_WORKFLOWS = (
 _LOGMIND_PIN_RE = re.compile(r'pip install\s+"?logmind==([\d.]+)"?')
 _LOGMIND_MARKER_RE = re.compile(r"^# logmind-template-version:\s*(\S+)")
 _CLUD_BUG_MARKER_RE = re.compile(r"^# clud-bug-template-version:\s*(\S+)")
+# AGENTS.md ships a `<!-- logmind-block-version: vN -->` comment marking the
+# version of the embedded logmind instructions. Doctor uses it to detect when
+# an installed repo's AGENTS.md is older than what the current logmind would
+# write (the common cause: agent runtime memory cached a previous AGENTS.md
+# revision and the agent is still working from those stale instructions).
+_LOGMIND_BLOCK_VERSION_RE = re.compile(
+    r"^<!--\s*logmind-block-version:\s*(\S+)\s*-->", re.MULTILINE
+)
 
 
 @dataclass
@@ -189,6 +197,73 @@ def _logmind_installed_version(project_root: Path) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _bundled_agents_md_block_versions() -> Tuple[Optional[str], Optional[str]]:
+    """Return (slim_marker, full_marker) — both bundled AGENTS.md template
+    markers, since logmind init writes one OR the other depending on
+    whether skills.sh is available at install time (see inserter.py).
+
+    Reporting both lets doctor accept an installed marker that matches
+    EITHER variant — otherwise we'd false-positive every full-template
+    install as stale against the slim bundled marker.
+    """
+    def _read_marker(path: Path) -> Optional[str]:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            return None
+        m = _LOGMIND_BLOCK_VERSION_RE.search(text)
+        return m.group(1) if m else None
+
+    slim = _read_marker(_TEMPLATES_DIR.parent / "AGENTS.md.slim.template")
+    full = _read_marker(_TEMPLATES_DIR.parent / "AGENTS.md.template")
+    return slim, full
+
+
+def _probe_agents_md(project_root: Path) -> WorkflowStatus:
+    """AGENTS.md block-version vs bundled template. Reported alongside
+    workflow probes because the failure mode is identical — agents work
+    from a stale instruction set when the installed repo's AGENTS.md
+    block is older than what logmind init would currently write.
+
+    A repo's installed marker may match EITHER the slim or the full
+    bundled marker (logmind init writes one or the other based on
+    skills.sh availability). We treat the install as current if it
+    matches either; stale only if it matches neither.
+    """
+    agents_path = project_root / "AGENTS.md"
+    slim_bundled, full_bundled = _bundled_agents_md_block_versions()
+    # Choose one bundled marker for display (the user installed one of
+    # them, but we don't know which without reading more context). Prefer
+    # slim because it's the more common modern install path.
+    display_bundled = slim_bundled or full_bundled
+    if not agents_path.exists():
+        return WorkflowStatus(
+            name="AGENTS.md", installed=False, marker=None,
+            bundled_marker=display_bundled, drift="missing",
+        )
+    try:
+        text = agents_path.read_text(encoding="utf-8")
+    except OSError:
+        return WorkflowStatus(
+            name="AGENTS.md", installed=True, marker=None,
+            bundled_marker=display_bundled, drift="markerless",
+        )
+    m = _LOGMIND_BLOCK_VERSION_RE.search(text)
+    marker = m.group(1) if m else None
+    if marker is None:
+        drift = "markerless"
+    elif slim_bundled is None and full_bundled is None:
+        drift = "unknown"
+    elif marker == slim_bundled or marker == full_bundled:
+        drift = "current"
+    else:
+        drift = "stale"
+    return WorkflowStatus(
+        name="AGENTS.md", installed=True, marker=marker,
+        bundled_marker=display_bundled, drift=drift,
+    )
+
+
 def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     installed = _logmind_installed_version(project_root)
     latest: Optional[str] = None
@@ -201,6 +276,9 @@ def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
         _probe_workflow(project_root, name, _LOGMIND_MARKER_RE, _bundled_logmind_marker(name))
         for name in LOGMIND_WORKFLOWS
     ]
+    # AGENTS.md block-version is reported in the same workflows list so
+    # downstream rendering / drift aggregation treats it uniformly.
+    workflows.append(_probe_agents_md(project_root))
 
     # Drift = any installed workflow with a marker that's stale,
     # OR installed version != latest version (when both known).
