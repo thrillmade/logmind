@@ -60,9 +60,26 @@ jobs:
           EOF
           )
 
+          # Idempotently ensure the label exists on the receiving repo
+          # before we try to attach it. `--force` makes this a no-op when
+          # the label already exists. Without this, the first tag push
+          # would fail `gh issue create` (label not found), the `|| ::warning::`
+          # would swallow the failure, and no issue would ever land —
+          # exactly the bug the v0.2.6 review caught.
+          gh label create from-logmind \
+            --repo thrillmot/agent-skills \
+            --color "0e8a16" \
+            --description "Auto-opened by logmind release notifier" \
+            --force \
+            || echo "::warning::could not create/update from-logmind label on agent-skills; proceeding without label"
+
           gh issue create \
             --repo thrillmot/agent-skills \
             --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md" \
             --label "from-logmind" \
             --body "$body" \
-            || echo "::warning::failed to open issue on agent-skills (label may not exist — re-run after creating the 'from-logmind' label on agent-skills, or remove the --label flag)"
+            || gh issue create \
+              --repo thrillmot/agent-skills \
+              --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md" \
+              --body "$body" \
+            || echo "::error::failed to open issue on agent-skills even without label — check AGENT_SKILLS_NOTIFY_PAT scopes (needs Issues: write)"
