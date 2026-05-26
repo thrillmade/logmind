@@ -26,6 +26,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Bundle CHANGELOG into package
+        # CHANGELOG.md is canonical at repo root (GitHub auto-renders it,
+        # publish.yml's release-notes step reads from there) but must be
+        # under src/logmind/ for setuptools package-data to bundle it
+        # into the wheel. Copy at build time so the file stays in one
+        # place in source control; editable installs fall back to the
+        # repo-root copy via logmind.core.changelog._changelog_path().
+        run: cp CHANGELOG.md src/logmind/CHANGELOG.md
+
       - name: Build
         run: |
           python -m pip install --upgrade pip build

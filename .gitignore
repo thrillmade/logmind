@@ -67,3 +67,4 @@ skills-lock.json
 homebrew-logmind/
 homebrew-tap/
 verify_logmind.sh
+src/logmind/CHANGELOG.md
