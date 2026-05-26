@@ -40,7 +40,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.2.3", prog_name="logmind")
+@click.version_option(version="0.2.4", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -1514,6 +1514,44 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
         click.secho(f"✓ Regenerated {write_path}", fg="green")
     else:
         click.echo(f"  {write_path} already up to date")
+
+
+@main.command("doctor")
+@click.option(
+    "--json", "as_json", is_flag=True, help="Emit the report as JSON."
+)
+@click.option(
+    "--offline",
+    is_flag=True,
+    help="Skip PyPI / npm probes; use only locally-readable signals.",
+)
+@click.option(
+    "--exit-zero",
+    is_flag=True,
+    help="Always exit 0, even on drift (for informational CI runs).",
+)
+def doctor_cmd(as_json: bool, offline: bool, exit_zero: bool):
+    """
+    Report installed versions and workflow drift for logmind + clud-bug.
+
+    Reads .github/workflows/*.yml pin lines and template-version markers,
+    optionally probes PyPI and the npm registry for the latest releases,
+    then prints a status table. Exits non-zero on drift so it's CI-pluggable.
+
+    Network is best-effort: a PyPI/npm probe failure degrades to "?" in the
+    latest column rather than erroring. Use --offline to skip network entirely.
+    """
+    from logmind.core.doctor import collect_status, render_status
+
+    report = collect_status(Path.cwd(), offline=offline)
+
+    if as_json:
+        click.echo(report.to_json())
+    else:
+        click.echo(render_status(report))
+
+    if report.overall == "DRIFT" and not exit_zero:
+        sys.exit(1)
 
 
 @main.command("tree")

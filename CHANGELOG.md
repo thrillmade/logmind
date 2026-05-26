@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-26
+
+### Added
+- **New `logmind doctor` command** reports installed-vs-latest versions for logmind + clud-bug, scans workflow templates for stale `# logmind-template-version:` / `# clud-bug-template-version:` markers, and exits non-zero on drift so it can gate CI. Read-only — prints the suggested fix (`pip install --upgrade logmind && logmind init`) but never runs it.
+  - `--json` emits the report as machine-readable JSON.
+  - `--offline` skips PyPI/npm probes; uses only locally-readable signals.
+  - `--exit-zero` always exits 0 even on drift, for informational CI runs.
+  - Markerless workflows (the dogfood / heavily-customized case) are reported as `markerless` and never count as drift — they predate the v0.2.1 marker convention and v0.2.1's refresh mode deliberately leaves them alone.
+  - clud-bug section is omitted entirely if `.claude/skills/.clud-bug.json` is not present, so doctor stays useful in logmind-only repos.
+  - Network failures degrade to `?` in the "latest" column rather than crashing; the marker check + installed-version diff are the load-bearing drift signals.
+
+### Migration from v0.2.3
+None — additive change. No template change, no `logmind init` needed in installed repos. Run `logmind doctor` to get a status table; nothing else to do.
+
 ## [0.2.3] - 2026-05-26
 
 ### Fixed

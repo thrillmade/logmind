@@ -1,0 +1,242 @@
+"""Tests for `logmind doctor`."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from logmind.cli import main
+from logmind.core import doctor
+
+
+@pytest.fixture
+def project(tmp_path: Path) -> Path:
+    """Empty project root with .github/workflows/ ready to populate."""
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    return tmp_path
+
+
+def _write_workflow(project: Path, name: str, content: str) -> None:
+    (project / ".github" / "workflows" / name).write_text(content, encoding="utf-8")
+
+
+def _write_clud_bug_cfg(project: Path, payload: dict) -> None:
+    skills = project / ".claude" / "skills"
+    skills.mkdir(parents=True, exist_ok=True)
+    (skills / ".clud-bug.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# collect_status — pure logic, no CLI
+# ---------------------------------------------------------------------------
+
+
+def test_offline_no_workflows_reports_clean_unknown_versions(project: Path):
+    """No workflows, no clud-bug, offline mode → no crash; latest=None."""
+    report = doctor.collect_status(project, offline=True)
+    assert report.network_used is False
+    assert len(report.tools) == 1
+    logmind = report.tools[0]
+    assert logmind.name == "logmind"
+    assert logmind.installed_version is None
+    assert logmind.latest_version is None
+    # Every shipped workflow is reported as missing
+    names = {w.name for w in logmind.workflows}
+    assert names == set(doctor.LOGMIND_WORKFLOWS)
+    assert all(w.drift == "missing" for w in logmind.workflows)
+
+
+def test_pinned_workflow_with_matching_marker_is_current(project: Path, monkeypatch):
+    """A workflow pinned to logmind==X.Y.Z with marker matching bundled → current."""
+    bundled = doctor._bundled_logmind_marker("regen-timeline.yml")
+    assert bundled is not None  # sanity: shipped template has a marker
+    _write_workflow(
+        project,
+        "regen-timeline.yml",
+        f"# logmind-template-version: {bundled}\nname: regen\n"
+        f"          pip install \"logmind==0.2.3\"\n",
+    )
+    # Monkeypatch the HTTP probe to return 0.2.3 too — no drift
+    monkeypatch.setattr(
+        doctor, "_http_get_json", lambda *_a, **_kw: {"info": {"version": "0.2.3"}}
+    )
+    report = doctor.collect_status(project, offline=False)
+    logmind = report.tools[0]
+    assert logmind.installed_version == "0.2.3"
+    assert logmind.latest_version == "0.2.3"
+    regen = next(w for w in logmind.workflows if w.name == "regen-timeline.yml")
+    assert regen.drift == "current"
+    assert logmind.drift == "ok"
+    assert report.overall == "OK"
+
+
+def test_stale_marker_in_workflow_triggers_drift(project: Path, monkeypatch):
+    """Marker on workflow ≠ bundled marker → stale → DRIFT."""
+    _write_workflow(
+        project,
+        "check-doc-links.yml",
+        "# logmind-template-version: v1\nname: links\n",  # bundled is v2
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    cdl = next(w for w in report.tools[0].workflows if w.name == "check-doc-links.yml")
+    assert cdl.marker == "v1"
+    assert cdl.bundled_marker == "v2"
+    assert cdl.drift == "stale"
+    assert report.tools[0].drift == "stale"
+    assert report.overall == "DRIFT"
+    assert any("pip install --upgrade logmind" in s for s in report.suggestions)
+
+
+def test_installed_version_older_than_latest_is_drift(project: Path, monkeypatch):
+    """Workflow pin says 0.2.1, PyPI says 0.2.3 → DRIFT."""
+    _write_workflow(
+        project,
+        "regen-timeline.yml",
+        '          pip install "logmind==0.2.1"\n',
+    )
+    monkeypatch.setattr(
+        doctor, "_http_get_json", lambda *_a, **_kw: {"info": {"version": "0.2.3"}}
+    )
+    report = doctor.collect_status(project, offline=False)
+    logmind = report.tools[0]
+    assert logmind.installed_version == "0.2.1"
+    assert logmind.latest_version == "0.2.3"
+    assert logmind.drift == "stale"
+    assert report.overall == "DRIFT"
+
+
+def test_markerless_workflow_is_not_drift(project: Path, monkeypatch):
+    """Dogfood-style (markerless) installs must not false-positive."""
+    _write_workflow(
+        project,
+        "regen-timeline.yml",
+        "name: regen\n# no marker line\n",
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    regen = next(w for w in report.tools[0].workflows if w.name == "regen-timeline.yml")
+    assert regen.drift == "markerless"
+    # No workflow marker → no drift contribution (and no PyPI pin → no version drift)
+    assert report.tools[0].drift == "ok"
+    assert report.overall == "OK"
+
+
+def test_network_failure_offline_safe(project: Path, monkeypatch):
+    """A network failure on PyPI must not crash; latest just becomes None."""
+    _write_workflow(
+        project,
+        "regen-timeline.yml",
+        '          pip install "logmind==0.2.3"\n',
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    logmind = report.tools[0]
+    assert logmind.installed_version == "0.2.3"
+    assert logmind.latest_version is None
+    assert logmind.drift == "ok"  # can't claim drift without a latest signal
+
+
+def test_offline_flag_skips_network(project: Path, monkeypatch):
+    """--offline must short-circuit _http_get_json entirely."""
+    calls = []
+
+    def fake_http(*args, **kwargs):
+        calls.append(args)
+        return {"info": {"version": "0.2.3"}}
+
+    monkeypatch.setattr(doctor, "_http_get_json", fake_http)
+    report = doctor.collect_status(project, offline=True)
+    assert calls == [], "no HTTP calls should happen in --offline mode"
+    assert report.network_used is False
+    assert report.tools[0].latest_version is None
+
+
+def test_clud_bug_absent_omitted(project: Path, monkeypatch):
+    """Repos without clud-bug installed should not get a clud-bug section."""
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    report = doctor.collect_status(project, offline=False)
+    assert [t.name for t in report.tools] == ["logmind"]
+
+
+def test_clud_bug_release_version_from_lastUpdateVersion(project: Path, monkeypatch):
+    """clud-bug's release version lives in `lastUpdateVersion`; `version` is a
+    schema-version int that must not be misreported as a release."""
+    _write_clud_bug_cfg(
+        project,
+        {"version": 1, "lastUpdateVersion": "0.5.6", "strictMode": False, "installed": []},
+    )
+    monkeypatch.setattr(
+        doctor, "_http_get_json", lambda *_a, **_kw: {"version": "0.5.10"}
+    )
+    report = doctor.collect_status(project, offline=False)
+    clud_bug = next(t for t in report.tools if t.name == "clud-bug")
+    assert clud_bug.installed_version == "0.5.6"
+    assert clud_bug.latest_version == "0.5.10"
+    assert clud_bug.drift == "stale"
+    assert clud_bug.extras["strict_mode"] == "off"
+
+
+# ---------------------------------------------------------------------------
+# CLI integration — exit codes + flags
+# ---------------------------------------------------------------------------
+
+
+def test_cli_doctor_ok_exits_zero(project: Path, monkeypatch):
+    """Stack is OK → exit 0."""
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=project):
+        # Empty project, offline-friendly: no version pin → no drift signal
+        result = runner.invoke(main, ["doctor", "--offline"])
+        assert result.exit_code == 0, result.output
+        assert "Stack status: OK" in result.output
+
+
+def test_cli_doctor_drift_exits_one(project: Path, monkeypatch):
+    """Stale marker → exit 1."""
+    _write_workflow(
+        project,
+        "check-doc-links.yml",
+        "# logmind-template-version: v1\nname: links\n",  # bundled is v2
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    runner = CliRunner()
+    # Note: isolated_filesystem can't be used because we need cwd == project,
+    # so test the CLI by chdir into project_root explicitly.
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+    result = runner.invoke(main, ["doctor", "--offline"])
+    assert result.exit_code == 1, result.output
+    assert "Stack status: DRIFT" in result.output
+
+
+def test_cli_exit_zero_flag_overrides_drift(project: Path, monkeypatch):
+    """--exit-zero forces exit 0 even on drift (informational CI runs)."""
+    _write_workflow(
+        project,
+        "check-doc-links.yml",
+        "# logmind-template-version: v1\nname: links\n",
+    )
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+    result = runner.invoke(main, ["doctor", "--offline", "--exit-zero"])
+    assert result.exit_code == 0, result.output
+    assert "Stack status: DRIFT" in result.output  # still REPORTS drift
+
+
+def test_cli_json_output_parses(project: Path, monkeypatch):
+    """--json emits valid JSON matching the StatusReport shape."""
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+    result = runner.invoke(main, ["doctor", "--offline", "--json", "--exit-zero"])
+    payload = json.loads(result.output)
+    assert "tools" in payload
+    assert "overall" in payload
+    assert "network_used" in payload
+    assert payload["network_used"] is False
