@@ -1,0 +1,85 @@
+name: notify agent-skills on release
+
+# When logmind ships a new release (tag push v*), open an issue on
+# thrillmot/agent-skills asking the maintainer to review
+# `skills/logmind/SKILL.md` for any new features that should be
+# documented. Closes the manual-sync chore between logmind releases
+# and the skill content — mirror of agent-skills' notify-clud-bug.yml
+# pattern.
+#
+# Same auth model as notify-clud-bug.yml: GITHUB_TOKEN can create
+# issues on this repo but NOT on a different repo. So this workflow
+# reads an AGENT_SKILLS_NOTIFY_PAT secret — a fine-grained PAT scoped
+# to thrillmot/agent-skills with Issues: write. Without it, the
+# notifier degrades to a ::warning:: rather than failing the release.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  open-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open issue on thrillmot/agent-skills
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::AGENT_SKILLS_NOTIFY_PAT secret missing — install a fine-grained PAT scoped to thrillmot/agent-skills with Issues: write to enable this notifier."
+            exit 0
+          fi
+
+          body=$(cat <<EOF
+          logmind \`${TAG}\` shipped: https://github.com/thrillmot/logmind/releases/tag/${TAG}
+
+          Review \`skills/logmind/SKILL.md\` for any user-facing changes from
+          this release that should be reflected in the skill body:
+
+          - https://github.com/thrillmot/agent-skills/blob/main/skills/logmind/SKILL.md
+
+          ## What to check
+
+          - New CLI commands, flags, or behaviors → mention in skill
+          - Automatic side effects of \`logmind log\` (timeline regen, etc.) → document
+          - New "Don't" rules surfaced by user feedback → add
+          - Changelog: https://github.com/thrillmot/logmind/blob/${TAG}/CHANGELOG.md
+
+          Close as a no-op if this release is internal-only (refactor, test
+          additions, CI changes) with no skill-relevant behavior change.
+
+          ## Auto-generated
+          Opened by \`logmind/.github/workflows/notify-agent-skills.yml\` on
+          every tag push.
+          EOF
+          )
+
+          # Idempotently ensure the label exists on the receiving repo
+          # before we try to attach it. `--force` makes this a no-op when
+          # the label already exists. Without this, the first tag push
+          # would fail `gh issue create` (label not found), the `|| ::warning::`
+          # would swallow the failure, and no issue would ever land —
+          # exactly the bug the v0.2.6 review caught.
+          gh label create from-logmind \
+            --repo thrillmot/agent-skills \
+            --color "0e8a16" \
+            --description "Auto-opened by logmind release notifier" \
+            --force \
+            || echo "::warning::could not create/update from-logmind label on agent-skills; proceeding without label"
+
+          gh issue create \
+            --repo thrillmot/agent-skills \
+            --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md" \
+            --label "from-logmind" \
+            --body "$body" \
+            || gh issue create \
+              --repo thrillmot/agent-skills \
+              --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md" \
+              --body "$body" \
+            || echo "::error::failed to open issue on agent-skills even without label — check AGENT_SKILLS_NOTIFY_PAT scopes (needs Issues: write)"
