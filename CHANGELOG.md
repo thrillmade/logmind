@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-26
+
+### Added — custom git merge driver for derived files
+- **`logmind init` registers a custom merge driver for `docs/timeline.md` and `docs/file-structure.md`.** Closes the parallel-PR conflict class: previously, two PRs that both ran `logmind log` produced textual merge conflicts on rebase because git did three-way merge on the derived snapshot. Now git delegates conflict resolution on these files to logmind, which regenerates them from the per-branch decision files (which never collide). Clean rebases on parallel work.
+  - **`.gitattributes` block** added by `logmind init` (idempotent, marker-bracketed, preserves user edits) — registers `merge=logmind-timeline` and `merge=logmind-file-structure` for the two derived files.
+  - **Per-clone `git config`** also set by `logmind init` — defines the merge drivers themselves (`merge.logmind-timeline.driver = 'logmind timeline --write %A'`, similar for file-structure). Lives in `.git/config`, not committed (git refuses to auto-run a merge driver that wasn't explicitly configured locally — security guard against untrusted repos).
+  - **`logmind init` refresh-mode** re-runs `configure_merge_drivers()` every invocation, so fresh clones get the per-clone config after a single `logmind init` even if the committed `.gitattributes` was already in place.
+- **New `logmind file-structure --write <path>` CLI command** — mirror of `logmind timeline --write`. The merge driver invokes it as `logmind file-structure --write %A` where git passes the resolved-content target path.
+- **`.git/hooks/post-merge` installed by `logmind init`** — re-regenerates `docs/timeline.md` and `docs/file-structure.md` from the FULL post-merge working tree. Belt + suspenders with the merge driver: the driver runs per-file during conflict resolution, before other merged-in files (e.g. the merged-in branch's `docs/decisions-branches/<branch>.md`) are checked out, so its output can miss decisions. The hook runs once at end-of-merge and sweeps any incomplete regen. Verified end-to-end: two branches both running `logmind log`, merge succeeds without conflict, resulting timeline contains both decisions.
+- **`logmind doctor` reports merge-driver drift** as three new rows: `.gitattributes (merge driver)`, `git config (merge driver)`, and `post-merge hook`. Each shows `current`/`missing`. Missing rows do NOT count as drift (they're "not yet installed for this logmind version", not "wrong") — the next `logmind init` resolves them silently.
+
+### Why a minor version bump (0.2.x → 0.3.0)
+The previous v0.2.x line accumulated feature-grade additions under patch bumps (`logmind doctor` in v0.2.4, `--stage all` default in v0.2.7, changelog-on-upgrade in v0.2.10). v0.3.0 introduces a new install-time surface (git config setup, `.gitattributes` ownership) that's clearly minor-grade, and marks a clean reset of the under-bumping pattern.
+
+### Migration from v0.2.10
+Run `logmind init` in each logmind-installed repo to get the merge driver. v0.2.5+'s refresh-mode handles the workflow updates automatically; the `.gitattributes` block is added; `git config` is set per-clone. `logmind doctor` reports two new STALE rows until you do.
+
+**CI runners** (fresh-clone, no `logmind init`) don't get the per-clone config and won't use the driver — but `regen-timeline.yml` already regenerates derived files in CI as a separate safety net (the existing `check-derived-docs` gate). Belt + suspenders.
+
 ## [0.2.10] - 2026-05-26
 
 ### Added

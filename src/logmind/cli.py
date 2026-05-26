@@ -10,6 +10,11 @@ import click
 
 from logmind.core.config import load_config
 from logmind.core.git_handler import commit_and_push, is_git_repo
+from logmind.core.gitattributes import (
+    configure_merge_drivers,
+    ensure_block as ensure_gitattributes_block,
+    install_post_merge_hook,
+)
 from logmind.core.gitignore import ensure_block as ensure_gitignore_block
 from logmind.core.skill_install import (
     DEFAULT_SKILL_NAME,
@@ -40,7 +45,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.2.10", prog_name="logmind")
+@click.version_option(version="0.3.0", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -325,6 +330,20 @@ def init(
         sync_messages = sync_agent_files_from_config(root_path)
         for msg in sync_messages:
             click.echo(msg)
+
+        # v0.3.0: ensure the .gitattributes block + git config merge
+        # drivers are present. Both are idempotent — `.gitattributes`
+        # already in place is a no-op, and `git config` no-ops when the
+        # value already matches. Setting them every refresh covers the
+        # common case where someone freshly cloned a repo that already
+        # has .gitattributes committed but no .git/config driver entries.
+        gitattributes_path = root_path / ".gitattributes"
+        gitattributes_changed = ensure_gitattributes_block(gitattributes_path)
+        if gitattributes_changed:
+            click.echo("✓ Added logmind block to .gitattributes")
+        configure_merge_drivers(root_path)
+        install_post_merge_hook(root_path)
+
         click.echo()
         click.secho("Done. docs/ and .logmind/ left untouched.", fg="green")
 
@@ -434,6 +453,21 @@ def init(
     if gitignore_changed:
         click.echo("✓ Added logmind block to .gitignore")
 
+    # v0.3.0: register the custom merge driver for derived files
+    # (docs/timeline.md + docs/file-structure.md). Two parts:
+    #   1) .gitattributes block (committed) telling git which files
+    #      use the driver
+    #   2) git config (per-clone) defining what the driver does
+    # Without (2), git refuses to invoke the driver — security guard
+    # against untrusted repos running arbitrary commands.
+    gitattributes_path = root_path / ".gitattributes"
+    gitattributes_changed = ensure_gitattributes_block(gitattributes_path)
+    if gitattributes_changed:
+        click.echo("✓ Added logmind block to .gitattributes")
+    if not no_git:
+        configure_merge_drivers(root_path)
+        install_post_merge_hook(root_path)
+
     # Log first decision
     log_first_decision(docs_path)
     click.echo("✓ Logged first decision: \"Initialize logmind decision tracking\"")
@@ -468,6 +502,10 @@ def init(
             # .gitignore (if logmind block was added)
             if gitignore_changed:
                 files_to_commit.append(".gitignore")
+
+            # .gitattributes (if logmind merge-driver block was added)
+            if gitattributes_changed:
+                files_to_commit.append(".gitattributes")
 
             commit_and_push(
                 files_to_commit,
@@ -1656,6 +1694,41 @@ def tree_cmd():
         sys.exit(1)
     update_file_structure(docs_path)
     click.secho("✓ Updated docs/file-structure.md", fg="green")
+
+
+@main.command("file-structure")
+@click.option(
+    "--write",
+    "write_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write the rendered tree to PATH (typically docs/file-structure.md). "
+    "Without this flag, prints to stdout.",
+)
+def file_structure_cmd(write_path: Optional[Path]):
+    """
+    Print or regenerate the derived docs/file-structure.md tree snapshot.
+
+    Mirror of ``logmind timeline`` for the file-structure derived doc.
+    The v0.3.0 git merge driver invokes this as
+    ``logmind file-structure --write %A`` to resolve conflicts on
+    parallel-PR rebases without falling through to textual three-way merge.
+
+    Examples:
+        logmind file-structure                                # print to stdout
+        logmind file-structure --write docs/file-structure.md # regenerate file
+    """
+    from logmind.core.tree_gen import generate_file_structure, write_file_structure
+
+    repo_root = Path.cwd()
+    if write_path is None:
+        click.echo(generate_file_structure(repo_root), nl=False)
+        return
+    changed = write_file_structure(write_path)
+    if changed:
+        click.secho(f"✓ Regenerated {write_path}", fg="green")
+    else:
+        click.echo(f"  {write_path} already up to date")
 
 
 @main.command("check-links")
