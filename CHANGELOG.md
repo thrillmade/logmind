@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-05-26
+
+### Changed
+- **Bump shipped workflow templates from `actions/checkout@v4` and `actions/setup-python@v5` to `@v6`** across all four templates: `regen-timeline.yml`, `check-doc-links.yml`, `check-decisions.yml`, `logmind-self-update.yml`. GitHub deprecated Node 20 actions runtime in 2026; v6 of both actions runs on Node 24. Without this, every downstream install would silently emit deprecation warnings until the Node 20 cutoff (2026-09), then fail.
+- **Same bump in this repo's dogfood workflows.** Absorbs Dependabot PRs #43 (`setup-python@v5 → v6`) and #44 (`checkout@v4 → v6`) — Dependabot only saw the dogfood copies, but the shipped templates were the broader gap; this bundles both. PRs #43 and #44 will be closed once this lands (target files already updated).
+- **Template-version markers bumped** so downstream `logmind init` refresh-mode picks up the new templates automatically:
+  - `regen-timeline.yml`: `v1 → v2`
+  - `check-decisions.yml`: `v1 → v2`
+  - `check-doc-links.yml`: `v2 → v3`
+  - `logmind-self-update.yml`: `v2 → v3`
+
+### Added
+- **`vercel.json` at repo root with `ignoreCommand: git diff --quiet HEAD^ HEAD -- site/`.** Skips Vercel preview deployments on PRs that don't touch `site/`. The marketing site rebuilds were burning the deploy quota on every Python-only change — `logmind` and `agent-skills` PRs frequently get rate-limited by Vercel mid-release for this reason. The ignoreCommand exits 0 (skip) when no site/ files changed, 1 (build) otherwise.
+
+### Migration from v0.2.8
+Run `logmind init` in each logmind-installed repo. v0.2.1+'s refresh-mode auto-detects the bumped markers and rewrites the workflow files; `logmind doctor` reports STALE rows until the refresh runs.
+
 ## [0.2.8] - 2026-05-26
 
 ### Fixed

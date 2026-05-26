@@ -74,17 +74,25 @@ def test_pinned_workflow_with_matching_marker_is_current(project: Path, monkeypa
 
 
 def test_stale_marker_in_workflow_triggers_drift(project: Path, monkeypatch):
-    """Marker on workflow ≠ bundled marker → stale → DRIFT."""
+    """Marker on workflow ≠ bundled marker → stale → DRIFT.
+
+    Read the bundled marker dynamically so this test doesn't have to be
+    updated every release that bumps a template version.
+    """
+    bundled = doctor._bundled_logmind_marker("check-doc-links.yml")
+    assert bundled is not None
+    # Pick a marker that's definitely different from bundled (v0 is older
+    # than any version we've ever shipped).
     _write_workflow(
         project,
         "check-doc-links.yml",
-        "# logmind-template-version: v1\nname: links\n",  # bundled is v2
+        "# logmind-template-version: v0\nname: links\n",
     )
     monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
     report = doctor.collect_status(project, offline=False)
     cdl = next(w for w in report.tools[0].workflows if w.name == "check-doc-links.yml")
-    assert cdl.marker == "v1"
-    assert cdl.bundled_marker == "v2"
+    assert cdl.marker == "v0"
+    assert cdl.bundled_marker == bundled
     assert cdl.drift == "stale"
     assert report.tools[0].drift == "stale"
     assert report.overall == "DRIFT"

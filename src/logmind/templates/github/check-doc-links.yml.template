@@ -1,4 +1,4 @@
-# logmind-template-version: v2
+# logmind-template-version: v3
 name: doc link integrity
 
 # Fail PRs that introduce broken or orphaned markdown links so agents stay
@@ -20,9 +20,9 @@ jobs:
   check-links:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
