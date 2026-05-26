@@ -226,7 +226,7 @@ def log(
     docs_path: Optional[Path] = None,
     auto_commit: Optional[bool] = None,
     auto_push: Optional[bool] = None,
-    stage: str = "scoped",
+    stage: str = "all",
     extra_scoped_paths: Optional[List[str]] = None,
 ) -> None:
     """
@@ -248,11 +248,13 @@ def log(
         docs_path: Path to docs directory. Defaults to ./docs
         auto_commit: Whether to auto-commit. If None, uses config value.
         auto_push: Whether to auto-push. If None, uses config value.
-        stage: ``"scoped"`` (default) stages only the decision log and its
-            companion files (file-structure.md, decisions-archive.md if
-            rotated, timeline.md if changed). ``"all"`` stages the entire
-            working tree (pre-v0.1.2 behavior, opt-in via
-            ``logmind log ... --stage all``).
+        stage: ``"all"`` (default since v0.2.7) stages every change in the
+            working tree alongside the decision — `logmind log` is the
+            single add+commit+push primitive for automated workflows.
+            ``"scoped"`` stages only the decision log + companion files
+            (file-structure.md, decisions-archive.md if rotated,
+            timeline.md if changed) — opt in when you have unrelated WIP
+            you want to keep unstaged.
 
     Raises:
         FileNotFoundError: If docs/ doesn't exist (run logmind init first)

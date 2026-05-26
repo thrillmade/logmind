@@ -107,8 +107,11 @@ def test_get_agents_md_template_returns_slim_when_skills_available(monkeypatch):
 
     monkeypatch.setattr(skill_install, "is_skills_available", lambda: True)
     slim = get_agents_md_template()
-    assert "logmind-block-version: v3-slim" in slim
-    assert "see the `logmind` skill" in slim
+    assert "logmind-block-version: v4-slim" in slim
+    # v4 leads with the single-command framing; "logmind log is the commit
+    # primitive" is the new headline. Either marker should anchor the slim
+    # variant.
+    assert "logmind log` is the commit primitive" in slim or "logmind` skill" in slim
 
 
 def test_get_agents_md_template_returns_full_when_skills_absent(monkeypatch):
@@ -117,7 +120,10 @@ def test_get_agents_md_template_returns_full_when_skills_absent(monkeypatch):
 
     monkeypatch.setattr(skill_install, "is_skills_available", lambda: False)
     full = get_agents_md_template()
-    assert "logmind-block-version: v3" in full
+    # Match exact marker (v4 — not v4-slim, which is a different file). Use
+    # the line-exact match so a future v4-extended variant wouldn't also
+    # satisfy this assertion accidentally.
+    assert "logmind-block-version: v4 " in full or "logmind-block-version: v4\n" in full
     # Full template carries the inline procedure
     assert "When you MUST log" in full or "REQUIREMENT" in full or "skill is also embedded" in full
 

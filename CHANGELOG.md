@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-05-26
+
+### Changed (default behavior — backwards-compatible flag still works)
+- **`logmind log` now defaults to `--stage all`**, staging every change in the working tree alongside the decision rather than just the decision log + companion files. The whole point of `logmind log` is to be a single add+commit+push primitive for automated agents — the previous `--stage scoped` default forced agents into the same two-step pattern (`git add` + `git commit`) that `logmind log` exists to replace.
+
+  The previous default (`scoped`) is still available via `--stage scoped` — useful when you have unrelated WIP in the working tree you don't want to commit. But for the common case (an agent making a focused change + logging the decision for it), one `logmind log "summary" -r "why"` invocation now does everything: writes the decision file, regenerates the derived docs, stages every change in the working tree, commits, pushes.
+
+### Added (documentation clarity — propagates to AGENTS.md via `logmind init` refresh)
+- **AGENTS.md.slim.template + AGENTS.md.template rewritten to lead with the single-command model.** Was: "Use `logmind log` for the commit, not `git add` + `git commit`. Use `--stage all` to also stage the rest of the working tree." Now: `logmind log` IS the commit primitive that handles `git add`, `git commit`, and `git push` together; manual git commands are explicitly off-script for any change that carries a decision.
+
+### Migration from v0.2.6
+**No `logmind init` required** for the CLI default change — that takes effect as soon as the new logmind is installed. Optional: run `logmind init` in installed repos to pick up the refreshed AGENTS.md block.
+
+**If you have scripts that relied on the old scoped default** (i.e. they ran `logmind log "..."` expecting unrelated working-tree changes to stay unstaged), pass `--stage scoped` explicitly to preserve the old behavior.
+
 ## [0.2.6] - 2026-05-26
 
 ### Added

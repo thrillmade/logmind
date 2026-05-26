@@ -139,6 +139,77 @@ def test_log_command_basic(git_repo):
         assert "Test decision" in content
 
 
+def test_log_command_default_stage_is_all(git_repo):
+    """v0.2.7: default --stage is 'all', not 'scoped'. An unrelated
+    working-tree change made between `logmind init` and `logmind log`
+    must end up in the decision commit by default. The previous scoped
+    default forced agents into a two-step git add + git commit + push
+    pattern that defeated the whole point of `logmind log` being a
+    single primitive.
+    """
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        runner.invoke(init)
+        # Make an unrelated working-tree change (simulates the agent's
+        # actual code change that prompted the decision).
+        rogue = Path.cwd() / "rogue_change.py"
+        rogue.write_text("# unrelated edit\n", encoding="utf-8")
+
+        result = runner.invoke(log, ["Test decision"])
+        assert result.exit_code == 0, result.output
+
+        # The rogue change must be in the resulting commit AND no longer
+        # dirty in the working tree.
+        out = subprocess.run(
+            ["git", "log", "-1", "--name-only", "--format="],
+            capture_output=True, text=True, check=True,
+        )
+        # Paths in the commit may carry a tmp-fs prefix; substring match.
+        assert "rogue_change.py" in out.stdout, (
+            f"v0.2.7 default --stage all must sweep working-tree changes "
+            f"into the decision commit; commit listed:\n{out.stdout}"
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, check=True,
+        )
+        assert status.stdout.strip() == "", (
+            f"working tree must be clean after `logmind log` (default "
+            f"--stage all); leftover: {status.stdout!r}"
+        )
+
+
+def test_log_command_scoped_stage_keeps_rogue_unstaged(git_repo):
+    """v0.2.7: explicit --stage scoped preserves the old behavior —
+    unrelated working-tree changes stay unstaged. Backwards-compat
+    escape hatch for users who relied on the previous default."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        runner.invoke(init)
+        rogue = Path.cwd() / "rogue_change.py"
+        rogue.write_text("# unrelated edit\n", encoding="utf-8")
+
+        result = runner.invoke(log, ["Test decision", "--stage", "scoped"])
+        assert result.exit_code == 0, result.output
+
+        out = subprocess.run(
+            ["git", "log", "-1", "--name-only", "--format="],
+            capture_output=True, text=True, check=True,
+        )
+        assert "rogue_change.py" not in out.stdout, (
+            f"explicit --stage scoped must leave rogue_change.py unstaged; "
+            f"commit listed:\n{out.stdout}"
+        )
+        # And it must still be dirty
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, check=True,
+        )
+        assert "rogue_change.py" in status.stdout, (
+            "rogue_change.py must remain unstaged after --stage scoped"
+        )
+
+
 def test_log_command_regenerates_timeline(git_repo):
     """v0.2.3: logmind log must regenerate + stage docs/timeline.md so
     derived-docs CI doesn't catch authors out. Regression: PR #42 stalled
