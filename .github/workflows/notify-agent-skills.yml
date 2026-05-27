@@ -1,17 +1,20 @@
 name: notify agent-skills on release
 
-# When logmind ships a new release (tag push v*), open an issue on
-# thrillmade/agent-skills asking the maintainer to review
-# `skills/logmind/SKILL.md` for any new features that should be
-# documented. Closes the manual-sync chore between logmind releases
-# and the skill content — mirror of agent-skills' notify-clud-bug.yml
-# pattern.
+# When logmind ships a new release (tag push v*), open a PR on
+# thrillmade/agent-skills with a Claude-generated proposed update to
+# `skills/logmind/SKILL.md` based on the release's CHANGELOG section.
+# Auto-merge stays OFF — Claude's output is a starting point the
+# maintainer reviews + edits + merges (or closes if over-proposed).
 #
-# Same auth model as notify-clud-bug.yml: GITHUB_TOKEN can create
-# issues on this repo but NOT on a different repo. So this workflow
-# reads an AGENT_SKILLS_NOTIFY_PAT secret — a fine-grained PAT scoped
-# to thrillmade/agent-skills with Issues: write. Without it, the
-# notifier degrades to a ::warning:: rather than failing the release.
+# Auth model: same as v0.3.x — AGENT_SKILLS_NOTIFY_PAT (fine-grained
+# PAT scoped to thrillmade/agent-skills, Contents + Pull requests:
+# write). Org-level secret as of 2026-05-27. ANTHROPIC_API_KEY is
+# org-level too, scoped to this repo.
+#
+# Failure-mode degradation: if either the Anthropic API call or the
+# PAT-clone-and-PR path fails, fall back to the v0.3.x issue-shaped
+# notification. Shipping discipline preserved — a release shouldn't
+# break because the new flow flakes.
 
 on:
   push:
@@ -22,64 +25,242 @@ permissions:
   contents: read
 
 jobs:
-  open-issue:
+  propose-skill-update:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
-      - name: Open issue on thrillmade/agent-skills
+      - name: Checkout logmind
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # need history for `git describe` to find previous tag
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install logmind + anthropic SDK
+        run: |
+          set -euo pipefail
+          # Install the just-released logmind from PyPI. The notify
+          # workflow runs AFTER publish.yml in the release chain, so
+          # the version is available. Pin to the tagged version so
+          # this step's behavior matches what consumers will see.
+          VERSION="${TAG#v}"
+          # Wait briefly for PyPI propagation — publish.yml also
+          # waits, but the GitHub-Actions runner's view of PyPI is
+          # sometimes behind. Best-effort.
+          for i in $(seq 1 18); do
+            if pip install "logmind==${VERSION}" 2>/dev/null; then break; fi
+            echo "  pip install logmind==${VERSION} attempt ${i}/18 — retrying in 10s"
+            sleep 10
+          done
+          pip install logmind=="${VERSION}"  # final attempt; fail loud if still unavailable
+          pip install anthropic
+
+      - name: Determine previous tag (for CHANGELOG slice)
+        id: prev
+        run: |
+          set -euo pipefail
+          # The tag we're releasing is HEAD. Walk back one commit to
+          # find the prior tag — `git describe --tags --abbrev=0 HEAD^`
+          # returns it. If HEAD^ has no ancestor with a tag (very
+          # first release), set to empty so extract_sections_between
+          # emits everything up to the current tag.
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          else
+            PREV=""
+          fi
+          echo "tag=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "  Previous tag: ${PREV:-<none — first release>}"
+
+      - name: Extract CHANGELOG section
+        env:
+          PREV_TAG: ${{ steps.prev.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Strip leading v from version tags before passing to
+          # extract_sections_between, which expects bare X.Y.Z.
+          AFTER="${PREV_TAG#v}"
+          UP_TO="${TAG#v}"
+          mkdir -p /tmp/notify
+          python3 - <<PY
+          from pathlib import Path
+          from logmind.core.changelog import extract_sections_between
+          text = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          section = extract_sections_between(
+              text,
+              after="${AFTER}" or None,
+              up_to="${UP_TO}",
+          )
+          Path("/tmp/notify/changelog-section.md").write_text(section, encoding="utf-8")
+          print(f"  Extracted {len(section)} chars of CHANGELOG section")
+          PY
+
+      - name: Fetch current SKILL.md from agent-skills
         env:
           GH_TOKEN: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
-          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::AGENT_SKILLS_NOTIFY_PAT secret missing — install a fine-grained PAT scoped to thrillmade/agent-skills with Issues: write to enable this notifier."
+            echo "::error::AGENT_SKILLS_NOTIFY_PAT secret missing"
+            exit 1  # caught by the fallback job below
+          fi
+          gh api repos/thrillmade/agent-skills/contents/skills/logmind/SKILL.md \
+            --jq .content | base64 -d > /tmp/notify/current-skill.md
+          wc -c /tmp/notify/current-skill.md
+
+      - name: Propose SKILL.md update via Anthropic API
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/propose_skill_update.py \
+            --changelog /tmp/notify/changelog-section.md \
+            --current-skill /tmp/notify/current-skill.md \
+            --version "${TAG}" \
+            --out-reasoning /tmp/notify/reasoning.md \
+            --out-skill /tmp/notify/proposed-skill.md
+
+      - name: Checkout thrillmade/agent-skills
+        uses: actions/checkout@v6
+        with:
+          repository: thrillmade/agent-skills
+          path: agent-skills
+          token: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
+
+      - name: Apply outputs + commit + push + open PR
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
+        working-directory: agent-skills
+        run: |
+          set -euo pipefail
+          BRANCH="notify/logmind-${TAG}"
+
+          # Short-circuit if a PR already exists for this branch (e.g.
+          # workflow re-run on the same tag). Don't double-open.
+          EXISTING=$(gh pr list --repo thrillmade/agent-skills \
+            --head "$BRANCH" --state open --json number --jq '.[0].number // ""')
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::PR #${EXISTING} already open for ${BRANCH} — leaving as-is."
             exit 0
           fi
 
-          body=$(cat <<EOF
-          logmind \`${TAG}\` shipped: https://github.com/thrillmade/logmind/releases/tag/${TAG}
+          git config user.name "logmind-notify[bot]"
+          git config user.email "logmind-notify@users.noreply.github.com"
+          git checkout -b "$BRANCH"
 
-          Review \`skills/logmind/SKILL.md\` for any user-facing changes from
-          this release that should be reflected in the skill body:
+          # Always write the stub TODO file with full context.
+          mkdir -p .skill-update-todo
+          {
+            echo "# logmind ${TAG} — skill update context"
+            echo
+            echo "**CHANGELOG diff**: https://github.com/thrillmade/logmind/blob/${TAG}/CHANGELOG.md"
+            echo "**Release URL**: https://github.com/thrillmade/logmind/releases/tag/${TAG}"
+            echo
+            echo "## Claude's reasoning"
+            echo
+            cat /tmp/notify/reasoning.md
+            echo
+            echo "## CHANGELOG section (verbatim, used as Claude's input)"
+            echo
+            cat /tmp/notify/changelog-section.md
+          } > ".skill-update-todo/${TAG}.md"
 
-          - https://github.com/thrillmade/agent-skills/blob/main/skills/logmind/SKILL.md
+          # If Claude proposed an update, overwrite the on-disk SKILL.md.
+          if [ -f /tmp/notify/proposed-skill.md ]; then
+            cp /tmp/notify/proposed-skill.md skills/logmind/SKILL.md
+            SHAPE="proposed SKILL.md edit + TODO context file"
+          else
+            SHAPE="TODO context only (Claude judged release skill-irrelevant)"
+          fi
 
-          ## What to check
+          git add -A
+          git commit -m "notify: logmind ${TAG} shipped — ${SHAPE}"
+          git push -u origin "$BRANCH"
 
-          - New CLI commands, flags, or behaviors → mention in skill
-          - Automatic side effects of \`logmind log\` (timeline regen, etc.) → document
-          - New "Don't" rules surfaced by user feedback → add
-          - Changelog: https://github.com/thrillmade/logmind/blob/${TAG}/CHANGELOG.md
+          REASONING=$(cat /tmp/notify/reasoning.md)
+          PR_BODY=$(cat <<EOF
+          Automated notification from \`thrillmade/logmind\` — ${TAG} shipped.
 
-          Close as a no-op if this release is internal-only (refactor, test
-          additions, CI changes) with no skill-relevant behavior change.
+          **CHANGELOG**: [\`${TAG}\` on logmind](https://github.com/thrillmade/logmind/blob/${TAG}/CHANGELOG.md)
+          **Release**: https://github.com/thrillmade/logmind/releases/tag/${TAG}
 
-          ## Auto-generated
-          Opened by \`logmind/.github/workflows/notify-agent-skills.yml\` on
-          every tag push.
+          ## Shape of this PR
+
+          ${SHAPE}
+
+          ## Claude's reasoning
+
+          ${REASONING}
+
+          ## Reviewer checklist
+
+          - [ ] Read the CHANGELOG section (linked above) and Claude's reasoning
+          - [ ] If a SKILL.md diff is included: verify it accurately reflects user-visible behavior. Edit if Claude over- or under-proposed; close if entirely wrong.
+          - [ ] Merge to ship the SKILL.md update (auto-merge stays OFF — content is discretionary).
+          - [ ] If Claude judged the release skill-irrelevant (TODO-only PR): close without merging unless you disagree, in which case edit \`skills/logmind/SKILL.md\` on this branch and add it before merging.
+
+          ## How this was generated
+
+          \`logmind/.github/workflows/notify-agent-skills.yml\` (v0.4.0+) on tag push. Calls Anthropic API via \`.github/scripts/propose_skill_update.py\` to generate the proposed edit from the CHANGELOG section + current SKILL.md. Auto-merge intentionally disabled.
           EOF
           )
 
-          # Idempotently ensure the label exists on the receiving repo
-          # before we try to attach it. `--force` makes this a no-op when
-          # the label already exists. Without this, the first tag push
-          # would fail `gh issue create` (label not found), the `|| ::warning::`
-          # would swallow the failure, and no issue would ever land —
-          # exactly the bug the v0.2.6 review caught.
+          gh pr create \
+            --repo thrillmade/agent-skills \
+            --base main \
+            --head "$BRANCH" \
+            --title "logmind ${TAG} shipped — proposed SKILL.md update" \
+            --body "$PR_BODY"
+
+  # Fallback job: if the propose-skill-update job above failed (Anthropic
+  # API down, PAT missing, etc.), open the v0.3.x-style issue so the
+  # release still gets acknowledged.
+  fallback-issue:
+    runs-on: ubuntu-latest
+    needs: propose-skill-update
+    if: failure()
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Open fallback issue on agent-skills
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::AGENT_SKILLS_NOTIFY_PAT missing — cannot open fallback issue."
+            exit 0
+          fi
+
+          BODY=$(cat <<EOF
+          logmind \`${TAG}\` shipped but the v0.4.0 PR-shape notify workflow failed.
+
+          Falling back to the v0.3.x issue notification. Review \`skills/logmind/SKILL.md\` manually for any user-facing changes:
+
+          - CHANGELOG: https://github.com/thrillmade/logmind/blob/${TAG}/CHANGELOG.md
+          - SKILL.md:  https://github.com/thrillmade/agent-skills/blob/main/skills/logmind/SKILL.md
+
+          The workflow run (for debugging): https://github.com/thrillmade/logmind/actions/runs/\${{ github.run_id }}
+
+          Close as a no-op if this release is internal-only with no skill-relevant changes.
+          EOF
+          )
+
           gh label create from-logmind \
             --repo thrillmade/agent-skills \
             --color "0e8a16" \
             --description "Auto-opened by logmind release notifier" \
-            --force \
-            || echo "::warning::could not create/update from-logmind label on agent-skills; proceeding without label"
+            --force || true
 
           gh issue create \
             --repo thrillmade/agent-skills \
-            --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md" \
+            --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md (PR-shape notify failed, fallback)" \
             --label "from-logmind" \
-            --body "$body" \
+            --body "$BODY" \
             || gh issue create \
               --repo thrillmade/agent-skills \
-              --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md" \
-              --body "$body" \
-            || echo "::error::failed to open issue on agent-skills even without label — check AGENT_SKILLS_NOTIFY_PAT scopes (needs Issues: write)"
+              --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md (PR-shape notify failed, fallback)" \
+              --body "$BODY"
