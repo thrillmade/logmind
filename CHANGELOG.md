@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-05-27
+
+### Added — `check-derived-docs` auto-fixes stale docs/timeline.md + docs/file-structure.md when configured
+- **The pain.** v0.2+'s derived-doc model treats `docs/timeline.md` + `docs/file-structure.md` as artifacts that must always be in sync with sources. Today's `check-derived-docs` workflow VERIFIES sync — if stale, it fails red and tells the author to regenerate locally. That works, but it makes merging harder: every rebase, every concurrent PR, every multi-commit branch push hits the same papercut. We were burning multiple cycles per session on "regen, add, commit, push" sequences that shouldn't need a human.
+- **The shape.** The shipped `regen-timeline.yml` template now runs in two modes. When the repo (or its org) has a `LOGMIND_AUTO_REGEN_PAT` secret configured, the workflow regenerates stale derived docs and pushes the fix back to the PR branch using the PAT — downstream CI re-runs naturally, the merge gate clears on its own. When no PAT is configured, falls back to today's fail-fast behavior (the warning explains how to opt in). Forked PRs always run in fail-fast mode (can't push to forks).
+- **Why a PAT.** GitHub deliberately blocks `GITHUB_TOKEN`-pushed commits from re-triggering required-status workflows (anti-recursion safety). Auto-commit via `GITHUB_TOKEN` would leave the merge gate stuck on "Expected — Waiting for status to be reported" forever. The PAT path is the documented escape hatch.
+- **Setup (one-time per repo or per org).** Create a fine-grained PAT scoped to the target repo(s) with `Contents: write`. Add it as `LOGMIND_AUTO_REGEN_PAT` under Settings → Secrets and variables → Actions. Already-installed `logmind init` repos pick up the new behavior on the next `logmind init` invocation (refresh-mode bumps the workflow's template-version marker from v2 → v3 and rewrites the file).
+- **Same context name.** The workflow still reports under the `check-derived-docs` status check — required-status rulesets and existing branch protection keep working without changes.
+
+### Migration from v0.3.3
+Run `logmind init` in each installed repo to pull the new `regen-timeline.yml` body. The behavior is backwards-compatible without setup — fail-fast mode is identical to v0.3.3's behavior. Opt into auto-fix by adding the `LOGMIND_AUTO_REGEN_PAT` secret.
+
 ## [0.3.3] - 2026-05-27
 
 ### Fixed — post-merge hook no longer re-stages `docs/file-structure.md` on every `git pull`
