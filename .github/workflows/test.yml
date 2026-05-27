@@ -9,7 +9,12 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  pytest:
+    # Per-matrix-cell test runner. Each matrix cell reports as its own
+    # status context (e.g. "pytest (ubuntu-latest / py3.10)") because
+    # matrix-expanded jobs replace the job-id-based context name with
+    # the `name:` template below. So none of these are named exactly
+    # `test` — that's what the aggregator job below covers.
     name: pytest (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -48,3 +53,22 @@ jobs:
       - name: Markdown link integrity (own docs)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: logmind check-links
+
+  test:
+    # Aggregator that reports under the literal `test` context — the
+    # org ruleset's `required_status_checks` rule pins this exact name,
+    # so without an aggregator every matrix-expanded cell's context
+    # (`pytest (…)`) gets ignored by the gate. `needs:` makes this
+    # block until every cell completes; `if: always()` + the inner
+    # `result` check propagates failure correctly when any cell fails.
+    needs: pytest
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Aggregate matrix results
+        run: |
+          if [ "${{ needs.pytest.result }}" != "success" ]; then
+            echo "::error::One or more pytest matrix cells failed (needs.pytest.result=${{ needs.pytest.result }})"
+            exit 1
+          fi
+          echo "All pytest matrix cells passed."
