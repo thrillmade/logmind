@@ -19,7 +19,7 @@ from typing import Optional
 # The default upstream skill source — full URL so `skills add` recognizes
 # this as a collection install (skills/<name>/SKILL.md layout). Overridable
 # via env var or CLI flag.
-DEFAULT_SKILL_SOURCE = "https://github.com/thrillmot/agent-skills"
+DEFAULT_SKILL_SOURCE = "https://github.com/thrillmade/agent-skills"
 DEFAULT_SKILL_NAME = "logmind"
 
 

@@ -1,6 +1,6 @@
 ## 2026-05-26 15:43 - feat: v0.2.6 — notify-agent-skills workflow closes the release→skill update gap
 
-**Reasoning:** Until today, every logmind release left the canonical skill on agent-skills out of date until someone manually noticed and opened a PR. Mirror the agent-skills→clud-bug notify pattern: on every tag push, open an issue on thrillmot/agent-skills prompting a SKILL.md review. Closes the structural gap that produced today's batch update covering v0.2.3→v0.2.5.
+**Reasoning:** Until today, every logmind release left the canonical skill on agent-skills out of date until someone manually noticed and opened a PR. Mirror the agent-skills→clud-bug notify pattern: on every tag push, open an issue on thrillmade/agent-skills prompting a SKILL.md review. Closes the structural gap that produced today's batch update covering v0.2.3→v0.2.5.
 
 **Alternatives considered:** Move SKILL.md into logmind repo and auto-push to agent-skills on release — couples the two repos too tightly; agent-skills is a multi-skill collection with its own release cadence, Bundle SKILL.md content INTO logmind package and have logmind init copy it locally — wouldn't help skills.sh consumers who fetch from the canonical repo
 

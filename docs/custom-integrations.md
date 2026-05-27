@@ -159,7 +159,7 @@ To share your integration with the community:
 1. Create a package named `logmind-<framework>` (e.g., `logmind-crewai`)
 2. Import from `logmind.integrations.base` — don't copy it
 3. List `logmind` as a dependency in `pyproject.toml`
-4. Open a PR or issue on [thrillmot/logmind](https://github.com/thrillmot/logmind) to link it
+4. Open a PR or issue on [thrillmade/logmind](https://github.com/thrillmade/logmind) to link it
 
 ## Available Integrations
 

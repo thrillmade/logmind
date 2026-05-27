@@ -221,12 +221,17 @@ def test_doctor_reports_current_after_full_install(tmp_path: Path):
 
 
 def test_install_post_merge_hook_creates_executable_hook(git_repo: Path):
-    """Hook is written under .git/hooks/ and is executable."""
+    """Hook is written under .git/hooks/ and (on POSIX) executable."""
+    import os
     changed = install_post_merge_hook(git_repo)
     assert changed is True
     hook = git_repo / ".git" / "hooks" / "post-merge"
     assert hook.exists()
-    assert hook.stat().st_mode & 0o111  # any execute bit set
+    # On Windows, `chmod(0o755)` doesn't translate to Unix execute bits;
+    # git for Windows runs hooks via the shell directly without checking
+    # file mode. So we only assert the bit on POSIX systems.
+    if os.name != "nt":
+        assert hook.stat().st_mode & 0o111  # any execute bit set
     body = hook.read_text(encoding="utf-8")
     assert "logmind timeline --write" in body
     assert "logmind file-structure --write" in body

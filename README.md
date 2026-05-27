@@ -2,8 +2,8 @@
 
 [![PyPI](https://img.shields.io/pypi/v/logmind.svg)](https://pypi.org/project/logmind/)
 [![Python versions](https://img.shields.io/pypi/pyversions/logmind.svg)](https://pypi.org/project/logmind/)
-[![CI](https://github.com/thrillmot/logmind/actions/workflows/test.yml/badge.svg)](https://github.com/thrillmot/logmind/actions/workflows/test.yml)
-[![skills.sh](https://skills.sh/b/thrillmot/agent-skills)](https://www.skills.sh/thrillmot/agent-skills/logmind)
+[![CI](https://github.com/thrillmade/logmind/actions/workflows/test.yml/badge.svg)](https://github.com/thrillmade/logmind/actions/workflows/test.yml)
+[![skills.sh](https://skills.sh/b/thrillmade/agent-skills)](https://www.skills.sh/thrillmade/agent-skills/logmind)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 AI decision logging for development projects — branch-aware by default.
@@ -30,7 +30,7 @@ detail. AGENTS.md is the canonical agent-instruction file; per-tool files
 pipx install logmind
 
 # Using Homebrew (macOS/Linux)
-brew tap thrillmot/logmind
+brew tap thrillmade/logmind
 brew install logmind
 
 # Using pip
@@ -57,13 +57,13 @@ different base commits and merge-conflict on the derived file.
 ### One-command setup via reporulez
 
 If you'd rather not click through the GitHub UI, the
-[`clud-bug-logmind`](https://github.com/thrillmot/reporulez) variant of
+[`clud-bug-logmind`](https://github.com/thrillmade/reporulez) variant of
 `reporulez` ships the canonical ruleset for repos using both logmind
 and clud-bug — strict status checks pinned to logmind's check names,
 required thread resolution, squash-only, the works:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thrillmot/reporulez/main/bin/apply.sh \
+curl -fsSL https://raw.githubusercontent.com/thrillmade/reporulez/main/bin/apply.sh \
   | bash -s -- owner/your-repo clud-bug-logmind
 ```
 
@@ -145,7 +145,7 @@ Working on logmind itself? Set it up like any CLI tool:
 
 ```bash
 # Clone the repo
-git clone https://github.com/thrillmot/logmind.git
+git clone https://github.com/thrillmade/logmind.git
 cd logmind
 
 # Install globally in editable mode (like npm, git, docker)

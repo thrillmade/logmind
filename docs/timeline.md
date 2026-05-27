@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-26** — v0.3.1: pre-transfer URL update — thrillmot → thrillmade *(chore/migrate-to-thrillmade)* — [decisions-branches/chore__migrate-to-thrillmade.md](decisions-branches/chore__migrate-to-thrillmade.md)
 - **2026-05-26** — feat: v0.3.0 — custom git merge driver for derived files + post-merge hook *(feat/v0.3.0-merge-driver)* — [decisions-branches/feat__v0.3.0-merge-driver.md](decisions-branches/feat__v0.3.0-merge-driver.md)
 - **2026-05-26** — feat: v0.2.10 changelog-on-upgrade + escape backticks in self-update notice *(feat/v0.2.10-changelog-on-upgrade)* — [decisions-branches/feat__v0.2.10-changelog-on-upgrade.md](decisions-branches/feat__v0.2.10-changelog-on-upgrade.md)
 - **2026-05-26** — feat: v0.2.9 propagation-gap follow-up — visible notice in logmind log + AGENTS.md drift check in doctor *(chore/v0.2.9-action-bumps-and-vercel-skip)* — [decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md](decisions-branches/chore__v0.2.9-action-bumps-and-vercel-skip.md)
@@ -37,7 +38,7 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-05-15** — v0.1.3: kill file-structure conflicts + fix AGENTS.md drift after logmind log *(feat/v0.1.3-structural-fix)* — [decisions-branches/feat__v0.1.3-structural-fix.md](decisions-branches/feat__v0.1.3-structural-fix.md)
 - **2026-05-15** — refresh repo's own workflows to v0.1.2 + fix Windows utf-8 encoding bug *(feat/repo-workflows-v0.1.2)* — [decisions-branches/feat__repo-workflows-v0.1.2.md](decisions-branches/feat__repo-workflows-v0.1.2.md)
 - **2026-05-15** — refresh AGENTS.md to v2 marker block (new agent-skills URL) *(feat/v0.1.2-upstream-fixes)* — [decisions-branches/feat__v0.1.2-upstream-fixes.md](decisions-branches/feat__v0.1.2-upstream-fixes.md)
-- **2026-05-15** — v0.1.2: upstream bug fixes from clud-bug PR #21 + skill repo restructure to thrillmot/agent-skills collection *(feat/v0.1.2-upstream-fixes)* — [decisions-branches/feat__v0.1.2-upstream-fixes.md](decisions-branches/feat__v0.1.2-upstream-fixes.md)
+- **2026-05-15** — v0.1.2: upstream bug fixes from clud-bug PR #21 + skill repo restructure to thrillmade/agent-skills collection *(feat/v0.1.2-upstream-fixes)* — [decisions-branches/feat__v0.1.2-upstream-fixes.md](decisions-branches/feat__v0.1.2-upstream-fixes.md)
 - **2026-05-15** — site: tighten copy, drop pseudo-numbering, remove ornament side-rules *(site-copy-cleanup)* — [decisions-branches/site-copy-cleanup.md](decisions-branches/site-copy-cleanup.md)
 - **2026-05-15** — Site: gitignore screenshots; remove the accidentally-committed PNGs *(site-responsive)* — [decisions-branches/site-responsive.md](decisions-branches/site-responsive.md)
 - **2026-05-15** — Site: responsive fixes (mobile 375 + desktop wide-screen) *(site-responsive)* — [decisions-branches/site-responsive.md](decisions-branches/site-responsive.md)

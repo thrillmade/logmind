@@ -16,7 +16,7 @@ Please report security issues privately so we can ship a fix before public
 disclosure.
 
 **Preferred:** open a private security advisory via GitHub:
-<https://github.com/thrillmot/logmind/security/advisories/new>
+<https://github.com/thrillmade/logmind/security/advisories/new>
 
 **Alternate:** email **security@logmind.dev** with:
 - A description of the issue and its impact

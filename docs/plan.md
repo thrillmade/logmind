@@ -322,7 +322,7 @@ Goal: make `pip install logmind` and `brew install logmind` work publicly, meet 
 - [ ] Create GitHub Release with tag `v0.1.0`
 - [ ] Create separate `homebrew-logmind` GitHub repo (tap convention: `homebrew-<name>`)
 - [ ] Compute real SHA256 from PyPI tarball; update formula
-- [ ] Verify `brew tap thrillmot/logmind && brew install logmind && logmind --version`
+- [ ] Verify `brew tap thrillmade/logmind && brew install logmind && logmind --version`
 - [ ] Verify `logmind update` self-upgrades in another repo
 
 ### Test Progression
@@ -430,7 +430,7 @@ logmind check-decisions       # run manually or in CI
 Formula at `homebrew-tap/Formula/logmind.rb`.
 
 ```bash
-brew tap thrillmot/logmind
+brew tap thrillmade/logmind
 brew install logmind
 ```
 
