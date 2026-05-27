@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.2] - 2026-05-27
 
-### Changed — homebrew tap bump now auto-merges
-- **`.github/workflows/homebrew-bump.yml` now auto-merges the tap PR it opens.** The bump is mechanical (formula `url` + `sha256`, already verified against `pypi.org/pypi/logmind/<version>/json` upstream in the same workflow). No human judgment adds value, and `thrillmade/homebrew-logmind` has no required checks, so `gh pr merge --auto --squash --delete-branch` resolves the PR seconds after creation. End-to-end: tag push → PyPI publish → tap PR opened → tap PR auto-merged → `brew install logmind` resolves the new version, all without human touch.
+### Changed — homebrew tap bump now self-merges
+- **`.github/workflows/homebrew-bump.yml` now squash-merges the tap PR synchronously after opening it.** The bump is mechanical (formula `url` + `sha256`, already verified against `pypi.org/pypi/logmind/<version>/json` upstream in the same workflow). No human judgment adds value, and `thrillmade/homebrew-logmind` has no required checks, so `gh pr merge --squash --delete-branch` resolves the PR immediately without the repo-level `Allow auto-merge` precondition that `--auto` would otherwise require. End-to-end: tag push → PyPI publish → tap PR opened → tap PR merged → `brew install logmind` resolves the new version, all without human touch.
 - **Nothing-to-commit guard** — if the formula already points at the target version (workflow re-run on the same tag, or the formula was edited by hand first), the workflow exits 0 cleanly instead of erroring on an empty commit. The desired end-state is reached either way.
 
 ### Changed — `site/app/page.tsx` GitHub-org URL refs

@@ -171,9 +171,10 @@ jobs:
             --title "logmind ${VERSION}" \
             --body "Auto-bumped from logmind tag \`v${VERSION}\`. PyPI tarball SHA verified against pypi.org. Resource blocks not refreshed (rarely changes between patch releases — open a follow-up if needed).")
           echo "Opened: ${PR_URL}"
-          # Auto-merge: the change is mechanical (URL + SHA already
-          # verified against PyPI above), and the tap repo has no
-          # required checks, so --auto merges the PR immediately. Squash
-          # + delete-branch keeps the tap history linear.
-          gh pr merge "${PR_URL}" --auto --squash --delete-branch
-          echo "Auto-merge requested on ${PR_URL}"
+          # Merge synchronously: change is mechanical (URL + SHA already
+          # verified against PyPI above) and the tap repo has no required
+          # checks, so `gh pr merge --squash` resolves the PR immediately
+          # without the repo-level `Allow auto-merge` precondition that
+          # `--auto` requires. Same end-state, fewer moving parts.
+          gh pr merge "${PR_URL}" --squash --delete-branch
+          echo "Merged ${PR_URL}"

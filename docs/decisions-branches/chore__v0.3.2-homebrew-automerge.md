@@ -7,3 +7,12 @@
 - Site change cosmetic for logmind.dev visitors
 
 ---
+## 2026-05-27 00:48 - fix(v0.3.2): drop --auto, use synchronous gh pr merge
+
+**Reasoning:** Tap repo has no required checks, so synchronous 'gh pr merge --squash' merges immediately with no precondition. Same end-state, fewer moving parts
+
+**Implications:**
+- Removes brittleness around the allow_auto_merge setting (which can be toggled off accidentally)
+- CHANGELOG language updated from 'auto-merges' to 'self-merges' to match reality
+
+---
