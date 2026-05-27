@@ -12,7 +12,7 @@
 ---
 ## 2026-05-15 02:35 - Fix check-decisions branch-aware bug + add skills.sh badge
 
-**Reasoning:** Two changes that got separated by a branch-switch + stash mid-task: (1) src/logmind/cli.py check-decisions now accepts docs/decisions-branches/<branch>.md as a documented change (was hardcoded to docs/decisions.md, blocking the pre-commit hook on every feature branch); (2) README.md + site/app/page.tsx now show the skills.sh install-counter badge from skills.sh/b/thrillmot/logmind-skill.
+**Reasoning:** Two changes that got separated by a branch-switch + stash mid-task: (1) src/logmind/cli.py check-decisions now accepts docs/decisions-branches/<branch>.md as a documented change (was hardcoded to docs/decisions.md, blocking the pre-commit hook on every feature branch); (2) README.md + site/app/page.tsx now show the skills.sh install-counter badge from skills.sh/b/thrillmade/logmind-skill.
 
 **Implications:**
 - Pre-commit hook + CI check now work correctly in branch_aware mode (the default since v0.1)

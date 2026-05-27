@@ -7,7 +7,7 @@ we keep, and how to ship a release.
 ## Quick start
 
 ```bash
-git clone https://github.com/thrillmot/logmind
+git clone https://github.com/thrillmade/logmind
 cd logmind
 python3 -m venv venv
 source venv/bin/activate

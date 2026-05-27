@@ -1,7 +1,7 @@
 """Template regression tests for the upstream bug fixes shipped in v0.1.2.
 
 Each bug was caught by bot reviewers on a downstream `logmind init` run
-(thrillmot/clud-bug PR #21). The fixes live in the .template files shipped
+(thrillmade/clud-bug PR #21). The fixes live in the .template files shipped
 with the package; these tests assert each fix is present so a future refactor
 can't silently re-introduce the bug.
 """
@@ -76,10 +76,10 @@ def test_check_decisions_no_renames():
     "tmpl", ["AGENTS.md.template", "AGENTS.md.slim.template"]
 )
 def test_agents_md_install_url_points_at_collection(tmpl):
-    """v0.1.1 templates referenced thrillmot/logmind-skill (two-level URL);
+    """v0.1.1 templates referenced thrillmade/logmind-skill (two-level URL);
     v0.1.2 must reference the agent-skills collection layout."""
     content = _read(tmpl)
-    assert "thrillmot/agent-skills" in content
+    assert "thrillmade/agent-skills" in content
     assert "--skill logmind" in content
     # Old single-skill repo URL must not linger
-    assert "thrillmot/logmind-skill" not in content
+    assert "thrillmade/logmind-skill" not in content

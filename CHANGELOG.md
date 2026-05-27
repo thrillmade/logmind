@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-27
+
+### Changed
+- **GitHub org migration: `thrillmot` → `thrillmade`.** All `thrillmot/<repo>` URL references in shipped templates and project metadata now point at `thrillmade/<repo>`. Surfaces touched:
+  - **Shipped templates** (auto-refreshed in downstream installs on next `logmind init`):
+    - `src/logmind/templates/AGENTS.md.template` + `.slim.template` — skill install URL `npx skills add https://github.com/thrillmade/agent-skills --skill logmind`. Block-version markers bumped `v4 → v5` and `v4-slim → v5-slim` so v0.2.1+ refresh-mode rewrites the AGENTS.md block in-place across every installed repo.
+  - **Project metadata** (visible on PyPI package page):
+    - `pyproject.toml` `[project.urls]` — Homepage, Documentation, Repository, Bug Tracker, Changelog all → `thrillmade/logmind`.
+  - **Repo workflows**:
+    - `.github/workflows/notify-agent-skills.yml` — opens issues at `thrillmade/agent-skills` on tag push.
+    - `.github/workflows/homebrew-bump.yml` — bumps formula at `thrillmade/homebrew-logmind`.
+  - **Code constant**:
+    - `src/logmind/core/skill_install.py` `DEFAULT_SKILL_SOURCE` → `https://github.com/thrillmade/agent-skills`.
+  - **Docs**: README, AGENTS.md, CLAUDE.md, CONTRIBUTING.md, custom-integrations.md, ISSUE_TEMPLATE, clud-bug-collaboration SKILL.md cache, CHANGELOG historical entries, decision-log entries.
+  - **Tests**: `test_skill_install.py` + `test_templates_v0_1_2.py` assertion strings updated to expect the new org.
+
+### Migration from v0.3.0
+Run `logmind init` in each installed repo. v0.2.1+ refresh-mode detects the marker bump (v4 → v5) on AGENTS.md and rewrites the block automatically; v0.2.3+'s changelog-on-upgrade prompt prints this section inline.
+
+`thrillmot/<repo>` URLs continue to work indefinitely via GitHub's auto-redirect, so existing pinned references (e.g. `pip install "logmind==0.3.0"` workflows) don't break. The thrillmade URLs are the new canonical.
+
 ## [0.3.0] - 2026-05-26
 
 ### Added — custom git merge driver for derived files
@@ -88,9 +109,9 @@ Run `logmind init` in each logmind-installed repo to pick up the corrected templ
 ## [0.2.6] - 2026-05-26
 
 ### Added
-- **`notify-agent-skills.yml` workflow** on this repo. Mirrors the `notify-clud-bug.yml` pattern shipped on `thrillmot/agent-skills`: on every tag push (`v*`), opens an issue on `thrillmot/agent-skills` titled `logmind <tag> shipped — review skills/logmind/SKILL.md`. Closes the manual-sync gap that left the skill out of date with v0.2.3 → v0.2.5 features until someone (an agent, in this case) noticed and shipped a batch update.
+- **`notify-agent-skills.yml` workflow** on this repo. Mirrors the `notify-clud-bug.yml` pattern shipped on `thrillmade/agent-skills`: on every tag push (`v*`), opens an issue on `thrillmade/agent-skills` titled `logmind <tag> shipped — review skills/logmind/SKILL.md`. Closes the manual-sync gap that left the skill out of date with v0.2.3 → v0.2.5 features until someone (an agent, in this case) noticed and shipped a batch update.
 
-  - Same auth model as the agent-skills→clud-bug notifier: needs `AGENT_SKILLS_NOTIFY_PAT` repo secret (fine-grained PAT scoped to `thrillmot/agent-skills` with `Issues: write`). Without it, the notifier degrades to a `::warning::` and the release itself succeeds.
+  - Same auth model as the agent-skills→clud-bug notifier: needs `AGENT_SKILLS_NOTIFY_PAT` repo secret (fine-grained PAT scoped to `thrillmade/agent-skills` with `Issues: write`). Without it, the notifier degrades to a `::warning::` and the release itself succeeds.
   - Internal-only releases (refactor / CI / test additions) can close the issue as no-op; the prompt is the value.
 
 ### Migration from v0.2.5
@@ -188,7 +209,7 @@ None. v0.2.1 is a strict superset; existing installs are unaffected. To pick up 
 - `check-decisions.yml`: `[skip-logmind]` PR-title override actually wired; `THRESHOLD` env threaded; `--no-renames` on `git diff --numstat`.
 - `logmind-aggregate.yml`: PR fallback under branch protection (removed entirely in v0.2).
 - Scoped staging in `logmind log` (`--stage scoped` default).
-- Skill repo restructure to `thrillmot/agent-skills` collection layout.
+- Skill repo restructure to `thrillmade/agent-skills` collection layout.
 
 ## [0.1.1] - 2026-05-15
 
@@ -200,9 +221,9 @@ None. v0.2.1 is a strict superset; existing installs are unaffected. To pick up 
 - **skills.sh install-counter badge** on `README.md` and the `logmind.dev` landing page footer.
 
 ### Changed
-- **`.github/workflows/claude-review.yml` → `clud-bug` (`thrillmot/clud-bug`)** — replaced the hand-rolled Claude-code-action workflow with the user's first-party `clud-bug` install. Generated workflow skips Dependabot + Renovate PRs (best-practice pattern).
+- **`.github/workflows/claude-review.yml` → `clud-bug` (`thrillmade/clud-bug`)** — replaced the hand-rolled Claude-code-action workflow with the user's first-party `clud-bug` install. Generated workflow skips Dependabot + Renovate PRs (best-practice pattern).
 - **`AGENTS.md` template is now adaptive**: ships the slim variant (defers to the `logmind` skill) when skills.sh is on PATH; ships the full variant (procedure inline) when it isn't.
-- **`reporulez` (`thrillmot/reporulez`, `external` variant) applied to all 3 repos** (logmind, homebrew-logmind, logmind-skill) — standardised ruleset replacing the manual `gh api branch-protection` rule from v0.1.0. Squash-only merges, linear history, force-push + delete blocked, thread resolution required.
+- **`reporulez` (`thrillmade/reporulez`, `external` variant) applied to all 3 repos** (logmind, homebrew-logmind, logmind-skill) — standardised ruleset replacing the manual `gh api branch-protection` rule from v0.1.0. Squash-only merges, linear history, force-push + delete blocked, thread resolution required.
 - **`check-doc-links.yml` runs unconditionally** (dropped the `paths: ["**/*.md"]` filter). Required-status-check interacts badly with path-filtered workflows on the reporulez ruleset; ~15s unconditional cost is acceptable.
 
 ### Fixed
@@ -220,7 +241,7 @@ None. v0.2.1 is a strict superset; existing installs are unaffected. To pick up 
 - **AGENTS.md as canonical agent-instructions hub**: per-tool files (CLAUDE.md, .cursorrules, .windsurfrules, ...) are now 2-line stubs pointing at AGENTS.md. New `logmind agents migrate` consolidates legacy per-agent content into AGENTS.md and replaces files with stubs. JSON agents (cody, zed) unchanged.
 - **Tree generation hardening**: `generate_tree()` and the Python fallback now augment `DEFAULT_IGNORES` with the project's `.gitignore` basenames; fallback is unbounded by default with stable dirs-first ordering. New `logmind tree` CLI subcommand for on-demand regeneration. `update_file_structure()` no longer depends on caller cwd.
 - **Managed `.gitignore` block**: `logmind init` appends a marker-bracketed block (`.logmind/cache/`, `.logmind/.lock`); idempotent and preserves manual edits inside the markers.
-- **logmind agent skill (skills.sh)**: new `skill/SKILL.md` content for the standalone `thrillmot/logmind-skill` repo. `logmind init` offers to install it globally via the user's `skills` CLI (or `npx`). New `--skill-install / --no-skill-install` flag.
+- **logmind agent skill (skills.sh)**: new `skill/SKILL.md` content for the standalone `thrillmade/logmind-skill` repo. `logmind init` offers to install it globally via the user's `skills` CLI (or `npx`). New `--skill-install / --no-skill-install` flag.
 - **Open-source readiness**: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue + PR templates, `.github/dependabot.yml`, `.pre-commit-config.yaml`, `.github/workflows/test.yml` (Python 3.8/3.10/3.12/3.13 on Ubuntu + 3.12 on macOS/Windows), `.github/workflows/publish.yml` (tag-driven PyPI publish via OIDC + GitHub Release), README badges, `[tool.ruff]` + `mypy` config in `pyproject.toml`.
 - Test suite expanded to 446 tests (all passing).
 
@@ -262,4 +283,4 @@ None. v0.2.1 is a strict superset; existing installs are unaffected. To pick up 
 - **Decorators**: Automatic decision logging via function decorators
 - **AI-Friendly**: Designed for AI agents (Claude, GPT, Copilot) with clear context
 
-[0.1.0]: https://github.com/thrillmot/logmind/releases/tag/v0.1.0
+[0.1.0]: https://github.com/thrillmade/logmind/releases/tag/v0.1.0

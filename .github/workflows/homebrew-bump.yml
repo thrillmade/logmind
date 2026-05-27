@@ -1,12 +1,12 @@
 name: homebrew tap bump
 
 # Fires after a PyPI release tag is pushed and opens a bump PR on
-# thrillmot/homebrew-logmind. Uses dawidd6/action-homebrew-bump-formula,
+# thrillmade/homebrew-logmind. Uses dawidd6/action-homebrew-bump-formula,
 # which knows how to compute the new tarball SHA from the URL and edit the
 # formula in place.
 #
 # Requires a repo secret HOMEBREW_TAP_PAT — a fine-grained PAT scoped to
-# thrillmot/homebrew-logmind with these permissions:
+# thrillmade/homebrew-logmind with these permissions:
 #   - Contents: Read and write
 #   - Pull requests: Read and write
 # (GITHUB_TOKEN from this repo cannot write to a different repo, so a PAT
@@ -100,7 +100,7 @@ jobs:
           # `git push` against the tap remote works without prompting.
           gh auth setup-git
 
-          gh repo clone thrillmot/homebrew-logmind tap -- --quiet
+          gh repo clone thrillmade/homebrew-logmind tap -- --quiet
           cd tap
 
           BRANCH="bump-${VERSION}"
@@ -157,7 +157,7 @@ jobs:
           git push -u origin "${BRANCH}"
 
           gh pr create \
-            --repo thrillmot/homebrew-logmind \
+            --repo thrillmade/homebrew-logmind \
             --base main \
             --head "${BRANCH}" \
             --title "logmind ${VERSION}" \
