@@ -45,7 +45,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.3.4", prog_name="logmind")
+@click.version_option(version="0.4.0", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass

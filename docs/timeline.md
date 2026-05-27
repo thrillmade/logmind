@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-27** — feat(v0.4.0): notify-agent-skills.yml opens a Claude-proposed SKILL.md PR (not an issue) *(feat/v0.4.0-notify-pr-shape)* — [decisions-branches/feat__v0.4.0-notify-pr-shape.md](decisions-branches/feat__v0.4.0-notify-pr-shape.md)
 - **2026-05-27** — chore: regen docs/file-structure.md (drop legacy Last updated line) *(chore/regen-derived-docs)* — [decisions-branches/chore__regen-derived-docs.md](decisions-branches/chore__regen-derived-docs.md)
 - **2026-05-27** — chore: add test aggregator job (reports under literal 'test' context) *(chore/add-test-aggregator-job)* — [decisions-branches/chore__add-test-aggregator-job.md](decisions-branches/chore__add-test-aggregator-job.md)
 - **2026-05-27** — fix(vercel.json): guard ignoreCommand against bad VERCEL_GIT_PREVIOUS_SHA *(fix/vercel-ignore-bad-sha)* — [decisions-branches/fix__vercel-ignore-bad-sha.md](decisions-branches/fix__vercel-ignore-bad-sha.md)
