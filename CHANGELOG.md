@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-27
+
+### Changed — homebrew tap bump now auto-merges
+- **`.github/workflows/homebrew-bump.yml` now auto-merges the tap PR it opens.** The bump is mechanical (formula `url` + `sha256`, already verified against `pypi.org/pypi/logmind/<version>/json` upstream in the same workflow). No human judgment adds value, and `thrillmade/homebrew-logmind` has no required checks, so `gh pr merge --auto --squash --delete-branch` resolves the PR seconds after creation. End-to-end: tag push → PyPI publish → tap PR opened → tap PR auto-merged → `brew install logmind` resolves the new version, all without human touch.
+- **Nothing-to-commit guard** — if the formula already points at the target version (workflow re-run on the same tag, or the formula was edited by hand first), the workflow exits 0 cleanly instead of erroring on an empty commit. The desired end-state is reached either way.
+
+### Changed — `site/app/page.tsx` GitHub-org URL refs
+- **Marketing site GitHub-org links now point at `thrillmade`.** The v0.3.1 bulk sed sweep used `--include='*.md' '*.yml' '*.json' '*.template' '*.py' '*.js' '*.toml'` and missed `.tsx`, leaving 12 GitHub-org refs in `site/app/page.tsx` (brew tap copy, skill install copy, github navlinks, CHANGELOG / CONTRIBUTING / issues / security-policy links, skills.sh agent-skills badge). Replaced. Personal-brand `thrillmot.com` refs (lines 306–319) intentionally preserved — those point at the human author's site and don't migrate with the org.
+
+### Migration from v0.3.1
+None required. The homebrew-bump change takes effect on the next tag push (v0.3.2 itself dogfoods it). The marketing site change is cosmetic for the logmind.dev site.
+
 ## [0.3.1] - 2026-05-27
 
 ### Changed

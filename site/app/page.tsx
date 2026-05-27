@@ -1,8 +1,8 @@
 import { CopyButton } from "./copy-button";
 
 const PIP = "pip install logmind";
-const BREW = "brew tap thrillmot/logmind && brew install logmind";
-const SKILL = "npx skills add -g thrillmot/logmind-skill";
+const BREW = "brew tap thrillmade/logmind && brew install logmind";
+const SKILL = "npx skills add -g thrillmade/logmind-skill";
 
 const QUICKSTART = `$ logmind init
 $ git checkout -b feat/auth
@@ -62,9 +62,9 @@ export default function Home() {
             logmind<span className="text-accent">.</span>
           </a>
           <nav className="flex items-center gap-6 sm:gap-8">
-            <NavLink href="https://github.com/thrillmot/logmind">github</NavLink>
+            <NavLink href="https://github.com/thrillmade/logmind">github</NavLink>
             <NavLink href="https://pypi.org/project/logmind/">pypi</NavLink>
-            <NavLink href="https://skills.sh/thrillmot/logmind-skill">skill</NavLink>
+            <NavLink href="https://skills.sh/thrillmade/logmind-skill">skill</NavLink>
           </nav>
         </div>
       </header>
@@ -117,7 +117,7 @@ export default function Home() {
 
           <div className="rise mt-12 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 text-sm" style={{ animationDelay: "0.32s" }}>
             <a
-              href="https://github.com/thrillmot/logmind"
+              href="https://github.com/thrillmade/logmind"
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono uppercase tracking-[0.18em] px-5 py-3 bg-paper text-background hover:bg-accent hover:text-paper transition-colors text-center whitespace-nowrap"
@@ -324,14 +324,14 @@ export default function Home() {
           </div>
           <div className="flex flex-col sm:items-end gap-4">
             <a
-              href="https://www.skills.sh/thrillmot/agent-skills"
+              href="https://www.skills.sh/thrillmade/agent-skills"
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="thrillmot/agent-skills collection on skills.sh"
+              aria-label="thrillmade/agent-skills collection on skills.sh"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="https://skills.sh/b/thrillmot/agent-skills"
+                src="https://skills.sh/b/thrillmade/agent-skills"
                 alt="skills.sh skill count"
                 height={20}
               />
@@ -343,19 +343,19 @@ export default function Home() {
               boundaries instead of overflowing the viewport.
             */}
             <nav className="text-sm flex flex-wrap items-center gap-y-1 sm:block sm:whitespace-nowrap sm:text-right">
-              <NavLink href="https://github.com/thrillmot/logmind/blob/main/CHANGELOG.md">
+              <NavLink href="https://github.com/thrillmade/logmind/blob/main/CHANGELOG.md">
                 changelog
               </NavLink>
               <span aria-hidden className="mx-2 text-foreground/30">·</span>
-              <NavLink href="https://github.com/thrillmot/logmind/blob/main/CONTRIBUTING.md">
+              <NavLink href="https://github.com/thrillmade/logmind/blob/main/CONTRIBUTING.md">
                 contributing
               </NavLink>
               <span aria-hidden className="mx-2 text-foreground/30">·</span>
-              <NavLink href="https://github.com/thrillmot/logmind/issues">
+              <NavLink href="https://github.com/thrillmade/logmind/issues">
                 issues
               </NavLink>
               <span aria-hidden className="mx-2 text-foreground/30">·</span>
-              <NavLink href="https://github.com/thrillmot/logmind/security/policy">
+              <NavLink href="https://github.com/thrillmade/logmind/security/policy">
                 security
               </NavLink>
             </nav>
