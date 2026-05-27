@@ -6,7 +6,6 @@ from __future__ import annotations
 import fnmatch
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -279,12 +278,16 @@ def generate_file_structure(repo_root: Path) -> str:
     direct the output somewhere other than the canonical
     ``<repo_root>/docs/file-structure.md`` — e.g. v0.3.0's custom merge
     driver, which receives the target path from git as ``%A``.
+
+    Output is deterministic for a given tree: identical trees render to
+    byte-identical files. v0.3.3 dropped the prior wall-clock
+    ``Last updated:`` line, which caused the post-merge hook to re-stage
+    the file on every ``git pull`` even when the tree was unchanged.
     """
     tree_output = generate_tree(repo_root)
     template_path = Path(__file__).parent.parent / "templates" / "file-structure.md.template"
     template = template_path.read_text(encoding="utf-8")
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return template.format(timestamp=timestamp, tree_output=tree_output)
+    return template.format(tree_output=tree_output)
 
 
 def write_file_structure(target_path: Path, repo_root: Optional[Path] = None) -> bool:
