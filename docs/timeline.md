@@ -15,6 +15,8 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-27** — fix(v0.3.2): drop --auto, use synchronous gh pr merge *(chore/v0.3.2-homebrew-automerge)* — [decisions-branches/chore__v0.3.2-homebrew-automerge.md](decisions-branches/chore__v0.3.2-homebrew-automerge.md)
+- **2026-05-27** — v0.3.2: homebrew-bump auto-merge + nothing-to-commit guard + site/app/page.tsx URL fix *(chore/v0.3.2-homebrew-automerge)* — [decisions-branches/chore__v0.3.2-homebrew-automerge.md](decisions-branches/chore__v0.3.2-homebrew-automerge.md)
 - **2026-05-26** — v0.3.1: pre-transfer URL update — thrillmot → thrillmade *(chore/migrate-to-thrillmade)* — [decisions-branches/chore__migrate-to-thrillmade.md](decisions-branches/chore__migrate-to-thrillmade.md)
 - **2026-05-26** — feat: v0.3.0 — custom git merge driver for derived files + post-merge hook *(feat/v0.3.0-merge-driver)* — [decisions-branches/feat__v0.3.0-merge-driver.md](decisions-branches/feat__v0.3.0-merge-driver.md)
 - **2026-05-26** — feat: v0.2.10 changelog-on-upgrade + escape backticks in self-update notice *(feat/v0.2.10-changelog-on-upgrade)* — [decisions-branches/feat__v0.2.10-changelog-on-upgrade.md](decisions-branches/feat__v0.2.10-changelog-on-upgrade.md)
