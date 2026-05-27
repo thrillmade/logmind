@@ -145,7 +145,7 @@ def test_update_file_structure_writes_freshly(tmp_path):
 
     content = (docs / "file-structure.md").read_text(encoding="utf-8")
     assert "marker.txt" in content
-    assert "Last updated:" in content
+    assert "# File Structure" in content
 
 
 def test_update_file_structure_updates_on_repeat(tmp_path):
@@ -187,4 +187,4 @@ def test_log_updates_file_structure(tmp_path, monkeypatch):
 
     fs_content = (docs / "file-structure.md").read_text(encoding="utf-8")
     assert "interesting_new_file.py" in fs_content
-    assert "Last updated:" in fs_content
+    assert "# File Structure" in fs_content

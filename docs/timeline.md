@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-27** — fix(v0.3.3): drop wall-clock timestamp from docs/file-structure.md *(fix/v0.3.3-file-structure-determinism)* — [decisions-branches/fix__v0.3.3-file-structure-determinism.md](decisions-branches/fix__v0.3.3-file-structure-determinism.md)
 - **2026-05-27** — fix(v0.3.2): drop --auto, use synchronous gh pr merge *(chore/v0.3.2-homebrew-automerge)* — [decisions-branches/chore__v0.3.2-homebrew-automerge.md](decisions-branches/chore__v0.3.2-homebrew-automerge.md)
 - **2026-05-27** — v0.3.2: homebrew-bump auto-merge + nothing-to-commit guard + site/app/page.tsx URL fix *(chore/v0.3.2-homebrew-automerge)* — [decisions-branches/chore__v0.3.2-homebrew-automerge.md](decisions-branches/chore__v0.3.2-homebrew-automerge.md)
 - **2026-05-26** — v0.3.1: pre-transfer URL update — thrillmot → thrillmade *(chore/migrate-to-thrillmade)* — [decisions-branches/chore__migrate-to-thrillmade.md](decisions-branches/chore__migrate-to-thrillmade.md)

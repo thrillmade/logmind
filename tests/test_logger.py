@@ -167,7 +167,7 @@ def test_log_updates_file_structure(docs_dir):
     assert file_structure.exists()
 
     content = file_structure.read_text(encoding="utf-8")
-    assert "Last updated:" in content
+    assert "# File Structure" in content
 
 
 def test_log_without_docs_dir_raises_error(temp_dir):

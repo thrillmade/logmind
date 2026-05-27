@@ -164,11 +164,6 @@ def test_file_structure_write_creates_output_when_missing(git_repo: Path):
         assert target.exists()
         assert "Regenerated" in result.output
 
-    # NB: file-structure.md content includes a timestamp, so we don't
-    # assert byte-stable idempotency — `write_file_structure` returns
-    # True every call because the timestamp moves. That's fine for the
-    # merge-driver path: git already detected a conflict and accepts
-    # whatever the driver writes.
 
 
 # ---------------------------------------------------------------------------

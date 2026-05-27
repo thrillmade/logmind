@@ -69,8 +69,42 @@ def test_update_file_structure(temp_dir):
 
     content = file_structure.read_text(encoding="utf-8")
     assert "# File Structure" in content
-    assert "Last updated:" in content
     assert "```" in content
+    assert "test.txt" in content
+
+
+def test_update_file_structure_is_deterministic(temp_dir):
+    """Two regens of a *fully-realized* tree (file-structure.md already
+    present) produce byte-identical output. This is the v0.3.3 fix: the
+    prior wall-clock ``Last updated:`` line caused the post-merge hook
+    to re-stage docs/file-structure.md on every ``git pull`` even when
+    nothing in the tree had changed since the regen that was just merged.
+
+    Note: we run an initial regen first to materialize file-structure.md
+    in the tree (mirroring the post-merge state where CI has already
+    committed the file). The byte-stability assertion is on the second
+    and third regens, both of which see the same fully-realized tree.
+    """
+    docs_dir = temp_dir / "docs"
+    docs_dir.mkdir()
+    (temp_dir / "test.txt").write_text("test", encoding="utf-8")
+
+    # First regen: materializes docs/file-structure.md in the tree.
+    update_file_structure(docs_dir)
+
+    # Subsequent regens see the same tree (now including the just-written
+    # file-structure.md) and must produce byte-identical output.
+    update_file_structure(docs_dir)
+    first = (docs_dir / "file-structure.md").read_bytes()
+
+    update_file_structure(docs_dir)
+    second = (docs_dir / "file-structure.md").read_bytes()
+
+    assert first == second, (
+        "file-structure.md is not byte-stable across regens of an "
+        "unchanged tree; the post-merge hook will re-stage it on every "
+        "git pull"
+    )
 
 
 def test_update_file_structure_creates_docs_dir(temp_dir):
