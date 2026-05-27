@@ -193,7 +193,7 @@ def test_shipped_template_markers_match_expected():
     future marker change is intentional + accompanied by a test
     update."""
     expected = {
-        "regen-timeline.yml.template": "v2",
+        "regen-timeline.yml.template": "v3",  # v0.3.4: auto-fix-with-PAT + fail-fast fallback
         "check-decisions.yml.template": "v2",
         "check-doc-links.yml.template": "v3",
         "logmind-self-update.yml.template": "v4",

@@ -269,12 +269,15 @@ def test_aggregator_template_no_longer_shipped():
     assert (template_root / "regen-timeline.yml.template").exists()
 
 
-def test_regen_timeline_template_is_fail_fast_not_autocommit():
-    """v0.2 final design: the workflow VERIFIES timeline.md is current and
-    fails red if not — it does NOT auto-commit. Auto-committing via
-    GITHUB_TOKEN doesn't trigger downstream workflows (GitHub anti-recursion
-    safety), which leaves required status checks stuck on "Expected" forever.
-    The fail-fast pattern (same as Prettier/ESLint) avoids the entire issue."""
+def test_regen_timeline_template_supports_auto_fix_with_failfast_fallback():
+    """v0.3.4 design: the workflow auto-fixes when LOGMIND_AUTO_REGEN_PAT is
+    configured (pushes a regenerated derived-doc commit back to the PR branch
+    so downstream CI re-runs naturally), and falls back to v0.2's fail-fast
+    behavior when no PAT is configured. The fail-fast fallback exists because
+    GITHUB_TOKEN-pushed commits don't re-trigger required status checks,
+    which would leave the merge gate stuck on "Expected" forever — so the
+    PAT path is the documented opt-in for the happy-path UX. Forked PRs
+    always run in fail-fast mode (can't push to a fork's head ref)."""
     template = (
         Path(__file__).parent.parent
         / "src"
@@ -283,12 +286,20 @@ def test_regen_timeline_template_is_fail_fast_not_autocommit():
         / "github"
         / "regen-timeline.yml.template"
     ).read_text(encoding="utf-8")
-    # Must NOT depend on LOGMIND_BOT_PAT
+    # Auto-fix path: opt-in via LOGMIND_AUTO_REGEN_PAT. The legacy
+    # LOGMIND_BOT_PAT name from the v0.1.x aggregator is NOT reused.
     assert "secrets.LOGMIND_BOT_PAT" not in template
-    # Must NOT push a commit back to the branch (the failure mode we're
-    # avoiding). The previous auto-commit design used `git push` here.
-    assert "git push" not in template
-    # Must use `::error::` to surface the failure clearly
-    assert "::error::" in template
-    # Must guide the user to the fix command
+    assert "secrets.LOGMIND_AUTO_REGEN_PAT" in template
+    # The push back to the PR branch IS shipped now (auto-fix mode).
+    assert "git push origin" in template
+    # But the push must be gated — fork PRs and no-PAT cases fail fast,
+    # never auto-commit via GITHUB_TOKEN. The gate is the explicit empty
+    # PAT check.
+    assert '[ -z "${PAT:-}" ]' in template
+    # Fail-fast fallback must still surface a clear ::error:: and guide
+    # the user to the regenerate-locally command.
+    assert "::error" in template
     assert "logmind timeline --write docs/timeline.md" in template
+    # Fork PRs always fall back to fail-fast (the head repo != base repo
+    # branch in the env block proves the workflow is checking).
+    assert "HEAD_REPO" in template and "BASE_REPO" in template
