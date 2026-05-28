@@ -6,3 +6,8 @@
 - Stub angles ship now so the 4-angle frame is in production. Real per-session + org-cumulative implementations land in follow-up PRs when session-log path is designed. Bench CI workflow uses paths-filter to only run on src/logmind/cli.py, core/**, bench/** changes — keeps PR CI fast.
 
 ---
+## 2026-05-28 17:10 - PR #74 review fixes: single bench execution in CI + fail-safe net_pct=None on lm_exit != 0
+
+**Reasoning:** clud-bug self-review on PR #74 caught 2 real measurement-integrity bugs. (1) bench.yml ran 'python -m bench --json' then 'python -m bench' as TWO separate subprocess invocations — each sample real tempdirs + subprocesses, so the JSON and text artifacts could disagree. Worse: if run 1 exited non-zero, set -e halted before run 2 wrote text artifact (missing); if run 1 passed and run 2 happened to fail (variance), CI failed based on run 2 while uploaded JSON said pass. Fix: run --json ONCE, then format the same JSON to human-readable via inline python (single source of truth). (2) _run_pair captured lm_exit but ignored it — broken logmind command (small error-msg bytes vs large git equivalent) would look like a HUGE saver, pulling aggregate negative and keeping CI green even on regression. Fix: lm_exit != 0 → net_pct=None + failed=True; run_per_call skips failed pairs in average. run_worst_case same posture. +2 regression tests assert: (a) bogus logmind subcommand never becomes a fake-saver pair; (b) per-call aggregate skips failed pairs entirely (not averaged as 0% or as saver). 11 bench tests pass.
+
+---

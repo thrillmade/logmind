@@ -45,12 +45,38 @@ jobs:
       - name: Run Q7-logmind bench
         id: bench
         run: |
+          # PR #74 fix: run bench ONCE, produce both JSON and text from
+          # the same execution. Previously this step ran `python -m bench`
+          # twice — each invocation samples real subprocesses + tempdirs,
+          # so the two outputs disagreed and the CI gate vs uploaded
+          # artifact were potentially inconsistent.
           python -m bench --json > bench-current.json
-          # Also produce human-readable for the job log + PR comment.
-          python -m bench > bench-current.txt
-          cat bench-current.txt
-        # If `python -m bench` exits non-zero, that's a Q7 violation.
-        # The step exit code propagates and fails the job.
+          # Render the same JSON to human-readable using a tiny inline
+          # consumer so the text artifact agrees with the JSON.
+          python -c "
+          import json, sys
+          data = json.load(open('bench-current.json'))
+          lines = []
+          spender = any(
+              isinstance(r, dict) and (r.get('net_pct') or 0) > 0
+              for r in data.values()
+          )
+          lines.append('FAIL: Q7-logmind net-spender detected' if spender else 'ok: 4-angle Q7-logmind compliance')
+          for name, r in data.items():
+              if not isinstance(r, dict): continue
+              pct = r.get('net_pct')
+              label = r.get('label', name)
+              if pct is None:
+                  lines.append(f'  {name:<14} (stub — not yet implemented)')
+                  continue
+              verdict = '✅ saver' if pct < 0 else '❌ spender'
+              sign = '' if pct < 0 else '+'
+              lines.append(f'  {name:<14} {sign}{pct:.0f}% {label:<28} {verdict}')
+          out = '\n'.join(lines)
+          print(out)
+          open('bench-current.txt', 'w').write(out + '\n')
+          sys.exit(1 if spender else 0)
+          "
 
       - name: Upload bench artifact
         if: always()

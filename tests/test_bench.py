@@ -122,6 +122,65 @@ def test_main_runs_single_angle():
     assert "worst-case" not in proc.stdout
 
 
+def test_failed_logmind_command_does_not_become_a_fake_saver(monkeypatch):
+    """PR #74 regression: if a logmind invocation exits non-zero, the
+    pair MUST NOT be folded into the aggregate as a saver. A broken
+    command might emit just an error message (e.g. 80 bytes) against a
+    much larger git equivalent — looking like a huge saver and hiding
+    the regression."""
+    from bench.per_call import _run_pair, CommandPair, _setup_logmind_repo, _setup_plain_git
+
+    # Construct a pair whose "logmind command" is guaranteed to fail
+    # (bogus subcommand). The git side stays normal.
+    broken_pair = CommandPair(
+        name="bogus",
+        logmind_setup=_setup_logmind_repo,
+        logmind_cmd=["logmind", "this-subcommand-does-not-exist"],
+        git_setup=_setup_plain_git,
+        git_cmds=[["git", "log", "--oneline"]],
+    )
+    result = _run_pair(broken_pair)
+    assert result["failed"] is True, "failed logmind exit must be flagged"
+    assert result["net_pct"] is None, (
+        "failed pair must have net_pct=None — NEVER count a broken "
+        "command as a saver in the aggregate"
+    )
+    assert result["logmind_exit"] != 0
+
+
+def test_per_call_aggregate_skips_failed_pairs(monkeypatch):
+    """If one pair fails and the other succeeds, run_per_call returns
+    the average of the successful pair(s) only — failed pairs are
+    surfaced in `pairs` but excluded from the average."""
+    from bench import per_call
+
+    real_run = per_call._run_pair
+
+    call_count = {"n": 0}
+    def fake_run_pair(pair):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First pair: pretend it failed.
+            return {"name": "failed_pair", "net_pct": None, "failed": True,
+                    "logmind_bytes": 80, "git_bytes": 500,
+                    "logmind_exit": 1, "git_exit": 0}
+        # Second pair: real saver.
+        return {"name": "good_pair", "net_pct": -30.0, "failed": False,
+                "logmind_bytes": 70, "git_bytes": 100,
+                "logmind_exit": 0, "git_exit": 0}
+
+    monkeypatch.setattr(per_call, "_run_pair", fake_run_pair)
+    monkeypatch.setattr(per_call, "_pairs", lambda: ["dummy1", "dummy2"])
+
+    result = per_call.run_per_call()
+    # Average of successful pairs only = -30%, NOT (-30 + None)/2 nor
+    # (-30 + 0)/2 nor an averaging that includes the broken pair.
+    assert result.net_pct == -30.0, (
+        "aggregate must average only successful pairs — never silently "
+        "include a broken pair as 0% or as a saver"
+    )
+
+
 def test_baseline_diff_detects_regression(tmp_path):
     """Pass a previous --json run via --baseline; bench reports the
     per-angle diff. Used to detect regressions in CI."""

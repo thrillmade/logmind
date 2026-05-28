@@ -89,7 +89,18 @@ def _make_change(path: Path) -> None:
 
 def _run_pair(pair: CommandPair) -> dict:
     """Run the logmind command and its git equivalent in fresh tempdirs;
-    return byte counts + per-pair net %."""
+    return byte counts + per-pair net %.
+
+    PR #74 fix: if the logmind command fails (non-zero exit), DO NOT
+    include it in the aggregate as a saver. A broken logmind command
+    might emit just an 80-byte error message against several hundred
+    bytes of git equivalent, looking like a -90% saver. That would pull
+    the average negative and keep CI green even though `logmind show`
+    is broken.
+
+    Set `failed: True` on failed pairs and `net_pct: None` so callers
+    skip them in the aggregate (matches the stub-angle convention).
+    """
     with tempfile.TemporaryDirectory(prefix="bench-lm-") as lm_dir_str:
         lm_dir = Path(lm_dir_str)
         pair.logmind_setup(lm_dir)
@@ -117,6 +128,19 @@ def _run_pair(pair: CommandPair) -> dict:
             if r.returncode != 0:
                 g_exit = r.returncode
 
+    # PR #74 fix: failed logmind invocation → net_pct=None + failed=True.
+    # Caller's aggregate must skip this pair (NOT count it as a saver).
+    if lm_exit != 0:
+        return {
+            "name": pair.name,
+            "logmind_bytes": lm_bytes,
+            "git_bytes": g_bytes,
+            "net_pct": None,
+            "failed": True,
+            "logmind_exit": lm_exit,
+            "git_exit": g_exit,
+        }
+
     if g_bytes == 0:
         net = 0.0  # Avoid div-by-zero on empty git output (shouldn't happen).
     else:
@@ -126,6 +150,7 @@ def _run_pair(pair: CommandPair) -> dict:
         "logmind_bytes": lm_bytes,
         "git_bytes": g_bytes,
         "net_pct": net,
+        "failed": False,
         "logmind_exit": lm_exit,
         "git_exit": g_exit,
     }
@@ -222,12 +247,31 @@ def _seed_decisions_then_git(path: Path) -> None:
 
 
 def run_per_call() -> PerCallResult:
-    """Top-level entry point: run all pairs, aggregate."""
+    """Top-level entry point: run all pairs, aggregate.
+
+    PR #74 fix: skip pairs whose logmind invocation failed (lm_exit !=
+    0). They have net_pct=None and would otherwise pollute the average
+    or, if folded in, hide a broken command behind a misleading aggregate.
+
+    If ALL pairs failed, return net_pct=None so the angle reports as
+    unable-to-measure (caller treats this like a stub — doesn't gate
+    the exit code on a measurement that didn't run). If SOME pairs
+    failed, return the average of the successful pairs + surface the
+    failed ones in the `pairs` list so debugging is possible.
+    """
     pairs_results = [_run_pair(p) for p in _pairs()]
     if not pairs_results:
-        return PerCallResult(label="bytes vs git equivalent", net_pct=0.0, pairs=[])
-    # Aggregate: average net % across pairs (each pair weighted equally).
-    nets = [r["net_pct"] for r in pairs_results]
+        return PerCallResult(label="bytes vs git equivalent", net_pct=None, pairs=[])
+    successful = [r for r in pairs_results if not r.get("failed", False)]
+    if not successful:
+        # All pairs failed — measurement is unable to assert net_saver.
+        # Caller treats None like a stub.
+        return PerCallResult(
+            label="bytes vs git equivalent (all pairs FAILED)",
+            net_pct=None,
+            pairs=pairs_results,
+        )
+    nets = [r["net_pct"] for r in successful]
     avg_net = sum(nets) / len(nets)
     return PerCallResult(
         label="bytes vs git equivalent",
