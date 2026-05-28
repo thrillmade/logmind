@@ -243,10 +243,28 @@ def test_render_markdown_brief_shows_all_when_2_or_fewer(tmp_path):
     docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
     rendered = render_markdown(collect_entries(docs), brief=True)
     # 2025-01 has exactly 1 entry → no count suffix, no elision line.
-    assert "## 2025-01\n" in rendered or "## 2025-01 " not in rendered.replace(
-        "## 2025-01 (", ""
-    )
+    assert "## 2025-01\n" in rendered
+    # Negative lockdown: a regression that wrongly appends a count to
+    # 1-entry months would emit "## 2025-01 (1 decision...)" — guard
+    # explicitly so the positive assertion above isn't undermined.
+    assert "## 2025-01 (" not in rendered
     assert "lone ancient decision" in rendered
+
+
+def test_render_markdown_brief_n3_uses_singular_decision(tmp_path):
+    """A month with exactly 3 entries renders an elision line for n-2 = 1
+    entry. The pluralization branch in timeline._render_entry_line must
+    emit `1 more decision` (singular), not `1 more decisions`.
+
+    This was uncovered until clud-bug PR #72 flagged it — adding here
+    to lock down the singular case alongside the existing plural case."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=3)
+    rendered = render_markdown(collect_entries(docs), brief=True)
+    assert "*... 1 more decision ...*" in rendered, (
+        f"n=3 month must use singular 'decision'; got: {rendered!r}"
+    )
+    # Plural form must NOT appear for the n-2=1 case.
+    assert "1 more decisions" not in rendered
 
 
 def test_render_markdown_full_matches_legacy_format(tmp_path):

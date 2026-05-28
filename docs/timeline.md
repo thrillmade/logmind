@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (55 decisions)
+## 2026-05 (56 decisions)
 
-- **2026-05-28** — v0.5.4: docs/timeline.md ships brief format on disk (Phase 0.B.4) *(feat/0.B.4-timeline-brief-format)* — [decisions-branches/feat__0.B.4-timeline-brief-format.md](decisions-branches/feat__0.B.4-timeline-brief-format.md)
-- *... 53 more decisions ...*
+- **2026-05-28** — PR #72 fix: tighten brief-1-entry assertion + add singular-form test for n=3 elision *(feat/0.B.4-timeline-brief-format)* — [decisions-branches/feat__0.B.4-timeline-brief-format.md](decisions-branches/feat__0.B.4-timeline-brief-format.md)
+- *... 54 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)

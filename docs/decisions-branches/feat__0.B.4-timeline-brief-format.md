@@ -6,3 +6,8 @@
 - Future timeline-readers (clud-bug review prompt, agent boots) ingest ~70% fewer bytes from this file in every consuming repo. Legacy full format remains opt-in via logmind timeline --full.
 
 ---
+## 2026-05-28 09:01 - PR #72 fix: tighten brief-1-entry assertion + add singular-form test for n=3 elision
+
+**Reasoning:** clud-bug review caught: the 'or' clause on the 1-entry assertion made the test permissive enough to pass the very regression it guarded against (substring shadowing via .replace). Fix: drop the 'or' clause, add negative lockdown assert that '## 2025-01 (' never appears. Separately: the n=3 case (elision = '1 more decision' singular) was uncovered — added test_render_markdown_brief_n3_uses_singular_decision to lock down that branch. Pre-existing pluralization fix in timeline.py was correct; just needed test coverage.
+
+---
