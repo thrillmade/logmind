@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-27** — Phase A → B propagation: clud-bug v0.5.6 → v0.6.7 in logmind *(chore/clud-bug-v0.5.6-to-v0.6.7)* — [decisions-branches/chore__clud-bug-v0.5.6-to-v0.6.7.md](decisions-branches/chore__clud-bug-v0.5.6-to-v0.6.7.md)
 - **2026-05-27** — feat(v0.4.0): notify-agent-skills.yml opens a Claude-proposed SKILL.md PR (not an issue) *(feat/v0.4.0-notify-pr-shape)* — [decisions-branches/feat__v0.4.0-notify-pr-shape.md](decisions-branches/feat__v0.4.0-notify-pr-shape.md)
 - **2026-05-27** — chore: regen docs/file-structure.md (drop legacy Last updated line) *(chore/regen-derived-docs)* — [decisions-branches/chore__regen-derived-docs.md](decisions-branches/chore__regen-derived-docs.md)
 - **2026-05-27** — chore: add test aggregator job (reports under literal 'test' context) *(chore/add-test-aggregator-job)* — [decisions-branches/chore__add-test-aggregator-job.md](decisions-branches/chore__add-test-aggregator-job.md)
