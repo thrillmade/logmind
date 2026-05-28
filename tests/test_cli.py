@@ -1176,3 +1176,61 @@ def test_agents_remove_without_force_prompts(temp_dir):
         assert result.exit_code == 0
         assert "Remove" in result.output
         assert "Cancelled" in result.output
+
+
+# --- 0.B.3 (v0.5.1): --quiet / LOGMIND_QUIET=1 token-frugal mode ---
+
+def test_quiet_flag_advertised_in_help():
+    """Help text must mention --quiet/-q + LOGMIND_QUIET=1 so agents
+    discover the env-var route at session boot."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["--help"])
+    assert result.exit_code == 0
+    assert "--quiet" in result.output or "-q" in result.output
+    assert "LOGMIND_QUIET" in result.output
+
+
+def test_show_quiet_emits_single_ok_line_when_no_decisions(git_repo, docs_dir, monkeypatch):
+    """When there are no decisions, --quiet mode should emit exactly one
+    `ok ...` line on stdout — no progress chatter.
+
+    monkeypatch.chdir (not raw os.chdir) so cwd restores after the
+    test — clud-bug PR #69 caught the raw-chdir version as cascading
+    23 unrelated test failures via the cwd leak.
+    """
+    runner = CliRunner()
+    (docs_dir / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    monkeypatch.chdir(git_repo)
+    result = runner.invoke(main, ["--quiet", "show"])
+    ok_lines = [l for l in result.output.splitlines() if l.startswith("ok ")]
+    assert len(ok_lines) >= 1, (
+        f"--quiet show must emit at least one ok line; got: {result.output!r}"
+    )
+
+
+def test_env_var_LOGMIND_QUIET_suppresses_progress_end_to_end(
+    git_repo, docs_dir, monkeypatch
+):
+    """End-to-end exercise of the env-var path: LOGMIND_QUIET=1 +
+    `logmind show` on a non-empty decisions.md → exactly one ok line,
+    no ✓-prefixed progress. clud-bug PR #69 review caught that the v1
+    test only verified --help didn't crash without actually exercising
+    the feature."""
+    monkeypatch.setenv("LOGMIND_QUIET", "1")
+    monkeypatch.chdir(git_repo)
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n## 2026-01-01\n\nTest decision body.\n", encoding="utf-8"
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["show"])
+    assert result.exit_code == 0, f"show should succeed: {result.output!r}"
+    ok_lines = [l for l in result.output.splitlines() if l.startswith("ok ")]
+    assert len(ok_lines) == 1, (
+        f"LOGMIND_QUIET=1 show must emit exactly one ok line; got: {result.output!r}"
+    )
+    assert "show: docs/decisions.md" in ok_lines[0]
+    # ✓-prefixed progress lines SHOULD be absent in quiet mode.
+    assert "✓" not in result.output, (
+        f"LOGMIND_QUIET=1 should suppress ✓-prefixed progress lines; got: {result.output!r}"
+    )

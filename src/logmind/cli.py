@@ -44,11 +44,66 @@ from logmind.core.search import format_search_results, search_decisions
 from logmind.core.tree_gen import update_file_structure
 
 
+import os
+
+# Quiet-mode mechanism (v0.5.1+, mirrors clud-bug v0.6.7's pattern).
+#
+# Strategy: monkey-patch click.echo at module load so EVERY existing
+# call site (185 of them) becomes quiet-aware without touching each
+# one. Errors via click.secho(fg="red"/"yellow") still print because
+# we only filter the colorless click.echo path. ok() uses the
+# UNPATCHED echo so its single-line summary always emits.
+#
+# Activation: LOGMIND_QUIET=1 env var OR --quiet/-q on the group.
+_QUIET = os.environ.get("LOGMIND_QUIET") == "1"
+_orig_click_echo = click.echo
+
+
+def _quiet_aware_echo(*args, **kwargs):
+    """Drop-in for click.echo that no-ops when _QUIET. Error paths use
+    click.secho(fg=...) which calls _orig_secho — secho is left
+    untouched, so warnings + errors still print."""
+    if _QUIET:
+        return
+    return _orig_click_echo(*args, **kwargs)
+
+
+# Install the patch immediately so subcommand functions captured at
+# import time pick it up. _QUIET is re-read on every call so the
+# group-level --quiet flag can flip it mid-run.
+click.echo = _quiet_aware_echo
+
+
+def _set_quiet(flag: bool) -> None:
+    global _QUIET
+    _QUIET = bool(flag)
+
+
+def _ok(msg: str) -> None:
+    """Single-line success summary — ALWAYS emits, even with --quiet.
+    Format: `ok <key-value>` so agents can parse it for chaining
+    (commit SHA / file count / depth)."""
+    _orig_click_echo(f"ok {msg}")
+
+
 @click.group()
-@click.version_option(version="0.5.0", prog_name="logmind")
-def main():
+@click.version_option(version="0.5.1", prog_name="logmind")
+@click.option(
+    "--quiet",
+    "-q",
+    "quiet_flag",
+    is_flag=True,
+    help="Token-frugal mode for agent invocations. Suppresses progress "
+    "chatter; emits exactly one `ok <key-value>` summary line per command. "
+    "Errors and warnings still print. Also honored via LOGMIND_QUIET=1 env var.",
+)
+def main(quiet_flag: bool):
     """logmind - AI decision logging system for development projects."""
-    pass
+    # Re-evaluate quietness on every invocation so test runs (and any
+    # other long-lived processes that call main() multiple times via
+    # CliRunner) don't leak stale state from a prior call. The flag
+    # OR the env var enables quiet; absence of both disables it.
+    _set_quiet(quiet_flag or os.environ.get("LOGMIND_QUIET") == "1")
 
 
 _AGENT_FILE_CANDIDATES = (
@@ -567,6 +622,10 @@ def init(
         "to the PR branch."
     )
 
+    # Final agent-friendly summary (always emits, even with --quiet).
+    from logmind import __version__ as _v
+    _ok(f"initialized: docs/ .logmind/ workflows @v{_v}")
+
 
 def _show_skill_recommendation(flag: Optional[bool]) -> None:
     """
@@ -817,6 +876,26 @@ def log(
             else:
                 click.echo("✓ Committed changes (push disabled)")
 
+        # Final agent-friendly summary (always emits, even with --quiet).
+        # Surface the commit SHA when we made one so agents can chain on it.
+        commit_sha = ""
+        if should_commit:
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=docs_path.parent,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                commit_sha = result.stdout.strip()
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        if commit_sha:
+            _ok(f"logged: {commit_sha} \"{decision[:60]}\"")
+        else:
+            _ok(f"logged: \"{decision[:60]}\" (no commit)")
+
     except Exception as e:
         click.secho(f"Error: {e}", fg="red")
         sys.exit(1)
@@ -850,10 +929,12 @@ def show(show_all: bool):
 
     if not decisions_path.exists():
         click.secho("No decisions logged yet.", fg="yellow")
+        _ok("show: 0 decisions (none logged yet)")
         return
 
     click.echo(decisions_path.read_text(encoding="utf-8"))
 
+    archive_shown = False
     if show_all:
         archive_path = docs_path / "decisions-archive.md"
         if archive_path.exists():
@@ -861,6 +942,10 @@ def show(show_all: bool):
             click.echo("ARCHIVED DECISIONS")
             click.echo("=" * 80 + "\n")
             click.echo(archive_path.read_text(encoding="utf-8"))
+            archive_shown = True
+    decisions_bytes = decisions_path.stat().st_size
+    suffix = " + archive" if archive_shown else ""
+    _ok(f"show: docs/decisions.md ({decisions_bytes} bytes{suffix})")
 
 
 @main.command()
@@ -1624,10 +1709,14 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
             )
             sys.exit(1)
         click.secho(f"✓ {write_path} is up to date", fg="green")
+        _ok(f"timeline: {write_path} up to date")
         return
 
     if write_path is None:
-        click.echo(generate_timeline(docs_path), nl=False)
+        rendered = generate_timeline(docs_path)
+        _orig_click_echo(rendered, nl=False)
+        # utf-8 byte count, not character count — see file-structure_cmd.
+        _ok(f"timeline: {len(rendered.encode('utf-8'))} bytes (stdout)")
         return
 
     changed = write_timeline(write_path, docs_path)
@@ -1635,6 +1724,8 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
         click.secho(f"✓ Regenerated {write_path}", fg="green")
     else:
         click.echo(f"  {write_path} already up to date")
+    out_bytes = Path(write_path).stat().st_size
+    _ok(f"timeline: {write_path} ({out_bytes} bytes)")
 
 
 @main.command("doctor")
@@ -1705,13 +1796,17 @@ def tree_cmd(max_depth: Optional[int]):
     # --max-depth omitted falls through to update_file_structure's default.
     if max_depth is None:
         update_file_structure(docs_path)
+        effective = "default"
     else:
         from logmind.core.tree_gen import write_file_structure
         write_file_structure(
             docs_path / "file-structure.md",
             max_depth=None if max_depth == 0 else max_depth,
         )
+        effective = "unbounded" if max_depth == 0 else f"depth={max_depth}"
     click.secho("✓ Updated docs/file-structure.md", fg="green")
+    out_bytes = (docs_path / "file-structure.md").stat().st_size
+    _ok(f"docs/file-structure.md ({out_bytes} bytes, {effective})")
 
 
 @main.command("file-structure")
@@ -1760,15 +1855,26 @@ def file_structure_cmd(write_path: Optional[Path], max_depth: Optional[int]):
     else:
         effective_depth = max_depth
 
+    depth_label = "unbounded" if effective_depth is None else f"depth={effective_depth}"
+
     repo_root = Path.cwd()
     if write_path is None:
-        click.echo(generate_file_structure(repo_root, max_depth=effective_depth), nl=False)
+        rendered = generate_file_structure(repo_root, max_depth=effective_depth)
+        # Use unpatched echo so the tree itself isn't suppressed by --quiet;
+        # the tree is the command's PRIMARY output, not progress chatter.
+        _orig_click_echo(rendered, nl=False)
+        # Use utf-8 byte count (not character count) so this matches the
+        # write-path's Path.stat().st_size — em-dashes/non-ASCII would
+        # otherwise undercount. clud-bug PR #69 caught this.
+        _ok(f"file-structure: {len(rendered.encode('utf-8'))} bytes, {depth_label} (stdout)")
         return
     changed = write_file_structure(write_path, max_depth=effective_depth)
     if changed:
         click.secho(f"✓ Regenerated {write_path}", fg="green")
     else:
         click.echo(f"  {write_path} already up to date")
+    out_bytes = Path(write_path).stat().st_size
+    _ok(f"{write_path} ({out_bytes} bytes, {depth_label})")
 
 
 @main.command("check-links")
