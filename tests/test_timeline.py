@@ -125,7 +125,9 @@ def test_collect_entries_tolerates_missing_branches_dir(tmp_path):
 
 def test_render_markdown_groups_by_month(tmp_path):
     docs = _seed_docs(tmp_path)
-    rendered = render_markdown(collect_entries(docs))
+    # Use brief=False so every entry is exercised (v0.5.4+ default is
+    # brief, which elides the middle entry of a 3-entry month).
+    rendered = render_markdown(collect_entries(docs), brief=False)
     # 2026-05 should appear once for the three May entries
     assert rendered.count("## 2026-05") == 1
     # 2025-01 for the archive entry
@@ -162,6 +164,162 @@ def test_render_markdown_is_deterministic(tmp_path):
     a = render_markdown(collect_entries(docs))
     b = render_markdown(collect_entries(docs))
     assert a == b
+
+
+# ---------------------------------------------------------------------------
+# v0.5.4 — brief format on disk (Phase 0.B.4)
+# ---------------------------------------------------------------------------
+
+
+def _seed_docs_with_many_decisions(tmp_path: Path, may_count: int = 5) -> Path:
+    """Build a docs/ layout with `may_count` decisions in 2026-05 plus
+    one entry in 2025-01 so brief mode has something to compress and
+    a separate month with a single entry."""
+    docs = tmp_path / "docs"
+    (docs).mkdir(parents=True, exist_ok=True)
+
+    lines = ["# Decision Log\n", ""]
+    # Newest day first; entries inside same month so brief can elide.
+    for day in range(may_count, 0, -1):
+        lines.append(f"## 2026-05-{day:02d} 10:00 - may entry {day}\n")
+        lines.append("**Reasoning:** test\n\n---\n")
+    (docs / "decisions.md").write_text("\n".join(lines), encoding="utf-8")
+
+    (docs / "decisions-archive.md").write_text(
+        "# Decision Archive\n\n---\n"
+        "## 2025-01-15 09:00 - lone ancient decision\n\n---\n",
+        encoding="utf-8",
+    )
+    return docs
+
+
+def test_render_markdown_brief_is_default_v054_plus(tmp_path):
+    """v0.5.4: render_markdown() defaults to brief=True."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    default = render_markdown(collect_entries(docs))
+    explicit_brief = render_markdown(collect_entries(docs), brief=True)
+    assert default == explicit_brief
+
+
+def test_render_markdown_brief_shorter_than_full(tmp_path):
+    """Brief mode strictly fewer bytes than full mode when months have
+    ≥3 decisions to elide."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    entries = collect_entries(docs)
+    brief = render_markdown(entries, brief=True)
+    full = render_markdown(entries, brief=False)
+    assert len(brief) < len(full), (
+        f"brief ({len(brief)}) must be strictly shorter than full ({len(full)})"
+    )
+
+
+def test_render_markdown_brief_header_carries_month_count(tmp_path):
+    """Brief mode's month heading includes the decision count so
+    readers know how much was elided."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    rendered = render_markdown(collect_entries(docs), brief=True)
+    # 5 May entries → "## 2026-05 (5 decisions)"
+    assert "## 2026-05 (5 decisions)" in rendered
+
+
+def test_render_markdown_brief_shows_first_and_last_when_3plus(tmp_path):
+    """≥3-entry month renders newest + oldest with elision line between."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    rendered = render_markdown(collect_entries(docs), brief=True)
+    # Newest May entry (day 05) appears.
+    assert "may entry 5" in rendered
+    # Oldest May entry (day 01) appears.
+    assert "may entry 1" in rendered
+    # Elision line for the 3 middle entries.
+    assert "*... 3 more decisions ...*" in rendered
+    # Middle entries (days 02-04) are NOT in brief output.
+    assert "may entry 2" not in rendered
+    assert "may entry 3" not in rendered
+    assert "may entry 4" not in rendered
+
+
+def test_render_markdown_brief_shows_all_when_2_or_fewer(tmp_path):
+    """≤2-entry months show every entry verbatim (nothing to elide)."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    rendered = render_markdown(collect_entries(docs), brief=True)
+    # 2025-01 has exactly 1 entry → no count suffix, no elision line.
+    assert "## 2025-01\n" in rendered or "## 2025-01 " not in rendered.replace(
+        "## 2025-01 (", ""
+    )
+    assert "lone ancient decision" in rendered
+
+
+def test_render_markdown_full_matches_legacy_format(tmp_path):
+    """Full mode reproduces the pre-v0.5.4 per-decision listing exactly
+    — every entry shown, no count in header, no elision line."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    full = render_markdown(collect_entries(docs), brief=False)
+    # All 5 May entries present.
+    for n in range(1, 6):
+        assert f"may entry {n}" in full
+    # No count suffix in header.
+    assert "## 2026-05\n" in full
+    assert "(5 decisions)" not in full
+    # No elision line.
+    assert "more decisions ...*" not in full
+
+
+def test_render_markdown_brief_still_deterministic(tmp_path):
+    """Brief mode preserves the deterministic-rendering invariant."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    a = render_markdown(collect_entries(docs), brief=True)
+    b = render_markdown(collect_entries(docs), brief=True)
+    assert a == b
+
+
+def test_write_timeline_default_is_brief(tmp_path):
+    """write_timeline() writes brief by default — every consuming repo
+    sees a smaller docs/timeline.md after upgrading to v0.5.4."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    target = tmp_path / "docs" / "timeline.md"
+    write_timeline(target, docs)
+    written = target.read_text(encoding="utf-8")
+    assert "## 2026-05 (5 decisions)" in written
+    assert "*... 3 more decisions ...*" in written
+
+
+def test_write_timeline_full_opt_in(tmp_path):
+    """write_timeline(brief=False) emits the legacy per-decision listing."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    target = tmp_path / "docs" / "timeline.md"
+    write_timeline(target, docs, brief=False)
+    written = target.read_text(encoding="utf-8")
+    assert "(5 decisions)" not in written
+    assert "more decisions ...*" not in written
+    # Every entry present.
+    for n in range(1, 6):
+        assert f"may entry {n}" in written
+
+
+def test_timeline_cli_full_flag_uses_legacy_format(tmp_path, monkeypatch):
+    """`logmind timeline --full` renders legacy per-decision listing on stdout."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    # Need a git repo for cwd context; CLI checks Path.cwd()/docs.
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cli_main, ["timeline", "--full"])
+    assert result.exit_code == 0, result.output
+    # Every entry present, no count or elision.
+    for n in range(1, 6):
+        assert f"may entry {n}" in result.output
+    assert "(5 decisions)" not in result.output
+    assert "more decisions ...*" not in result.output
+
+
+def test_timeline_cli_default_is_brief(tmp_path, monkeypatch):
+    """`logmind timeline` (no flag) renders brief by default."""
+    docs = _seed_docs_with_many_decisions(tmp_path, may_count=5)
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cli_main, ["timeline"])
+    assert result.exit_code == 0, result.output
+    assert "## 2026-05 (5 decisions)" in result.output
+    assert "*... 3 more decisions ...*" in result.output
 
 
 # ---------------------------------------------------------------------------

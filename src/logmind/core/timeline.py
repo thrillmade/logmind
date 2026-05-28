@@ -135,41 +135,71 @@ _TIMELINE_HEADER = (
 )
 
 
-def render_markdown(entries: List[TimelineEntry]) -> str:
+def _render_entry_line(e: TimelineEntry) -> str:
+    link_label = str(e.source_path).replace("\\", "/")
+    return (
+        f"- **{e.date.strftime('%Y-%m-%d')}** — {e.title} "
+        f"*({e.source_label})* — [{link_label}]({link_label})"
+    )
+
+
+def render_markdown(entries: List[TimelineEntry], brief: bool = True) -> str:
     """Render entries as a markdown timeline grouped by year-month.
 
-    Output shape:
+    Brief format (default, v0.5.4+) — token-frugal on disk:
 
-        # Decision Timeline
-        <header explaining derived-file nature>
-        ---
+        ## 2026-05 (23 decisions)
+
+        - **2026-05-28** — newest title *(main)* — [link](link)
+        - *... 21 more decisions ...*
+        - **2026-05-01** — oldest title *(feat/foo)* — [link](link)
+
+    Full format (`brief=False`, opt-in via `logmind timeline --full`):
 
         ## 2026-05
 
-        - **2026-05-15** — site: footer polish — version, skill URL, breathing room… *(main)* — [docs/decisions.md](docs/decisions.md)
-        - **2026-05-15** — v0.1.4: optional LOGMIND_BOT_PAT for aggregator PRs *(feat/v0.1.4-bot-pat-fallback)* — [docs/decisions-branches/feat__v0.1.4-bot-pat-fallback.md](...)
+        - **2026-05-28** — title *(main)* — [link](link)
+        - **2026-05-27** — title *(feat/foo)* — [link](link)
+        - **2026-05-26** — title *(main)* — [link](link)
+        - … (every entry, one line each)
 
-        ## 2026-04
-        ...
+    Months with ≤2 entries render every entry verbatim in BOTH formats
+    (no elision line) — there's nothing to compress.
     """
     if not entries:
         return _TIMELINE_HEADER + "\n*(no decisions logged yet)*\n"
 
-    lines = [_TIMELINE_HEADER, ""]
-    last_month: Optional[str] = None
+    # Group entries by month, preserving newest-first ordering.
+    months: List[tuple[str, List[TimelineEntry]]] = []
     for e in entries:
         month = e.date.strftime("%Y-%m")
-        if month != last_month:
-            if last_month is not None:
-                lines.append("")
-            lines.append(f"## {month}")
+        if months and months[-1][0] == month:
+            months[-1][1].append(e)
+        else:
+            months.append((month, [e]))
+
+    lines = [_TIMELINE_HEADER, ""]
+    for i, (month, month_entries) in enumerate(months):
+        if i > 0:
             lines.append("")
-            last_month = month
-        link_label = str(e.source_path).replace("\\", "/")
-        lines.append(
-            f"- **{e.date.strftime('%Y-%m-%d')}** — {e.title} "
-            f"*({e.source_label})* — [{link_label}]({link_label})"
-        )
+        n = len(month_entries)
+        # Header includes count in brief mode so total decisions stay legible.
+        if brief and n >= 3:
+            lines.append(f"## {month} ({n} decisions)")
+        else:
+            lines.append(f"## {month}")
+        lines.append("")
+
+        if brief and n >= 3:
+            # First (newest) + elision + last (oldest).
+            elided = n - 2
+            noun = "decision" if elided == 1 else "decisions"
+            lines.append(_render_entry_line(month_entries[0]))
+            lines.append(f"- *... {elided} more {noun} ...*")
+            lines.append(_render_entry_line(month_entries[-1]))
+        else:
+            for e in month_entries:
+                lines.append(_render_entry_line(e))
     lines.append("")
     return "\n".join(lines)
 
@@ -179,17 +209,26 @@ def render_markdown(entries: List[TimelineEntry]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def generate_timeline(docs_path: Optional[Path] = None) -> str:
-    """Collect every decision under docs_path and return the rendered markdown."""
+def generate_timeline(
+    docs_path: Optional[Path] = None,
+    brief: bool = True,
+) -> str:
+    """Collect every decision under docs_path and return the rendered markdown.
+
+    Brief defaults to True (v0.5.4+) so the on-disk timeline.md ships
+    compact in every consuming repo. Pass `brief=False` (or use the CLI
+    `--full` flag) for the legacy per-decision listing.
+    """
     if docs_path is None:
         docs_path = Path.cwd() / "docs"
     entries = collect_entries(docs_path)
-    return render_markdown(entries)
+    return render_markdown(entries, brief=brief)
 
 
 def write_timeline(
     target_path: Path,
     docs_path: Optional[Path] = None,
+    brief: bool = True,
 ) -> bool:
     """Regenerate target_path's content from sources.
 
@@ -198,7 +237,7 @@ def write_timeline(
     """
     from logmind.core.atomic_io import atomic_write_text
 
-    rendered = generate_timeline(docs_path)
+    rendered = generate_timeline(docs_path, brief=brief)
     existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
     if existing == rendered:
         return False
