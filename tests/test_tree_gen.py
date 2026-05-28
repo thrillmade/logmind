@@ -215,3 +215,46 @@ def test_write_file_structure_default_depth_writes_truncated_file(temp_dir):
     assert "level0" in contents
     # level3 file MUST NOT appear at default depth
     assert "file3.txt" not in contents
+
+
+def test_generate_tree_binary_and_fallback_agree_at_same_max_depth(temp_dir):
+    """0.B.1 regression (caught by clud-bug on PR #68): the tree(1) binary
+    path and the Python fallback path MUST produce the same depth bound
+    for the same max_depth argument. The first PR revision had a spurious
+    `-L max_depth + 1` that made tree(1) display one level deeper than
+    the fallback. This test exposes the off-by-one by checking that
+    deeply-nested file names appear or don't appear in BOTH paths
+    consistently."""
+    import shutil
+    from logmind.core.tree_gen import _generate_fallback_tree, generate_tree
+
+    if shutil.which("tree") is None:
+        # No tree(1) binary on this system — the binary/fallback comparison
+        # has no signal. Skip.
+        return
+
+    current = temp_dir
+    for i in range(5):
+        current = current / f"level{i}"
+        current.mkdir()
+        (current / f"file{i}.txt").write_text("x", encoding="utf-8")
+
+    # At max_depth=2, both paths should:
+    # - include level0 + level1 (their names appear as listed by their
+    #   parent's iteration)
+    # - NOT recurse into level1 (so level1's contents level2/file1.txt
+    #   are NOT visible)
+    binary_out = generate_tree(temp_dir, max_depth=2)
+    fallback_out = _generate_fallback_tree(temp_dir, max_depth=2)
+
+    for path in [binary_out, fallback_out]:
+        assert "level0" in path, "level0 should be visible at depth 2"
+        assert "level1" in path, "level1 should be visible at depth 2"
+        # The off-by-one: tree(1) -L 3 would show level2 + file1.txt here.
+        # With the fix (-L 2), neither path shows them.
+        assert "level2" not in path, (
+            "level2 should NOT be visible at depth 2 — if this fails, "
+            "the tree(1) path is rendering one level deeper than Python "
+            "(the off-by-one PR #68 was supposed to fix)"
+        )
+        assert "file1.txt" not in path

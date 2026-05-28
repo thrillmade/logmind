@@ -10,3 +10,11 @@
 - --max-depth 0 on CLI requests full tree
 
 ---
+## 2026-05-27 23:30 - Fix tree(1) -L off-by-one + --help docstring (clud-bug PR #68 findings)
+
+**Reasoning:** Two legitimate critical findings: (1) -L max_depth+1 made tree(1) path display ONE LEVEL DEEPER than the Python fallback for the same max_depth; my 'root counts as 1' mental model was wrong about tree(1) -L semantics. (2) logmind tree --help claimed Default: unbounded but actual behavior writes depth=2.
+
+**Implications:**
+- Tests: added regression that asserts binary + fallback paths produce same depth shape at same max_depth value
+
+---

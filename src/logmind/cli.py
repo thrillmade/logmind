@@ -1681,8 +1681,9 @@ def doctor_cmd(as_json: bool, offline: bool, exit_zero: bool):
     "max_depth",
     type=int,
     default=None,
-    help="Cap the tree at depth N (root is depth 0). Default: unbounded. "
-    "Pass 0 for unbounded explicitly; pass a positive integer to truncate.",
+    help="Cap the tree at depth N (root is depth 0). Default: 2 (token-frugal — "
+    "matches `logmind file-structure`). Pass 0 for unbounded (full tree); "
+    "pass a positive integer to truncate.",
 )
 def tree_cmd(max_depth: Optional[int]):
     """

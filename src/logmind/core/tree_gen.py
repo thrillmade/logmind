@@ -197,10 +197,16 @@ def generate_tree(
                 "--dirsfirst",
             ]
             if max_depth is not None:
-                # tree(1)'s -L N caps depth (root counts as 1; matches our
-                # convention of depth 0 = root, depth N = N levels deep
-                # after a +1 adjustment).
-                cmd.extend(["-L", str(max_depth + 1)])
+                # tree(1)'s -L N caps display depth at N levels BELOW the
+                # root. Matches our Python fallback's convention exactly:
+                # `_current_depth >= max_depth` early-returns, so
+                # max_depth=2 shows root + its children + grandchild
+                # names (but no further), which is precisely what
+                # `tree -L 2` produces. PR #68's first revision had a
+                # spurious +1 here that made the tree(1) path display
+                # one level deeper than the Python fallback; clud-bug
+                # caught it.
+                cmd.extend(["-L", str(max_depth)])
             try:
                 result = subprocess.run(
                     cmd,
