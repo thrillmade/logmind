@@ -87,7 +87,7 @@ def _ok(msg: str) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.1", prog_name="logmind")
+@click.version_option(version="0.5.2", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -909,8 +909,45 @@ def log(
     is_flag=True,
     help="Show all decisions including archived",
 )
-def show(show_all: bool):
-    """Show recent decisions."""
+@click.option(
+    "--brief",
+    is_flag=True,
+    help="One-line summary per decision (date + title) instead of "
+    "full markdown. Reduces ingest cost when agents read prior context.",
+)
+@click.option(
+    "--limit",
+    "-n",
+    "limit",
+    type=int,
+    default=None,
+    help="Show at most N most-recent decisions. Matches `logmind aggregate "
+    "--limit` convention. Default: no limit (full file when --brief absent; "
+    "all parsed entries when --brief set).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a JSON array of {date, title, source} objects. Stable schema "
+    "for downstream tools. Mutually exclusive with --brief (JSON wins).",
+)
+def show(show_all: bool, brief: bool, limit: Optional[int], as_json: bool):
+    """Show recent decisions.
+
+    Default: streams docs/decisions.md verbatim (the current 20 most-recent
+    entries; older are in decisions-archive.md, surface via --all).
+
+    Agent-friendly views (v0.5.2+):
+
+      --brief                one-line summary per entry
+      --limit N              cap to N most-recent
+      --json                 structured array for parsing
+
+    Combinations are allowed: `logmind show --brief --limit 5` for a quick
+    last-5 recall, `logmind show --json --limit 10 --all` for parsed access
+    across main + archive.
+    """
     docs_path = Path.cwd() / "docs"
 
     if not docs_path.exists():
@@ -928,24 +965,74 @@ def show(show_all: bool):
     decisions_path = docs_path / "decisions.md"
 
     if not decisions_path.exists():
-        click.secho("No decisions logged yet.", fg="yellow")
+        if as_json:
+            _orig_click_echo("[]")
+        else:
+            click.secho("No decisions logged yet.", fg="yellow")
         _ok("show: 0 decisions (none logged yet)")
         return
 
-    click.echo(decisions_path.read_text(encoding="utf-8"))
+    # Default verbatim view (preserves pre-v0.5.2 behavior).
+    if not (brief or as_json or limit is not None):
+        click.echo(decisions_path.read_text(encoding="utf-8"))
 
-    archive_shown = False
+        archive_shown = False
+        if show_all:
+            archive_path = docs_path / "decisions-archive.md"
+            if archive_path.exists():
+                click.echo("\n" + "=" * 80)
+                click.echo("ARCHIVED DECISIONS")
+                click.echo("=" * 80 + "\n")
+                click.echo(archive_path.read_text(encoding="utf-8"))
+                archive_shown = True
+        decisions_bytes = decisions_path.stat().st_size
+        suffix = " + archive" if archive_shown else ""
+        _ok(f"show: docs/decisions.md ({decisions_bytes} bytes{suffix})")
+        return
+
+    # Parsed-view paths (brief / limit / json). Load entries with provenance.
+    from logmind.core.parser import iter_decisions
+
+    entries = []
+    for dt, title in iter_decisions(decisions_path):
+        entries.append({"date": dt, "title": title, "source": "main"})
     if show_all:
         archive_path = docs_path / "decisions-archive.md"
         if archive_path.exists():
-            click.echo("\n" + "=" * 80)
-            click.echo("ARCHIVED DECISIONS")
-            click.echo("=" * 80 + "\n")
-            click.echo(archive_path.read_text(encoding="utf-8"))
-            archive_shown = True
-    decisions_bytes = decisions_path.stat().st_size
-    suffix = " + archive" if archive_shown else ""
-    _ok(f"show: docs/decisions.md ({decisions_bytes} bytes{suffix})")
+            for dt, title in iter_decisions(archive_path):
+                entries.append({"date": dt, "title": title, "source": "archive"})
+
+    # Sort newest-first so --limit N picks the latest entries.
+    entries.sort(key=lambda e: e["date"], reverse=True)
+    if limit is not None:
+        entries = entries[:limit]
+
+    if as_json:
+        import json
+        # ALWAYS emit JSON to stdout (bypass quiet patch — JSON is the
+        # primary output for downstream parsers, not progress chatter).
+        _orig_click_echo(
+            json.dumps(
+                [
+                    {
+                        "date": e["date"].isoformat(),
+                        "title": e["title"],
+                        "source": e["source"],
+                    }
+                    for e in entries
+                ],
+                indent=2,
+            )
+        )
+    elif brief:
+        # Use _orig_click_echo so brief output isn't suppressed by --quiet.
+        for e in entries:
+            _orig_click_echo(f"{e['date'].strftime('%Y-%m-%d %H:%M')} — {e['title']} [{e['source']}]")
+
+    _ok(
+        f"show: {len(entries)} decisions "
+        f"({'json' if as_json else 'brief' if brief else 'verbatim'})"
+    )
 
 
 @main.command()

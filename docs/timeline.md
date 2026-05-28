@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-28** — B.2: show --brief / --limit / --json (v0.5.2) *(feat/0.B.2-show-brief-limit-json)* — [decisions-branches/feat__0.B.2-show-brief-limit-json.md](decisions-branches/feat__0.B.2-show-brief-limit-json.md)
 - **2026-05-28** — Fix B.3 PR #69 review threads: cwd leak, missing end-to-end test, state reset, byte counts *(feat/0.B.3-quiet-ok-output)* — [decisions-branches/feat__0.B.3-quiet-ok-output.md](decisions-branches/feat__0.B.3-quiet-ok-output.md)
 - **2026-05-27** — B.3: logmind --quiet / LOGMIND_QUIET=1 with ok output (v0.5.1) *(feat/0.B.3-quiet-ok-output)* — [decisions-branches/feat__0.B.3-quiet-ok-output.md](decisions-branches/feat__0.B.3-quiet-ok-output.md)
 - **2026-05-27** — Fix tree(1) -L off-by-one + --help docstring (clud-bug PR #68 findings) *(feat/0.B.1-file-structure-max-depth)* — [decisions-branches/feat__0.B.1-file-structure-max-depth.md](decisions-branches/feat__0.B.1-file-structure-max-depth.md)

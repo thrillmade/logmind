@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-28
+
+### Added — `logmind show --brief` / `--limit` / `--json` (Phase B.2)
+
+Agent-friendly views on the `show` command. Pure additive — existing
+`logmind show` and `logmind show --all` behavior unchanged.
+
+- `--brief`: one-line summary per decision (`YYYY-MM-DD HH:MM — title [source]`). Cheap recall for agents that need context but don't need full prose. Uses `iter_decisions` from `logmind.core.parser` (already exists).
+- `--limit N` / `-n N`: cap to N most-recent entries (newest-first). Matches the `logmind aggregate --limit` convention. Combinable with `--brief` and `--json`.
+- `--json`: stable structured output for downstream tools. Array of `{date: ISO8601, title: str, source: "main" | "archive"}`. Bypasses the `--quiet` patch so JSON is always emitted to stdout (it's primary output, not progress).
+- All three combine: `logmind show --brief --limit 5` for quick last-5 recall, `logmind show --json --limit 10 --all` for parsed access across main + archive.
+
+### Tests
+
+- `tests/test_cli.py` (+3): brief shape (newest-first), `--limit 2` caps correctly, `--json` produces a valid parseable array.
+
 ## [0.5.1] - 2026-05-27
 
 ### Added — `--quiet/-q` flag + `LOGMIND_QUIET=1` env var (Phase B.3)

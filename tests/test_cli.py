@@ -1234,3 +1234,68 @@ def test_env_var_LOGMIND_QUIET_suppresses_progress_end_to_end(
     assert "✓" not in result.output, (
         f"LOGMIND_QUIET=1 should suppress ✓-prefixed progress lines; got: {result.output!r}"
     )
+
+
+# --- 0.B.2 (v0.5.2): show --brief / --limit / --json ---
+
+def test_show_brief_emits_one_line_per_entry(git_repo, docs_dir, monkeypatch):
+    """--brief: one line per decision (date + title + source)."""
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n## 2026-01-01 10:00 - First decision\n\nBody.\n\n"
+        "## 2026-01-02 11:00 - Second decision\n\nBody.\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(main, ["show", "--brief"])
+    assert result.exit_code == 0, result.output
+    lines = [l for l in result.output.splitlines() if not l.startswith("ok ")]
+    # Two decisions, two non-ok lines (verbatim markdown not emitted in brief mode).
+    summary_lines = [l for l in lines if l.strip() and "—" in l]
+    assert len(summary_lines) == 2, f"expected 2 brief lines; got: {result.output!r}"
+    # Newest-first: 2026-01-02 should come before 2026-01-01.
+    assert "2026-01-02" in summary_lines[0]
+    assert "2026-01-01" in summary_lines[1]
+    # Source tag present.
+    assert "[main]" in summary_lines[0]
+
+
+def test_show_limit_caps_to_n_most_recent(git_repo, docs_dir, monkeypatch):
+    """--limit N: keeps N most-recent (newest-first)."""
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n"
+        "## 2026-01-01 10:00 - One\n\n"
+        "## 2026-01-02 11:00 - Two\n\n"
+        "## 2026-01-03 12:00 - Three\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(main, ["show", "--brief", "--limit", "2"])
+    assert result.exit_code == 0
+    assert "Three" in result.output
+    assert "Two" in result.output
+    assert "One" not in result.output  # capped out
+
+
+def test_show_json_emits_valid_array(git_repo, docs_dir, monkeypatch):
+    """--json: stable structured output for downstream tools."""
+    import json
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n## 2026-01-01 10:00 - First decision\n\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(main, ["show", "--json"])
+    assert result.exit_code == 0
+    # Pull out the JSON array from result.output (sync_messages may precede).
+    # JSON starts at first '[' and ends at matching ']'.
+    output = result.output
+    start = output.find("[")
+    end = output.rfind("]") + 1
+    assert start >= 0 and end > start, f"no JSON found: {output!r}"
+    parsed = json.loads(output[start:end])
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0]["title"] == "First decision"
+    assert parsed[0]["source"] == "main"
+    assert "date" in parsed[0]
