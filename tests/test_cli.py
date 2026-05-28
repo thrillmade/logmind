@@ -8,6 +8,21 @@ from click.testing import CliRunner
 from logmind.cli import agents, config, init, log, main, show, update, check_decisions, install_hook
 
 
+def _separate_streams_runner():
+    """CliRunner that keeps stdout/stderr separate across Click versions.
+
+    Click <8.4 (py3.8 ships Click 8.1.x) defaults to mix_stderr=True, which
+    merges stderr into stdout and breaks tests that parse `result.stdout`
+    as JSON when an `ok` line is routed to stderr. Click 8.4 removed the
+    kwarg but separates streams by default — so try the kwarg first, fall
+    back to the no-arg constructor.
+    """
+    try:
+        return CliRunner(mix_stderr=False)
+    except TypeError:
+        return CliRunner()
+
+
 def test_cli_help():
     """Test main CLI help."""
     runner = CliRunner()
@@ -1311,7 +1326,7 @@ def test_show_json_stdout_is_parseable_no_chatter(git_repo, docs_dir, monkeypatc
         "# Decision Log\n\n## 2026-01-01 10:00 - Decision\n\n", encoding="utf-8"
     )
     monkeypatch.chdir(git_repo)
-    runner = CliRunner()
+    runner = _separate_streams_runner()
     result = runner.invoke(main, ["show", "--json"])
     assert result.exit_code == 0
     # stdout should be parseable JSON top-to-bottom (no extra chatter
@@ -1332,7 +1347,7 @@ def test_show_json_with_quiet_still_emits_json(git_repo, docs_dir, monkeypatch):
         "# Decision Log\n\n## 2026-01-01 10:00 - Decision\n\n", encoding="utf-8"
     )
     monkeypatch.chdir(git_repo)
-    runner = CliRunner()
+    runner = _separate_streams_runner()
     result = runner.invoke(main, ["--quiet", "show", "--json"])
     assert result.exit_code == 0
     parsed = json.loads(result.stdout)
@@ -1350,7 +1365,7 @@ def test_show_json_with_all_includes_archive(git_repo, docs_dir, monkeypatch):
         "# DA\n\n## 2025-12-01 09:00 - Older\n\n", encoding="utf-8"
     )
     monkeypatch.chdir(git_repo)
-    runner = CliRunner()
+    runner = _separate_streams_runner()
     result = runner.invoke(main, ["show", "--json", "--all"])
     assert result.exit_code == 0
     parsed = json.loads(result.stdout)
@@ -1358,3 +1373,46 @@ def test_show_json_with_all_includes_archive(git_repo, docs_dir, monkeypatch):
     assert sources == {"main", "archive"}, (
         f"--json --all should span both sources; got: {sources}"
     )
+
+
+def test_show_json_wins_over_brief(git_repo, docs_dir, monkeypatch):
+    """`--json --brief`: JSON precedence per help text contract.
+
+    Help on `--json` says: "Mutually exclusive with --brief (JSON wins)".
+    Verifies stdout is parseable JSON, not brief one-liners.
+    """
+    import json
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n## 2026-01-01 10:00 - Decision\n\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(git_repo)
+    runner = _separate_streams_runner()
+    result = runner.invoke(main, ["show", "--json", "--brief"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+
+
+def test_show_limit_only_emits_decisions(git_repo, docs_dir, monkeypatch):
+    """`--limit N` alone (no --brief/--json) must emit decisions.
+
+    Regression for PR #70 review finding: the parsed-view path only
+    handled `as_json` and `brief`, leaving `--limit N` with no output
+    branch — user saw zero decisions followed by a misleading `ok` line.
+    """
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n"
+        "## 2026-01-01 10:00 - One\n\n"
+        "## 2026-01-02 11:00 - Two\n\n"
+        "## 2026-01-03 12:00 - Three\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(main, ["show", "--limit", "2"])
+    assert result.exit_code == 0
+    # Newest 2 entries present (Three + Two); oldest (One) capped out.
+    assert "Three" in result.output, f"expected newest in --limit 2; got: {result.output!r}"
+    assert "Two" in result.output
+    assert "One" not in result.output

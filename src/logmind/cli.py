@@ -1032,15 +1032,17 @@ def show(show_all: bool, brief: bool, limit: Optional[int], as_json: bool):
                 indent=2,
             )
         )
-    elif brief:
-        # Use _orig_click_echo so brief output isn't suppressed by --quiet.
+    else:
+        # brief OR limit-only: render one-line-per-entry. limit-only falls
+        # here because we only carry (date, title) from the parser (no body
+        # for verbatim) — one-line-per-entry is the natural "N most recent"
+        # answer. Use _orig_click_echo so output isn't suppressed by --quiet.
         for e in entries:
             _orig_click_echo(f"{e['date'].strftime('%Y-%m-%d %H:%M')} — {e['title']} [{e['source']}]")
 
     # Route the ok line to stderr in JSON mode so stdout is parseable JSON.
     _ok(
-        f"show: {len(entries)} decisions "
-        f"({'json' if as_json else 'brief' if brief else 'verbatim'})",
+        f"show: {len(entries)} decisions ({'json' if as_json else 'brief'})",
         err=as_json,
     )
 

@@ -15,6 +15,7 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-05
 
+- **2026-05-28** — PR #70 fixes: limit-only output bug + py3.8 Click compat + JSON-wins-over-brief test *(feat/0.B.2-show-brief-limit-json)* — [decisions-branches/feat__0.B.2-show-brief-limit-json.md](decisions-branches/feat__0.B.2-show-brief-limit-json.md)
 - **2026-05-28** — B.2 PR #70 fixes: JSON stdout cleanliness + test coverage gaps *(feat/0.B.2-show-brief-limit-json)* — [decisions-branches/feat__0.B.2-show-brief-limit-json.md](decisions-branches/feat__0.B.2-show-brief-limit-json.md)
 - **2026-05-28** — B.2: show --brief / --limit / --json (v0.5.2) *(feat/0.B.2-show-brief-limit-json)* — [decisions-branches/feat__0.B.2-show-brief-limit-json.md](decisions-branches/feat__0.B.2-show-brief-limit-json.md)
 - **2026-05-28** — Fix B.3 PR #69 review threads: cwd leak, missing end-to-end test, state reset, byte counts *(feat/0.B.3-quiet-ok-output)* — [decisions-branches/feat__0.B.3-quiet-ok-output.md](decisions-branches/feat__0.B.3-quiet-ok-output.md)
