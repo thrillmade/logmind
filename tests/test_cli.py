@@ -1299,3 +1299,62 @@ def test_show_json_emits_valid_array(git_repo, docs_dir, monkeypatch):
     assert parsed[0]["title"] == "First decision"
     assert parsed[0]["source"] == "main"
     assert "date" in parsed[0]
+
+
+def test_show_json_stdout_is_parseable_no_chatter(git_repo, docs_dir, monkeypatch):
+    """v0.5.2 PR #70 review: stdout under --json must be ONLY the JSON
+    array — no sync_messages, no `ok ...` line. Verifies the pipeline
+    contract for `logmind show --json | jq`.
+    """
+    import json
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n## 2026-01-01 10:00 - Decision\n\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(main, ["show", "--json"])
+    assert result.exit_code == 0
+    # stdout should be parseable JSON top-to-bottom (no extra chatter
+    # before or after the array).
+    parsed = json.loads(result.stdout)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    # The ok line MUST go to stderr (agent-visible, pipeline-clean).
+    assert "ok show:" in result.stderr, (
+        f"--json should route the ok line to stderr; got stderr: {result.stderr!r}"
+    )
+
+
+def test_show_json_with_quiet_still_emits_json(git_repo, docs_dir, monkeypatch):
+    """--json bypasses the --quiet suppression — JSON is primary output."""
+    import json
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n## 2026-01-01 10:00 - Decision\n\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(main, ["--quiet", "show", "--json"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+
+
+def test_show_json_with_all_includes_archive(git_repo, docs_dir, monkeypatch):
+    """--json --all spans main + archive sources."""
+    import json
+    (docs_dir / "decisions.md").write_text(
+        "# DL\n\n## 2026-02-01 10:00 - Recent\n\n", encoding="utf-8"
+    )
+    (docs_dir / "decisions-archive.md").write_text(
+        "# DA\n\n## 2025-12-01 09:00 - Older\n\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(main, ["show", "--json", "--all"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    sources = {e["source"] for e in parsed}
+    assert sources == {"main", "archive"}, (
+        f"--json --all should span both sources; got: {sources}"
+    )

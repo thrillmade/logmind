@@ -79,11 +79,16 @@ def _set_quiet(flag: bool) -> None:
     _QUIET = bool(flag)
 
 
-def _ok(msg: str) -> None:
+def _ok(msg: str, *, err: bool = False) -> None:
     """Single-line success summary — ALWAYS emits, even with --quiet.
     Format: `ok <key-value>` so agents can parse it for chaining
-    (commit SHA / file count / depth)."""
-    _orig_click_echo(f"ok {msg}")
+    (commit SHA / file count / depth).
+
+    Pass `err=True` to route the line to stderr (used when stdout is
+    reserved for parseable primary output, e.g. `show --json`). Agents
+    still see the ok line; pipeline consumers (jq, etc.) get a clean
+    stdout."""
+    _orig_click_echo(f"ok {msg}", err=err)
 
 
 @click.group()
@@ -957,10 +962,13 @@ def show(show_all: bool, brief: bool, limit: Optional[int], as_json: bool):
         )
         sys.exit(1)
 
-    # Sync agent files from config
+    # Sync agent files from config. In --json mode, suppress sync chatter
+    # entirely (it's not the primary output and would corrupt `... | jq`
+    # pipelines by printing non-JSON before the array). Sync still runs.
     sync_messages = sync_agent_files_from_config()
-    for msg in sync_messages:
-        click.echo(msg)
+    if not as_json:
+        for msg in sync_messages:
+            click.echo(msg)
 
     decisions_path = docs_path / "decisions.md"
 
@@ -969,7 +977,7 @@ def show(show_all: bool, brief: bool, limit: Optional[int], as_json: bool):
             _orig_click_echo("[]")
         else:
             click.secho("No decisions logged yet.", fg="yellow")
-        _ok("show: 0 decisions (none logged yet)")
+        _ok("show: 0 decisions (none logged yet)", err=as_json)
         return
 
     # Default verbatim view (preserves pre-v0.5.2 behavior).
@@ -1029,9 +1037,11 @@ def show(show_all: bool, brief: bool, limit: Optional[int], as_json: bool):
         for e in entries:
             _orig_click_echo(f"{e['date'].strftime('%Y-%m-%d %H:%M')} — {e['title']} [{e['source']}]")
 
+    # Route the ok line to stderr in JSON mode so stdout is parseable JSON.
     _ok(
         f"show: {len(entries)} decisions "
-        f"({'json' if as_json else 'brief' if brief else 'verbatim'})"
+        f"({'json' if as_json else 'brief' if brief else 'verbatim'})",
+        err=as_json,
     )
 
 
