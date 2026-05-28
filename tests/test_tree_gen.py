@@ -133,3 +133,85 @@ def test_generate_fallback_tree_max_depth(temp_dir):
     assert "level0" in tree
     assert "level1" in tree
     # level2 might or might not be there depending on exact depth counting
+
+
+# --- 0.B.1 (v0.5.0): generate_file_structure ships max_depth=2 default ---
+# Activates the depth-truncation path that already existed in
+# _generate_fallback_tree but wasn't reached from the public API.
+# Every consuming repo's docs/file-structure.md regen now ships
+# token-frugal across the org.
+
+def test_generate_file_structure_defaults_to_depth_2(temp_dir):
+    """v0.5.0+: depth defaults to 2 (token-frugal). Deeply nested dirs
+    must NOT appear at default depth."""
+    from logmind.core.tree_gen import generate_file_structure
+
+    current = temp_dir
+    for i in range(5):
+        current = current / f"level{i}"
+        current.mkdir()
+        (current / f"file{i}.txt").write_text("test", encoding="utf-8")
+
+    rendered = generate_file_structure(temp_dir)
+    # depth 2 = root + 2 levels → level0, level1 visible; level2+ truncated
+    assert "level0" in rendered
+    assert "level1" in rendered
+    # Deeply nested files MUST be excluded at default depth
+    assert "file4.txt" not in rendered
+    assert "file3.txt" not in rendered
+
+
+def test_generate_file_structure_max_depth_none_is_unbounded(temp_dir):
+    """Explicit None unrolls the full tree (CLI --max-depth 0 path)."""
+    from logmind.core.tree_gen import generate_file_structure
+
+    current = temp_dir
+    for i in range(5):
+        current = current / f"level{i}"
+        current.mkdir()
+        (current / f"file{i}.txt").write_text("test", encoding="utf-8")
+
+    rendered = generate_file_structure(temp_dir, max_depth=None)
+    assert "level4" in rendered
+    assert "file4.txt" in rendered
+
+
+def test_generate_file_structure_default_shorter_than_unbounded(temp_dir):
+    """The depth-2 default MUST produce a strictly shorter output than
+    unbounded on a sufficiently deep tree. This is the load-bearing
+    property — if this regresses, every consuming repo's file-structure.md
+    silently grows back."""
+    from logmind.core.tree_gen import generate_file_structure
+
+    current = temp_dir
+    for i in range(8):
+        current = current / f"level{i}"
+        current.mkdir()
+        for j in range(3):
+            (current / f"f{j}.txt").write_text("x", encoding="utf-8")
+
+    default = generate_file_structure(temp_dir)
+    full = generate_file_structure(temp_dir, max_depth=None)
+    assert len(default) < len(full), (
+        f"depth-2 default ({len(default)} chars) should be shorter than "
+        f"unbounded ({len(full)} chars) on an 8-deep tree"
+    )
+
+
+def test_write_file_structure_default_depth_writes_truncated_file(temp_dir):
+    """Round-trip: write_file_structure with default depth produces a
+    file that excludes deeply nested entries."""
+    from logmind.core.tree_gen import write_file_structure
+
+    current = temp_dir
+    for i in range(5):
+        current = current / f"level{i}"
+        current.mkdir()
+        (current / f"file{i}.txt").write_text("test", encoding="utf-8")
+
+    target = temp_dir / "docs" / "file-structure.md"
+    write_file_structure(target, repo_root=temp_dir)
+    contents = target.read_text(encoding="utf-8")
+    assert "level0" in contents
+    # level3 file MUST NOT appear at default depth
+    assert "file3.txt" not in contents

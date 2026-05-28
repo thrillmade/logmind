@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-27
+
+### Changed — `docs/file-structure.md` ships at max-depth 2 by default
+
+Phase B.1 of the org-wide token-cost compression roadmap. The biggest
+single token sink in the org (logmind's own `docs/file-structure.md` at
+103 KB) drops to ~10 KB on next regen across every consuming repo.
+
+- `generate_file_structure(repo_root, max_depth=2)` is now the default. The depth-truncation code already existed in `_generate_fallback_tree`; v0.5.0 activates it via the public API.
+- `generate_tree(...)` accepts a new `max_depth: int | None = None` keyword. The system `tree(1)` path passes `-L max_depth+1`; the Python fallback recurses with the existing `_current_depth` check.
+- `write_file_structure(target, max_depth=...)` threads the cap through. `update_file_structure()` (called by `logmind init` + the post-merge auto-regen) picks up the default automatically.
+- New CLI flag on `logmind file-structure` and `logmind tree`: `--max-depth N` (default 2). `--max-depth 0` requests the full tree.
+- `file-structure.md` template footer notes the truncation and directs readers to `--max-depth 0` / `logmind tree --max-depth 0` for the full view.
+
+### Why this compounds
+
+Every clud-bug review on a PR that touches the tree ingests the
+file-structure.md diff. Every agent session that `cat`s the file pays
+the byte cost. Dropping from 103 KB → 10 KB in logmind alone, and
+similar reductions in 6 other consuming repos, compounds on every
+future read.
+
+### Tests
+
+- `tests/test_tree_gen.py` (+4 new): default depth=2 truncates deep trees; `max_depth=None` is unbounded; depth-2 default is strictly shorter than unbounded on a deep tree; `write_file_structure` honors the default.
+
 ## [0.4.0] - 2026-05-27
 
 ### Changed — `notify-agent-skills.yml` opens a PR (not an issue) with a Claude-generated proposed SKILL.md update

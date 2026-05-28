@@ -45,7 +45,7 @@ from logmind.core.tree_gen import update_file_structure
 
 
 @click.group()
-@click.version_option(version="0.4.0", prog_name="logmind")
+@click.version_option(version="0.5.0", prog_name="logmind")
 def main():
     """logmind - AI decision logging system for development projects."""
     pass
@@ -1676,7 +1676,15 @@ def doctor_cmd(as_json: bool, offline: bool, exit_zero: bool):
 
 
 @main.command("tree")
-def tree_cmd():
+@click.option(
+    "--max-depth",
+    "max_depth",
+    type=int,
+    default=None,
+    help="Cap the tree at depth N (root is depth 0). Default: unbounded. "
+    "Pass 0 for unbounded explicitly; pass a positive integer to truncate.",
+)
+def tree_cmd(max_depth: Optional[int]):
     """
     Regenerate docs/file-structure.md with the current project tree.
 
@@ -1692,7 +1700,16 @@ def tree_cmd():
             fg="red",
         )
         sys.exit(1)
-    update_file_structure(docs_path)
+    # CLI convention: --max-depth 0 means unbounded (None internally).
+    # --max-depth omitted falls through to update_file_structure's default.
+    if max_depth is None:
+        update_file_structure(docs_path)
+    else:
+        from logmind.core.tree_gen import write_file_structure
+        write_file_structure(
+            docs_path / "file-structure.md",
+            max_depth=None if max_depth == 0 else max_depth,
+        )
     click.secho("✓ Updated docs/file-structure.md", fg="green")
 
 
@@ -1705,7 +1722,15 @@ def tree_cmd():
     help="Write the rendered tree to PATH (typically docs/file-structure.md). "
     "Without this flag, prints to stdout.",
 )
-def file_structure_cmd(write_path: Optional[Path]):
+@click.option(
+    "--max-depth",
+    "max_depth",
+    type=int,
+    default=None,
+    help="Cap the tree at depth N (root is depth 0). Default: 2 (token-frugal). "
+    "Pass 0 for unbounded (full tree); pass a positive integer to truncate.",
+)
+def file_structure_cmd(write_path: Optional[Path], max_depth: Optional[int]):
     """
     Print or regenerate the derived docs/file-structure.md tree snapshot.
 
@@ -1715,16 +1740,30 @@ def file_structure_cmd(write_path: Optional[Path]):
     parallel-PR rebases without falling through to textual three-way merge.
 
     Examples:
-        logmind file-structure                                # print to stdout
-        logmind file-structure --write docs/file-structure.md # regenerate file
+        logmind file-structure                                # depth 2, stdout
+        logmind file-structure --max-depth 0                  # full tree
+        logmind file-structure --write docs/file-structure.md # regenerate file at depth 2
     """
-    from logmind.core.tree_gen import generate_file_structure, write_file_structure
+    from logmind.core.tree_gen import (
+        DEFAULT_FILE_STRUCTURE_DEPTH,
+        generate_file_structure,
+        write_file_structure,
+    )
+
+    # CLI convention: --max-depth 0 means unbounded (None internally).
+    # --max-depth omitted defaults to DEFAULT_FILE_STRUCTURE_DEPTH (2).
+    if max_depth is None:
+        effective_depth = DEFAULT_FILE_STRUCTURE_DEPTH
+    elif max_depth == 0:
+        effective_depth = None
+    else:
+        effective_depth = max_depth
 
     repo_root = Path.cwd()
     if write_path is None:
-        click.echo(generate_file_structure(repo_root), nl=False)
+        click.echo(generate_file_structure(repo_root, max_depth=effective_depth), nl=False)
         return
-    changed = write_file_structure(write_path)
+    changed = write_file_structure(write_path, max_depth=effective_depth)
     if changed:
         click.secho(f"✓ Regenerated {write_path}", fg="green")
     else:
