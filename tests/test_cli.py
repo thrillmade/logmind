@@ -1251,6 +1251,82 @@ def test_env_var_LOGMIND_QUIET_suppresses_progress_end_to_end(
     )
 
 
+# --- 0.B.3.1 (v0.5.3): click.secho also suppressed under LOGMIND_QUIET ---
+
+def test_quiet_suppresses_secho_progress_in_log(git_repo, monkeypatch):
+    """v0.5.3 fix: LOGMIND_QUIET=1 logmind log must NOT emit the
+    `ℹ Default --stage all` cyan notice or the `✓ Logged decision`
+    green-success line. Pre-v0.5.3 only click.echo was patched; secho
+    leaked through. After: only the `ok logged: ...` line prints."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        # Init first (uses default — not quiet — to set up docs/).
+        init_result = runner.invoke(init)
+        assert init_result.exit_code == 0
+
+        # Now flip LOGMIND_QUIET on and exercise log.
+        monkeypatch.setenv("LOGMIND_QUIET", "1")
+        result = runner.invoke(
+            main, ["log", "test secho quiet fix", "--no-push"]
+        )
+        assert result.exit_code == 0, f"log should succeed: {result.output!r}"
+        # Exactly one ok line.
+        ok_lines = [l for l in result.output.splitlines() if l.startswith("ok ")]
+        assert len(ok_lines) == 1, (
+            f"LOGMIND_QUIET=1 log must emit exactly one ok line; got: {result.output!r}"
+        )
+        # Neither secho-emitted progress glyph appears.
+        assert "ℹ" not in result.output, (
+            f"v0.5.3: LOGMIND_QUIET=1 should suppress ℹ-prefixed secho notice; got: {result.output!r}"
+        )
+        assert "✓" not in result.output, (
+            f"v0.5.3: LOGMIND_QUIET=1 should suppress ✓-prefixed secho success; got: {result.output!r}"
+        )
+
+
+def test_quiet_still_prints_error_warning_secho(monkeypatch):
+    """Loud-color secho (fg=red, fg=yellow) MUST still print even under
+    LOGMIND_QUIET — agents need to see errors and warnings. Regression
+    guard against over-suppression in v0.5.3."""
+    from logmind.cli import _quiet_aware_secho, _set_quiet
+    import click as click_mod
+
+    # Capture by patching the underlying _orig_click_secho via a buffer.
+    captured = []
+    orig = click_mod.secho
+
+    def capture(*args, **kwargs):
+        captured.append((args, kwargs))
+
+    # Activate quiet mode and exercise the wrapper directly.
+    _set_quiet(True)
+    try:
+        # Monkey-patch the original-secho the wrapper delegates to so we
+        # don't actually emit ANSI sequences in the test.
+        import logmind.cli as cli_mod
+        monkeypatch.setattr(cli_mod, "_orig_click_secho", capture)
+
+        # Loud colors must pass through.
+        _quiet_aware_secho("err msg", fg="red")
+        _quiet_aware_secho("warn msg", fg="yellow")
+        _quiet_aware_secho("err bright", fg="bright_red")
+        _quiet_aware_secho("warn bright", fg="bright_yellow")
+
+        # Quiet colors must be suppressed.
+        _quiet_aware_secho("info msg", fg="cyan")
+        _quiet_aware_secho("success msg", fg="green")
+        _quiet_aware_secho("default fg", )  # no fg at all
+    finally:
+        _set_quiet(False)
+
+    # 4 loud colors should have passed through; 3 quiet calls suppressed.
+    assert len(captured) == 4, (
+        f"loud-color secho calls must print under quiet mode; captured: {captured!r}"
+    )
+    bodies = [args[0] for args, _ in captured]
+    assert bodies == ["err msg", "warn msg", "err bright", "warn bright"]
+
+
 # --- 0.B.2 (v0.5.2): show --brief / --limit / --json ---
 
 def test_show_brief_emits_one_line_per_entry(git_repo, docs_dir, monkeypatch):

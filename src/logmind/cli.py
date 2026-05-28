@@ -46,32 +46,47 @@ from logmind.core.tree_gen import update_file_structure
 
 import os
 
-# Quiet-mode mechanism (v0.5.1+, mirrors clud-bug v0.6.7's pattern).
+# Quiet-mode mechanism (v0.5.1+, extended in v0.5.3 to also patch secho).
 #
-# Strategy: monkey-patch click.echo at module load so EVERY existing
-# call site (185 of them) becomes quiet-aware without touching each
-# one. Errors via click.secho(fg="red"/"yellow") still print because
-# we only filter the colorless click.echo path. ok() uses the
-# UNPATCHED echo so its single-line summary always emits.
+# Strategy: monkey-patch BOTH click.echo and click.secho at module load
+# so progress chatter is suppressed without touching 250+ call sites.
+# secho needs special handling — it carries semantic color: red/yellow
+# mean error/warning and MUST still print when LOGMIND_QUIET=1, while
+# green/cyan/blue/default are progress chatter and get suppressed.
+# ok() uses the UNPATCHED echo so its single-line summary always emits.
 #
 # Activation: LOGMIND_QUIET=1 env var OR --quiet/-q on the group.
 _QUIET = os.environ.get("LOGMIND_QUIET") == "1"
 _orig_click_echo = click.echo
+_orig_click_secho = click.secho
+
+# Colors that always print regardless of quiet mode — these carry
+# error/warning semantics agents need to see. Everything else (green
+# success, cyan info, default/none) is progress chatter and suppressed.
+_LOUD_COLORS = frozenset({"red", "yellow", "bright_red", "bright_yellow"})
 
 
 def _quiet_aware_echo(*args, **kwargs):
-    """Drop-in for click.echo that no-ops when _QUIET. Error paths use
-    click.secho(fg=...) which calls _orig_secho — secho is left
-    untouched, so warnings + errors still print."""
+    """Drop-in for click.echo that no-ops when _QUIET."""
     if _QUIET:
         return
     return _orig_click_echo(*args, **kwargs)
 
 
-# Install the patch immediately so subcommand functions captured at
-# import time pick it up. _QUIET is re-read on every call so the
+def _quiet_aware_secho(*args, **kwargs):
+    """Drop-in for click.secho. Suppresses when _QUIET unless fg is one
+    of the loud colors (red/yellow) — those carry error/warning
+    semantics and must still print in quiet mode."""
+    if _QUIET and kwargs.get("fg") not in _LOUD_COLORS:
+        return
+    return _orig_click_secho(*args, **kwargs)
+
+
+# Install the patches immediately so subcommand functions captured at
+# import time pick them up. _QUIET is re-read on every call so the
 # group-level --quiet flag can flip it mid-run.
 click.echo = _quiet_aware_echo
+click.secho = _quiet_aware_secho
 
 
 def _set_quiet(flag: bool) -> None:
@@ -92,7 +107,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.2", prog_name="logmind")
+@click.version_option(version="0.5.3", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",

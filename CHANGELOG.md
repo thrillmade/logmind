@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-05-28
+
+### Fixed — `LOGMIND_QUIET=1` now also suppresses `click.secho` progress chatter
+
+v0.5.1 monkey-patched `click.echo` but intentionally left `click.secho`
+untouched on the rationale "errors via secho(fg='red'/'yellow') still
+print." Side effect: progress lines that also use secho (the `ℹ Default
+--stage all` cyan notice, `✓ Logged decision` green success) slipped
+through unsuppressed — visibly defeating the token-frugal mode for the
+most common command (`logmind log`).
+
+Fix: monkey-patch `click.secho` too, with a small wrapper that
+suppresses when `_QUIET` UNLESS `fg` is one of `_LOUD_COLORS` =
+`{red, yellow, bright_red, bright_yellow}`. Errors and warnings still
+print; progress chatter goes away.
+
+Concrete user-visible change with `LOGMIND_QUIET=1 logmind log "..."`:
+
+```
+# Before (v0.5.1, v0.5.2):                 # After (v0.5.3):
+ℹ Default --stage all (v0.2.7+): ...       ok logged: <sha> "..."
+✓ Logged decision: "..."
+ok logged: <sha> "..."
+```
+
+3 lines → 1 line. ~67% reduction on the most common quiet-mode call.
+
+### Tests
+
+- `tests/test_cli.py`: assert `LOGMIND_QUIET=1 logmind log` emits only
+  the single `ok logged:` line (no `ℹ`, no `✓`); assert error/warning
+  secho paths still print under quiet mode.
+
 ## [0.5.2] - 2026-05-28
 
 ### Added — `logmind show --brief` / `--limit` / `--json` (Phase B.2)
