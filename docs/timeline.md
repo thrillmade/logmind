@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (60 decisions)
+## 2026-05 (61 decisions)
 
-- **2026-05-28** — PR #74 review fixes: single bench execution in CI + fail-safe net_pct=None on lm_exit != 0 *(feat/0.0.M.2-logmind-bench)* — [decisions-branches/feat__0.0.M.2-logmind-bench.md](decisions-branches/feat__0.0.M.2-logmind-bench.md)
-- *... 58 more decisions ...*
+- **2026-05-28** — PR #74 fix: skip bench integration tests on Windows (designed for Linux CI) *(feat/0.0.M.2-logmind-bench)* — [decisions-branches/feat__0.0.M.2-logmind-bench.md](decisions-branches/feat__0.0.M.2-logmind-bench.md)
+- *... 59 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)

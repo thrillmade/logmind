@@ -21,12 +21,25 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# The bench harness spawns real `logmind` subprocesses + tempdirs +
+# git invocations + initializes logmind in those tempdirs. The bench
+# itself is designed to run on Linux CI (.github/workflows/bench.yml
+# uses ubuntu-latest). Windows behaves differently around tempdir
+# paths, git default-branch handling, and `logmind init`'s symlink/
+# workflow-template install — skip the integration tests there. The
+# pure-logic tests below still run on Windows.
+_skip_on_windows = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="bench harness targets Linux CI (bench.yml ubuntu-latest); Windows tempdir/git behavior differs",
+)
+
 
 def test_bench_module_importable():
     """`python -m bench` is the entry point. Module must import cleanly."""
     from bench import per_call, worst_case, per_session, org_cumulative  # noqa: F401
 
 
+@_skip_on_windows
 def test_per_call_returns_saver_or_break_even_for_log_command():
     """The `log` command pair must be a net saver. This is the
     foundational guarantee — if `logmind log` costs more bytes than
@@ -47,6 +60,7 @@ def test_per_call_returns_saver_or_break_even_for_log_command():
     )
 
 
+@_skip_on_windows
 def test_worst_case_is_saver():
     """Worst-case (fresh session, single `logmind log`, never reads
     back) must still be ≤ break-even. The HARDEST guarantee — if this
@@ -78,6 +92,7 @@ def test_org_cumulative_returns_stub_with_null_net_pct():
     assert result.net_pct is None
 
 
+@_skip_on_windows
 def test_main_exits_zero_when_all_angles_saver_or_stub():
     """Top-level: when every non-stub angle is a saver, `python -m bench`
     exits 0. CI uses this as the gate."""
@@ -91,6 +106,7 @@ def test_main_exits_zero_when_all_angles_saver_or_stub():
     assert "ok: 4-angle Q7-logmind compliance" in proc.stdout
 
 
+@_skip_on_windows
 def test_main_json_output_is_parseable():
     """`--json` emits machine-readable output for downstream consumers."""
     proc = subprocess.run(
@@ -109,6 +125,7 @@ def test_main_json_output_is_parseable():
     assert "log" in pair_names
 
 
+@_skip_on_windows
 def test_main_runs_single_angle():
     """`python -m bench per-call` runs only that angle. Useful for fast
     iteration on a specific surface."""
@@ -122,6 +139,7 @@ def test_main_runs_single_angle():
     assert "worst-case" not in proc.stdout
 
 
+@_skip_on_windows
 def test_failed_logmind_command_does_not_become_a_fake_saver(monkeypatch):
     """PR #74 regression: if a logmind invocation exits non-zero, the
     pair MUST NOT be folded into the aggregate as a saver. A broken
@@ -181,6 +199,7 @@ def test_per_call_aggregate_skips_failed_pairs(monkeypatch):
     )
 
 
+@_skip_on_windows
 def test_baseline_diff_detects_regression(tmp_path):
     """Pass a previous --json run via --baseline; bench reports the
     per-angle diff. Used to detect regressions in CI."""
