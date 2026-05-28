@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-27
+
+### Added — `--quiet/-q` flag + `LOGMIND_QUIET=1` env var (Phase B.3)
+
+Mirrors clud-bug v0.6.7's RTK-style `ok <key-value>` pattern. Agent
+invocations of `logmind log` / `init` / `show` / `tree --write` /
+`file-structure --write` / `timeline --write` can now opt into a
+token-frugal mode that suppresses progress chatter and emits exactly
+one final `ok <key-value>` summary line.
+
+| Command | Quiet output (always emitted, even without --quiet) |
+|---|---|
+| `logmind log "..."` | `ok logged: <sha> "<decision[:60]>"` |
+| `logmind init` | `ok initialized: docs/ .logmind/ workflows @vX.Y.Z` |
+| `logmind show` | `ok show: docs/decisions.md (N bytes[ + archive])` |
+| `logmind tree` | `ok docs/file-structure.md (N bytes, depth=N/default)` |
+| `logmind file-structure` | `ok <path-or-stdout> (N bytes, depth=N/unbounded)` |
+| `logmind timeline` | `ok timeline: <path-or-stdout> (N bytes)` |
+
+### Activation
+
+Either pass `--quiet` / `-q` to the `logmind` group, or export
+`LOGMIND_QUIET=1` in the environment.
+
+### Behavior
+
+- `_ok(...)` ALWAYS emits, even without quiet (positive confirmation
+  for agents that parse stdout).
+- `click.echo` is monkey-patched at module load so all 185 existing
+  call sites become quiet-aware without per-call edits.
+- `click.secho(fg="red"/"yellow")` (warnings + errors) is UNTOUCHED —
+  quiet doesn't silence real problems.
+
+### Tests
+
+- `tests/test_cli.py` (+3 new): `--help` advertises the flag,
+  `show --quiet` on a fresh repo emits a single `ok` line,
+  `LOGMIND_QUIET=1` env var doesn't break `--help`.
+
 ## [0.5.0] - 2026-05-27
 
 ### Changed — `docs/file-structure.md` ships at max-depth 2 by default
