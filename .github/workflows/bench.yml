@@ -1,0 +1,83 @@
+name: Q7-logmind bench (nightly)
+
+# Q7-logmind enforcement (Phase 0.5 / 0.0.M.2).
+# Runs the 4-angle net-saver measurement nightly + on PRs that touch
+# logmind's CLI surface, asserts every non-stub angle stays in the saver
+# direction. CI failure = a logmind change shipped that flipped us into
+# being a token spender — P0.
+
+on:
+  schedule:
+    # 10:00 UTC nightly — after most US/EU CI traffic has cleared.
+    - cron: '0 10 * * *'
+  pull_request:
+    paths:
+      - 'src/logmind/cli.py'
+      - 'src/logmind/core/**'
+      - 'bench/**'
+      - '.github/workflows/bench.yml'
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # post comment summary on PRs
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install logmind in editable mode
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Verify logmind CLI is on PATH
+        run: logmind --version
+
+      - name: Run Q7-logmind bench
+        id: bench
+        run: |
+          python -m bench --json > bench-current.json
+          # Also produce human-readable for the job log + PR comment.
+          python -m bench > bench-current.txt
+          cat bench-current.txt
+        # If `python -m bench` exits non-zero, that's a Q7 violation.
+        # The step exit code propagates and fails the job.
+
+      - name: Upload bench artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q7-bench-${{ github.run_id }}
+          path: |
+            bench-current.json
+            bench-current.txt
+          retention-days: 30
+
+      - name: Post PR comment summary
+        if: github.event_name == 'pull_request' && always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Dedup: edit prior bench comment if present (avoids stacking
+          # one comment per push). Identified by a hidden HTML marker.
+          MARKER='<!-- q7-bench-summary -->'
+          BODY=$(printf '%s\n\n## 🐛 Q7-logmind bench\n\n```\n%s\n```\n\n_Updated %s. See workflow run for full JSON._' \
+            "$MARKER" "$(cat bench-current.txt)" "$(date -u +%Y-%m-%dT%H:%MZ)")
+          EXISTING_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq "[.[] | select(.body | startswith(\"${MARKER}\"))] | .[0].id // empty")
+          if [ -n "$EXISTING_ID" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${EXISTING_ID}" \
+              -f body="$BODY" > /dev/null
+          else
+            gh pr comment "$PR_NUMBER" --body "$BODY"
+          fi
