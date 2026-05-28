@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (57 decisions)
+## 2026-05 (58 decisions)
 
-- **2026-05-28** — 0.A.9 audit: all 7 consuming repos pass Q4 + <200-line CLAUDE.md; zero Q5 path-scope candidates found *(main)* — [decisions.md](decisions.md)
-- *... 55 more decisions ...*
+- **2026-05-28** — chore: clud-bug v0.6.7 → v0.6.12 (Sonnet pin, incremental-diff, --max-turns, secho lessons, self-update YAML fix) *(chore/clud-bug-update-v0.6.12)* — [decisions-branches/chore__clud-bug-update-v0.6.12.md](decisions-branches/chore__clud-bug-update-v0.6.12.md)
+- *... 56 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
