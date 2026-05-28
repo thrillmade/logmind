@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-28
+
+### Added — `docs/timeline.md` ships brief format on disk (Phase 0.B.4)
+
+The on-disk timeline now defaults to a token-frugal brief layout: per
+month, render the newest + oldest decisions with an elision line
+between them, plus the month-total count in the header. Months with
+≤2 decisions render every entry (nothing to compress).
+
+Example (brief, default):
+
+```
+## 2026-05 (23 decisions)
+
+- **2026-05-28** — newest title *(main)* — [docs/decisions.md](docs/decisions.md)
+- *... 21 more decisions ...*
+- **2026-05-01** — oldest title *(feat/foo)* — [link](link)
+```
+
+Pass `--full` for the legacy per-decision listing:
+
+```bash
+logmind timeline --full                              # full to stdout
+logmind timeline --write docs/timeline.md --full     # full on disk
+```
+
+### Impact
+
+Every consuming repo's `docs/timeline.md` shrinks on next regen. For
+a repo with 5 months × 20 avg decisions, `docs/timeline.md` drops
+from ~100 lines to ~25 lines (~75% reduction). Source files
+(`decisions.md`, `decisions-branches/*.md`, `decisions-archive.md`)
+remain user-owned and untouched.
+
+### Tests
+
+- `tests/test_timeline.py`: brief default produces month header with
+  count; ≥3-entry months show first+elision+last; ≤2-entry months show
+  every entry; `--full` recovers legacy format; brief strictly shorter
+  than full on representative fixtures; rendering still deterministic.
+
 ## [0.5.3] - 2026-05-28
 
 ### Fixed — `LOGMIND_QUIET=1` now also suppresses `click.secho` progress chatter

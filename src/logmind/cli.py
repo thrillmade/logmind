@@ -107,7 +107,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.3", prog_name="logmind")
+@click.version_option(version="0.5.4", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -1781,7 +1781,15 @@ def check_decisions(threshold: int, no_fail: bool):
     help="Exit nonzero if writing would change the file. Used in CI to fail "
     "the build before regen so the auto-commit step runs and updates the PR.",
 )
-def timeline_cmd(write_path: Optional[Path], check: bool):
+@click.option(
+    "--full",
+    is_flag=True,
+    default=False,
+    help="Render the legacy per-decision format (one bullet per entry). "
+    "Default is brief (v0.5.4+): first + last entry per month with a "
+    "`... N more decisions ...` elision line — token-frugal on disk.",
+)
+def timeline_cmd(write_path: Optional[Path], check: bool, full: bool):
     """
     Print or regenerate the high-level decision timeline.
 
@@ -1790,8 +1798,9 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
     timeline grouped by year-month. Sources are never modified.
 
     Examples:
-        logmind timeline                              # print to stdout
-        logmind timeline --write docs/timeline.md     # regenerate file
+        logmind timeline                              # brief, to stdout
+        logmind timeline --full                       # full per-decision
+        logmind timeline --write docs/timeline.md     # brief, on disk
         logmind timeline --write docs/timeline.md --check  # CI gate
     """
     from logmind.core.timeline import generate_timeline, write_timeline
@@ -1804,6 +1813,8 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
         )
         sys.exit(1)
 
+    brief = not full
+
     if check:
         if write_path is None:
             click.secho(
@@ -1811,7 +1822,7 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
                 fg="red",
             )
             sys.exit(2)
-        rendered = generate_timeline(docs_path)
+        rendered = generate_timeline(docs_path, brief=brief)
         existing = (
             write_path.read_text(encoding="utf-8") if write_path.exists() else ""
         )
@@ -1827,19 +1838,21 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
         return
 
     if write_path is None:
-        rendered = generate_timeline(docs_path)
+        rendered = generate_timeline(docs_path, brief=brief)
         _orig_click_echo(rendered, nl=False)
         # utf-8 byte count, not character count — see file-structure_cmd.
-        _ok(f"timeline: {len(rendered.encode('utf-8'))} bytes (stdout)")
+        mode = "brief" if brief else "full"
+        _ok(f"timeline: {len(rendered.encode('utf-8'))} bytes (stdout, {mode})")
         return
 
-    changed = write_timeline(write_path, docs_path)
+    changed = write_timeline(write_path, docs_path, brief=brief)
     if changed:
         click.secho(f"✓ Regenerated {write_path}", fg="green")
     else:
         click.echo(f"  {write_path} already up to date")
     out_bytes = Path(write_path).stat().st_size
-    _ok(f"timeline: {write_path} ({out_bytes} bytes)")
+    mode = "brief" if brief else "full"
+    _ok(f"timeline: {write_path} ({out_bytes} bytes, {mode})")
 
 
 @main.command("doctor")
