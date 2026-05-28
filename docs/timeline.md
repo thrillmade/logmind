@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (56 decisions)
+## 2026-05 (57 decisions)
 
-- **2026-05-28** — PR #72 fix: tighten brief-1-entry assertion + add singular-form test for n=3 elision *(feat/0.B.4-timeline-brief-format)* — [decisions-branches/feat__0.B.4-timeline-brief-format.md](decisions-branches/feat__0.B.4-timeline-brief-format.md)
-- *... 54 more decisions ...*
+- **2026-05-28** — 0.A.9 audit: all 7 consuming repos pass Q4 + <200-line CLAUDE.md; zero Q5 path-scope candidates found *(main)* — [decisions.md](decisions.md)
+- *... 55 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
