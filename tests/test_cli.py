@@ -1190,31 +1190,47 @@ def test_quiet_flag_advertised_in_help():
     assert "LOGMIND_QUIET" in result.output
 
 
-def test_show_quiet_emits_single_ok_line_when_no_decisions(git_repo, docs_dir):
+def test_show_quiet_emits_single_ok_line_when_no_decisions(git_repo, docs_dir, monkeypatch):
     """When there are no decisions, --quiet mode should emit exactly one
-    `ok ...` line on stdout — no progress chatter."""
+    `ok ...` line on stdout — no progress chatter.
+
+    monkeypatch.chdir (not raw os.chdir) so cwd restores after the
+    test — clud-bug PR #69 caught the raw-chdir version as cascading
+    23 unrelated test failures via the cwd leak.
+    """
     runner = CliRunner()
-    # Wipe decisions.md so we hit the "0 decisions" early-return.
     (docs_dir / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
-    import os
-    os.chdir(git_repo)
+    monkeypatch.chdir(git_repo)
     result = runner.invoke(main, ["--quiet", "show"])
-    # Even with no decisions, the ok line is emitted (positive confirmation).
     ok_lines = [l for l in result.output.splitlines() if l.startswith("ok ")]
     assert len(ok_lines) >= 1, (
         f"--quiet show must emit at least one ok line; got: {result.output!r}"
     )
 
 
-def test_env_var_LOGMIND_QUIET_suppresses_progress(temp_dir, monkeypatch):
-    """The LOGMIND_QUIET=1 env var honored end-to-end via subprocess —
-    no progress chatter for `logmind --help` (--help bypasses quiet
-    since it's the explicit user request, but the principle holds:
-    quiet doesn't break --help)."""
+def test_env_var_LOGMIND_QUIET_suppresses_progress_end_to_end(
+    git_repo, docs_dir, monkeypatch
+):
+    """End-to-end exercise of the env-var path: LOGMIND_QUIET=1 +
+    `logmind show` on a non-empty decisions.md → exactly one ok line,
+    no ✓-prefixed progress. clud-bug PR #69 review caught that the v1
+    test only verified --help didn't crash without actually exercising
+    the feature."""
     monkeypatch.setenv("LOGMIND_QUIET", "1")
-    # Just verify the CLI doesn't crash with the env var set.
+    monkeypatch.chdir(git_repo)
+    (docs_dir / "decisions.md").write_text(
+        "# Decision Log\n\n## 2026-01-01\n\nTest decision body.\n", encoding="utf-8"
+    )
+
     runner = CliRunner()
-    result = runner.invoke(main, ["--help"])
-    assert result.exit_code == 0
-    # --help SHOULD still print; quiet shouldn't suppress it.
-    assert "Usage:" in result.output
+    result = runner.invoke(main, ["show"])
+    assert result.exit_code == 0, f"show should succeed: {result.output!r}"
+    ok_lines = [l for l in result.output.splitlines() if l.startswith("ok ")]
+    assert len(ok_lines) == 1, (
+        f"LOGMIND_QUIET=1 show must emit exactly one ok line; got: {result.output!r}"
+    )
+    assert "show: docs/decisions.md" in ok_lines[0]
+    # ✓-prefixed progress lines SHOULD be absent in quiet mode.
+    assert "✓" not in result.output, (
+        f"LOGMIND_QUIET=1 should suppress ✓-prefixed progress lines; got: {result.output!r}"
+    )

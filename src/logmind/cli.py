@@ -99,8 +99,11 @@ def _ok(msg: str) -> None:
 )
 def main(quiet_flag: bool):
     """logmind - AI decision logging system for development projects."""
-    if quiet_flag:
-        _set_quiet(True)
+    # Re-evaluate quietness on every invocation so test runs (and any
+    # other long-lived processes that call main() multiple times via
+    # CliRunner) don't leak stale state from a prior call. The flag
+    # OR the env var enables quiet; absence of both disables it.
+    _set_quiet(quiet_flag or os.environ.get("LOGMIND_QUIET") == "1")
 
 
 _AGENT_FILE_CANDIDATES = (
@@ -1712,7 +1715,8 @@ def timeline_cmd(write_path: Optional[Path], check: bool):
     if write_path is None:
         rendered = generate_timeline(docs_path)
         _orig_click_echo(rendered, nl=False)
-        _ok(f"timeline: {len(rendered)} bytes (stdout)")
+        # utf-8 byte count, not character count — see file-structure_cmd.
+        _ok(f"timeline: {len(rendered.encode('utf-8'))} bytes (stdout)")
         return
 
     changed = write_timeline(write_path, docs_path)
@@ -1859,7 +1863,10 @@ def file_structure_cmd(write_path: Optional[Path], max_depth: Optional[int]):
         # Use unpatched echo so the tree itself isn't suppressed by --quiet;
         # the tree is the command's PRIMARY output, not progress chatter.
         _orig_click_echo(rendered, nl=False)
-        _ok(f"file-structure: {len(rendered)} bytes, {depth_label} (stdout)")
+        # Use utf-8 byte count (not character count) so this matches the
+        # write-path's Path.stat().st_size — em-dashes/non-ASCII would
+        # otherwise undercount. clud-bug PR #69 caught this.
+        _ok(f"file-structure: {len(rendered.encode('utf-8'))} bytes, {depth_label} (stdout)")
         return
     changed = write_file_structure(write_path, max_depth=effective_depth)
     if changed:
