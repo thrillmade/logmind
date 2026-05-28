@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (56 decisions)
+## 2026-05 (58 decisions)
 
-- **2026-05-28** — PR #72 fix: tighten brief-1-entry assertion + add singular-form test for n=3 elision *(feat/0.B.4-timeline-brief-format)* — [decisions-branches/feat__0.B.4-timeline-brief-format.md](decisions-branches/feat__0.B.4-timeline-brief-format.md)
-- *... 54 more decisions ...*
+- **2026-05-28** — chore: clud-bug v0.6.7 → v0.6.12 (Sonnet pin, incremental-diff, --max-turns, secho lessons, self-update YAML fix) *(chore/clud-bug-update-v0.6.12)* — [decisions-branches/chore__clud-bug-update-v0.6.12.md](decisions-branches/chore__clud-bug-update-v0.6.12.md)
+- *... 56 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
