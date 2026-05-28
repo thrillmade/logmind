@@ -149,6 +149,7 @@ def _resolve_ignore_patterns(
 def generate_tree(
     root_path: Optional[Path] = None,
     extra_ignore: Optional[Iterable[str]] = None,
+    max_depth: Optional[int] = None,
 ) -> str:
     """
     Render a tree of ``root_path`` using the system ``tree`` binary if
@@ -158,6 +159,12 @@ def generate_tree(
     patterns the caller supplies. Path-shaped patterns (``site/.next``)
     and gitignore negation (``!keep.log``) force the Python fallback,
     since the `tree` binary's ``-I`` flag is basename-only.
+
+    ``max_depth=N`` truncates the tree at depth N (root is depth 0).
+    ``max_depth=None`` (default) is unbounded. v0.5.0+: ``generate_file_structure``
+    passes ``max_depth=2`` by default so the on-disk file-structure.md ships
+    at a token-frugal depth across every consuming repo. Callers wanting
+    the full tree (drill-in via CLI ``--max-depth 0``) pass ``None``.
     """
     if root_path is None:
         root_path = Path.cwd()
@@ -181,16 +188,28 @@ def generate_tree(
 
         if binary_available:
             ignore_arg = "|".join(rules.ignore)
+            cmd = [
+                "tree",
+                "-I",
+                ignore_arg,
+                "-a",
+                "--noreport",
+                "--dirsfirst",
+            ]
+            if max_depth is not None:
+                # tree(1)'s -L N caps display depth at N levels BELOW the
+                # root. Matches our Python fallback's convention exactly:
+                # `_current_depth >= max_depth` early-returns, so
+                # max_depth=2 shows root + its children + grandchild
+                # names (but no further), which is precisely what
+                # `tree -L 2` produces. PR #68's first revision had a
+                # spurious +1 here that made the tree(1) path display
+                # one level deeper than the Python fallback; clud-bug
+                # caught it.
+                cmd.extend(["-L", str(max_depth)])
             try:
                 result = subprocess.run(
-                    [
-                        "tree",
-                        "-I",
-                        ignore_arg,
-                        "-a",
-                        "--noreport",
-                        "--dirsfirst",
-                    ],
+                    cmd,
                     cwd=root_path,
                     capture_output=True,
                     text=True,
@@ -200,7 +219,7 @@ def generate_tree(
             except subprocess.CalledProcessError:
                 pass  # fall through to Python fallback
 
-    return _generate_fallback_tree(root_path, rules=rules)
+    return _generate_fallback_tree(root_path, rules=rules, max_depth=max_depth)
 
 
 def _generate_fallback_tree(
@@ -272,7 +291,13 @@ def _generate_fallback_tree(
     return "\n".join(line for line in lines if line)
 
 
-def generate_file_structure(repo_root: Path) -> str:
+DEFAULT_FILE_STRUCTURE_DEPTH = 2
+
+
+def generate_file_structure(
+    repo_root: Path,
+    max_depth: Optional[int] = DEFAULT_FILE_STRUCTURE_DEPTH,
+) -> str:
     """Render the file-structure.md content for ``repo_root`` and return it
     as a string (no file is written). Useful when the caller wants to
     direct the output somewhere other than the canonical
@@ -283,14 +308,23 @@ def generate_file_structure(repo_root: Path) -> str:
     byte-identical files. v0.3.3 dropped the prior wall-clock
     ``Last updated:`` line, which caused the post-merge hook to re-stage
     the file on every ``git pull`` even when the tree was unchanged.
+
+    v0.5.0+: ``max_depth`` defaults to 2 so the on-disk file ships
+    token-frugal across all consuming repos. The 103 KB unbounded tree
+    in logmind itself drops to ~10 KB at depth 2. Pass ``max_depth=None``
+    (or CLI ``--max-depth 0``) to get the full tree.
     """
-    tree_output = generate_tree(repo_root)
+    tree_output = generate_tree(repo_root, max_depth=max_depth)
     template_path = Path(__file__).parent.parent / "templates" / "file-structure.md.template"
     template = template_path.read_text(encoding="utf-8")
     return template.format(tree_output=tree_output)
 
 
-def write_file_structure(target_path: Path, repo_root: Optional[Path] = None) -> bool:
+def write_file_structure(
+    target_path: Path,
+    repo_root: Optional[Path] = None,
+    max_depth: Optional[int] = DEFAULT_FILE_STRUCTURE_DEPTH,
+) -> bool:
     """Write rendered file-structure to ``target_path`` atomically. Returns
     True if the file's content changed, False if it was already up to date.
     Mirrors the shape of ``logmind.core.timeline.write_timeline()``.
@@ -300,6 +334,9 @@ def write_file_structure(target_path: Path, repo_root: Optional[Path] = None) ->
             when invoked by the v0.3.0 git merge driver).
         repo_root: project root. Defaults to ``target_path.parent.parent``
             (assumes docs/file-structure.md layout), then falls back to cwd.
+        max_depth: depth cap for the rendered tree. Defaults to
+            ``DEFAULT_FILE_STRUCTURE_DEPTH`` (2). Pass ``None`` for the
+            full tree (drill-in via CLI ``--max-depth 0``).
     """
     from logmind.core.atomic_io import atomic_write_text
 
@@ -311,7 +348,7 @@ def write_file_structure(target_path: Path, repo_root: Optional[Path] = None) ->
         if not (repo_root / ".git").exists():
             repo_root = Path.cwd()
 
-    rendered = generate_file_structure(repo_root)
+    rendered = generate_file_structure(repo_root, max_depth=max_depth)
     existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
     if existing == rendered:
         return False
