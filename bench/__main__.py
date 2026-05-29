@@ -16,14 +16,14 @@ from typing import Any
 from .per_call import run_per_call
 from .worst_case import run_worst_case
 from .per_session import run_per_session
-from .org_cumulative import run_org_cumulative_stub
+from .org_cumulative import run_org_cumulative
 
 
 ANGLES = {
     "per-call": run_per_call,
     "worst-case": run_worst_case,
     "per-session": run_per_session,
-    "org-cumulative": run_org_cumulative_stub,
+    "org-cumulative": run_org_cumulative,
 }
 
 
@@ -72,14 +72,15 @@ def main() -> int:
         print(_format_human(results))
 
     # Exit non-zero if any GATING non-stub angle is a NET SPENDER.
-    # Stubs (net_pct=None) don't gate. Per-session is informational
-    # only — its baseline (``git log --oneline -100``) is conceptually
-    # too thin (agents would not get equivalent context from raw git
-    # log alone in the no-logmind world), so the absolute ``net_pct``
-    # isn't a quality signal. The angle's value is the per-file shares
-    # (``per_file_share``, ``agents_md_block_share``) which gate the
-    # conditional 0.B.5 / 0.B.6 candidates downstream.
-    informational = {"per-session"}
+    # Stubs (net_pct=None) don't gate. Per-session AND org-cumulative
+    # are informational only — they share the ``git log --oneline -100``
+    # baseline, which is conceptually too thin (agents would not get
+    # equivalent context from raw git log alone in the no-logmind world),
+    # so the absolute ``net_pct`` isn't a quality signal. Per-session's
+    # value is per-file shares (``per_file_share``, ``agents_md_block_share``)
+    # which gate 0.B.5 / 0.B.6; org-cumulative's value is ``per_repo_share``
+    # which surfaces per-consumer outliers for Step 4 validation.
+    informational = {"per-session", "org-cumulative"}
     any_spender = any(
         (r.get("net_pct") or 0) > 0
         for name, r in results.items()
@@ -92,7 +93,7 @@ def main() -> int:
 
 def _format_human(results: dict[str, Any]) -> str:
     lines = ["ok: 4-angle Q7-logmind compliance" if not _has_spender(results) else "FAIL: Q7-logmind net-spender detected"]
-    informational = {"per-session"}
+    informational = {"per-session", "org-cumulative"}
     for name, r in results.items():
         if name.startswith("_"):
             continue
@@ -104,10 +105,11 @@ def _format_human(results: dict[str, Any]) -> str:
             lines.append(f"  {name:<14} (stub — not yet implemented)")
             continue
         if name in informational:
-            # Per-session's ``git log --oneline`` baseline is too thin
-            # to interpret pos/neg as quality — the per-file shares in
-            # ``label`` are the load-bearing data.
-            verdict = "ℹ info (gates 0.B.5/0.B.6 via shares)"
+            # Same baseline-thinness concern for both per-session and
+            # org-cumulative — pos/neg net_pct isn't a quality signal.
+            # The load-bearing data is in ``label`` + per-repo / per-file
+            # shares (Step 4 validation + 0.B.5/0.B.6 gating).
+            verdict = "ℹ info (Step 4 / 0.B.5 / 0.B.6 inputs)"
         else:
             verdict = "✅ saver" if pct < 0 else "❌ spender"
         sign = "" if pct < 0 else "+"
@@ -122,9 +124,10 @@ def _format_human(results: dict[str, Any]) -> str:
 
 
 def _has_spender(results: dict[str, Any]) -> bool:
-    """Header verdict — informational angles (per-session) are excluded
-    so the human-readable banner matches the exit-gate logic."""
-    informational = {"per-session"}
+    """Header verdict — informational angles (per-session, org-cumulative)
+    are excluded so the human-readable banner matches the exit-gate
+    logic."""
+    informational = {"per-session", "org-cumulative"}
     return any(
         isinstance(r, dict) and (r.get("net_pct") or 0) > 0
         for name, r in results.items()

@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (69 decisions)
+## 2026-05 (71 decisions)
 
-- **2026-05-29** — Defer 0.B.5 (docs/decisions.md per-entry compact) to Phase 3+ — structural overhead too small to be worth a release *(main)* — [decisions.md](decisions.md)
-- *... 67 more decisions ...*
+- **2026-05-29** — fix(0.5 §2): add sessions_contributing counter + strip hardcoded paths (PR #81 review) *(feat/0.5-S2-org-cumulative-bench)* — [decisions-branches/feat__0.5-S2-org-cumulative-bench.md](decisions-branches/feat__0.5-S2-org-cumulative-bench.md)
+- *... 69 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
