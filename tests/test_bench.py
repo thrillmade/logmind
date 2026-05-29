@@ -362,11 +362,159 @@ def test_per_session_malformed_line_skipped(tmp_path):
     assert result.per_file_share["AGENTS.md"] == pytest.approx(1.0)
 
 
-def test_org_cumulative_returns_stub_with_null_net_pct():
-    from bench.org_cumulative import run_org_cumulative_stub
-    result = run_org_cumulative_stub()
+def test_org_cumulative_no_sessions_returns_stub(tmp_path):
+    """Stub-invariant: when no sessions exist on disk, the angle
+    reports as not-yet-implemented-shaped so the exit gate skips it."""
+    from bench.org_cumulative import run_org_cumulative
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    result = run_org_cumulative(home=fake_home)
     assert result.stub is True
     assert result.net_pct is None
+    assert "no sessions found" in result.label
+
+
+def test_org_cumulative_aggregates_across_sessions_and_repos(tmp_path):
+    """End-to-end: two sessions across two distinct logmind repos.
+    Verifies global sum aggregation (not per-session averaging) AND
+    that ``per_repo_share`` keys both repos. Distinguishes from
+    per_session.py's average-of-percentages rollup."""
+    from bench.org_cumulative import run_org_cumulative
+
+    def _setup_repo(name: str, doc_content: str) -> Path:
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "README.md").write_text("# t\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+        (repo / ".logmind").mkdir()
+        (repo / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "decisions.md").write_text(doc_content, encoding="utf-8")
+        return repo
+
+    repo_a = _setup_repo("repo-a", "# A\n")
+    repo_b = _setup_repo("repo-b", "# B\n")
+
+    fake_home = tmp_path / "home"
+
+    def _emit_session(session_name: str, repo: Path, payload_size: int) -> None:
+        projects_dir = fake_home / ".claude" / "projects" / session_name
+        projects_dir.mkdir(parents=True, exist_ok=True)
+        session = projects_dir / "session.jsonl"
+        payload = "x" * payload_size
+        lines = [
+            json.dumps({"cwd": str(repo), "type": "user"}),
+            json.dumps({
+                "message": {
+                    "content": [{
+                        "type": "tool_use",
+                        "name": "Read",
+                        "id": f"tu-{session_name}",
+                        "input": {"file_path": str(repo / "docs" / "decisions.md")},
+                    }]
+                }
+            }),
+            json.dumps({
+                "message": {
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": f"tu-{session_name}",
+                        "content": payload,
+                    }]
+                }
+            }),
+        ]
+        session.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    _emit_session("enc-a", repo_a, 3000)
+    _emit_session("enc-b", repo_b, 1000)
+
+    result = run_org_cumulative(home=fake_home)
+    assert result.stub is False
+    assert result.sessions_sampled == 2
+    assert result.repos_sampled == 2
+    # Total logmind bytes = 3000 + 1000 = 4000.
+    assert result.total_logmind_bytes == 4000
+    assert result.total_git_bytes > 0
+    # Global net_pct = (4000 - total_git) / total_git * 100. Sign +/-
+    # depends on baseline size, but the value must be defined.
+    assert result.net_pct is not None
+    # Per-repo share: repo-a contributes 75 %, repo-b 25 %.
+    shares = result.per_repo_share
+    assert sum(shares.values()) == pytest.approx(1.0)
+    assert shares[str(repo_a)] == pytest.approx(0.75)
+    assert shares[str(repo_b)] == pytest.approx(0.25)
+
+
+def test_org_cumulative_per_repo_share_isolates_outlier(tmp_path):
+    """Three sessions in the same repo vs one in another → first repo
+    should carry the dominant share. This is the metric Step 4 uses
+    to spot per-consumer cache-key regressions (>2× median share)."""
+    from bench.org_cumulative import run_org_cumulative
+
+    repos: list[Path] = []
+    for name in ("dominant", "small"):
+        r = tmp_path / name
+        r.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=r, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=r, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=r, check=True)
+        (r / "README.md").write_text("# t\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=r, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=r, check=True)
+        (r / ".logmind").mkdir()
+        (r / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+        (r / "docs").mkdir()
+        (r / "docs" / "decisions.md").write_text(f"# {name}\n", encoding="utf-8")
+        repos.append(r)
+
+    fake_home = tmp_path / "home"
+
+    def _emit(slug: str, repo: Path, payload: int) -> None:
+        d = fake_home / ".claude" / "projects" / slug
+        d.mkdir(parents=True, exist_ok=True)
+        s = d / "session.jsonl"
+        lines = [
+            json.dumps({"cwd": str(repo), "type": "user"}),
+            json.dumps({"message": {"content": [{
+                "type": "tool_use", "name": "Read", "id": f"tu-{slug}",
+                "input": {"file_path": str(repo / "docs" / "decisions.md")}
+            }]}}),
+            json.dumps({"message": {"content": [{
+                "type": "tool_result", "tool_use_id": f"tu-{slug}", "content": "x" * payload,
+            }]}}),
+        ]
+        s.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    _emit("d1", repos[0], 1000)
+    _emit("d2", repos[0], 1000)
+    _emit("d3", repos[0], 1000)
+    _emit("s1", repos[1], 500)
+
+    result = run_org_cumulative(home=fake_home)
+    assert result.stub is False
+    assert result.repos_sampled == 2
+    # Dominant repo: 3000 / 3500 ≈ 0.857; small repo: 500 / 3500 ≈ 0.143.
+    assert result.per_repo_share[str(repos[0])] == pytest.approx(3000 / 3500)
+    assert result.per_repo_share[str(repos[1])] == pytest.approx(500 / 3500)
+
+
+def test_org_cumulative_stub_shim_calls_real_impl():
+    """``run_org_cumulative_stub`` is a back-compat alias that just
+    delegates to the real implementation. It MUST NOT return the
+    pre-impl stub shape (would silently keep callers on the old
+    placeholder). Caught at registry-swap time."""
+    from bench.org_cumulative import run_org_cumulative_stub
+    result = run_org_cumulative_stub()
+    # On a real machine this MAY be a stub (no sessions in test env)
+    # but the SHAPE must include the new fields, not the old 3-field
+    # dataclass. ``repos_sampled`` is the canary.
+    assert hasattr(result, "repos_sampled")
+    assert hasattr(result, "per_repo_share")
 
 
 @_skip_on_windows
