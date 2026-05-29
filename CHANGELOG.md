@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-05-29
+
+### Added — `bench/per_session.py` real impl (Phase 0.5 Step 1)
+
+The 4th angle of `logmind-bench` (Q7-logmind enforcement) was a stub.
+Now walks `~/.claude/projects/*/*.jsonl`, joins `tool_use: Read` events
+to their `tool_result` siblings via `tool_use_id`, buckets read bytes
+into `docs/decisions.md` / `docs/timeline.md` / `docs/file-structure.md`
+/ `AGENTS.md` (+ AGENTS.md-logmind-block sub-bucket), compares to a
+`git log --oneline -100` baseline.
+
+Per-session is **informational only** (does NOT gate the exit code) —
+the `git log --oneline` baseline is conceptually too thin for the
+`net_pct` sign to be a quality signal. The load-bearing data is the
+per-file shares (`per_file_share`, `agents_md_block_share`), which
+gate the conditional 0.B.5 / 0.B.6 candidates.
+
+Sample output:
+
+```
+ok: 4-angle Q7-logmind compliance
+  per-call       -18% bytes vs git equivalent      ✅ saver
+  worst-case     -58% even on never-read           ✅ saver
+  per-session    +352% bytes amortized (9/14 sessions, AGENTS.md=35%, decisions=38%) ℹ info
+  org-cumulative (stub — not yet implemented)
+```
+
+`bench/` is internal-only (not shipped to PyPI); the change is at the
+repo level for nightly bench + decision-rubric inputs.
+
+### Changed — `AGENTS.md` logmind-block trimmed v5-slim → v6-pointer (Phase 0.5 / 0.B.6)
+
+Block compressed from 2526 bytes / 48 lines to ~770 bytes / 12 lines
+(**~ 69 % reduction**) — drops the inline 5-step procedure +
+"Required reading" list, keeps the load-bearing "logmind log is the
+commit primitive" rule + bash example + skill pointer to
+`agent-skills/skills/logmind`. Full procedure now lives entirely in
+the skill (which most agent runtimes auto-load).
+
+**Per-session data justifying the ship** (`python -m bench` on a real
+machine with 14 sampled logmind-repo sessions, 9 with decision-doc
+reads):
+
+- `per_file_share[AGENTS.md] = 0.36` ≥ 0.20 threshold ✅
+- `agents_md_block_share = 0.51` ≥ 0.30 threshold ✅
+
+(See `/Users/ludlow/.claude/plans/ok-here-is-recent-distributed-chipmunk.md`
+Step 3 rubric.)
+
+**Savings:** ~1.8 KB per repo per AGENTS.md read. Across 6 consuming
+repos × per-session reads, compounds quickly.
+
+### Migration
+
+Consuming repos pick up the v6-pointer block on next `logmind doctor`
++ refresh cycle. `inserter._replace_marker_block` handles the swap
+idempotently. The v6 block is a strict subset of v5's information
+(everything trimmed lives in the linked skill); no agent action lost.
+
+### Tests
+
+`test_get_agents_md_template_returns_slim_when_skills_available` updated
+to assert `v6-pointer` marker, the "commit primitive" rule, the
+git-trio-replacement phrase, the skill-URL pointer, AND a 1500-byte
+hard cap on the slim block to prevent future re-bloating.
+
+### Composite pin
+
+No clud-bug composite changes this release.
+
 ## [0.5.5] - 2026-05-29
 
 ### Added — RTK-inspired fail-safe patterns (Phase 0.5 / 0.0.T, logmind side)
