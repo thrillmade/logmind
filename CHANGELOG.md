@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-05-29
+
+### Added — RTK-inspired fail-safe patterns (Phase 0.5 / 0.0.T, logmind side)
+
+Two surgical patterns lifted from RTK (MIT-licensed) into logmind's
+parser + atomic-write paths. RTK is not adopted as a dependency; only
+the patterns ship.
+
+**Parser warn-not-silent** (`src/logmind/core/parser.py`):
+`iter_decisions` previously caught `ValueError` on malformed decision
+header dates (e.g. `"## 2026-13-45 25:99 - title"` — regex matches but
+the date doesn't parse) and silently dropped the entry. Now emits a
+stderr warning naming the file + lineno + parse error, then skips.
+Silent drops were the Phase 0 hindsight bug this addresses.
+
+```
+  ! logmind: skipping malformed decision header at
+  docs/decisions-branches/foo.md:14: month must be in 1..12
+```
+
+**Atomic-write orphan cleanup** (`src/logmind/core/atomic_io.py`):
+`atomic_write_text` previously left an orphaned `.tmp` sibling behind
+if the write failed mid-flight. Now catches `BaseException` (covers
+`KeyboardInterrupt`), unlinks the orphan with `missing_ok=True`, then
+re-raises the original exception. Cleanup is best-effort: if the
+unlink ALSO fails, the original exception still propagates so the
+real error is never masked.
+
+### Tests
+
++6 tests in `tests/test_fail_safe_0_0_T.py`: malformed-date warning,
+no warning on clean / missing files, tmp cleanup on write failure,
+original exception preserved when cleanup also fails, happy path
+unchanged. Full suite: 614 passed, 1 skipped.
+
+### Impact
+
+Quality boost (Q6 — never silent-drop warnings). No measurable token
+cost change.
+
 ## [0.5.4] - 2026-05-28
 
 ### Added — `docs/timeline.md` ships brief format on disk (Phase 0.B.4)
