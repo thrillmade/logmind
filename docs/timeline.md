@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (68 decisions)
+## 2026-05 (69 decisions)
 
-- **2026-05-29** — 0.B.6: trim AGENTS.md logmind-block v5-slim → v6-pointer (~69% reduction, data-justified by PR #78 per_session) *(feat/0.B.6-agents-block-trim)* — [decisions-branches/feat__0.B.6-agents-block-trim.md](decisions-branches/feat__0.B.6-agents-block-trim.md)
-- *... 66 more decisions ...*
+- **2026-05-29** — Defer 0.B.5 (docs/decisions.md per-entry compact) to Phase 3+ — structural overhead too small to be worth a release *(main)* — [decisions.md](decisions.md)
+- *... 67 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)

@@ -16,6 +16,14 @@ logmind
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .logmind
 │   └── config.yml
+├── bench
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── org_cumulative.py
+│   ├── per_call.py
+│   ├── per_session.py
+│   ├── README.md
+│   └── worst_case.py
 ├── docs
 │   ├── decisions-branches
 │   ├── ai-agent-files.md
@@ -55,6 +63,7 @@ logmind
 │   ├── test_agents_consolidation.py
 │   ├── test_aggregator.py
 │   ├── test_analytics.py
+│   ├── test_bench.py
 │   ├── test_branch_aware_logging.py
 │   ├── test_changelog.py
 │   ├── test_cli.py
@@ -62,6 +71,7 @@ logmind
 │   ├── test_decision_templates.py
 │   ├── test_decorators.py
 │   ├── test_doctor.py
+│   ├── test_fail_safe_0_0_T.py
 │   ├── test_file_structure_updates.py
 │   ├── test_git_handler.py
 │   ├── test_gitignore_management.py
