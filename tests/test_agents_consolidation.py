@@ -102,16 +102,38 @@ def test_ensure_agents_md_auto_refreshes_stale_marker_block(tmp_path):
 
 
 def test_get_agents_md_template_returns_slim_when_skills_available(monkeypatch):
-    """When skills.sh is detected, template adapts to the slim variant."""
+    """When skills.sh is detected, template adapts to the slim variant.
+
+    0.B.6 (v0.5.6): block trimmed from v5-slim (2526 bytes / 48 lines)
+    to v6-pointer (~770 bytes / 12 lines, 69 % reduction) — drops the
+    inline procedure (covered by the skill at the linked URL), keeps
+    the load-bearing "commit primitive" rule + bash example + skill
+    pointer.
+    """
     from logmind.core import skill_install
 
     monkeypatch.setattr(skill_install, "is_skills_available", lambda: True)
     slim = get_agents_md_template()
-    assert "logmind-block-version: v5-slim" in slim
-    # v4 leads with the single-command framing; "logmind log is the commit
-    # primitive" is the new headline. Either marker should anchor the slim
-    # variant.
-    assert "logmind log` is the commit primitive" in slim or "logmind` skill" in slim
+    assert "logmind-block-version: v6-pointer" in slim
+    # The load-bearing contract — "logmind log replaces git add+commit+push"
+    # — must survive every future trim. If this assertion fails, the
+    # block was over-trimmed and agents will fall back to direct git.
+    assert "logmind log` is the commit primitive" in slim
+    assert "replaces `git add` + `git commit` + `git push`" in slim
+    # Skill pointer is the authority delegation — without it, agents
+    # have no way to find the full procedure when this block trims it out.
+    assert "agent-skills/tree/main/skills/logmind" in slim
+    # Hard size cap on the slim variant — guards against future block
+    # growth re-bloating it. v6 is ~770 bytes; cap at 1500 leaves 2×
+    # headroom for additions while preventing return to v5's 2526.
+    block_start = slim.find("<!-- logmind-start -->")
+    block_end = slim.find("<!-- logmind-end -->") + len("<!-- logmind-end -->")
+    assert block_start != -1 and block_end > block_start
+    block = slim[block_start:block_end]
+    assert len(block.encode("utf-8")) <= 1500, (
+        f"slim logmind-block is {len(block.encode('utf-8'))} bytes "
+        f"— v6-pointer should stay under 1500 (current ~770)"
+    )
 
 
 def test_get_agents_md_template_returns_full_when_skills_absent(monkeypatch):

@@ -77,9 +77,20 @@ def test_check_decisions_no_renames():
 )
 def test_agents_md_install_url_points_at_collection(tmpl):
     """v0.1.1 templates referenced thrillmade/logmind-skill (two-level URL);
-    v0.1.2 must reference the agent-skills collection layout."""
+    v0.1.2 must reference the agent-skills collection layout.
+
+    0.B.6 (v0.5.6): the slim variant dropped the explicit
+    `npx skills add ... --skill logmind` bash example as part of the
+    block trim (~770 bytes vs v5-slim's 2526). The skill-URL pointer
+    is still present — that's the load-bearing assertion. The
+    `--skill logmind` install command is now covered by the skill
+    itself or the README; checking it only on the FULL template
+    where the inline procedure still lives.
+    """
     content = _read(tmpl)
     assert "thrillmade/agent-skills" in content
-    assert "--skill logmind" in content
-    # Old single-skill repo URL must not linger
+    if tmpl == "AGENTS.md.template":
+        # Full template still ships the inline install command.
+        assert "--skill logmind" in content
+    # Old single-skill repo URL must not linger (both variants).
     assert "thrillmade/logmind-skill" not in content
