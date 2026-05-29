@@ -15,14 +15,14 @@ from typing import Any
 
 from .per_call import run_per_call
 from .worst_case import run_worst_case
-from .per_session import run_per_session_stub
+from .per_session import run_per_session
 from .org_cumulative import run_org_cumulative_stub
 
 
 ANGLES = {
     "per-call": run_per_call,
     "worst-case": run_worst_case,
-    "per-session": run_per_session_stub,
+    "per-session": run_per_session,
     "org-cumulative": run_org_cumulative_stub,
 }
 
@@ -71,17 +71,28 @@ def main() -> int:
     else:
         print(_format_human(results))
 
-    # Exit non-zero if any non-stub angle is a NET SPENDER (logmind
-    # costs > it saves). Stubs (net_pct=None) don't gate the exit.
+    # Exit non-zero if any GATING non-stub angle is a NET SPENDER.
+    # Stubs (net_pct=None) don't gate. Per-session is informational
+    # only — its baseline (``git log --oneline -100``) is conceptually
+    # too thin (agents would not get equivalent context from raw git
+    # log alone in the no-logmind world), so the absolute ``net_pct``
+    # isn't a quality signal. The angle's value is the per-file shares
+    # (``per_file_share``, ``agents_md_block_share``) which gate the
+    # conditional 0.B.5 / 0.B.6 candidates downstream.
+    informational = {"per-session"}
     any_spender = any(
-        (r.get("net_pct") or 0) > 0 for r in results.values()
-        if isinstance(r, dict) and r.get("net_pct") is not None
+        (r.get("net_pct") or 0) > 0
+        for name, r in results.items()
+        if isinstance(r, dict)
+        and r.get("net_pct") is not None
+        and name not in informational
     )
     return 1 if any_spender else 0
 
 
 def _format_human(results: dict[str, Any]) -> str:
     lines = ["ok: 4-angle Q7-logmind compliance" if not _has_spender(results) else "FAIL: Q7-logmind net-spender detected"]
+    informational = {"per-session"}
     for name, r in results.items():
         if name.startswith("_"):
             continue
@@ -92,7 +103,13 @@ def _format_human(results: dict[str, Any]) -> str:
         if pct is None:
             lines.append(f"  {name:<14} (stub — not yet implemented)")
             continue
-        verdict = "✅ saver" if pct < 0 else "❌ spender"
+        if name in informational:
+            # Per-session's ``git log --oneline`` baseline is too thin
+            # to interpret pos/neg as quality — the per-file shares in
+            # ``label`` are the load-bearing data.
+            verdict = "ℹ info (gates 0.B.5/0.B.6 via shares)"
+        else:
+            verdict = "✅ saver" if pct < 0 else "❌ spender"
         sign = "" if pct < 0 else "+"
         lines.append(f"  {name:<14} {sign}{pct:.0f}% {label:<28} {verdict}")
     if results.get("_baseline_diff"):
@@ -105,9 +122,13 @@ def _format_human(results: dict[str, Any]) -> str:
 
 
 def _has_spender(results: dict[str, Any]) -> bool:
+    """Header verdict — informational angles (per-session) are excluded
+    so the human-readable banner matches the exit-gate logic."""
+    informational = {"per-session"}
     return any(
         isinstance(r, dict) and (r.get("net_pct") or 0) > 0
-        for r in results.values()
+        for name, r in results.items()
+        if name not in informational
     )
 
 
