@@ -12,8 +12,9 @@ equivalent). Positive = spender (P0 fix).
 The output also surfaces per-file shares + an AGENTS.md-logmind-block
 sub-share — these are the load-bearing metrics for the conditional
 0.B.5 (decisions.md per-entry compact) and 0.B.6 (logmind-block trim)
-candidates. See ``/Users/ludlow/.claude/plans/ok-here-is-recent-distributed-chipmunk.md``
-Step 3 for the ship/defer rubric that consumes them.
+candidates. The ship/defer rubric that consumes them lives in
+``CHANGELOG.md`` (the per-version entries describe how the per-file
+shares + ``agents_md_block_share`` thresholds gated each decision).
 
 Edge cases all return ``stub=True`` / ``net_pct=None`` so the angle
 reports as "not yet implemented"-shaped (and the exit gate doesn't

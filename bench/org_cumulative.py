@@ -13,8 +13,8 @@ sampled byte volume — used by Step 4 validation to spot per-repo
 outliers (a single misconfigured consumer >2× the median share would
 indicate a cache-key regression).
 
-Closes the last Q7-logmind bench stub. See plan §2 in
-``/Users/ludlow/.claude/plans/ok-here-is-recent-distributed-chipmunk.md``.
+Closes the last Q7-logmind bench stub. See the Phase 0.5 §2 entry in
+``CHANGELOG.md`` for the ship/defer rationale.
 """
 
 from __future__ import annotations
@@ -38,7 +38,16 @@ class OrgCumulativeResult:
     label: str
     net_pct: float | None
     stub: bool
+    # All sessions whose cwd is a logmind repo. Matches per_session's
+    # ``sessions_sampled`` semantic so the cross-check invariant
+    # (``org_cumulative.sessions_sampled == per_session.sessions_sampled``
+    # when run against the same home dir) holds.
     sessions_sampled: int = 0
+    # Subset of ``sessions_sampled`` that actually contributed bytes
+    # (>0 decision-doc reads AND non-zero git baseline). Matches
+    # per_session's ``sessions_with_decision_reads``. These are the
+    # sessions whose bytes flow into ``total_logmind_bytes``.
+    sessions_contributing: int = 0
     repos_sampled: int = 0
     total_logmind_bytes: int = 0
     total_git_bytes: int = 0
@@ -62,6 +71,7 @@ def run_org_cumulative(home: Path | None = None) -> OrgCumulativeResult:
         )
 
     sessions_sampled = 0
+    sessions_contributing = 0
     total_logmind_bytes = 0
     total_git_bytes = 0
     repo_bytes: dict[str, int] = {}
@@ -88,6 +98,7 @@ def run_org_cumulative(home: Path | None = None) -> OrgCumulativeResult:
             # Same divide-by-zero defence as per_session: skip the
             # session entirely rather than fake a "free" git baseline.
             continue
+        sessions_contributing += 1
         total_logmind_bytes += session_logmind_bytes
         total_git_bytes += git_bytes
         repo_key = str(cwd)
@@ -128,6 +139,7 @@ def run_org_cumulative(home: Path | None = None) -> OrgCumulativeResult:
         net_pct=net_pct,
         stub=False,
         sessions_sampled=sessions_sampled,
+        sessions_contributing=sessions_contributing,
         repos_sampled=repos_sampled,
         total_logmind_bytes=total_logmind_bytes,
         total_git_bytes=total_git_bytes,

@@ -436,6 +436,7 @@ def test_org_cumulative_aggregates_across_sessions_and_repos(tmp_path):
     result = run_org_cumulative(home=fake_home)
     assert result.stub is False
     assert result.sessions_sampled == 2
+    assert result.sessions_contributing == 2  # both sessions contributed bytes
     assert result.repos_sampled == 2
     # Total logmind bytes = 3000 + 1000 = 4000.
     assert result.total_logmind_bytes == 4000
@@ -501,6 +502,54 @@ def test_org_cumulative_per_repo_share_isolates_outlier(tmp_path):
     # Dominant repo: 3000 / 3500 ≈ 0.857; small repo: 500 / 3500 ≈ 0.143.
     assert result.per_repo_share[str(repos[0])] == pytest.approx(3000 / 3500)
     assert result.per_repo_share[str(repos[1])] == pytest.approx(500 / 3500)
+
+
+def test_org_cumulative_zero_bytes_session_increments_sampled_not_contributing(tmp_path):
+    """A session in a logmind repo with zero decision-doc reads MUST
+    increment ``sessions_sampled`` (cross-check against per_session)
+    but MUST NOT increment ``sessions_contributing`` (which counts
+    only sessions whose bytes flow into the totals). Caught by the
+    PR #81 review thread on counter-placement semantics — pinned here
+    so a future refactor can't quietly collapse the two counters."""
+    from bench.org_cumulative import run_org_cumulative
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# t\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / ".logmind").mkdir()
+    (repo / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+
+    fake_home = tmp_path / "home"
+    projects_dir = fake_home / ".claude" / "projects" / "enc"
+    projects_dir.mkdir(parents=True)
+
+    # Session in the logmind repo that reads ONLY a non-bucket file
+    # (e.g., random source) — gets sampled but contributes zero bytes.
+    session = projects_dir / "session.jsonl"
+    lines = [
+        json.dumps({"cwd": str(repo), "type": "user"}),
+        json.dumps({"message": {"content": [{
+            "type": "tool_use", "name": "Read", "id": "tu-1",
+            "input": {"file_path": str(repo / "README.md")}
+        }]}}),
+        json.dumps({"message": {"content": [{
+            "type": "tool_result", "tool_use_id": "tu-1", "content": "x" * 500,
+        }]}}),
+    ]
+    session.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = run_org_cumulative(home=fake_home)
+    # Zero contributing sessions → angle reports stub (no signal),
+    # but the sampled-counter MUST still reflect the visit.
+    assert result.sessions_contributing == 0
+    # Note: returns stub because no contributing sessions; the sampled
+    # counter still surfaces in the result for the cross-check.
+    assert result.sessions_sampled == 1
 
 
 def test_org_cumulative_stub_shim_calls_real_impl():
