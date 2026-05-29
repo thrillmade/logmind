@@ -39,8 +39,24 @@ def atomic_write_text(
     The tmp file lives next to ``path`` (not in ``/tmp``) so the rename
     is guaranteed atomic — ``os.replace`` is atomic only within a single
     filesystem.
+
+    Fail-safe (0.0.T, RTK-inspired): if either step raises, the original
+    file is untouched AND we make a best-effort attempt to remove the
+    orphaned tmp sibling so the next write doesn't trip on it. The
+    original exception still propagates — cleanup never masks the real
+    error.
     """
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(content, encoding=encoding)
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(content, encoding=encoding)
+        os.replace(tmp, path)
+    except BaseException:
+        # On any failure (encoding error, disk full, KeyboardInterrupt
+        # mid-write), remove the orphaned tmp sibling. Best-effort:
+        # never mask the underlying exception with a cleanup failure.
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
