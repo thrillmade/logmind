@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (63 decisions)
+## 2026-05 (64 decisions)
 
-- **2026-05-29** — 0.0.T (logmind side): RTK-inspired fail-safe → warn-not-silent on parser; orphan-cleanup on atomic_write *(feat/0.0.T-rtk-inspired-fail-safe)* — [decisions-branches/feat__0.0.T-rtk-inspired-fail-safe.md](decisions-branches/feat__0.0.T-rtk-inspired-fail-safe.md)
-- *... 61 more decisions ...*
+- **2026-05-29** — Release logmind v0.5.5 — RTK-inspired fail-safe (0.0.T logmind side) *(release/v0.5.5)* — [decisions-branches/release__v0.5.5.md](decisions-branches/release__v0.5.5.md)
+- *... 62 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
