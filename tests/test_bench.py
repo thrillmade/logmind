@@ -75,14 +75,291 @@ def test_worst_case_is_saver():
     )
 
 
-def test_per_session_returns_stub_with_null_net_pct():
-    """Stub angles return net_pct=None so they don't gate the exit
-    code (they report as 'not yet implemented' in human output, and
-    they're omitted from the spender check)."""
-    from bench.per_session import run_per_session_stub
-    result = run_per_session_stub()
+def test_per_session_stub_invariant_when_no_sessions(tmp_path):
+    """The stub-invariant: when no sessions exist on disk, the angle
+    returns ``stub=True`` / ``net_pct=None`` so the exit gate skips it
+    (matches the org-cumulative stub contract). Was
+    ``test_per_session_returns_stub_with_null_net_pct`` pre-impl —
+    renamed + routed through the real entry point with an empty fake
+    ``~/.claude/projects/``."""
+    from bench.per_session import run_per_session
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    result = run_per_session(home=fake_home)
     assert result.stub is True
     assert result.net_pct is None
+    assert "no sessions found" in result.label
+
+
+def test_per_session_no_logmind_repos_returns_stub(tmp_path):
+    """A session whose cwd isn't a logmind repo (no
+    ``.logmind/config.yml``) is dropped from the sample. If ALL sampled
+    sessions are non-logmind, the angle reports as stub — the metric
+    has nothing to assert."""
+    from bench.per_session import run_per_session
+    fake_home = tmp_path / "home"
+    projects_dir = fake_home / ".claude" / "projects" / "encoded-cwd"
+    projects_dir.mkdir(parents=True)
+    # A plain (non-logmind) repo as the session cwd.
+    plain_repo = tmp_path / "plain-repo"
+    plain_repo.mkdir()
+    session = projects_dir / "session-1.jsonl"
+    session.write_text(
+        json.dumps({"cwd": str(plain_repo), "type": "user"}) + "\n",
+        encoding="utf-8",
+    )
+    result = run_per_session(home=fake_home)
+    assert result.stub is True
+    assert result.net_pct is None
+    assert result.sessions_sampled == 0
+
+
+def test_per_session_aggregates_from_fixture(tmp_path):
+    """End-to-end aggregation: fake home + fake logmind repo + inline
+    JSONL with one Read of decisions.md. Validates the tool_use →
+    tool_result join, bucket assignment, and per-file-share output."""
+    from bench.per_session import run_per_session
+    # Set up the fake logmind repo so _is_logmind_repo passes.
+    repo = tmp_path / "logmind-repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# t\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / ".logmind").mkdir()
+    (repo / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n", encoding="utf-8")
+
+    # Inline JSONL fixture: one Read of decisions.md returning 2000 bytes.
+    fake_home = tmp_path / "home"
+    projects_dir = fake_home / ".claude" / "projects" / "enc"
+    projects_dir.mkdir(parents=True)
+    session = projects_dir / "session.jsonl"
+    payload = "x" * 2000
+    lines = [
+        json.dumps({"cwd": str(repo), "type": "user"}),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Read",
+                            "id": "tu-1",
+                            "input": {"file_path": str(repo / "docs" / "decisions.md")},
+                        }
+                    ]
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu-1",
+                            "content": payload,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    session.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = run_per_session(home=fake_home)
+    # 1 session sampled, 1 with decision reads, net_pct computed.
+    assert result.stub is False
+    assert result.sessions_sampled == 1
+    assert result.sessions_with_decision_reads == 1
+    assert result.net_pct is not None
+    # decisions.md share should be 1.0 (only file read).
+    assert result.per_file_share["docs/decisions.md"] == pytest.approx(1.0)
+    assert result.per_file_share["AGENTS.md"] == pytest.approx(0.0)
+
+
+def test_per_session_zero_decision_reads_returns_stub(tmp_path):
+    """Session reads ONLY non-bucket files (e.g. random source). The
+    aggregate has no signal — angle reports stub with
+    sessions_sampled > 0 to distinguish from "no sessions found"."""
+    from bench.per_session import run_per_session
+    repo = tmp_path / "logmind-repo"
+    repo.mkdir()
+    (repo / ".logmind").mkdir()
+    (repo / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+    fake_home = tmp_path / "home"
+    projects_dir = fake_home / ".claude" / "projects" / "enc"
+    projects_dir.mkdir(parents=True)
+    session = projects_dir / "session.jsonl"
+    lines = [
+        json.dumps({"cwd": str(repo), "type": "user"}),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Read",
+                            "id": "tu-1",
+                            "input": {"file_path": str(repo / "src" / "foo.py")},
+                        }
+                    ]
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu-1",
+                            "content": "x" * 500,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    session.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = run_per_session(home=fake_home)
+    assert result.stub is True
+    assert result.net_pct is None
+    assert result.sessions_sampled == 1
+    assert result.sessions_with_decision_reads == 0
+
+
+def test_per_session_empty_git_baseline_does_not_count_session(tmp_path):
+    """REGRESSION GUARD (PR #78 review): if a session has decision-doc
+    reads but the repo's ``git log --oneline -100`` returns 0 bytes
+    (fresh ``git init`` with no commits, broken HEAD, etc.), the
+    session must NOT be counted in ``sessions_with_decision_reads``.
+    Otherwise the aggregate falls through to ``stub=False, net_pct=0.0``
+    — a fake "break-even" verdict.
+
+    The test sets up a fresh git init repo WITHOUT a commit, so
+    ``git log --oneline -100`` exits 0 with empty stdout. The session
+    reads AGENTS.md (a logmind-doc bucket); the aggregate should report
+    stub=True / net_pct=None, not stub=False / net_pct=0.0.
+    """
+    from bench.per_session import run_per_session
+    repo = tmp_path / "logmind-repo"
+    repo.mkdir()
+    # Fresh git init — no commit, so ``git log --oneline -100`` returns
+    # empty stdout (exit 0).
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    (repo / ".logmind").mkdir()
+    (repo / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+    fake_home = tmp_path / "home"
+    projects_dir = fake_home / ".claude" / "projects" / "enc"
+    projects_dir.mkdir(parents=True)
+    session = projects_dir / "session.jsonl"
+    lines = [
+        json.dumps({"cwd": str(repo), "type": "user"}),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Read",
+                            "id": "tu-1",
+                            "input": {"file_path": str(repo / "AGENTS.md")},
+                        }
+                    ]
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu-1",
+                            "content": "x" * 1000,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    session.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = run_per_session(home=fake_home)
+    # NOT stub=False with net_pct=0.0. The empty git baseline means
+    # this session has no usable measurement → angle reports stub.
+    assert result.stub is True
+    assert result.net_pct is None
+    assert result.sessions_sampled == 1
+    assert result.sessions_with_decision_reads == 0
+    # Verify the detail entry has net_pct=None so callers can introspect.
+    assert any(
+        d.get("net_pct") is None and d.get("git_bytes") == 0
+        for d in result.detail
+    )
+
+
+def test_per_session_malformed_line_skipped(tmp_path):
+    """Garbage JSONL lines are skipped, not crashing. Surrounding valid
+    events still aggregate normally."""
+    from bench.per_session import run_per_session
+    repo = tmp_path / "logmind-repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# t\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / ".logmind").mkdir()
+    (repo / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+    fake_home = tmp_path / "home"
+    projects_dir = fake_home / ".claude" / "projects" / "enc"
+    projects_dir.mkdir(parents=True)
+    session = projects_dir / "session.jsonl"
+    lines = [
+        json.dumps({"cwd": str(repo), "type": "user"}),
+        "this is not json at all — should be skipped",
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Read",
+                            "id": "tu-1",
+                            "input": {"file_path": str(repo / "AGENTS.md")},
+                        }
+                    ]
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu-1",
+                            "content": "x" * 1000,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    session.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = run_per_session(home=fake_home)
+    # The malformed line was skipped; the Read+result joined and was
+    # bucketed to AGENTS.md.
+    assert result.stub is False
+    assert result.sessions_with_decision_reads == 1
+    assert result.per_file_share["AGENTS.md"] == pytest.approx(1.0)
 
 
 def test_org_cumulative_returns_stub_with_null_net_pct():
