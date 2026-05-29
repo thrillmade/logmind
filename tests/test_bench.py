@@ -234,6 +234,76 @@ def test_per_session_zero_decision_reads_returns_stub(tmp_path):
     assert result.sessions_with_decision_reads == 0
 
 
+def test_per_session_empty_git_baseline_does_not_count_session(tmp_path):
+    """REGRESSION GUARD (PR #78 review): if a session has decision-doc
+    reads but the repo's ``git log --oneline -100`` returns 0 bytes
+    (fresh ``git init`` with no commits, broken HEAD, etc.), the
+    session must NOT be counted in ``sessions_with_decision_reads``.
+    Otherwise the aggregate falls through to ``stub=False, net_pct=0.0``
+    — a fake "break-even" verdict.
+
+    The test sets up a fresh git init repo WITHOUT a commit, so
+    ``git log --oneline -100`` exits 0 with empty stdout. The session
+    reads AGENTS.md (a logmind-doc bucket); the aggregate should report
+    stub=True / net_pct=None, not stub=False / net_pct=0.0.
+    """
+    from bench.per_session import run_per_session
+    repo = tmp_path / "logmind-repo"
+    repo.mkdir()
+    # Fresh git init — no commit, so ``git log --oneline -100`` returns
+    # empty stdout (exit 0).
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    (repo / ".logmind").mkdir()
+    (repo / ".logmind" / "config.yml").write_text("project: t\n", encoding="utf-8")
+    fake_home = tmp_path / "home"
+    projects_dir = fake_home / ".claude" / "projects" / "enc"
+    projects_dir.mkdir(parents=True)
+    session = projects_dir / "session.jsonl"
+    lines = [
+        json.dumps({"cwd": str(repo), "type": "user"}),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Read",
+                            "id": "tu-1",
+                            "input": {"file_path": str(repo / "AGENTS.md")},
+                        }
+                    ]
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu-1",
+                            "content": "x" * 1000,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    session.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = run_per_session(home=fake_home)
+    # NOT stub=False with net_pct=0.0. The empty git baseline means
+    # this session has no usable measurement → angle reports stub.
+    assert result.stub is True
+    assert result.net_pct is None
+    assert result.sessions_sampled == 1
+    assert result.sessions_with_decision_reads == 0
+    # Verify the detail entry has net_pct=None so callers can introspect.
+    assert any(
+        d.get("net_pct") is None and d.get("git_bytes") == 0
+        for d in result.detail
+    )
+
+
 def test_per_session_malformed_line_skipped(tmp_path):
     """Garbage JSONL lines are skipped, not crashing. Surrounding valid
     events still aggregate normally."""

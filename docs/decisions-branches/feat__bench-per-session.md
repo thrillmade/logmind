@@ -9,3 +9,11 @@
 - Org-cumulative angle is still a stub but its blocker (per-session real impl) is now lifted — implementing org-cumulative is a follow-up Phase 0.5 polish PR, not blocking on this plan's ship work.
 
 ---
+## 2026-05-29 11:50 - PR #78 fix: empty-git-baseline must not count session-with-reads; clarify inline comment on AGENTS.md block fallback
+
+**Reasoning:** clud-bug-review caught two issues. (1) Critical: sessions_with_reads += 1 ran BEFORE the git_bytes == 0 guard, so a session with decision reads but an empty git baseline (fresh git init, no commits) would fall through to the aggregate as 'stub=False, net_pct=0.0' — a fake 'break-even' verdict instead of 'no usable measurement'. Moved the increment AFTER the guard. (2) Nit: inline comment in _agents_md_block_bytes said 'report 0 to keep the metric honest' but the code below returned a non-zero estimate. Rewrote to match actual behavior (heuristic estimate for older installs is better than muting the metric).
+
+**Implications:**
+- Added test_per_session_empty_git_baseline_does_not_count_session as a regression pin — fresh git init + AGENTS.md read = stub/None, not break-even. 16/16 bench tests pass.
+
+---

@@ -269,12 +269,13 @@ def _agents_md_block_bytes(cwd: Path) -> tuple[int, int]:
     if start != -1 and end != -1 and end > start:
         block = text[start : end + len("<!-- logmind-end -->")]
         return len(block.encode("utf-8")), total
-    # Fallback: anchor-text region. We can't draw a clean boundary so
-    # report 0 to keep the metric honest — block-share == 0 reads as
-    # "no detectable block" rather than overstating coverage.
+    # Fallback for older installs that lack the markers: anchor-text
+    # region from the first matching anchor to the next H2 heading
+    # (or EOF). The result is a best-effort estimate, not a precise
+    # block size — older installs are a rare case and a heuristic is
+    # better than ``0`` (which would mute the metric entirely).
     for anchor in _LOGMIND_BLOCK_ANCHORS:
         if anchor in text:
-            # Best-effort: count from anchor to next blank line OR end.
             idx = text.find(anchor)
             tail = text[idx:]
             # Stop at the next "## " heading or end of file.
@@ -331,11 +332,16 @@ def run_per_session(home: Path | None = None) -> PerSessionResult:
                 }
             )
             continue
-        sessions_with_reads += 1
         git_bytes = _git_equivalent_bytes(cwd)
         if git_bytes == 0:
             # Empty git baseline — divide-by-zero. Don't count this
-            # session in the aggregate (it's noise, not signal).
+            # session in the aggregate (it's noise, not signal). Also
+            # don't increment ``sessions_with_reads``: a session with
+            # decision reads BUT no usable baseline has nothing for
+            # ``avg_net`` to average over, and would otherwise produce
+            # ``stub=False, net_pct=0.0`` (a fake "break-even" verdict)
+            # via the empty-list path at the aggregate. Caught by PR #78
+            # review thread; pinned by a fixture test below.
             detail.append(
                 {
                     "path": str(path),
@@ -347,6 +353,7 @@ def run_per_session(home: Path | None = None) -> PerSessionResult:
                 }
             )
             continue
+        sessions_with_reads += 1
         net_pct = ((session_logmind_bytes - git_bytes) / git_bytes) * 100.0
         logmind_total_bytes += session_logmind_bytes
         git_total_bytes += git_bytes

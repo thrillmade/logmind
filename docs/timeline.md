@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (66 decisions)
+## 2026-05 (67 decisions)
 
 - **2026-05-29** — Upgrade logmind to clud-bug v0.6.22 — picks up Phase 0.5 efficiency + quality improvements *(chore/clud-bug-v0.6.22-upgrade)* — [decisions-branches/chore__clud-bug-v0.6.22-upgrade.md](decisions-branches/chore__clud-bug-v0.6.22-upgrade.md)
-- *... 64 more decisions ...*
+- *... 65 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
