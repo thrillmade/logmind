@@ -107,7 +107,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.7", prog_name="logmind")
+@click.version_option(version="0.5.8", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -1521,10 +1521,45 @@ def agents_update(do_apply: bool, commit: bool):
     outdated = find_outdated_marker_blocks(root_path)
 
     if not outdated:
-        click.secho("✓ All agent files are current.", fg="green")
+        # v0.5.8 / issue #57: "All agent files are current" was misleading
+        # in two distinct cases — AGENTS.md absent, or AGENTS.md present
+        # without a logmind marker block. Split them out so the message
+        # accurately describes WHY no update is needed.
+        agents_path = root_path / "AGENTS.md"
+        if not agents_path.exists():
+            click.secho(
+                "✓ No AGENTS.md in this repo — nothing to update. "
+                "Run `logmind init` to install one.",
+                fg="green",
+            )
+        else:
+            from logmind.core.inserter import _extract_marker_block
+            installed = _extract_marker_block(
+                agents_path.read_text(encoding="utf-8")
+            )
+            if installed is None:
+                click.secho(
+                    "✓ AGENTS.md exists but has no logmind marker block. "
+                    "Run `logmind init` to install one (will preserve "
+                    "existing content above + below the markers).",
+                    fg="green",
+                )
+            else:
+                click.secho(
+                    "✓ AGENTS.md logmind block is current "
+                    "(no update needed).",
+                    fg="green",
+                )
         return
 
-    click.echo(f"Found {len(outdated)} file(s) with stale logmind block(s):")
+    # v0.5.8 / issue #57: surface the version delta on dry-run so the
+    # user knows what `--apply` would actually do.
+    if not do_apply:
+        click.echo(
+            f"Would update {len(outdated)} file(s) with stale logmind block(s):"
+        )
+    else:
+        click.echo(f"Found {len(outdated)} file(s) with stale logmind block(s):")
     for file_path, _old, _new in outdated:
         rel = file_path.relative_to(root_path)
         click.echo(f"  - {rel}")

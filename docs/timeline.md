@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (71 decisions)
+## 2026-05 (72 decisions)
 
-- **2026-05-29** — fix(0.5 §2): add sessions_contributing counter + strip hardcoded paths (PR #81 review) *(feat/0.5-S2-org-cumulative-bench)* — [decisions-branches/feat__0.5-S2-org-cumulative-bench.md](decisions-branches/feat__0.5-S2-org-cumulative-bench.md)
-- *... 69 more decisions ...*
+- **2026-05-29** — feat(v0.5.8): quality batch — issue #57 dry-run output + issue #66 file-structure on feature branches *(feat/v0.5.8-quality-batch)* — [decisions-branches/feat__v0.5.8-quality-batch.md](decisions-branches/feat__v0.5.8-quality-batch.md)
+- *... 70 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
