@@ -275,10 +275,16 @@ def update_workflow_pin(content: str, new_version: str) -> Tuple[str, Optional[s
     ``new_version`` instead.
 
     Returns ``(new_content, previous_version_or_None)``. ``previous_version``
-    is taken from the FIRST pin found. Returns ``(content, None)`` unchanged
-    when no pin is present or when the pin already matches.
+    is taken from the FIRST pin found, so it's the version string in both
+    the rewrite case AND the idempotent (already-current) case.
+    ``previous`` is ``None`` only when no pin is present at all (dogfood-
+    style workflows). The 3 return shapes:
 
-    Idempotent: re-applying the same version is a no-op.
+      - ``(content, None)`` — no pin in content; nothing to do
+      - ``(content, "X.Y.Z")`` — pin already matches ``new_version``; idempotent no-op
+      - ``(rewritten_content, "OLD")`` — pin bumped; old version surfaced for logging
+
+    Idempotent: re-applying the same version is a no-op (content unchanged).
     """
     m = _PIN_LINE_RE.search(content)
     if m is None:
