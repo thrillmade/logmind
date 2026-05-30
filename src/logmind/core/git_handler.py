@@ -259,6 +259,33 @@ def default_branch(path: Optional[Path] = None) -> str:
     return "main"
 
 
+def unstaged_tracked_modifications(path: Optional[Path] = None) -> List[str]:
+    """
+    Return tracked files that have unstaged modifications.
+
+    Uses ``git diff --name-only`` which lists modifications to tracked
+    files NOT in the index. Untracked files (``git ls-files --others``)
+    are intentionally excluded — users opting into ``--stage scoped``
+    typically have intentional untracked WIP they want to preserve.
+
+    Returns empty list on any git error (including not-a-git-repo).
+    """
+    if path is None:
+        path = Path.cwd()
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only"],
+            cwd=path,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        return [line for line in result.stdout.splitlines() if line]
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return []
+
+
 def commit_and_push(files: List[str], message: str, path: Optional[Path] = None, push: bool = True) -> None:
     """
     Add files, commit, and optionally push in one operation.

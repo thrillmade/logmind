@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-05-30
+
+### Fixed — issue #59: `--stage scoped` silent-failure on forgotten `git add`
+
+`logmind log "<title>" --stage scoped` stages only logmind-owned
+files (decisions.md, file-structure.md, etc.). When a user forgot
+`git add` before running it — the failure mode that hit clud-bug
+PR #87 and reporulez PR #20 in the 2026-05-27 wrap-up session —
+the commit shipped ONLY the decision-log entry. The intended file
+change stayed unstaged; the PR diff didn't match its description;
+CI reviewed unchanged code; reviewer flagged "PR does not match
+description"; user had to push a follow-up commit.
+
+logmind now detects this case and emits a stderr warning naming
+the unstaged tracked file(s) plus the fix hint
+(`git add <files> && git commit --amend --no-edit`). Warn-not-block
+per the Q6 invariant: the user may legitimately have unrelated
+tracked WIP they want to keep unstaged, so the commit still
+proceeds.
+
+Untracked files (scratch debug artifacts, generated PNGs, etc.) do
+NOT trigger the warning — users opting into `--stage scoped`
+typically have intentional untracked WIP. Only tracked-but-modified
+files surface the warning (i.e., the actual silent-failure
+scenario).
+
+### Added
+
+- `git_handler.unstaged_tracked_modifications(path)` helper —
+  returns the list of tracked files with unstaged modifications.
+  Used by the `--stage scoped` warning code path; reusable for
+  future scoped-stage tooling.
+
+### Tests
+
+4 new tests in `tests/test_logger.py`:
+
+- `test_log_scoped_stage_warns_on_unstaged_tracked_modifications`
+  — the actual silent-failure scenario; warning fires AND commit
+  still proceeds (non-blocking).
+- `test_log_scoped_stage_silent_when_working_tree_clean` —
+  regression guard against warning-spam on clean scoped commits.
+- `test_log_scoped_stage_ignores_untracked_files` — untracked
+  scratch files (the `--stage scoped` raison d'être) do NOT
+  trigger the warning.
+- `test_log_stage_all_never_warns` — `--stage all` sweeps the
+  whole tree so the warning code path must never fire.
+
 ## [0.5.9] - 2026-05-30
 
 ### Fixed — issue #60: check-links parses markdown links inside backticks / code fences
