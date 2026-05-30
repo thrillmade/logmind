@@ -109,12 +109,19 @@ def test_get_agents_md_template_returns_slim_when_skills_available(monkeypatch):
     inline procedure (covered by the skill at the linked URL), keeps
     the load-bearing "commit primitive" rule + bash example + skill
     pointer.
+
+    §4b.2 (v0.5.13): block bumped to v7-pointer — promotes the
+    commit-primitive rule to the FIRST line after the heading. The
+    `logmind log replaces git add+commit+push` sentence was buried
+    as the second sentence of the lead paragraph; agents skim
+    instructions top-down, so the cost-avoidance rule now lands
+    first, link-to-logmind.dev demoted to context.
     """
     from logmind.core import skill_install
 
     monkeypatch.setattr(skill_install, "is_skills_available", lambda: True)
     slim = get_agents_md_template()
-    assert "logmind-block-version: v6-pointer" in slim
+    assert "logmind-block-version: v7-pointer" in slim
     # The load-bearing contract — "logmind log replaces git add+commit+push"
     # — must survive every future trim. If this assertion fails, the
     # block was over-trimmed and agents will fall back to direct git.
@@ -123,16 +130,36 @@ def test_get_agents_md_template_returns_slim_when_skills_available(monkeypatch):
     # Skill pointer is the authority delegation — without it, agents
     # have no way to find the full procedure when this block trims it out.
     assert "agent-skills/tree/main/skills/logmind" in slim
-    # Hard size cap on the slim variant — guards against future block
-    # growth re-bloating it. v6 is ~770 bytes; cap at 1500 leaves 2×
-    # headroom for additions while preventing return to v5's 2526.
+
+    # §4b.2: the commit-primitive rule must be the FIRST line after
+    # the heading (not buried mid-paragraph). Find the heading line,
+    # then the first non-empty line below — assert it starts with
+    # the `**\`logmind log\`` bold marker, not the link to logmind.dev.
     block_start = slim.find("<!-- logmind-start -->")
     block_end = slim.find("<!-- logmind-end -->") + len("<!-- logmind-end -->")
     assert block_start != -1 and block_end > block_start
     block = slim[block_start:block_end]
+    block_lines = block.splitlines()
+    heading_idx = next(
+        i for i, line in enumerate(block_lines)
+        if line.startswith("## Decision logging")
+    )
+    first_content_idx = next(
+        i for i in range(heading_idx + 1, len(block_lines))
+        if block_lines[i].strip()
+    )
+    first_content = block_lines[first_content_idx]
+    assert first_content.startswith("**`logmind log`"), (
+        f"§4b.2 (v0.5.13): commit-primitive rule must be the FIRST line "
+        f"after the heading. Got: {first_content!r}"
+    )
+
+    # Hard size cap on the slim variant — guards against future block
+    # growth re-bloating it. v7 is ~830 bytes; cap at 1500 leaves
+    # headroom for additions while preventing return to v5's 2526.
     assert len(block.encode("utf-8")) <= 1500, (
         f"slim logmind-block is {len(block.encode('utf-8'))} bytes "
-        f"— v6-pointer should stay under 1500 (current ~770)"
+        f"— v7-pointer should stay under 1500 (current ~830)"
     )
 
 

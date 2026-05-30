@@ -289,6 +289,50 @@ def test_cli_doctor_ok_exits_zero(project: Path, monkeypatch):
         assert "Stack status: OK" in result.output
 
 
+def test_cli_doctor_missing_merge_driver_in_git_repo_exits_one(project: Path, monkeypatch):
+    """v0.5.13 / tokenomics issue: a git repo with missing merge-driver
+    config OR missing post-merge / post-rewrite hooks is one merge away
+    from a check-derived-docs failure. doctor must exit non-zero so CI
+    gates catch this before the failure manifests.
+
+    Pre-v0.5.13, `_probe_merge_driver_config` returned drift="missing"
+    but `collect_logmind_status` only escalated to "stale" on workflow
+    template drift — so a fresh clone with no merge-driver config
+    silently reported OK. Now: any critical missing in a git repo →
+    overall DRIFT.
+    """
+    import subprocess
+    # Make the project a real git repo (without any logmind init).
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+    result = runner.invoke(main, ["doctor", "--offline"])
+    assert result.exit_code == 1, result.output
+    assert "Stack status: DRIFT" in result.output
+    # The signal should mention either the merge driver or a hook (so
+    # users see WHICH critical-missing tripped the gate).
+    assert (
+        "merge driver" in result.output.lower()
+        or "post-merge" in result.output.lower()
+        or "post-rewrite" in result.output.lower()
+    )
+
+
+def test_cli_doctor_missing_merge_driver_outside_git_repo_is_ok(project: Path, monkeypatch):
+    """v0.5.13: outside a git repo, missing merge-driver config is NOT
+    drift — the driver only matters for git operations, so there's
+    nothing for it to fail at. Test fixture: bare project dir (no .git/)
+    must stay OK so test fixtures don't false-positive."""
+    # NOTE: `project` fixture creates `.github/workflows` but no `.git/`
+    monkeypatch.setattr(doctor, "_http_get_json", lambda *_a, **_kw: None)
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+    result = runner.invoke(main, ["doctor", "--offline"])
+    assert result.exit_code == 0, result.output
+    assert "Stack status: OK" in result.output
+
+
 def test_cli_doctor_drift_exits_one(project: Path, monkeypatch):
     """Stale marker → exit 1."""
     _write_workflow(
