@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-05-30
+
+### Fixed — `timeline.md` auto-resolves on fresh clones / CI / throwaway worktrees
+
+Pre-fix, `logmind init` was the only path that installed the
+per-clone git config + hooks needed for `timeline.md` and
+`file-structure.md` to merge cleanly. Fresh clones, CI runners,
+and agents working in throwaway worktrees had the committed
+`.gitattributes` reference to `merge=logmind-timeline` but no
+driver definition registered locally. Git refuses to invoke an
+unconfigured merge driver (security guard against untrusted
+repos), so it silently fell back to the default ort 3-way merge.
+The result was text-valid but semantically incomplete `timeline.md`
+output that `check-derived-docs` later flagged — failing the PR
+gate even though the merge "succeeded."
+
+Hit live on tokenomics #21 when merging main into a branch
+produced `Auto-merging docs/timeline.md / Merge made by the 'ort'
+strategy` instead of the expected `logmind-timeline` driver
+output. User stance (memory `project_timeline_conflict_should_auto_resolve`):
+_"conflicts bugs like this shouldn't happen on our own timeline
+file and logmind should auto resolve."_
+
+v0.5.12 makes `logmind log` self-healing. Every invocation now
+runs the three idempotent installers from `logmind.core.gitattributes`:
+
+- `configure_merge_drivers(repo_root)` — sets `merge.logmind-timeline.driver` + `merge.logmind-file-structure.driver` in `.git/config`.
+- `install_post_merge_hook(repo_root)` — writes the canonical post-merge hook (v0.3.0+).
+- `install_post_rewrite_hook(repo_root)` — writes the post-rewrite hook (v0.5.11+).
+
+All three are silent no-ops outside a git repo (the fresh-clone
+case isn't always in a git checkout — e.g. when an agent works
+in a temp directory). Cost per `logmind log`: ~3 `git config --get`
+calls + 2 file stats. Negligible.
+
+The first `logmind log` in any fresh clone now leaves the clone
+fully configured for future merges, rebases, and amends. No more
+"why isn't the merge driver firing?" mysteries on CI / agents.
+
+### Added
+
+- `logmind.core.logger.log()` — auto-install block at top of
+  function, runs unconditionally (idempotent + git-safe).
+
+### Tests
+
+3 new tests in `tests/test_logger.py`:
+
+- `test_log_auto_installs_merge_driver_on_fresh_clone` — fresh-clone
+  simulation (.gitattributes committed, no per-clone driver). After
+  `logmind log` with `auto_commit=False`, driver + both hooks are
+  configured.
+- `test_log_auto_install_is_silent_noop_outside_git_repo` — non-git-repo
+  invocation doesn't crash. Decision is still recorded.
+- `test_log_auto_install_is_idempotent_across_repeated_invocations`
+  — second `logmind log` doesn't re-write hook files (regression
+  guard against double-install at log() layer).
+
 ## [0.5.11] - 2026-05-30
 
 ### Fixed — issue #58: multi-commit rebases left `docs/timeline.md` stale

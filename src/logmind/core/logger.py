@@ -20,6 +20,11 @@ from logmind.core.git_handler import (
     is_git_repo,
     unstaged_tracked_modifications,
 )
+from logmind.core.gitattributes import (
+    configure_merge_drivers,
+    install_post_merge_hook,
+    install_post_rewrite_hook,
+)
 from logmind.core.timeline import write_timeline
 from logmind.core.tree_gen import update_file_structure
 
@@ -268,6 +273,28 @@ def log(
         raise FileNotFoundError(
             "docs/ directory not found. Run 'logmind init' first to initialize."
         )
+
+    # v0.5.12: auto-install merge-driver config + post-merge + post-rewrite
+    # hooks on every invocation. All three helpers are idempotent (no-op
+    # when already configured) AND silent no-ops outside a git repo.
+    # Cost: ~3 `git config --get` calls + 2 file stats on each `logmind log`.
+    #
+    # Why: pre-v0.5.12, `logmind init` was the only path that installed
+    # the per-clone git config + hooks. Fresh clones / CI runners /
+    # agents working in throwaway worktrees had the committed
+    # `.gitattributes` reference but no driver registered locally → git
+    # refused to invoke the driver (security guard against untrusted
+    # repos) → fell back to ort 3-way merge → text-valid but
+    # semantically-wrong timeline.md → check-derived-docs failed
+    # downstream. Hit live on tokenomics #21. Captured in memory
+    # `project_timeline_conflict_should_auto_resolve`. v0.5.12 makes
+    # `logmind log` self-healing: the first invocation in any fresh
+    # checkout leaves the clone fully configured for future merges /
+    # rebases / amends.
+    repo_root = docs_path.parent
+    configure_merge_drivers(repo_root)
+    install_post_merge_hook(repo_root)
+    install_post_rewrite_hook(repo_root)
 
     # Load configuration
     config = load_config()

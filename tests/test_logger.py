@@ -479,6 +479,127 @@ def test_log_scoped_stage_ignores_untracked_files(
     )
 
 
+# ---------------------------------------------------------------------------
+# v0.5.12 — auto-install merge driver + hooks on every `logmind log`
+#
+# Pre-v0.5.12, `logmind init` was the only path that installed the per-clone
+# git config + hooks. Fresh clones / CI runners / agents in throwaway worktrees
+# had the committed .gitattributes reference but no driver registered locally
+# → git refused to invoke the driver → fell back to ort 3-way merge → ended
+# up with text-valid but semantically-wrong timeline.md → check-derived-docs
+# failed downstream. Hit live on tokenomics #21. Memory:
+# `project_timeline_conflict_should_auto_resolve`.
+# ---------------------------------------------------------------------------
+
+
+def test_log_auto_installs_merge_driver_on_fresh_clone(tmp_path, monkeypatch):
+    """v0.5.12: fresh-clone simulation — git init + committed
+    .gitattributes block but NO per-clone driver config. After running
+    `logmind log`, the driver must be configured and both hooks must
+    be installed."""
+    from logmind.core.gitattributes import (
+        driver_configured,
+        ensure_block as ensure_gitattributes_block,
+        post_merge_hook_installed,
+        post_rewrite_hook_installed,
+    )
+
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    # Simulate the fresh-clone shape: .gitattributes is committed
+    # (would be the case post-`logmind init` by someone else), but the
+    # per-clone `git config merge.logmind-timeline.driver` is unset
+    # (fresh clone never ran `logmind init` locally).
+    ensure_gitattributes_block(tmp_path / ".gitattributes")
+    assert driver_configured(tmp_path) is False, (
+        "Sanity: fresh clone must start with driver UNconfigured"
+    )
+    assert post_merge_hook_installed(tmp_path) is False
+    assert post_rewrite_hook_installed(tmp_path) is False
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Archive\n\n---\n", encoding="utf-8")
+
+    log(
+        "fresh-clone smoke test",
+        reasoning="verify auto-install on log",
+        docs_path=docs,
+        auto_commit=False,  # auto-install must fire even with --no-commit
+    )
+
+    # After logmind log: driver configured + both hooks installed.
+    assert driver_configured(tmp_path) is True, (
+        "v0.5.12: `logmind log` must auto-install the merge driver "
+        "config so fresh clones self-heal on first use"
+    )
+    assert post_merge_hook_installed(tmp_path) is True, (
+        "v0.5.12: post-merge hook must be auto-installed by `logmind log`"
+    )
+    assert post_rewrite_hook_installed(tmp_path) is True, (
+        "v0.5.12: post-rewrite hook (v0.5.11) must be auto-installed by "
+        "`logmind log`"
+    )
+
+
+def test_log_auto_install_is_silent_noop_outside_git_repo(tmp_path):
+    """v0.5.12: outside a git repo, the auto-install must not crash —
+    all three helpers no-op silently. Regression guard against
+    `Path.cwd()` resolving to a non-repo when logmind log runs from
+    a stray directory."""
+    # No `git init` — just a docs/ directory in a plain folder.
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+
+    # Must not raise.
+    log(
+        "non-git-repo log",
+        reasoning="auto-install must be safe outside git",
+        docs_path=docs,
+        auto_commit=False,
+    )
+
+    # Decision still recorded.
+    content = (docs / "decisions.md").read_text(encoding="utf-8")
+    assert "non-git-repo log" in content
+
+
+def test_log_auto_install_is_idempotent_across_repeated_invocations(
+    tmp_path, monkeypatch
+):
+    """v0.5.12: invoking `logmind log` twice in a row must not re-install
+    or double-write hook files. configure_merge_drivers / install_*_hook
+    are individually idempotent; this is the integration regression
+    guard at the log() layer."""
+    from logmind.core.gitattributes import (
+        ensure_block as ensure_gitattributes_block,
+    )
+
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    ensure_gitattributes_block(tmp_path / ".gitattributes")
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+
+    # First call: installs.
+    log("first call", docs_path=docs, auto_commit=False)
+    first_hook_mtime = (tmp_path / ".git" / "hooks" / "post-merge").stat().st_mtime
+
+    # Second call: must NOT touch the hook file again (idempotent).
+    log("second call", docs_path=docs, auto_commit=False)
+    second_hook_mtime = (tmp_path / ".git" / "hooks" / "post-merge").stat().st_mtime
+
+    assert first_hook_mtime == second_hook_mtime, (
+        "v0.5.12: idempotent auto-install must not re-write hook file "
+        "on repeated `logmind log` invocations"
+    )
+
+
 def test_log_stage_all_never_warns(tmp_path, monkeypatch, capsys):
     """v0.5.10 / issue #59: --stage all sweeps the whole working tree
     so the scoped-warning code path must never fire under it."""
