@@ -73,7 +73,7 @@ export default function Home() {
       <section className="px-6 sm:px-10 lg:px-16 pt-12 sm:pt-24 pb-20">
         <div className="max-w-6xl mx-auto w-full">
           <div className="rise marginalia mb-6">
-            v0.5.12 ⁄ released 2026-05-30 ⁄ MIT
+            v0.5.12 ⁄ released 2026-05-30 ⁄ MIT ⁄ <a href="https://zakelfassi.com/skdd-skills-driven-development" className="hover:text-accent transition-colors">a substrate for SkDD</a>
           </div>
           <h1 className="rise display text-[12vw] sm:text-[8.5vw] leading-[0.92] font-light max-w-[16ch]" style={{ animationDelay: "0.05s" }}>
             Infinite context
@@ -215,6 +215,38 @@ export default function Home() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* pairs with clud-bug — the end-to-end SkDD loop */}
+      <section className="px-6 sm:px-10 lg:px-16 py-20 border-t border-rule">
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 sm:grid-cols-12 gap-8">
+          <div className="sm:col-span-4">
+            <h2 className="display text-4xl sm:text-5xl font-light leading-tight">
+              the loop<span className="text-accent">.</span>
+            </h2>
+            <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
+              Logmind is one part of an end-to-end agentic dev loop. The
+              tools compose; each can stand alone.
+            </p>
+          </div>
+          <div className="sm:col-span-8">
+            <p className="text-[15px] leading-[1.65] text-foreground/85 mb-6">
+              <a href="https://zakelfassi.com/skdd-skills-driven-development" className="text-accent hover:underline">Skills-driven development</a> (SkDD) gives you a methodology and
+              skill primitives. <strong>logmind</strong> captures the <em>why</em> behind every
+              change as you work, builds and tests the skills you forge,
+              and keeps your derived docs in sync across rebase / merge /
+              fresh clone. <a href="https://cludbug.dev" className="text-accent hover:underline">clud-bug</a> runs your skills against every PR — every
+              finding cites the skill that motivated it. The loop closes
+              when logmind logs the review outcome and surfaces refinement
+              patterns for the next iteration.
+            </p>
+            <p className="marginalia normal-case tracking-normal text-foreground/55 mt-4 text-xs leading-relaxed">
+              End-to-end agentic auto dev: write skills first → log the
+              why → run them against PRs → iterate based on usage.
+              The tools work independently; better together.
+            </p>
           </div>
         </div>
       </section>

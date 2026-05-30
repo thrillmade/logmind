@@ -10,3 +10,14 @@
 - Stream 4b from token-cost-compression plan now shipping. PR #88 awaiting user async-review on Vercel preview before merge.
 
 ---
+## 2026-05-30 12:16 - site: add SkDD substrate framing + 'the loop' section linking clud-bug
+
+**Reasoning:** User-coined positioning 'end-to-end agentic auto dev' (2026-05-30) captures the full logmind + clud-bug loop. Add SkDD attribution to hero marginalia (links Zak's blog), new 'the loop' section between principles and measured that names the integrated story: write skills first → log the why with logmind → run them against PRs with clud-bug → iterate based on usage. Cross-links to cludbug.dev. Keeps editorial brand + principles motif.
+
+**Alternatives considered:** rebrand entire hero around SkDD — rejected, 'Infinite context' already strong + adopting Zak's verbiage as the hero would feel derivative, single mega-paragraph in lead — rejected, dedicated 'the loop' section signals integration as a first-class feature
+
+**Implications:**
+- Pairs with cludbug.dev PR #122 (SkDD framing in field-guide voice). Both sites now cross-link + both link Zak's methodology blog. Brand-preserving SkDD adoption complete.
+- Adds outbound link to cludbug.dev — first cross-product link from logmind.dev. Builds the 'whole package' story without forcing an explicit toolchain landing page.
+
+---
