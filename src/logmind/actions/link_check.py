@@ -75,7 +75,18 @@ _FENCED_CODE_BLOCK = re.compile(
 # Match 1+ backticks for the delimiter, then non-backtick content, then
 # the same delimiter. Handles ``code with ` inside`` correctly (per
 # CommonMark §6.1 the delimiter length must match).
-_INLINE_CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1", re.DOTALL)
+#
+# v0.5.9 PR #83 review fix: NO re.DOTALL — an unmatched stray backtick
+# (common in informal prose, e.g. mid-sentence `foo) would otherwise
+# match all the way to the next backtick paragraphs later, consuming
+# real broken links along the way. Restricting to non-newline keeps
+# code spans to a single line, matching CommonMark's common case and
+# leaving cross-line code blocks to the (greedy, intentional) fenced-
+# block regex. The cost: a CommonMark-compliant multi-line code span
+# isn't recognized — but in the docs corpus that's vanishingly rare
+# and the safer failure mode (false positive on a broken link rather
+# than silent suppression of one).
+_INLINE_CODE_SPAN = re.compile(r"(`+)(?:(?!\1)[^\n])+?\1")
 
 
 def _strip_code_regions(text: str) -> str:

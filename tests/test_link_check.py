@@ -156,6 +156,33 @@ def test_links_outside_code_still_detected_alongside_code_examples(tmp_path):
     )
 
 
+def test_unmatched_backtick_does_not_suppress_broken_link(tmp_path):
+    """v0.5.9 PR #83 review — `re.DOTALL` on the inline-code regex used to
+    let an unmatched stray backtick on one line pair with another
+    backtick many paragraphs later, consuming all content between them
+    (including real broken links). Concrete case: informal prose with
+    a stray ` mid-sentence followed paragraphs later by a real broken
+    link gets silently passed. Fix removes DOTALL so code spans can't
+    span newlines.
+    """
+    _make_clean_tree(tmp_path)
+    (tmp_path / "README.md").write_text(
+        "Mid-sentence stray backtick: The `foo shortcut works.\n"
+        "\n"
+        "Real broken link in next paragraph:\n"
+        "\n"
+        "[real-broken](docs/actually-missing.md)\n"
+        "\n"
+        "Another stray ` here.\n",
+        encoding="utf-8",
+    )
+    broken, orphans = check(tmp_path)
+    assert any("docs/actually-missing.md" in b for b in broken), (
+        f"v0.5.9 PR #83 review: stray backticks must not consume real broken "
+        f"links across paragraphs (re.DOTALL bug). Got broken={broken!r}"
+    )
+
+
 def test_strip_code_regions_preserves_line_numbers(tmp_path):
     """The strip-code-regions transform replaces code regions with
     whitespace of equivalent length so byte offsets + line numbers stay
