@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (74 decisions)
+## 2026-05 (75 decisions)
 
-- **2026-05-30** — feat(v0.5.10): warn loudly when --stage scoped leaves tracked modifications unstaged (#59) *(fix/v0.5.10-stage-scoped-warn-issue-59)* — [decisions-branches/fix__v0.5.10-stage-scoped-warn-issue-59.md](decisions-branches/fix__v0.5.10-stage-scoped-warn-issue-59.md)
-- *... 72 more decisions ...*
+- **2026-05-30** — chore: propagate clud-bug v0.6.22 → v0.6.27 to logmind (Smart Budget self-upgrade) *(chore/clud-bug-v0.6.27-self-upgrade)* — [decisions-branches/chore__clud-bug-v0.6.27-self-upgrade.md](decisions-branches/chore__clud-bug-v0.6.27-self-upgrade.md)
+- *... 73 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
