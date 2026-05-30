@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (77 decisions)
+## 2026-05 (78 decisions)
 
-- **2026-05-30** — feat(v0.5.12): `logmind log` auto-installs merge driver + hooks on every invocation (fresh-clone auto-resolve) *(fix/v0.5.12-auto-install-merge-driver-on-log)* — [decisions-branches/fix__v0.5.12-auto-install-merge-driver-on-log.md](decisions-branches/fix__v0.5.12-auto-install-merge-driver-on-log.md)
-- *... 75 more decisions ...*
+- **2026-05-30** — bench: Stream 1 Path C — calibration_aggregate.py *(feat/calibration-aggregate-path-c)* — [decisions-branches/feat__calibration-aggregate-path-c.md](decisions-branches/feat__calibration-aggregate-path-c.md)
+- *... 76 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)

@@ -57,3 +57,33 @@ changes meaningfully.
 
 Users don't need this. It's our QA gate. Keeps logmind's user-facing
 CLI surface clean.
+
+## `bench/scripts/` — Stream 1 calibration tooling
+
+Companion scripts for clud-bug's Smart Budget calibration (Stream 1
+of the token-cost-compression plan). Not part of the 4-angle Q7-logmind
+gate above — these inform clud-bug's Layer 1 estimator tuning, not
+logmind's net-saver story.
+
+### Path C — aggregate Layer 1.5 calibration markers
+
+```bash
+python -m bench.scripts.calibration_aggregate
+```
+
+Walks every consumer repo's PR comments via `gh api`, filters to
+`<!-- clud-bug-calibration: ... -->` markers (emitted on every
+clud-bug-review summary since v0.6.25), and computes:
+
+- Per-repo marker count
+- cap / est ratio distribution (p50, p90, min, max) — validates that
+  Layer 1's 1.2× safety margin is being applied consistently
+- Sorted table of (repo, shape, est, cap) per marker
+- JSON rows (one per marker) for downstream tooling
+
+Read-only; requires `gh auth login`. Run anytime to see current data;
+no waiting on the 30-day window.
+
+To add a repo to the sweep, edit `REPOS` in the script. Marker regex
+is locked to v0.6.25 format — any clud-bug release that changes the
+marker shape requires a corresponding bench/ bump.
