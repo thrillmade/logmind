@@ -274,6 +274,42 @@ def log(
             "docs/ directory not found. Run 'logmind init' first to initialize."
         )
 
+    # v0.5.14: deterministic auto-rebase BEFORE any local state changes.
+    # When git.auto_rebase is true in config AND the branch is behind
+    # origin/<default> AND the gap touches docs/timeline.md ONLY
+    # (no other files), rebase + regenerate + force-with-lease push
+    # silently. Saves ~5-8 agent turns per DIRTY incident. Default OFF
+    # — opt-in via .logmind/config.yml because force-push is destructive.
+    # All other conditions: silent no-op, log() continues normally.
+    if is_git_repo():
+        from logmind.core.auto_rebase import maybe_auto_rebase
+
+        config_for_rebase = load_config()
+        if config_for_rebase.auto_rebase:
+            branch_for_rebase = current_branch()
+            if branch_for_rebase:
+                ar_result = maybe_auto_rebase(
+                    docs_path.parent,
+                    branch_for_rebase,
+                    default_branch(docs_path.parent),
+                    enabled=True,
+                )
+                if ar_result.fired:
+                    sys.stderr.write(
+                        f"\n↻ logmind auto-rebased '{branch_for_rebase}' onto "
+                        f"origin/{default_branch(docs_path.parent)} "
+                        f"(was {ar_result.commits_behind} commits behind, "
+                        f"only docs/timeline.md affected — safely deterministic).\n\n"
+                    )
+                elif ar_result.commits_behind > 0:
+                    # Predictive heads-up when we DIDN'T fire but
+                    # the branch IS stale. Mirrors the doctor warning.
+                    sys.stderr.write(
+                        f"\n⚠ logmind auto-rebase skipped: {ar_result.reason}. "
+                        f"Branch is {ar_result.commits_behind} commits behind. "
+                        f"Run `logmind rebase` manually if needed.\n\n"
+                    )
+
     # v0.5.12: auto-install merge-driver config + post-merge + post-rewrite
     # hooks on every invocation. All three helpers are idempotent (no-op
     # when already configured) AND silent no-ops outside a git repo.
