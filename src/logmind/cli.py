@@ -28,12 +28,14 @@ from logmind.core.inserter import (
     _replace_marker_block,
     create_agent_file,
     find_outdated_marker_blocks,
+    find_outdated_workflow_pins,
     get_agent_file_path,
     get_agent_status,
     get_all_agent_names,
     insert_into_all_ai_files,
     insert_logmind_section,
     migrate_to_agents_md,
+    update_workflow_pin,
     remove_agent_file,
     sync_agent_files_from_config,
 )
@@ -108,7 +110,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.12", prog_name="logmind")
+@click.version_option(version="0.5.13", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -926,6 +928,136 @@ def log(
 
 @main.command()
 @click.option(
+    "--base",
+    default=None,
+    help="Base branch to rebase onto. Defaults to the repo's default branch.",
+)
+@click.option(
+    "--no-push",
+    is_flag=True,
+    help="Skip the push step. Just fetch + rebase.",
+)
+@click.option(
+    "--no-fetch",
+    is_flag=True,
+    help="Skip the fetch step. Rebase against whatever origin/<base> already points at.",
+)
+def rebase(base: Optional[str], no_push: bool, no_fetch: bool):
+    """Fetch origin, rebase the current branch onto origin/<base>, and force-with-lease push.
+
+    Convenience wrapper for the recurring three-step pattern hit when a PR
+    goes DIRTY after another PR's derived-doc regen lands on main:
+
+        git fetch origin
+        git rebase origin/<default-branch>
+        git push --force-with-lease
+
+    Reported by the tokenomics agent (2026-05-30) as Phase D friction:
+    out-of-order merges in a PR batch trigger timeline.md / file-structure.md
+    conflicts in the trailing PRs even when their substantive content
+    doesn't overlap. Logmind's post-rewrite hook (v0.5.11) makes the
+    rebase regen-clean; this wrapper makes the three-command dance one
+    command.
+
+    Exits non-zero on any step failure with a clear message about which
+    step failed and what to do next. Refuses to run on a detached HEAD
+    or on the default branch itself (rebasing main onto main is nonsense).
+    """
+    from logmind.core.git_handler import current_branch, default_branch, is_git_repo
+
+    if not is_git_repo():
+        click.secho("Error: not in a git repository.", fg="red")
+        sys.exit(1)
+
+    branch = current_branch()
+    if branch is None:
+        click.secho(
+            "Error: detached HEAD — `logmind rebase` needs a named branch.",
+            fg="red",
+        )
+        sys.exit(1)
+
+    base_branch = base if base else default_branch()
+    if branch == base_branch:
+        click.secho(
+            f"Error: refusing to rebase '{base_branch}' onto itself. "
+            f"Check out a feature branch first.",
+            fg="red",
+        )
+        sys.exit(1)
+
+    repo_root = Path.cwd()
+    steps_run: List[str] = []
+
+    # Step 1: fetch
+    if not no_fetch:
+        click.echo(f"→ git fetch origin {base_branch}")
+        try:
+            subprocess.run(
+                ["git", "fetch", "origin", base_branch],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            steps_run.append("fetch")
+        except subprocess.CalledProcessError as e:
+            click.secho(
+                f"Error: git fetch failed.\n{e.stderr}",
+                fg="red",
+            )
+            sys.exit(1)
+
+    # Step 2: rebase
+    click.echo(f"→ git rebase origin/{base_branch}")
+    try:
+        subprocess.run(
+            ["git", "rebase", f"origin/{base_branch}"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        steps_run.append("rebase")
+    except subprocess.CalledProcessError as e:
+        click.secho(
+            f"Error: git rebase failed.\n{e.stderr}\n"
+            f"Resolve conflicts manually, then run "
+            f"`git rebase --continue` (or `git rebase --abort` to bail).",
+            fg="red",
+        )
+        sys.exit(1)
+
+    # Step 3: push (unless --no-push)
+    if no_push:
+        click.echo(f"✓ Rebased '{branch}' onto origin/{base_branch} (push skipped).")
+        _ok(f"rebased: {branch} onto origin/{base_branch} (no push)")
+        return
+
+    click.echo(f"→ git push --force-with-lease origin {branch}")
+    try:
+        subprocess.run(
+            ["git", "push", "--force-with-lease", "origin", branch],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        steps_run.append("push")
+    except subprocess.CalledProcessError as e:
+        click.secho(
+            f"Error: git push --force-with-lease failed.\n{e.stderr}\n"
+            f"Rebase succeeded locally; you can retry push manually.",
+            fg="red",
+        )
+        sys.exit(1)
+
+    click.echo(f"✓ Rebased '{branch}' onto origin/{base_branch} and pushed.")
+    _ok(f"rebased: {branch} onto origin/{base_branch} (pushed)")
+
+
+@main.command()
+@click.option(
     "--all",
     "-a",
     "show_all",
@@ -1522,8 +1654,14 @@ def agents_update(do_apply: bool, commit: bool):
     """
     root_path = Path.cwd()
     outdated = find_outdated_marker_blocks(root_path)
+    # v0.5.13: also sweep CI workflow pin lines. The clud-bug update
+    # cycle re-renders workflows in consumer repos without bumping the
+    # logmind pin — pre-v0.5.13 this required manual `sed -i` after
+    # every cycle. Bundling here means one `logmind agents update
+    # --apply` refreshes both AGENTS.md AND the CI pins in one shot.
+    stale_pins = find_outdated_workflow_pins(root_path)
 
-    if not outdated:
+    if not outdated and not stale_pins:
         # v0.5.8 / issue #57: "All agent files are current" was misleading
         # in two distinct cases — AGENTS.md absent, or AGENTS.md present
         # without a logmind marker block. Split them out so the message
@@ -1557,15 +1695,28 @@ def agents_update(do_apply: bool, commit: bool):
 
     # v0.5.8 / issue #57: surface the version delta on dry-run so the
     # user knows what `--apply` would actually do.
-    if not do_apply:
-        click.echo(
-            f"Would update {len(outdated)} file(s) with stale logmind block(s):"
-        )
-    else:
-        click.echo(f"Found {len(outdated)} file(s) with stale logmind block(s):")
-    for file_path, _old, _new in outdated:
-        rel = file_path.relative_to(root_path)
-        click.echo(f"  - {rel}")
+    if outdated:
+        if not do_apply:
+            click.echo(
+                f"Would update {len(outdated)} file(s) with stale logmind block(s):"
+            )
+        else:
+            click.echo(f"Found {len(outdated)} file(s) with stale logmind block(s):")
+        for file_path, _old, _new in outdated:
+            rel = file_path.relative_to(root_path)
+            click.echo(f"  - {rel}")
+
+    # v0.5.13: report workflow pin drift alongside AGENTS.md drift.
+    if stale_pins:
+        if not do_apply:
+            click.echo(
+                f"Would update {len(stale_pins)} CI workflow pin(s):"
+            )
+        else:
+            click.echo(f"Found {len(stale_pins)} CI workflow pin(s) to bump:")
+        for wf_path, old_v, new_v in stale_pins:
+            rel = wf_path.relative_to(root_path)
+            click.echo(f"  - {rel} (logmind=={old_v} → logmind=={new_v})")
 
     if not do_apply:
         click.echo()
@@ -1583,6 +1734,15 @@ def agents_update(do_apply: bool, commit: bool):
         rel = file_path.relative_to(root_path)
         refreshed_paths.append(str(rel))
         click.secho(f"✓ Refreshed {rel}", fg="green")
+
+    # v0.5.13: write the refreshed pins.
+    for wf_path, _old, new_v in stale_pins:
+        content = wf_path.read_text(encoding="utf-8")
+        new_content, _ = update_workflow_pin(content, new_v)
+        wf_path.write_text(new_content, encoding="utf-8")
+        rel = wf_path.relative_to(root_path)
+        refreshed_paths.append(str(rel))
+        click.secho(f"✓ Bumped logmind pin in {rel}", fg="green")
 
     if commit and is_git_repo():
         try:

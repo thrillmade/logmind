@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-05-30
+
+### Added — 5-item quality batch
+
+1. **AGENTS.md slim template promoted to v7-pointer (§4b.2)** —
+   the load-bearing "`logmind log` replaces `git add` + `git commit`
+   + `git push`" rule was buried as the second sentence; now lands
+   first after the heading. Cap stays under 1500 bytes.
+2. **`logmind agents update --apply` sweeps CI workflow pins** —
+   closes recurring gotcha #1 (clud-bug update re-renders workflows
+   without bumping the `pip install "logmind==X.Y.Z"` line).
+   `find_outdated_workflow_pins()` + `update_workflow_pin()` helpers
+   in `core/inserter.py`. Sweeps the canonical 4 workflows.
+3. **`logmind doctor` exits non-zero on missing merge-driver
+   config in git repos** — pre-v0.5.13 a fresh clone silently
+   reported OK while one merge away from a check-derived-docs
+   failure. Outside a git repo: still OK (no false positives).
+4. **`logmind doctor` predictive heads-up: stale-derived-docs
+   warning** — when the current branch is behind
+   `origin/<default-branch>` AND the gap touches `docs/timeline.md`
+   or `docs/file-structure.md`, doctor surfaces "next push will
+   likely DIRTY this PR; consider `logmind rebase` now."
+   Predictive (doesn't flip overall to DRIFT). Addresses the
+   tokenomics agent's Phase D pain.
+5. **`logmind rebase` convenience subcommand** — one-command
+   wrapper for `git fetch origin && git rebase origin/<base> &&
+   git push --force-with-lease`. Flags: `--base`, `--no-push`,
+   `--no-fetch`. Refuses on detached HEAD or default branch.
+   Clear recovery hints on rebase / push failures.
+
+### Tests
+
+30+ new tests across `tests/test_agents_consolidation.py`,
+`tests/test_rebase_cmd.py`, `tests/test_doctor.py`,
+`tests/test_workflow_pin_update.py`,
+`tests/test_stale_derived_docs_warning.py`. Full suite: 673 pass,
+1 skipped.
+
+### Upstream context
+
+Items #4 + #5 address the tokenomics agent's 2026-05-30 Phase D
+report (3-PR batch went DIRTY when middle PR merged first). Items
+#1 + #3 close prior-plan quality items preserved into this batch.
+Item #2 closes a recurring gotcha surfaced across every clud-bug
+propagation cycle.
+
 ## [0.5.12] - 2026-05-30
 
 ### Fixed — `timeline.md` auto-resolves on fresh clones / CI / throwaway worktrees

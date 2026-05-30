@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (78 decisions)
+## 2026-05 (79 decisions)
 
-- **2026-05-30** — bench: Stream 1 Path C — calibration_aggregate.py *(feat/calibration-aggregate-path-c)* — [decisions-branches/feat__calibration-aggregate-path-c.md](decisions-branches/feat__calibration-aggregate-path-c.md)
-- *... 76 more decisions ...*
+- **2026-05-30** — feat(v0.5.13): 5-item quality batch — §4b.2 + workflow pin auto-update + doctor non-zero + doctor stale-derived-docs warning + logmind rebase *(feat/v0.5.13-quality-batch)* — [decisions-branches/feat__v0.5.13-quality-batch.md](decisions-branches/feat__v0.5.13-quality-batch.md)
+- *... 77 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)

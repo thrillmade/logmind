@@ -338,6 +338,97 @@ def _probe_post_merge_hook(project_root: Path) -> WorkflowStatus:
     )
 
 
+def check_stale_derived_docs_warning(project_root: Path) -> Optional[str]:
+    """v0.5.13 / tokenomics agent #2 — warn when the current branch is
+    behind ``origin/<default-branch>`` AND the gap touches
+    ``docs/timeline.md`` or ``docs/file-structure.md``.
+
+    Symptom this surfaces: the tokenomics agent's Phase D pain — a PR
+    batch where the trailing PRs go ``mergeStateStatus: DIRTY``
+    immediately after an earlier PR merges (the merge regenerates a
+    derived doc on main; trailing branches now have a textual
+    conflict). Running `logmind doctor` early surfaces "your branch
+    will go DIRTY on the next main push; consider `logmind rebase`
+    now" before the failure manifests.
+
+    Returns a one-line warning string when the condition fires, else
+    ``None``. Silent no-op outside a git repo, on the default branch
+    itself, when no remote is configured, or when the upstream tracking
+    ref is missing.
+    """
+    import subprocess
+
+    if not (project_root / ".git").exists():
+        return None
+
+    # Get current branch via existing helpers (avoid re-implementing).
+    try:
+        from logmind.core.git_handler import current_branch, default_branch
+    except ImportError:  # pragma: no cover — defensive only
+        return None
+
+    branch = current_branch(project_root)
+    if branch is None:
+        return None  # detached HEAD
+    default = default_branch(project_root)
+    if branch == default:
+        return None  # we ARE the default branch
+
+    # Files we care about. Hard-coded to the canonical set; if a user
+    # adds custom derived docs they can extend this list via a future
+    # config knob, not for v0.5.13.
+    derived_docs = ("docs/timeline.md", "docs/file-structure.md")
+
+    # Resolve `origin/<default>` — graceful no-op if origin isn't set.
+    upstream = f"origin/{default}"
+    try:
+        subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--verify", "--quiet", upstream],
+            capture_output=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None  # no remote / not yet fetched
+
+    # List files touched by commits on origin/<default> that aren't on
+    # this branch. `--format=` suppresses commit messages so the output
+    # is just file paths (deduplicated by set membership downstream).
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "log",
+             f"{branch}..{upstream}", "--name-only", "--format="],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+
+    touched_files = {line for line in result.stdout.splitlines() if line}
+    overlap = sorted(touched_files & set(derived_docs))
+    if not overlap:
+        return None
+
+    # Count commits in the gap so the warning quantifies "how stale."
+    try:
+        count_result = subprocess.run(
+            ["git", "-C", str(project_root), "rev-list", "--count",
+             f"{branch}..{upstream}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        n_commits = count_result.stdout.strip() or "?"
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        n_commits = "?"
+
+    return (
+        f"⚠ '{branch}' is {n_commits} commits behind {upstream} AND the gap "
+        f"touches {', '.join(overlap)}. Next push will likely DIRTY this "
+        f"PR. Consider `logmind rebase` now."
+    )
+
+
 def _probe_post_rewrite_hook(project_root: Path) -> WorkflowStatus:
     """v0.5.11 / issue #58: .git/hooks/post-rewrite installed by logmind.
     Companion to the post-merge hook. Fires after `git rebase` or
@@ -388,12 +479,33 @@ def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     workflows.append(_probe_post_rewrite_hook(project_root))
 
     # Drift = any installed workflow with a marker that's stale,
-    # OR installed version != latest version (when both known).
+    # OR installed version != latest version (when both known),
+    # OR (v0.5.13) merge-driver config / post-merge hook /
+    # post-rewrite hook missing inside a git repo. The "merge driver
+    # missing" cases default to "missing" (not "stale") per their
+    # probe contract, but in a git repo they indicate the local
+    # clone hasn't run `logmind init` yet and rebases/merges on
+    # derived docs will silently fall back to git's textual merge.
+    # Treating that as drift means CI gates surface the missing
+    # config before it produces a check-derived-docs failure.
     drift = "ok"
     if any(w.drift == "stale" for w in workflows):
         drift = "stale"
     if installed and latest and installed != latest:
         drift = "stale"
+    # v0.5.13: a git repo without merge-driver config / hooks is
+    # one merge away from a check-derived-docs failure. Surface as
+    # drift so `logmind doctor` exits non-zero on CI.
+    if (project_root / ".git").exists():
+        critical_missing_names = {
+            "git config (merge driver)",
+            "post-merge hook",
+            "post-rewrite hook",
+        }
+        for w in workflows:
+            if w.name in critical_missing_names and w.drift == "missing":
+                drift = "stale"
+                break
 
     return ToolStatus(
         name="logmind",
@@ -510,6 +622,13 @@ def collect_status(project_root: Optional[Path] = None, *, offline: bool = False
                 suggestions.append("pip install --upgrade logmind && logmind init")
             elif t.name == "clud-bug":
                 suggestions.append("npx clud-bug update")
+
+    # v0.5.13 / tokenomics agent #2 — surface the stale-derived-docs
+    # warning as a suggestion line. Non-fatal (doesn't flip overall to
+    # DRIFT) since it's a predictive heads-up, not a current failure.
+    stale_warning = check_stale_derived_docs_warning(project_root)
+    if stale_warning:
+        suggestions.append(stale_warning)
 
     return StatusReport(
         project_root=project_root,

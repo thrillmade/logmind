@@ -1,5 +1,6 @@
 """AI instruction file insertion and management logic."""
 
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -195,6 +196,102 @@ def get_stub_template() -> str:
     """Return the per-agent AGENTS.md-pointer stub content."""
     template_path = Path(__file__).parent.parent / "templates" / "agent-stub.md"
     return template_path.read_text(encoding="utf-8")
+
+
+# v0.5.13 / recurring gotcha #1: pin auto-update for CI workflows.
+# When `clud-bug update` re-renders workflows in consumer repos, the
+# logmind==X.Y.Z pin inside our CI workflows goes stale (clud-bug
+# doesn't know about logmind releases). Pre-v0.5.13, this required
+# manual `sed -i` after every clud-bug update cycle. Now `logmind
+# agents update --apply` sweeps the pin alongside the AGENTS.md
+# block — one command, two refreshes.
+
+# Workflows whose pin should track __version__. Names match the
+# canonical templates shipped under templates/github/.
+LOGMIND_PIN_WORKFLOWS = (
+    "regen-timeline.yml",
+    "check-doc-links.yml",
+    "logmind-self-update.yml",
+    "check-decisions.yml",
+)
+
+# Captures the pin line: prefix up through `==` (group 1), version (group 2),
+# trailing quote (group 3). Matches both `"logmind==X.Y.Z"` and bare
+# `logmind==X.Y.Z` forms. Anchored to `pip install` so we don't false-positive
+# on a comment that happens to mention the package name + version.
+_PIN_LINE_RE = re.compile(
+    r'(pip install\s+"?logmind==)([\d.]+)("?)'
+)
+
+
+def find_outdated_workflow_pins(
+    root_path: Optional[Path] = None,
+) -> List[Tuple[Path, str, str]]:
+    """
+    Return [(workflow_file, current_pin_version, target_version), ...] for
+    every `.github/workflows/<name>.yml` whose `pip install "logmind==X.Y.Z"`
+    pin doesn't match the running logmind's `__version__`.
+
+    Only the workflows in `LOGMIND_PIN_WORKFLOWS` are checked — the canonical
+    set logmind ships templates for. Custom user workflows aren't swept
+    (would risk surprising users with rewrites of files they own).
+
+    Returns empty list when:
+      - `.github/workflows/` doesn't exist
+      - none of the canonical workflows are present
+      - all present workflows already pin the current `__version__`
+    """
+    if root_path is None:
+        root_path = Path.cwd()
+
+    from logmind import __version__ as current_version
+
+    outdated: List[Tuple[Path, str, str]] = []
+    workflows_dir = root_path / ".github" / "workflows"
+    if not workflows_dir.exists():
+        return outdated
+
+    for name in LOGMIND_PIN_WORKFLOWS:
+        wf_path = workflows_dir / name
+        if not wf_path.exists():
+            continue
+        try:
+            content = wf_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        m = _PIN_LINE_RE.search(content)
+        if m is None:
+            continue  # no pin → nothing to update (dogfood-style installs)
+        found_version = m.group(2)
+        if found_version != current_version:
+            outdated.append((wf_path, found_version, current_version))
+
+    return outdated
+
+
+def update_workflow_pin(content: str, new_version: str) -> Tuple[str, Optional[str]]:
+    """
+    Rewrite every `pip install "logmind==X.Y.Z"` line in ``content`` to pin
+    ``new_version`` instead.
+
+    Returns ``(new_content, previous_version_or_None)``. ``previous_version``
+    is taken from the FIRST pin found. Returns ``(content, None)`` unchanged
+    when no pin is present or when the pin already matches.
+
+    Idempotent: re-applying the same version is a no-op.
+    """
+    m = _PIN_LINE_RE.search(content)
+    if m is None:
+        return content, None
+    previous = m.group(2)
+    if previous == new_version:
+        return content, previous
+
+    new_content = _PIN_LINE_RE.sub(
+        lambda mo: f"{mo.group(1)}{new_version}{mo.group(3)}",
+        content,
+    )
+    return new_content, previous
 
 
 def find_outdated_marker_blocks(
