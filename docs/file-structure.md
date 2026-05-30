@@ -17,6 +17,7 @@ logmind
 ├── .logmind
 │   └── config.yml
 ├── bench
+│   ├── scripts
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── org_cumulative.py
@@ -65,6 +66,7 @@ logmind
 │   ├── test_analytics.py
 │   ├── test_bench.py
 │   ├── test_branch_aware_logging.py
+│   ├── test_calibration_aggregate.py
 │   ├── test_changelog.py
 │   ├── test_cli.py
 │   ├── test_config.py
