@@ -86,6 +86,7 @@ logmind
 │   ├── test_propose_skill_update.py
 │   ├── test_rebase_cmd.py
 │   ├── test_search.py
+│   ├── test_skill_cli.py
 │   ├── test_skill_install.py
 │   ├── test_stale_derived_docs_warning.py
 │   ├── test_templates_v0_1_2.py

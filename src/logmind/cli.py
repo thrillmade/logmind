@@ -110,7 +110,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.13", prog_name="logmind")
+@click.version_option(version="0.6.0", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -1798,6 +1798,198 @@ def agents_migrate(no_commit: bool):
             click.echo("✓ Committed migration")
         except Exception as e:
             click.secho(f"Warning: Failed to commit: {e}", fg="yellow")
+
+
+# v0.6.0 — `logmind skill` subgroup (SkDD skill authoring + validation)
+@main.group()
+def skill():
+    """Author + validate SKILL.md files (composes with Zak Elfassi's skdd CLI).
+
+    Per the Skills-Driven Development (SkDD) methodology — see
+    https://zakelfassi.com/skdd-skills-driven-development.
+
+    These commands compose with `@zakelfassi/skdd` when it's on PATH:
+
+      - `logmind skill new` prefers `skdd forge` if available
+      - `logmind skill test` prefers `skdd validate` if available
+
+    Logmind layers on: decision-logging on skill creation (audit
+    trail), additional validation (byte cap, frontmatter required
+    fields), and the recursive-iteration loop logmind is positioned
+    to handle (v0.6.1+).
+    """
+    pass
+
+
+@skill.command("new")
+@click.argument("name")
+@click.option(
+    "--description",
+    default="",
+    help="One-sentence trigger description. The discovery surface.",
+)
+@click.option(
+    "--no-log",
+    is_flag=True,
+    help="Skip decision-logging the skill creation.",
+)
+def skill_new(name: str, description: str, no_log: bool):
+    """Create a new SKILL.md scaffolded for the agentskills.io/v1 spec.
+
+    Prefers `skdd forge <name>` when on PATH (canonical SkDD authoring).
+    Falls back to a basic scaffold otherwise. In both cases, the skill
+    creation is decision-logged via `logmind log` (audit trail).
+
+    Refuses to clobber an existing skill of the same name — delete
+    first if you want to recreate.
+    """
+    from logmind.core.skill_cli import (
+        delegate_skdd_forge,
+        has_skdd,
+        scaffold_basic_skill,
+        skill_md_path,
+    )
+
+    repo_root = Path.cwd()
+    target = skill_md_path(repo_root, name)
+    if target.exists():
+        click.secho(
+            f"Error: skill '{name}' already exists at {target}",
+            fg="red",
+        )
+        sys.exit(1)
+
+    if has_skdd():
+        click.echo(f"→ skdd forge {name}")
+        ok, output = delegate_skdd_forge(repo_root, name)
+        if not ok:
+            click.secho(
+                f"Error: skdd forge failed.\n{output}",
+                fg="yellow",
+            )
+            # v0.6.0 PR #92 review fix: skdd forge may create the SKILL.md
+            # AND THEN exit non-zero (e.g., post-creation validation fails).
+            # In that case, our fallback scaffold_basic_skill raises
+            # FileExistsError (its clobber-guard). Catch it so the user
+            # sees a clean error instead of a raw traceback.
+            try:
+                click.echo("Falling back to basic scaffold.")
+                scaffold_basic_skill(repo_root, name, description=description)
+            except FileExistsError:
+                # skdd already created the file but reported failure on it
+                click.secho(
+                    f"Error: skdd forge partially succeeded (file exists "
+                    f"at {target}) but reported failure. Inspect the file "
+                    f"+ skdd output above, then either fix it manually or "
+                    f"`rm -r {target.parent}` and re-run.",
+                    fg="red",
+                )
+                sys.exit(1)
+        else:
+            click.echo(output.strip() if output.strip() else "(skdd produced no output)")
+    else:
+        click.echo(
+            "→ scaffolding basic SKILL.md (`skdd` not on PATH; install "
+            "@zakelfassi/skdd for canonical SkDD authoring)"
+        )
+        scaffold_basic_skill(repo_root, name, description=description)
+
+    click.secho(f"✓ Created skill '{name}' at {skill_md_path(repo_root, name)}", fg="green")
+
+    # Decision-log the skill creation. Skip on --no-log (test scenarios,
+    # CI runs that don't want the auto-decision).
+    if not no_log:
+        docs_path = repo_root / "docs"
+        if docs_path.exists():
+            try:
+                from logmind.core.logger import log as _logmind_log
+                _logmind_log(
+                    f"Created skill '{name}' via `logmind skill new`",
+                    reasoning=(
+                        f"Skill scaffolded {'via skdd forge' if has_skdd() else 'via basic scaffold (skdd not on PATH)'}. "
+                        f"Trigger description: {description or '(TODO)'}. "
+                        f"Per SkDD methodology (Zak Elfassi)."
+                    ),
+                    docs_path=docs_path,
+                    auto_commit=False,  # let the user commit when ready
+                )
+                click.echo("✓ Decision-logged the skill creation (uncommitted).")
+            except Exception as e:
+                click.secho(
+                    f"Warning: failed to decision-log skill creation: {e}",
+                    fg="yellow",
+                )
+        else:
+            click.echo(
+                "(skipped decision-log: docs/ not present — run `logmind init` to enable)"
+            )
+
+    _ok(f"skill: created {name}")
+
+
+@skill.command("test")
+@click.argument("name")
+def skill_test(name: str):
+    """Validate a SKILL.md against the agentskills.io/v1 spec + logmind checks.
+
+    Prefers `skdd validate` when on PATH (canonical spec validation).
+    Layers logmind-specific checks: frontmatter required fields,
+    soft size cap (8KB — guards against skills that bloat every load).
+
+    Exits non-zero on any validation failure so CI can gate on it.
+    """
+    from logmind.core.skill_cli import (
+        check_frontmatter_required_fields,
+        check_size_cap,
+        delegate_skdd_validate,
+        has_skdd,
+        skill_md_path,
+    )
+
+    repo_root = Path.cwd()
+    target = skill_md_path(repo_root, name)
+    if not target.exists():
+        click.secho(
+            f"Error: skill '{name}' not found at {target}",
+            fg="red",
+        )
+        sys.exit(1)
+
+    failed = False
+
+    if has_skdd():
+        click.echo(f"→ skdd validate (filtering for '{name}')")
+        ok, output = delegate_skdd_validate(repo_root, name)
+        if output.strip():
+            click.echo(output.strip())
+        if not ok:
+            failed = True
+            click.secho("✗ skdd validate failed", fg="red")
+        else:
+            click.secho("✓ skdd validate passed", fg="green")
+    else:
+        click.echo(
+            "(skipping skdd validate — `skdd` not on PATH; install "
+            "@zakelfassi/skdd for canonical spec checks)"
+        )
+
+    # Always run logmind-specific layered checks.
+    content = target.read_text(encoding="utf-8")
+    for check_name, check_fn in [
+        ("frontmatter required fields", check_frontmatter_required_fields),
+        ("size cap", check_size_cap),
+    ]:
+        ok, msg = check_fn(content)
+        if ok:
+            click.secho(f"✓ {check_name}: {msg or 'ok'}", fg="green")
+        else:
+            failed = True
+            click.secho(f"✗ {check_name}: {msg}", fg="red")
+
+    if failed:
+        _ok(f"skill: {name} FAILED validation")
+        sys.exit(1)
+    _ok(f"skill: {name} validated")
 
 
 # Config command group
