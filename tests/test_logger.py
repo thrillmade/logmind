@@ -335,3 +335,177 @@ def test_log_stage_all_preserves_v011_behavior(tmp_path, monkeypatch):
     committed = {line for line in out.stdout.split() if line}
     assert "docs/decisions.md" in committed
     assert "feature.py" in committed
+
+
+# ---------------------------------------------------------------------------
+# v0.5.10 / issue #59 — --stage scoped warns when tracked files have
+# unstaged modifications. Pre-v0.5.10 silent-failure mode:
+# user runs `logmind log "chore: bump pin X" --stage scoped` having
+# forgotten to `git add` the actual file; --stage scoped stages only
+# logmind-owned files; commit ships ONLY the decision log; PR diff
+# doesn't match its description. Hit live twice (clud-bug PR #87 +
+# reporulez PR #20) in the 2026-05-27 wrap-up session.
+# ---------------------------------------------------------------------------
+
+
+def test_log_scoped_stage_warns_on_unstaged_tracked_modifications(
+    tmp_path, monkeypatch, capsys
+):
+    """v0.5.10 / issue #59: --stage scoped emits a stderr warning when
+    tracked files have unstaged modifications. Commit still proceeds
+    (warn-not-block per Q6 invariant)."""
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Archive\n\n---\n", encoding="utf-8")
+
+    # Create + commit a tracked workflow file, then modify it without staging.
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_file = workflow_dir / "ci.yml"
+    workflow_file.write_text("name: ci\non: push\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", ".github/workflows/ci.yml"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "add ci"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+
+    # The unstaged-tracked-modification — silent-failure scenario.
+    workflow_file.write_text(
+        "name: ci\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n",
+        encoding="utf-8",
+    )
+
+    log(
+        "chore: bump CI pin",
+        reasoning="security update",
+        docs_path=docs,
+        auto_commit=True,
+        auto_push=False,
+        stage="scoped",
+    )
+
+    captured = capsys.readouterr()
+    assert ".github/workflows/ci.yml" in captured.err, (
+        f"v0.5.10 / #59: warning must name the unstaged tracked file. "
+        f"Got stderr={captured.err!r}"
+    )
+    assert "--stage scoped" in captured.err, (
+        f"v0.5.10 / #59: warning must mention --stage scoped so users "
+        f"connect the warning to their flag choice. "
+        f"Got stderr={captured.err!r}"
+    )
+
+    # Commit still happened — warn-not-block per Q6 invariant.
+    out = subprocess.run(
+        ["git", "log", "--oneline", "-n", "2"],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    assert "chore: bump CI pin" in out.stdout, (
+        "v0.5.10 / #59: warning must be non-blocking (commit still proceeds). "
+        f"Got log:\n{out.stdout}"
+    )
+
+
+def test_log_scoped_stage_silent_when_working_tree_clean(
+    tmp_path, monkeypatch, capsys
+):
+    """v0.5.10 / issue #59: no warning when --stage scoped runs with no
+    leftover unstaged tracked modifications (happy-path regression
+    guard against warning-spam on legitimate scoped commits)."""
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Archive\n\n---\n", encoding="utf-8")
+
+    log(
+        "clean scoped commit",
+        reasoning="happy path",
+        docs_path=docs,
+        auto_commit=True,
+        auto_push=False,
+        stage="scoped",
+    )
+
+    captured = capsys.readouterr()
+    assert "--stage scoped" not in captured.err, (
+        f"v0.5.10 / #59: clean working tree must not produce the "
+        f"stage-scoped warning. Got stderr={captured.err!r}"
+    )
+
+
+def test_log_scoped_stage_ignores_untracked_files(
+    tmp_path, monkeypatch, capsys
+):
+    """v0.5.10 / issue #59: untracked files (e.g. scratch debug files)
+    do NOT trigger the warning — users opting into --stage scoped
+    typically have intentional untracked WIP they want to preserve.
+    Only TRACKED-but-unstaged modifications surface the warning."""
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+    (docs / "decisions-archive.md").write_text("# Archive\n\n---\n", encoding="utf-8")
+
+    # Untracked-only working-tree noise — must NOT trigger warning.
+    (tmp_path / "scratch.txt").write_text("draft", encoding="utf-8")
+    (tmp_path / "debug.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    log(
+        "scoped commit with untracked WIP",
+        reasoning="intentional preservation",
+        docs_path=docs,
+        auto_commit=True,
+        auto_push=False,
+        stage="scoped",
+    )
+
+    captured = capsys.readouterr()
+    assert "--stage scoped" not in captured.err, (
+        f"v0.5.10 / #59: untracked files (scratch.txt, debug.png) must "
+        f"NOT trigger the stage-scoped warning. "
+        f"Got stderr={captured.err!r}"
+    )
+
+
+def test_log_stage_all_never_warns(tmp_path, monkeypatch, capsys):
+    """v0.5.10 / issue #59: --stage all sweeps the whole working tree
+    so the scoped-warning code path must never fire under it."""
+    _git_init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
+
+    tracked = tmp_path / "feature.py"
+    tracked.write_text("def old(): pass\n", encoding="utf-8")
+    subprocess.run(["git", "add", "feature.py"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add feature"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    tracked.write_text("def new(): pass\n", encoding="utf-8")
+
+    log(
+        "stage-all sweeps everything",
+        reasoning="opt back in",
+        docs_path=docs,
+        auto_commit=True,
+        auto_push=False,
+        stage="all",
+    )
+
+    captured = capsys.readouterr()
+    assert "--stage scoped" not in captured.err

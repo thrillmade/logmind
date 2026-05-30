@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
@@ -17,6 +18,7 @@ from logmind.core.git_handler import (
     git_commit,
     git_push,
     is_git_repo,
+    unstaged_tracked_modifications,
 )
 from logmind.core.timeline import write_timeline
 from logmind.core.tree_gen import update_file_structure
@@ -347,6 +349,34 @@ def log(
             if extra_scoped_paths:
                 scoped.extend(extra_scoped_paths)
             git_add(scoped)
+
+            # v0.5.10 / issue #59: warn loudly when --stage scoped runs
+            # with tracked-but-unstaged modifications still present after
+            # staging logmind's own files. Without this warning, users
+            # who forget `git add` before `logmind log --stage scoped`
+            # silently ship only the decision-log entry — the actual
+            # code change stays unstaged and the PR diff doesn't match
+            # its description. Hit live in clud-bug PR #87 and reporulez
+            # PR #20 in the 2026-05-27 wrap-up session. Q6 invariant:
+            # warnings never silently dropped (warn-not-block, the user
+            # may legitimately have unrelated WIP they want unstaged).
+            leftover = unstaged_tracked_modifications()
+            if leftover:
+                count = len(leftover)
+                sys.stderr.write(
+                    f"\nWarning: --stage scoped committed without "
+                    f"{count} tracked modification"
+                    f"{'s' if count != 1 else ''} "
+                    f"(still unstaged):\n"
+                )
+                for f in leftover:
+                    sys.stderr.write(f"  - {f}\n")
+                sys.stderr.write(
+                    "  Did you mean --stage all (the default since "
+                    "v0.2.7)? If you intended to include the file(s), "
+                    "run `git add <files> && git commit --amend "
+                    "--no-edit` before pushing.\n\n"
+                )
 
         # Use configured commit message template
         commit_message = config.commit_message_template.format(decision=decision)
