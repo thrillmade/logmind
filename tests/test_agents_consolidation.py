@@ -378,9 +378,83 @@ def test_agents_update_cli_apply_rewrites_and_preserves_user_content(tmp_path, m
     assert "My section" in content  # preserved below
     assert "STALE" not in content  # rewritten
 
-    # Second invocation is a no-op
+    # Second invocation is a no-op.
+    # v0.5.8 / issue #57: message refined to be more informative when
+    # AGENTS.md has a current marker block (vs. the previous monolithic
+    # "All agent files are current" which conflated three distinct cases).
     result2 = CliRunner().invoke(cli_main, ["agents", "update"])
-    assert "All agent files are current" in result2.output
+    assert "AGENTS.md logmind block is current" in result2.output
+
+
+# v0.5.8 / issue #57: the pre-fix "✓ All agent files are current" was
+# emitted in three distinct cases — no AGENTS.md, AGENTS.md without a
+# marker, AGENTS.md with a current marker — which misled users into
+# thinking everything was current when really logmind just hadn't been
+# installed. These tests pin the per-case messaging.
+def test_agents_update_no_agents_md_is_explicit(tmp_path, monkeypatch):
+    """No AGENTS.md → output suggests `logmind init` (not 'all current')."""
+    from click.testing import CliRunner
+    from logmind.cli import main as cli_main
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli_main, ["agents", "update"])
+    assert result.exit_code == 0
+    assert "No AGENTS.md" in result.output, (
+        f"v0.5.8 / #57: bare 'all current' output is misleading; "
+        f"expected an explicit no-AGENTS.md message. Got: {result.output!r}"
+    )
+    assert "logmind init" in result.output
+
+
+def test_agents_update_no_marker_block_is_explicit(tmp_path, monkeypatch):
+    """AGENTS.md exists but lacks marker block → suggest `logmind init`."""
+    from click.testing import CliRunner
+    from logmind.cli import main as cli_main
+    (tmp_path / "AGENTS.md").write_text(
+        "# My agents file\n\nNo logmind markers here.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli_main, ["agents", "update"])
+    assert result.exit_code == 0
+    assert "no logmind marker block" in result.output, (
+        f"v0.5.8 / #57: AGENTS.md without a marker should say so, not 'all current'. "
+        f"Got: {result.output!r}"
+    )
+    assert "logmind init" in result.output
+
+
+def test_agents_update_dry_run_says_would_update(tmp_path, monkeypatch):
+    """When there ARE stale files in dry-run mode, prefix is 'Would update'
+    (was 'Found' — sounded like the work was already done).
+
+    PR #82 review caught: pre-fix this test used fake `<!-- clud-bug-start -->`
+    markers which didn't match logmind's actual markers (`<!-- logmind-start -->`).
+    The detector returned empty and the wrong branch fired silently — the
+    test claimed to validate the dry-run prefix but actually only exercised
+    the no-marker fallback. Fixed to import the real marker constants.
+    """
+    from click.testing import CliRunner
+    from logmind.cli import main as cli_main
+    from logmind.core.inserter import LOGMIND_START_MARKER, LOGMIND_END_MARKER
+    stale_block = (
+        f"{LOGMIND_START_MARKER}\n"
+        f"<!-- logmind-block-version: v0-STALE -->\n"
+        f"## stale content\n"
+        f"{LOGMIND_END_MARKER}\n"
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        f"# Project\n\nIntro.\n\n{stale_block}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli_main, ["agents", "update"])
+    assert "stale logmind block" in result.output, (
+        f"v0.5.8 / #57: detector should flag stale block. Got: {result.output!r}"
+    )
+    assert "Would update" in result.output, (
+        f"v0.5.8 / #57: dry-run prefix should be 'Would update' not 'Found'. "
+        f"Got: {result.output!r}"
+    )
 
 
 def test_migrate_skips_json_agents(tmp_path):

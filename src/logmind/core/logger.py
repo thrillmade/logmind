@@ -301,33 +301,23 @@ def log(
         _archive_oldest_decision(decisions_path)
         archive_rotated = True
 
-    # Update file structure (if configured) — but skip on feature branches.
-    # Each PR would regenerate against its own working tree, guaranteeing
-    # a merge conflict against main. Per v0.1.3, the aggregator workflow
-    # regenerates file-structure.md on main after each PR merge, so
-    # per-branch regeneration is no longer needed.
+    # v0.5.8 / issue #66: Regenerate docs/file-structure.md on every
+    # branch — same logic as timeline.md below. The pre-v0.5.8 behaviour
+    # (default-branch-only regen) self-perpetuated a 1-entry-stale cycle
+    # on main: PR adds docs/decisions-branches/<branch>.md → squash-merges
+    # without an updated file-structure → main's file-structure.md
+    # one entry behind reality → next PR catches it via check-derived-docs,
+    # adds a regen + a new decision file → cycle repeats. The original
+    # rationale (per-branch regen would conflict against main) was made
+    # obsolete by v0.3.0's merge driver for file-structure.md, which
+    # resolves conflicts by regenerating from the merged tree.
     #
-    # Project root is the parent of docs/ — check git there, NOT in cwd,
-    # so this works correctly when called from tests or other working dirs.
-    # Regenerate when: not a git repo OR HEAD is the default branch.
-    # Skip only when: in a git repo AND on a non-default branch.
-    project_root = docs_path.parent
+    # update_file_structure handles all OSError / not-git-repo edge cases
+    # internally; safe to call unconditionally per config.
     file_structure_updated = False
     if config.auto_update_file_structure:
-        # is_git_repo + current_branch + default_branch all return safe
-        # defaults on OSError / CalledProcessError / FileNotFoundError
-        # (verified in git_handler.py — hardened in v0.2.1). So no
-        # try/except needed here: in the worst case is_git_repo returns
-        # False and we regenerate (the safe default behavior on
-        # not-a-git-repo, e.g. the test suite's tmp dirs).
-        skip_regen = False
-        if is_git_repo(project_root):
-            cur = current_branch(project_root)
-            if cur is not None and cur != default_branch(project_root):
-                skip_regen = True
-        if not skip_regen:
-            update_file_structure(docs_path)
-            file_structure_updated = True
+        update_file_structure(docs_path)
+        file_structure_updated = True
 
     # Regenerate docs/timeline.md on every branch — unlike file-structure.md,
     # timeline conflicts are trivially three-way-mergeable (each branch

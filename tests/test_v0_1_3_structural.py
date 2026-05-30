@@ -59,9 +59,17 @@ def _checkout(path: Path, branch: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_log_on_feature_branch_does_not_touch_file_structure(tmp_path, monkeypatch):
-    """On a feature branch, `logmind log` should leave file-structure.md
-    alone — only main owns the tree snapshot now."""
+def test_log_on_feature_branch_regenerates_file_structure(tmp_path, monkeypatch):
+    """v0.5.8 / issue #66 — feature branches now regenerate file-structure.md
+    on every `logmind log` (mirrors timeline.md's behaviour). Pre-v0.5.8
+    skipped on feature branches, which self-perpetuated a 1-entry-stale
+    cycle on main (PR adds decisions-branches file → squash → main's
+    file-structure.md is 1 entry behind → next PR catches it → cycle).
+
+    v0.3.0's merge driver resolves conflicts by regenerating from the
+    merged tree, so per-branch regen no longer carries the conflict
+    risk that motivated the original skip.
+    """
     _git_init(tmp_path, default_branch="main")
     _checkout(tmp_path, "feat/something")
     monkeypatch.chdir(tmp_path)
@@ -70,13 +78,19 @@ def test_log_on_feature_branch_does_not_touch_file_structure(tmp_path, monkeypat
     (docs / "decisions-branches").mkdir(parents=True)
     (docs / "decisions.md").write_text("# Decision Log\n\n---\n", encoding="utf-8")
     fs_path = docs / "file-structure.md"
-    sentinel = "BASELINE-SENTINEL-DO-NOT-REGENERATE\n"
+    sentinel = "STALE-SHOULD-BE-REGENERATED\n"
     fs_path.write_text(sentinel, encoding="utf-8")
 
     log("feature work", reasoning="r", docs_path=docs, auto_commit=False)
 
-    # file-structure.md must still contain the sentinel — proves no regen.
-    assert fs_path.read_text(encoding="utf-8") == sentinel
+    # file-structure.md must NO LONGER contain the sentinel — proves regen
+    # fired on the feature branch.
+    regenerated = fs_path.read_text(encoding="utf-8")
+    assert sentinel not in regenerated, (
+        f"file-structure.md was NOT regenerated on the feature branch — "
+        f"still contains sentinel. v0.5.8 / issue #66 requires regen on "
+        f"every branch to break the self-perpetuating 1-entry-stale cycle."
+    )
 
 
 def test_log_on_default_branch_does_regenerate_file_structure(tmp_path, monkeypatch):
