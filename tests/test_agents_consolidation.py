@@ -425,15 +425,22 @@ def test_agents_update_no_marker_block_is_explicit(tmp_path, monkeypatch):
 
 def test_agents_update_dry_run_says_would_update(tmp_path, monkeypatch):
     """When there ARE stale files in dry-run mode, prefix is 'Would update'
-    (was 'Found' — sounded like the work was already done)."""
+    (was 'Found' — sounded like the work was already done).
+
+    PR #82 review caught: pre-fix this test used fake `<!-- clud-bug-start -->`
+    markers which didn't match logmind's actual markers (`<!-- logmind-start -->`).
+    The detector returned empty and the wrong branch fired silently — the
+    test claimed to validate the dry-run prefix but actually only exercised
+    the no-marker fallback. Fixed to import the real marker constants.
+    """
     from click.testing import CliRunner
     from logmind.cli import main as cli_main
-    # Install a stale AGENTS.md marker block by hand.
+    from logmind.core.inserter import LOGMIND_START_MARKER, LOGMIND_END_MARKER
     stale_block = (
-        "<!-- clud-bug-start -->\n"
-        "<!-- logmind-block-version: v0-STALE -->\n"
-        "## stale content\n"
-        "<!-- clud-bug-end -->\n"
+        f"{LOGMIND_START_MARKER}\n"
+        f"<!-- logmind-block-version: v0-STALE -->\n"
+        f"## stale content\n"
+        f"{LOGMIND_END_MARKER}\n"
     )
     (tmp_path / "AGENTS.md").write_text(
         f"# Project\n\nIntro.\n\n{stale_block}\n",
@@ -441,16 +448,13 @@ def test_agents_update_dry_run_says_would_update(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli_main, ["agents", "update"])
-    # Whether the detector classifies this exact stale block as outdated
-    # depends on which marker token logmind looks for; either way the
-    # output language should NOT misleadingly say "all current" when a
-    # marker block is present + the user came here on purpose.
-    # The dry-run language fix is what matters for #57.
-    if "stale logmind block" in result.output:
-        assert "Would update" in result.output, (
-            f"v0.5.8 / #57: dry-run prefix should be 'Would update' not 'Found'. "
-            f"Got: {result.output!r}"
-        )
+    assert "stale logmind block" in result.output, (
+        f"v0.5.8 / #57: detector should flag stale block. Got: {result.output!r}"
+    )
+    assert "Would update" in result.output, (
+        f"v0.5.8 / #57: dry-run prefix should be 'Would update' not 'Found'. "
+        f"Got: {result.output!r}"
+    )
 
 
 def test_migrate_skips_json_agents(tmp_path):
