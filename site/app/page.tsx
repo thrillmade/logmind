@@ -73,7 +73,7 @@ export default function Home() {
       <section className="px-6 sm:px-10 lg:px-16 pt-12 sm:pt-24 pb-20">
         <div className="max-w-6xl mx-auto w-full">
           <div className="rise marginalia mb-6">
-            v0.1 ⁄ released 2026-05-15 ⁄ MIT
+            v0.5.12 ⁄ released 2026-05-30 ⁄ MIT
           </div>
           <h1 className="rise display text-[12vw] sm:text-[8.5vw] leading-[0.92] font-light max-w-[16ch]" style={{ animationDelay: "0.05s" }}>
             Infinite context
@@ -141,7 +141,7 @@ export default function Home() {
             principles<span className="text-accent">.</span>
           </h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-10 gap-y-12">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-10 gap-y-12">
             {[
               {
                 n: "i.",
@@ -175,6 +175,18 @@ export default function Home() {
               },
               {
                 n: "iii.",
+                title: "always in sync",
+                body: (
+                  <>
+                    Decisions, timeline, project tree —{" "}
+                    <em>they update together</em>. Rebase against main? Fresh
+                    clone? Multi-commit amend? They stay synced. CI never
+                    catches you with a stale derived doc.
+                  </>
+                ),
+              },
+              {
+                n: "iv.",
                 title: "infinite context for agents",
                 body: (
                   <>
@@ -203,6 +215,44 @@ export default function Home() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* measured */}
+      <section className="px-6 sm:px-10 lg:px-16 py-20 border-t border-rule">
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 sm:grid-cols-12 gap-8">
+          <div className="sm:col-span-4">
+            <h2 className="display text-4xl sm:text-5xl font-light leading-tight">
+              measured<span className="text-accent">.</span>
+            </h2>
+            <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
+              Logmind costs fewer tokens than the git workflow it replaces.
+              Anyone can run the benchmarks. Every release.
+            </p>
+          </div>
+          <div className="sm:col-span-8">
+            <p className="text-[15px] leading-[1.65] text-foreground/85 mb-6">
+              Decision logging only matters if it stays cheaper than the
+              alternative. We measure four ways every release:
+              <em> per call</em>,{" "}
+              <em>worst case</em>, <em>per session</em>,{" "}
+              <em>org cumulative</em>. CI gates on net-saver across all four.
+            </p>
+            <pre className="border border-rule bg-code-bg px-4 py-4 text-[12px] sm:text-sm leading-[1.7] font-mono text-foreground/90 overflow-x-auto">
+{`$ python -m bench
+  per-call       -18% bytes vs git equivalent      ✅ saver
+  worst-case     -58% even on never-read           ✅ saver
+  per-session     informational (4-angle frame)    ℹ info
+  org-cumulative  informational (rollup)            ℹ info
+ok: 4-angle Q7-logmind compliance`}
+            </pre>
+            <p className="marginalia normal-case tracking-normal text-foreground/55 mt-4 text-xs leading-relaxed">
+              The two informational angles share a thin baseline (read-event
+              accounting needs aggregation); the two gating angles are the
+              load-bearing checks. <code className="font-mono">python -m bench</code> ships in the repo —
+              no setup, no API keys.
+            </p>
           </div>
         </div>
       </section>
@@ -297,7 +347,7 @@ export default function Home() {
             </a>
             <div className="marginalia normal-case tracking-normal mt-2 text-xs text-foreground/55 flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* keep version in sync with pyproject.toml */}
-              <span>v0.1.4</span>
+              <span>v0.5.12</span>
               <span>·</span>
               <span>MIT licensed</span>
               <span>·</span>
