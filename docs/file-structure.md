@@ -64,6 +64,7 @@ logmind
 │   ├── test_agents_consolidation.py
 │   ├── test_aggregator.py
 │   ├── test_analytics.py
+│   ├── test_auto_rebase.py
 │   ├── test_bench.py
 │   ├── test_branch_aware_logging.py
 │   ├── test_calibration_aggregate.py

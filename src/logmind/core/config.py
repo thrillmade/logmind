@@ -16,6 +16,15 @@ DEFAULT_CONFIG = {
         "auto_commit": True,
         "auto_push": True,
         "commit_message_template": "logmind: {decision}",
+        # v0.5.14: opt-in deterministic auto-rebase. Default OFF — auto
+        # force-with-lease push is destructive enough that users should
+        # opt in explicitly. When True, `logmind log` detects the
+        # tokenomics-Phase-D scenario (branch behind origin/<default> +
+        # the gap touches docs/timeline.md ONLY, no other files) and
+        # rebases + regenerates timeline + force-with-lease pushes
+        # silently as part of the log invocation. Saves ~5-8 agent
+        # turns per incident.
+        "auto_rebase": False,
     },
     "decisions": {
         "max_recent": 20,
@@ -183,6 +192,17 @@ class Config:
     def auto_push(self) -> bool:
         """Whether to auto-push after committing."""
         return self.get("git.auto_push", True)
+
+    @property
+    def auto_rebase(self) -> bool:
+        """v0.5.14 — opt-in deterministic auto-rebase on timeline.md gap.
+
+        When True + the very narrow conditions hold (branch behind
+        origin/<default>; gap touches exactly docs/timeline.md and no
+        other files), `logmind log` rebases + regenerates timeline +
+        force-with-lease pushes as part of the log invocation.
+        """
+        return self.get("git.auto_rebase", False)
 
     @property
     def commit_message_template(self) -> str:
