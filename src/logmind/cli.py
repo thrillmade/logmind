@@ -14,6 +14,7 @@ from logmind.core.gitattributes import (
     configure_merge_drivers,
     ensure_block as ensure_gitattributes_block,
     install_post_merge_hook,
+    install_post_rewrite_hook,
 )
 from logmind.core.gitignore import ensure_block as ensure_gitignore_block
 from logmind.core.skill_install import (
@@ -107,7 +108,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.10", prog_name="logmind")
+@click.version_option(version="0.5.11", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -418,6 +419,7 @@ def init(
             click.echo("✓ Added logmind block to .gitattributes")
         configure_merge_drivers(root_path)
         install_post_merge_hook(root_path)
+        install_post_rewrite_hook(root_path)
 
         click.echo()
         click.secho("Done. docs/ and .logmind/ left untouched.", fg="green")
@@ -542,6 +544,7 @@ def init(
     if not no_git:
         configure_merge_drivers(root_path)
         install_post_merge_hook(root_path)
+        install_post_rewrite_hook(root_path)
 
     # Log first decision
     log_first_decision(docs_path)

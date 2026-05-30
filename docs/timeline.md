@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (75 decisions)
+## 2026-05 (76 decisions)
 
-- **2026-05-30** — chore: propagate clud-bug v0.6.22 → v0.6.27 to logmind (Smart Budget self-upgrade) *(chore/clud-bug-v0.6.27-self-upgrade)* — [decisions-branches/chore__clud-bug-v0.6.27-self-upgrade.md](decisions-branches/chore__clud-bug-v0.6.27-self-upgrade.md)
-- *... 73 more decisions ...*
+- **2026-05-30** — feat(v0.5.11): post-rewrite hook so multi-commit rebases don't leave timeline.md stale (#58) *(fix/v0.5.11-post-rewrite-hook-issue-58)* — [decisions-branches/fix__v0.5.11-post-rewrite-hook-issue-58.md](decisions-branches/fix__v0.5.11-post-rewrite-hook-issue-58.md)
+- *... 74 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)

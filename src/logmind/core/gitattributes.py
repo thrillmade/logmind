@@ -189,6 +189,98 @@ def post_merge_hook_installed(repo_root: Path) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# v0.5.11 / issue #58 — post-rewrite hook
+#
+# Companion to post-merge. The merge driver in .gitattributes fires per
+# conflict during `git merge`, and post-merge sweeps the full post-merge
+# tree at end-of-merge. But neither path covers `git rebase` or
+# `git commit --amend` — both rewrite history without producing merge
+# conflicts on logmind's derived files, so the driver never fires AND
+# post-merge never fires either.
+#
+# Concrete failure mode (issue #58, hit on agent-skills PRs #21 + #22):
+# rebasing a feature branch with 2+ `logmind log` commits against a moved
+# main produces a stale `docs/timeline.md` (only the first commit's regen
+# survives; subsequent commits' regens are dropped during the rebase
+# replay). check-derived-docs fails the resulting PR.
+#
+# Fix: install a `post-rewrite` hook that regenerates timeline.md +
+# file-structure.md after every rebase/amend. Git invokes it once at
+# end-of-rewrite with $1 = "rebase" or "amend" — we don't branch on
+# the kind because the regen behaviour is identical.
+# ---------------------------------------------------------------------------
+
+
+_POST_REWRITE_HOOK_MARKER = "# logmind post-rewrite hook"
+_POST_REWRITE_HOOK_BODY = """#!/bin/sh
+# logmind post-rewrite hook
+# Installed by `logmind init` (v0.5.11+). Companion to the post-merge
+# hook. Fires after `git rebase` or `git commit --amend` and
+# regenerates derived docs from the FULL post-rewrite working tree.
+#
+# Why: the merge driver in .gitattributes only fires when a merge
+# produces conflicts on the derived files. A clean rebase rewrites
+# multiple commits without ever invoking the driver — leaving
+# docs/timeline.md and docs/file-structure.md stale relative to the
+# replayed `docs/decisions-branches/<branch>.md` entries. This hook
+# sweeps the final state once and stages the regen for inclusion in
+# the user's next commit / amend cycle.
+#
+# Git invokes post-rewrite with $1 = "rebase" or "amend"; the regen
+# behaviour is identical in both, so we don't branch on $1.
+
+if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
+  if [ -d docs ]; then
+    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
+    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
+    # Stage the regens if they changed anything; user can `git commit --amend`
+    # or include in their next commit.
+    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true
+  fi
+fi
+"""
+
+
+def install_post_rewrite_hook(repo_root: Path) -> bool:
+    """Write `.git/hooks/post-rewrite` to re-regenerate derived files
+    after every rebase or `git commit --amend`. Returns True if the
+    hook was created or updated, False if logmind's version was
+    already present.
+
+    Refuses to overwrite a non-logmind hook (someone may have custom
+    hook content; we leave it alone and let `logmind doctor` flag the
+    state instead).
+    """
+    hooks_dir = repo_root / ".git" / "hooks"
+    if not hooks_dir.exists():
+        return False
+    hook = hooks_dir / "post-rewrite"
+    if hook.exists():
+        existing = hook.read_text(encoding="utf-8", errors="ignore")
+        if _POST_REWRITE_HOOK_MARKER in existing:
+            if existing == _POST_REWRITE_HOOK_BODY:
+                return False
+            hook.write_text(_POST_REWRITE_HOOK_BODY, encoding="utf-8")
+            hook.chmod(0o755)
+            return True
+        # Foreign hook — don't trample.
+        return False
+    hook.write_text(_POST_REWRITE_HOOK_BODY, encoding="utf-8")
+    hook.chmod(0o755)
+    return True
+
+
+def post_rewrite_hook_installed(repo_root: Path) -> bool:
+    hook = repo_root / ".git" / "hooks" / "post-rewrite"
+    if not hook.exists():
+        return False
+    try:
+        return _POST_REWRITE_HOOK_MARKER in hook.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
 def driver_configured(repo_root: Path) -> bool:
     """Return True iff every key in MERGE_DRIVER_CONFIG is set to its
     expected value in the repo's local git config."""
