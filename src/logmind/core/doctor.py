@@ -338,6 +338,31 @@ def _probe_post_merge_hook(project_root: Path) -> WorkflowStatus:
     )
 
 
+def _probe_post_rewrite_hook(project_root: Path) -> WorkflowStatus:
+    """v0.5.11 / issue #58: .git/hooks/post-rewrite installed by logmind.
+    Companion to the post-merge hook. Fires after `git rebase` or
+    `git commit --amend` (which the merge driver and post-merge hook
+    don't cover), regenerating derived docs against the post-rewrite
+    tree so multi-commit rebases don't leave docs/timeline.md stale.
+    """
+    from logmind.core.gitattributes import post_rewrite_hook_installed
+
+    if not (project_root / ".git").exists():
+        return WorkflowStatus(
+            name="post-rewrite hook", installed=False,
+            marker=None, bundled_marker=None, drift="missing",
+        )
+    if post_rewrite_hook_installed(project_root):
+        return WorkflowStatus(
+            name="post-rewrite hook", installed=True,
+            marker="installed", bundled_marker="installed", drift="current",
+        )
+    return WorkflowStatus(
+        name="post-rewrite hook", installed=False,
+        marker=None, bundled_marker="installed", drift="missing",
+    )
+
+
 def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     installed = _logmind_installed_version(project_root)
     latest: Optional[str] = None
@@ -360,6 +385,7 @@ def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     workflows.append(_probe_merge_driver_attrs(project_root))
     workflows.append(_probe_merge_driver_config(project_root))
     workflows.append(_probe_post_merge_hook(project_root))
+    workflows.append(_probe_post_rewrite_hook(project_root))
 
     # Drift = any installed workflow with a marker that's stale,
     # OR installed version != latest version (when both known).

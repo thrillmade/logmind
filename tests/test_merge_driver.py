@@ -18,7 +18,9 @@ from logmind.core.gitattributes import (
     ensure_block,
     has_block,
     install_post_merge_hook,
+    install_post_rewrite_hook,
     post_merge_hook_installed,
+    post_rewrite_hook_installed,
 )
 
 
@@ -254,3 +256,96 @@ def test_post_merge_hook_installed_returns_false_for_foreign_hook(git_repo: Path
     hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_text("#!/bin/sh\necho 'custom'\n", encoding="utf-8")
     assert post_merge_hook_installed(git_repo) is False
+
+
+# ---------------------------------------------------------------------------
+# v0.5.11 / issue #58 — post-rewrite hook
+#
+# Companion to post-merge. Covers `git rebase` and `git commit --amend`
+# (which the merge driver + post-merge hook don't cover). Hit live on
+# agent-skills PRs #21 + #22 during the 2026-05-27 merge cascade —
+# multi-commit rebases left docs/timeline.md stale, failing
+# check-derived-docs.
+# ---------------------------------------------------------------------------
+
+
+def test_install_post_rewrite_hook_creates_executable_hook(git_repo: Path):
+    """v0.5.11 / #58: hook is written under .git/hooks/ and (on POSIX)
+    executable, mirroring the post-merge hook pattern."""
+    import os
+    changed = install_post_rewrite_hook(git_repo)
+    assert changed is True
+    hook = git_repo / ".git" / "hooks" / "post-rewrite"
+    assert hook.exists()
+    if os.name != "nt":
+        assert hook.stat().st_mode & 0o111
+    body = hook.read_text(encoding="utf-8")
+    assert "logmind timeline --write" in body
+    assert "logmind file-structure --write" in body
+
+
+def test_install_post_rewrite_hook_is_idempotent(git_repo: Path):
+    """v0.5.11 / #58: second invocation is a no-op when the canonical
+    body is already in place."""
+    install_post_rewrite_hook(git_repo)
+    second = install_post_rewrite_hook(git_repo)
+    assert second is False
+
+
+def test_install_post_rewrite_hook_does_not_overwrite_foreign_hook(git_repo: Path):
+    """v0.5.11 / #58: a user-authored post-rewrite hook is preserved
+    untouched — same contract as post-merge."""
+    hook = git_repo / ".git" / "hooks" / "post-rewrite"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\necho 'custom rewrite hook'\n", encoding="utf-8")
+    hook.chmod(0o755)
+    changed = install_post_rewrite_hook(git_repo)
+    assert changed is False
+    assert "custom rewrite hook" in hook.read_text(encoding="utf-8")
+
+
+def test_post_rewrite_hook_installed_detects_logmind_hook(git_repo: Path):
+    install_post_rewrite_hook(git_repo)
+    assert post_rewrite_hook_installed(git_repo) is True
+
+
+def test_post_rewrite_hook_installed_returns_false_for_foreign_hook(git_repo: Path):
+    hook = git_repo / ".git" / "hooks" / "post-rewrite"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\necho 'custom'\n", encoding="utf-8")
+    assert post_rewrite_hook_installed(git_repo) is False
+
+
+def test_doctor_surfaces_post_rewrite_hook_status(git_repo: Path):
+    """v0.5.11 / #58: `logmind doctor` reports post-rewrite hook
+    drift the same way it reports post-merge drift."""
+    # Before install: missing
+    report = doctor.collect_status(git_repo, offline=True)
+    hook_status = next(
+        w for w in report.tools[0].workflows if "post-rewrite" in w.name
+    )
+    assert hook_status.drift == "missing"
+
+    # After install: current
+    install_post_rewrite_hook(git_repo)
+    report = doctor.collect_status(git_repo, offline=True)
+    hook_status = next(
+        w for w in report.tools[0].workflows if "post-rewrite" in w.name
+    )
+    assert hook_status.drift == "current"
+
+
+def test_logmind_init_installs_post_rewrite_hook(git_repo: Path, monkeypatch):
+    """v0.5.11 / #58: `logmind init` invokes install_post_rewrite_hook
+    so a fresh project picks up the hook automatically — closes the
+    loop with the post-merge hook that's also init-installed."""
+    monkeypatch.chdir(git_repo)
+    runner = CliRunner()
+    result = runner.invoke(cli_main, ["init", "--no-skill-install"])
+    assert result.exit_code == 0, result.output
+    hook = git_repo / ".git" / "hooks" / "post-rewrite"
+    assert hook.exists(), (
+        f"v0.5.11 / #58: logmind init must install post-rewrite hook. "
+        f"init output:\n{result.output}"
+    )
+    assert "logmind timeline --write" in hook.read_text(encoding="utf-8")
