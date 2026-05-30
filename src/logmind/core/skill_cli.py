@@ -25,6 +25,7 @@ Scope:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -136,12 +137,22 @@ def delegate_skdd_forge(repo_root: Path, name: str) -> Tuple[bool, str]:
 
 
 def delegate_skdd_validate(repo_root: Path, name: str) -> Tuple[bool, str]:
-    """Run ``skdd validate`` in ``repo_root``. Returns (success, output).
+    """Run ``skdd validate`` in ``repo_root`` + filter result to ``name``.
 
     Zak's ``skdd validate`` walks every SKILL.md in the colony and
-    reports per-file pass/fail. We don't pass a name filter — the
-    upstream CLI doesn't take one — and instead read the full output
-    so the caller can grep for the target skill's section if needed.
+    reports per-file pass/fail. The upstream CLI doesn't take a name
+    filter, so we run it once + parse the output for the line
+    referencing ``name``. Returns:
+
+      - (True, lines mentioning ``name`` — should be a pass marker)
+      - (False, lines mentioning ``name`` — should be a fail marker)
+      - (False, full output) when ``name`` isn't found in the output
+        (defensive: report the whole thing rather than silently passing)
+
+    **v0.6.0 PR #92 review fix**: previously returned the colony-wide
+    exit code. Any unrelated broken skill in the repo caused
+    ``logmind skill test <good-skill>`` to fail. Now we extract just
+    the lines about ``name`` so the gate is per-skill as intended.
     """
     try:
         result = subprocess.run(
@@ -151,9 +162,35 @@ def delegate_skdd_validate(repo_root: Path, name: str) -> Tuple[bool, str]:
             text=True,
             check=False,
         )
-        return (result.returncode == 0, result.stdout + result.stderr)
     except (FileNotFoundError, OSError) as e:
         return (False, str(e))
+
+    combined = result.stdout + result.stderr
+    # Pull out lines referencing the target skill. `skdd validate`'s
+    # output format mentions the skill by path or name; we match both
+    # to stay format-tolerant.
+    relevant = [
+        line for line in combined.splitlines()
+        if name in line or f"skills/{name}/" in line
+    ]
+
+    if not relevant:
+        # Skill not mentioned in output — likely means it wasn't found
+        # by skdd OR the output format changed. Report the whole output
+        # + fail, rather than silently passing.
+        return (
+            False,
+            f"skdd validate did not mention '{name}' in its output. "
+            f"Full output:\n{combined}",
+        )
+
+    # Determine pass/fail per-skill from the relevant lines. skdd's
+    # convention: pass lines look like "✓" / "PASS" / "ok"; fail lines
+    # look like "✗" / "FAIL" / "error". Be permissive on the markers.
+    relevant_text = "\n".join(relevant)
+    fail_markers = ("✗", "FAIL", "fail", "ERROR", "error")
+    has_fail = any(m in relevant_text for m in fail_markers)
+    return (not has_fail, relevant_text)
 
 
 # Logmind-specific validation layered on top of skdd validate. Each
@@ -164,12 +201,25 @@ def delegate_skdd_validate(repo_root: Path, name: str) -> Tuple[bool, str]:
 _LOGMIND_SKILL_BYTE_CAP = 8000
 
 
+# Anchored regexes to detect required-field presence in YAML
+# frontmatter. Substring matches (e.g. `"name:" in fm`) false-positive on
+# nested fields like `domain_name:` or `package_name:`. Per v0.6.0 PR #92
+# review (evidence-based-review). Multiline + start-anchor matches both
+# top-level fields AND fields nested under a single indent level (which
+# is fine — they're still real `name:` declarations).
+_FRONTMATTER_NAME_RE = re.compile(r"^\s*name\s*:", re.MULTILINE)
+_FRONTMATTER_DESCRIPTION_RE = re.compile(r"^\s*description\s*:", re.MULTILINE)
+
+
 def check_frontmatter_required_fields(content: str) -> Tuple[bool, str]:
     """Required fields per agentskills.io/v1: ``name`` + ``description``.
 
     Lightweight check — proper validation is `skdd validate`'s job.
     This catches the most common authoring mistakes when skdd isn't
     available.
+
+    v0.6.0 PR #92 review fix: use anchored regexes instead of substring
+    `in` checks so `domain_name:` doesn't false-positive as `name:`.
     """
     if not content.startswith("---"):
         return (False, "SKILL.md must start with YAML frontmatter (--- block)")
@@ -177,9 +227,9 @@ def check_frontmatter_required_fields(content: str) -> Tuple[bool, str]:
     if end == -1:
         return (False, "SKILL.md frontmatter is unterminated (missing closing ---)")
     fm = content[4:end]
-    if "name:" not in fm:
+    if not _FRONTMATTER_NAME_RE.search(fm):
         return (False, "SKILL.md frontmatter missing required field: name")
-    if "description:" not in fm:
+    if not _FRONTMATTER_DESCRIPTION_RE.search(fm):
         return (False, "SKILL.md frontmatter missing required field: description")
     return (True, "")
 

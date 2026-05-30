@@ -1864,11 +1864,27 @@ def skill_new(name: str, description: str, no_log: bool):
         ok, output = delegate_skdd_forge(repo_root, name)
         if not ok:
             click.secho(
-                f"Error: skdd forge failed.\n{output}\n"
-                f"Falling back to basic scaffold.",
+                f"Error: skdd forge failed.\n{output}",
                 fg="yellow",
             )
-            scaffold_basic_skill(repo_root, name, description=description)
+            # v0.6.0 PR #92 review fix: skdd forge may create the SKILL.md
+            # AND THEN exit non-zero (e.g., post-creation validation fails).
+            # In that case, our fallback scaffold_basic_skill raises
+            # FileExistsError (its clobber-guard). Catch it so the user
+            # sees a clean error instead of a raw traceback.
+            try:
+                click.echo("Falling back to basic scaffold.")
+                scaffold_basic_skill(repo_root, name, description=description)
+            except FileExistsError:
+                # skdd already created the file but reported failure on it
+                click.secho(
+                    f"Error: skdd forge partially succeeded (file exists "
+                    f"at {target}) but reported failure. Inspect the file "
+                    f"+ skdd output above, then either fix it manually or "
+                    f"`rm -r {target.parent}` and re-run.",
+                    fg="red",
+                )
+                sys.exit(1)
         else:
             click.echo(output.strip() if output.strip() else "(skdd produced no output)")
     else:

@@ -285,7 +285,9 @@ def test_skill_test_delegates_to_skdd_validate_when_available(tmp_path, monkeypa
         if cmd[:2] == ["skdd", "validate"]:
             validate_calls.append(cmd)
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="all skills passed validation", stderr=""
+                args=cmd, returncode=0,
+                stdout="✓ skills/delegated-skill/SKILL.md: ok",
+                stderr="",
             )
         return real_run(cmd, *args, **kwargs)
 
@@ -299,3 +301,149 @@ def test_skill_test_delegates_to_skdd_validate_when_available(tmp_path, monkeypa
     assert "skdd validate passed" in result.output
     # Logmind-layered checks also ran
     assert "frontmatter required fields" in result.output
+
+
+# ---------------------------------------------------------------------------
+# v0.6.0 PR #92 review fixes — regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_skill_test_per_skill_gate_not_colony_gate(tmp_path, monkeypatch):
+    """v0.6.0 PR #92 critical #1: `logmind skill test <name>` must gate on
+    that skill's pass/fail line, NOT the colony-wide exit code. Setup:
+    `skdd validate` exits non-zero (some OTHER skill broken in the colony)
+    but the target skill's line is a pass — we should still pass.
+    """
+    monkeypatch.chdir(tmp_path)
+    scaffold_basic_skill(tmp_path, "good-skill", description="trigger")
+    scaffold_basic_skill(tmp_path, "broken-other", description="")
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd[:2] == ["skdd", "validate"]:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=1,  # colony-wide failure due to broken-other
+                stdout=(
+                    "✓ skills/good-skill/SKILL.md: ok\n"
+                    "✗ skills/broken-other/SKILL.md: missing description\n"
+                ),
+                stderr="",
+            )
+        return subprocess.run(cmd, *args, **kwargs)
+
+    with patch("logmind.core.skill_cli.shutil.which", return_value="/usr/bin/skdd"), \
+         patch("logmind.core.skill_cli.subprocess.run", side_effect=mock_run):
+        runner = CliRunner()
+        result = runner.invoke(cli_main, ["skill", "test", "good-skill"])
+
+    assert result.exit_code == 0, (
+        f"v0.6.0 PR #92 critical #1 regression: per-skill test must pass "
+        f"when target skill's line is ok even if colony-wide exit is "
+        f"non-zero. Got:\n{result.output}"
+    )
+    assert "skdd validate passed" in result.output
+
+
+def test_skill_test_per_skill_gate_fails_when_target_fails(tmp_path, monkeypatch):
+    """Inverse: when the target skill's line shows fail, exit 1 even if
+    other skills passed (no false-pass from grepping the right line)."""
+    monkeypatch.chdir(tmp_path)
+    scaffold_basic_skill(tmp_path, "broken-target", description="trigger")
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd[:2] == ["skdd", "validate"]:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,  # colony-wide OK
+                stdout=(
+                    "✓ skills/good-skill/SKILL.md: ok\n"
+                    "✗ skills/broken-target/SKILL.md: invalid frontmatter\n"
+                ),
+                stderr="",
+            )
+        return subprocess.run(cmd, *args, **kwargs)
+
+    with patch("logmind.core.skill_cli.shutil.which", return_value="/usr/bin/skdd"), \
+         patch("logmind.core.skill_cli.subprocess.run", side_effect=mock_run):
+        runner = CliRunner()
+        result = runner.invoke(cli_main, ["skill", "test", "broken-target"])
+
+    assert result.exit_code == 1
+
+
+def test_skill_new_skdd_partial_failure_no_traceback(tmp_path, monkeypatch):
+    """v0.6.0 PR #92 critical #2: when skdd forge CREATES the SKILL.md
+    AND THEN exits non-zero (post-creation check fails), the fallback
+    scaffold_basic_skill must NOT raise an uncaught FileExistsError.
+    User sees a clean error + clean exit, not a Python traceback.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd[:2] == ["skdd", "forge"]:
+            # Create the SKILL.md AND return non-zero — the bug scenario
+            target = skill_md_path(tmp_path, cmd[2])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                f"---\nname: {cmd[2]}\ndescription: \n---\nbody\n",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=1,
+                stdout="created file but description is empty", stderr="",
+            )
+        return subprocess.run(cmd, *args, **kwargs)
+
+    with patch("logmind.core.skill_cli.shutil.which", return_value="/usr/bin/skdd"), \
+         patch("logmind.core.skill_cli.subprocess.run", side_effect=mock_run):
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_main, ["skill", "new", "partial-fail-skill", "--no-log"]
+        )
+
+    assert result.exit_code == 1
+    # No raw Python traceback in the output
+    assert "FileExistsError" not in result.output, (
+        f"v0.6.0 PR #92 critical #2 regression: raw FileExistsError "
+        f"traceback in user-facing output. Got:\n{result.output}"
+    )
+    assert "Traceback" not in result.output
+    # User-friendly error mentions next steps
+    assert (
+        "partially succeeded" in result.output.lower()
+        or "rm -r" in result.output
+    )
+
+
+def test_check_frontmatter_no_false_positive_on_domain_name(tmp_path):
+    """v0.6.0 PR #92 minor: `domain_name:` must NOT satisfy the `name:`
+    required-field check. Pre-fix used substring `in`; now uses anchored
+    regex.
+    """
+    content = (
+        "---\n"
+        "domain_name: my-domain\n"
+        "description: missing real name field\n"
+        "---\n"
+        "body\n"
+    )
+    ok, msg = check_frontmatter_required_fields(content)
+    assert ok is False, (
+        f"v0.6.0 PR #92 minor regression: 'domain_name:' falsely passed "
+        f"as 'name:'. Got ok={ok}, msg={msg!r}"
+    )
+    assert "name" in msg
+
+
+def test_check_frontmatter_no_false_positive_on_description_nested():
+    """Mirror test for description field — `pkg_description:` shouldn't pass."""
+    content = (
+        "---\n"
+        "name: x\n"
+        "pkg_description: nested only\n"
+        "---\n"
+        "body\n"
+    )
+    ok, msg = check_frontmatter_required_fields(content)
+    assert ok is False
+    assert "description" in msg
