@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (76 decisions)
+## 2026-05 (77 decisions)
 
-- **2026-05-30** — feat(v0.5.11): post-rewrite hook so multi-commit rebases don't leave timeline.md stale (#58) *(fix/v0.5.11-post-rewrite-hook-issue-58)* — [decisions-branches/fix__v0.5.11-post-rewrite-hook-issue-58.md](decisions-branches/fix__v0.5.11-post-rewrite-hook-issue-58.md)
-- *... 74 more decisions ...*
+- **2026-05-30** — feat(v0.5.12): `logmind log` auto-installs merge driver + hooks on every invocation (fresh-clone auto-resolve) *(fix/v0.5.12-auto-install-merge-driver-on-log)* — [decisions-branches/fix__v0.5.12-auto-install-merge-driver-on-log.md](decisions-branches/fix__v0.5.12-auto-install-merge-driver-on-log.md)
+- *... 75 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
