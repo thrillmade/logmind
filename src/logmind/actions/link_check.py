@@ -57,12 +57,65 @@ def _collect_md_files(roots: Iterable[Path]) -> Set[Path]:
     return found
 
 
+# v0.5.9 / issue #60 — strip code regions before scanning for links.
+# Pre-v0.5.9, fenced code blocks (``` ... ```) and inline-code spans
+# (`...`) were scanned as live content, so any `[text](path)` example
+# inside backticks tripped the link checker. This made it impossible
+# to *talk about* markdown link syntax in prose or decision-log entries
+# without breaking CI. Every other markdown linter (markdown-link-check,
+# lychee, etc.) skips code regions because that's specifically where
+# you discuss the syntax. Now logmind matches that convention.
+#
+# Order matters: strip FENCED blocks first (they can contain backticks
+# that would confuse the inline-code regex), then inline-code spans.
+_FENCED_CODE_BLOCK = re.compile(
+    r"^```.*?^```",
+    re.DOTALL | re.MULTILINE,
+)
+# Match 1+ backticks for the delimiter, then non-backtick content, then
+# the same delimiter. Handles ``code with ` inside`` correctly (per
+# CommonMark §6.1 the delimiter length must match).
+#
+# v0.5.9 PR #83 review fix: NO re.DOTALL — an unmatched stray backtick
+# (common in informal prose, e.g. mid-sentence `foo) would otherwise
+# match all the way to the next backtick paragraphs later, consuming
+# real broken links along the way. Restricting to non-newline keeps
+# code spans to a single line, matching CommonMark's common case and
+# leaving cross-line code blocks to the (greedy, intentional) fenced-
+# block regex. The cost: a CommonMark-compliant multi-line code span
+# isn't recognized — but in the docs corpus that's vanishingly rare
+# and the safer failure mode (false positive on a broken link rather
+# than silent suppression of one).
+_INLINE_CODE_SPAN = re.compile(r"(`+)(?:(?!\1)[^\n])+?\1")
+
+
+def _strip_code_regions(text: str) -> str:
+    """v0.5.9 / issue #60 — return ``text`` with fenced code blocks and
+    inline-code spans replaced by whitespace of equivalent length.
+
+    Whitespace-replacement (vs. deletion) preserves line numbers + byte
+    offsets so error messages still point at the correct location in the
+    original file when the link scanner reports problems.
+    """
+    def _to_whitespace(match: "re.Match[str]") -> str:
+        # Preserve newlines so line numbers stay correct; replace other
+        # chars with spaces.
+        return "".join("\n" if c == "\n" else " " for c in match.group(0))
+
+    # Fenced blocks first (multi-line, can contain inline-code patterns).
+    text = _FENCED_CODE_BLOCK.sub(_to_whitespace, text)
+    # Then inline-code spans.
+    text = _INLINE_CODE_SPAN.sub(_to_whitespace, text)
+    return text
+
+
 def _extract_links(md_path: Path) -> List[Tuple[str, str]]:
     try:
         text = md_path.read_text(errors="ignore")
     except OSError:
         return []
-    return LINK_PATTERN.findall(text)
+    # v0.5.9 / issue #60: strip code regions before link-pattern scan.
+    return LINK_PATTERN.findall(_strip_code_regions(text))
 
 
 def check(

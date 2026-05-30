@@ -7,50 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.8] - 2026-05-30
+## [0.5.9] - 2026-05-30
 
-### Fixed — issue #57: `logmind agents update` dry-run output
+### Fixed — issue #60: check-links parses markdown links inside backticks / code fences
 
-The pre-fix monolithic "✓ All agent files are current" message conflated
-three distinct cases — no AGENTS.md, AGENTS.md without a logmind marker
-block, AGENTS.md with a current marker — and misled users into thinking
-everything was current when really logmind hadn't been installed at
-all. Split into three case-specific messages:
+Pre-fix, mentioning markdown link syntax inside backticks (a
+documentation-of-the-syntax pattern, e.g. `` `[text](path)` ``) tripped
+the link checker even though the bracket-paren wasn't a live link.
+Recursion: writing a decision-log entry explaining "I fixed broken
+`[text](missing.md)` examples" persisted that very example as plain
+markdown, breaking the next CI run. Hit constantly by agents writing
+decision-log reasoning that needed to discuss link syntax.
 
-- **No AGENTS.md**: `✓ No AGENTS.md in this repo — nothing to update.
-  Run `logmind init` to install one.`
-- **AGENTS.md w/o marker block**: `✓ AGENTS.md exists but has no logmind
-  marker block. Run `logmind init` to install one ...`
-- **AGENTS.md w/ current marker**: `✓ AGENTS.md logmind block is current
-  (no update needed).`
-
-Plus refined the dry-run-with-outdated-files prefix from "Found N file(s)
-..." to "Would update N file(s) ..." so the user knows the action is
-prospective, not retrospective.
-
-### Fixed — issue #66: file-structure.md skipped on feature branches
-
-Pre-v0.5.8, `logmind log` on a feature branch regenerated `timeline.md`
-but skipped `docs/file-structure.md`. The skip self-perpetuated a
-1-entry-stale cycle on main: PR adds `docs/decisions-branches/<branch>.md`
-→ squash-merges without an updated file-structure → main's
-`file-structure.md` is one entry behind reality → next PR catches it via
-check-derived-docs, ships a regen + a new decision file → cycle repeats.
-Hit live on `thrillmade/agent-skills` PRs #37 → #38 → (would-be #39).
-
-The original rationale for the skip (per-branch regen would conflict
-against main on rebase) was made obsolete by v0.3.0's merge driver for
-`file-structure.md`, which resolves conflicts by regenerating from the
-merged tree. Feature branches now regen on every `logmind log` — same
-behaviour as `timeline.md`.
+Other markdown linters (markdown-link-check, lychee, etc.) skip code
+regions because that's specifically where you discuss the syntax.
+logmind now matches that convention via `_strip_code_regions()` which
+substitutes fenced blocks (` ``` ... ``` `) and inline-code spans
+(`` `...` ``) with whitespace of equivalent length before scanning
+for link patterns. Whitespace-replacement (vs. deletion) preserves
+line numbers + byte offsets so any broken-link error messages still
+point at the correct location in the original file.
 
 ### Tests
 
-- 3 new tests in `tests/test_agents_consolidation.py` covering the per-case
-  messaging (no-AGENTS.md / no-marker / dry-run-prefix).
-- `test_log_on_feature_branch_regenerates_file_structure` (renamed +
-  inverted from `_does_not_touch_file_structure`) — pins the v0.5.8
-  behaviour against future regression.
+4 new tests in `tests/test_link_check.py`:
+- `test_links_inside_inline_code_span_are_ignored`
+- `test_links_inside_fenced_code_block_are_ignored`
+- `test_links_outside_code_still_detected_alongside_code_examples`
+  (regression guard against silencing legitimate broken-link detection)
+- `test_strip_code_regions_preserves_line_numbers`
+
+### Note on v0.5.8
+
+This release is v0.5.9 because v0.5.8 (#82) is in parallel review;
+v0.5.9's #60 fix is independent and can ship without depending on
+v0.5.8's changes. Once v0.5.8 lands, v0.5.9 rebases cleanly atop it.
 
 ## [0.5.7] - 2026-05-29
 

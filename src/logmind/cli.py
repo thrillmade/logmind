@@ -107,7 +107,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.5.8", prog_name="logmind")
+@click.version_option(version="0.5.9", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",

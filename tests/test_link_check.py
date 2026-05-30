@@ -96,6 +96,117 @@ def test_broken_anchor_to_missing_file(tmp_path):
     assert any("docs/missing.md" in b for b in broken)
 
 
+# v0.5.9 / issue #60 — strip code regions before scanning for links.
+# Pre-v0.5.9, mentioning markdown link syntax inside backticks (a
+# documentation-of-the-syntax pattern) tripped the link checker even
+# though the bracket-paren wasn't a live link. These tests pin the new
+# code-aware behaviour.
+
+def test_links_inside_inline_code_span_are_ignored(tmp_path):
+    """Mentioning `[text](path)` inside backticks is NOT a live link."""
+    _make_clean_tree(tmp_path)
+    (tmp_path / "README.md").write_text(
+        "Discussion: use `[text](docs/this-does-not-exist.md)` syntax for links.\n",
+        encoding="utf-8",
+    )
+    broken, orphans = check(tmp_path)
+    assert broken == [], (
+        f"v0.5.9 / #60: link inside inline-code span must be ignored. "
+        f"Got broken={broken!r}"
+    )
+
+
+def test_links_inside_fenced_code_block_are_ignored(tmp_path):
+    """Mentioning [text](path) inside ``` blocks is NOT a live link."""
+    _make_clean_tree(tmp_path)
+    (tmp_path / "README.md").write_text(
+        "Example:\n\n```markdown\n[broken](docs/nonexistent.md)\n```\n",
+        encoding="utf-8",
+    )
+    broken, orphans = check(tmp_path)
+    assert broken == [], (
+        f"v0.5.9 / #60: link inside fenced code block must be ignored. "
+        f"Got broken={broken!r}"
+    )
+
+
+def test_links_outside_code_still_detected_alongside_code_examples(tmp_path):
+    """Real broken links outside code regions are STILL caught even when
+    the same file mentions the link syntax in prose. Regression guard:
+    the strip-code-regions fix mustn't silence legitimate broken-link
+    detection."""
+    _make_clean_tree(tmp_path)
+    (tmp_path / "README.md").write_text(
+        # Real broken link in prose:
+        "[real-broken](docs/actually-missing.md)\n\n"
+        # Same file mentions the link syntax in code (should be ignored):
+        "We use the `[text](path)` syntax. Avoid `[broken](nope.md)` examples.\n",
+        encoding="utf-8",
+    )
+    broken, orphans = check(tmp_path)
+    # Must detect the real broken link...
+    assert any("docs/actually-missing.md" in b for b in broken), (
+        f"v0.5.9 / #60 regression: legitimate broken link in prose missed. "
+        f"Got broken={broken!r}"
+    )
+    # ...but NOT the in-code examples.
+    assert not any("nope.md" in b for b in broken), (
+        f"v0.5.9 / #60: in-code example `[broken](nope.md)` got flagged. "
+        f"Got broken={broken!r}"
+    )
+
+
+def test_unmatched_backtick_does_not_suppress_broken_link(tmp_path):
+    """v0.5.9 PR #83 review — `re.DOTALL` on the inline-code regex used to
+    let an unmatched stray backtick on one line pair with another
+    backtick many paragraphs later, consuming all content between them
+    (including real broken links). Concrete case: informal prose with
+    a stray ` mid-sentence followed paragraphs later by a real broken
+    link gets silently passed. Fix removes DOTALL so code spans can't
+    span newlines.
+    """
+    _make_clean_tree(tmp_path)
+    (tmp_path / "README.md").write_text(
+        "Mid-sentence stray backtick: The `foo shortcut works.\n"
+        "\n"
+        "Real broken link in next paragraph:\n"
+        "\n"
+        "[real-broken](docs/actually-missing.md)\n"
+        "\n"
+        "Another stray ` here.\n",
+        encoding="utf-8",
+    )
+    broken, orphans = check(tmp_path)
+    assert any("docs/actually-missing.md" in b for b in broken), (
+        f"v0.5.9 PR #83 review: stray backticks must not consume real broken "
+        f"links across paragraphs (re.DOTALL bug). Got broken={broken!r}"
+    )
+
+
+def test_strip_code_regions_preserves_line_numbers(tmp_path):
+    """The strip-code-regions transform replaces code regions with
+    whitespace of equivalent length so byte offsets + line numbers stay
+    correct. Tested indirectly: a broken link AFTER a multi-line fenced
+    block reports correctly."""
+    from logmind.actions.link_check import _strip_code_regions
+    src = (
+        "Line 1\n"
+        "```\n"
+        "code line A\n"
+        "code line B\n"
+        "```\n"
+        "Line 6: [real](missing.md)\n"
+    )
+    stripped = _strip_code_regions(src)
+    # Same number of lines.
+    assert stripped.count("\n") == src.count("\n")
+    # Real link still present in the stripped output.
+    assert "[real](missing.md)" in stripped
+    # Fenced content gone (replaced by whitespace).
+    assert "code line A" not in stripped
+    assert "code line B" not in stripped
+
+
 def test_format_report_clean():
     assert "no orphans" in format_report([], [])
 
