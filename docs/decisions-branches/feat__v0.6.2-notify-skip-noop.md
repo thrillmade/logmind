@@ -10,3 +10,14 @@
 - First test of the fix happens on the next logmind tag — likely v0.6.2 itself (recursive: this very release's notify-workflow run will exercise the new diff-check step)
 
 ---
+## 2026-05-31 14:13 - v0.6.2 fix: remove unreachable else-branch in notify-skill commit step (claude-review PR #96)
+
+**Reasoning:** claude-review flagged dead code: the new diff-check step guarantees proposed-skill.md exists AND differs, so the else-branch handling 'Claude judged skill-irrelevant' (TODO-only PR shape) can never execute. Simplifying to unconditional cp + SHAPE assignment, plus dropping the now-stale 'TODO-only PR' line from the reviewer checklist.
+
+**Alternatives considered:** Leave dead code as defense-in-depth comment (rejected: rots if diff-check logic changes later; cleaner to delete now), Resolve thread + ship as-is (rejected: dead code is the kind of soft signal that becomes load-bearing wrong when someone refactors next year)
+
+**Implications:**
+- Reviewer checklist now has 2 items instead of 4 — every PR has the same shape, no per-PR conditional reading needed
+- Commit message SHAPE string is now constant; could be inlined but keeping the variable preserves a single edit-point if shape descriptor evolves
+
+---

@@ -197,13 +197,12 @@ jobs:
             cat /tmp/notify/changelog-section.md
           } > ".skill-update-todo/${TAG}.md"
 
-          # If Claude proposed an update, overwrite the on-disk SKILL.md.
-          if [ -f /tmp/notify/proposed-skill.md ]; then
-            cp /tmp/notify/proposed-skill.md skills/logmind/SKILL.md
-            SHAPE="proposed SKILL.md edit + TODO context file"
-          else
-            SHAPE="TODO context only (Claude judged release skill-irrelevant)"
-          fi
+          # The diff-check step above guarantees proposed-skill.md
+          # exists AND differs from current — both no-op cases
+          # (missing file + byte-identical) short-circuit before this
+          # step runs.
+          cp /tmp/notify/proposed-skill.md skills/logmind/SKILL.md
+          SHAPE="proposed SKILL.md edit + TODO context file"
 
           git add -A
           git commit -m "notify: logmind ${TAG} shipped — ${SHAPE}"
@@ -227,9 +226,8 @@ jobs:
           ## Reviewer checklist
 
           - [ ] Read the CHANGELOG section (linked above) and Claude's reasoning
-          - [ ] If a SKILL.md diff is included: verify it accurately reflects user-visible behavior. Edit if Claude over- or under-proposed; close if entirely wrong.
+          - [ ] Verify the SKILL.md diff accurately reflects user-visible behavior. Edit if Claude over- or under-proposed; close if entirely wrong.
           - [ ] Merge to ship the SKILL.md update (auto-merge stays OFF — content is discretionary).
-          - [ ] If Claude judged the release skill-irrelevant (TODO-only PR): close without merging unless you disagree, in which case edit \`skills/logmind/SKILL.md\` on this branch and add it before merging.
 
           ## How this was generated
 
