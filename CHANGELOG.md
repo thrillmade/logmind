@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-31
+
+### Fixed — notify-agent-skills no longer opens churn PRs
+
+User flagged (2026-05-30): _"is there any metric around if we should
+be doing a change or update? look at them, are they material and
+important?"_ — half of recent notify-bot PRs were `+0/-0` for
+`skills/logmind/SKILL.md` (just the `.skill-update-todo/<TAG>.md`
+context file). 5 stale ones got closed manually; this release
+prevents new ones from being opened.
+
+#### Root cause
+
+`notify-agent-skills.yml` (logmind's own workflow, fires on
+`v*` tag push) was unconditionally opening a PR even when:
+
+- Claude judged the release skill-irrelevant (`proposed-skill.md` never written), OR
+- Claude proposed an update that was byte-identical to the current
+  `SKILL.md` on `main`.
+
+Both cases generated a "diff" of `.skill-update-todo/<TAG>.md` only
+— pure churn with no actionable signal.
+
+#### Fix
+
+New `Check if SKILL.md actually changed` step runs after the
+propose + fetch-current steps. Compares
+`/tmp/notify/proposed-skill.md` (if it exists) to
+`/tmp/notify/current-skill.md` via `cmp --silent`. Sets
+`steps.diff-check.outputs.skill-changed`. The two downstream steps
+(checkout agent-skills + commit/push/open-PR) gate on
+`skill-changed == 'true'`.
+
+When the diff check shorts the workflow, an
+`::notice title=notify-agent-skills::` annotation explains why no
+PR was opened. Workflow-run logs preserve Claude's reasoning + the
+CHANGELOG section for debugging.
+
+Behavior matrix:
+
+| Claude's verdict | Diff vs current | Pre-v0.6.2 | Post-v0.6.2 |
+|---|---|---|---|
+| Skill-irrelevant | n/a | TODO-only PR opened | No PR, notice emitted |
+| Proposed update | byte-identical | TODO-only PR opened | No PR, notice emitted |
+| Proposed update | substantive | PR opened | PR opened (unchanged) |
+
+No CLI changes. No behavior changes for consumers — this is
+logmind's own release workflow only.
+
 ## [0.6.1] - 2026-05-30
 
 ### Added — deterministic auto-rebase on timeline.md gap (opt-in)

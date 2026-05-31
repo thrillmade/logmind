@@ -123,7 +123,35 @@ jobs:
             --out-reasoning /tmp/notify/reasoning.md \
             --out-skill /tmp/notify/proposed-skill.md
 
+      # v0.6.2 / churn-reduction: only open a PR when Claude actually
+      # proposed a SKILL.md change. Skip when:
+      #   - propose step produced no proposed-skill.md (Claude judged
+      #     release skill-irrelevant), OR
+      #   - proposed-skill.md is byte-identical to the current SKILL.md
+      #     on main (Claude said "yes update" but the diff is +0/-0).
+      # Both cases historically created a PR containing only a
+      # `.skill-update-todo/<TAG>.md` context file — pure churn with
+      # no actionable signal. Workflow-run logs preserve Claude's
+      # reasoning + the CHANGELOG section for debugging.
+      - name: Check if SKILL.md actually changed
+        id: diff-check
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/notify/proposed-skill.md ]; then
+            echo "::notice title=notify-agent-skills::Claude judged ${TAG} skill-irrelevant — no PR opened."
+            echo "skill-changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if cmp --silent /tmp/notify/proposed-skill.md /tmp/notify/current-skill.md; then
+            echo "::notice title=notify-agent-skills::Proposed SKILL.md is byte-identical to current — no PR opened (was churn under v0.6.1)."
+            echo "skill-changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "  Proposed SKILL.md differs from current — opening PR."
+          echo "skill-changed=true" >> "$GITHUB_OUTPUT"
+
       - name: Checkout thrillmade/agent-skills
+        if: steps.diff-check.outputs.skill-changed == 'true'
         uses: actions/checkout@v6
         with:
           repository: thrillmade/agent-skills
@@ -131,6 +159,7 @@ jobs:
           token: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
 
       - name: Apply outputs + commit + push + open PR
+        if: steps.diff-check.outputs.skill-changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
         working-directory: agent-skills
@@ -168,13 +197,12 @@ jobs:
             cat /tmp/notify/changelog-section.md
           } > ".skill-update-todo/${TAG}.md"
 
-          # If Claude proposed an update, overwrite the on-disk SKILL.md.
-          if [ -f /tmp/notify/proposed-skill.md ]; then
-            cp /tmp/notify/proposed-skill.md skills/logmind/SKILL.md
-            SHAPE="proposed SKILL.md edit + TODO context file"
-          else
-            SHAPE="TODO context only (Claude judged release skill-irrelevant)"
-          fi
+          # The diff-check step above guarantees proposed-skill.md
+          # exists AND differs from current — both no-op cases
+          # (missing file + byte-identical) short-circuit before this
+          # step runs.
+          cp /tmp/notify/proposed-skill.md skills/logmind/SKILL.md
+          SHAPE="proposed SKILL.md edit + TODO context file"
 
           git add -A
           git commit -m "notify: logmind ${TAG} shipped — ${SHAPE}"
@@ -198,9 +226,8 @@ jobs:
           ## Reviewer checklist
 
           - [ ] Read the CHANGELOG section (linked above) and Claude's reasoning
-          - [ ] If a SKILL.md diff is included: verify it accurately reflects user-visible behavior. Edit if Claude over- or under-proposed; close if entirely wrong.
+          - [ ] Verify the SKILL.md diff accurately reflects user-visible behavior. Edit if Claude over- or under-proposed; close if entirely wrong.
           - [ ] Merge to ship the SKILL.md update (auto-merge stays OFF — content is discretionary).
-          - [ ] If Claude judged the release skill-irrelevant (TODO-only PR): close without merging unless you disagree, in which case edit \`skills/logmind/SKILL.md\` on this branch and add it before merging.
 
           ## How this was generated
 
