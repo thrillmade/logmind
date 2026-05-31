@@ -13,8 +13,8 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-05 (83 decisions)
+## 2026-05 (84 decisions)
 
-- **2026-05-30** — feat(v0.6.1): deterministic auto-rebase on timeline.md gap (opt-in) *(feat/v0.5.14-auto-rebase)* — [decisions-branches/feat__v0.5.14-auto-rebase.md](decisions-branches/feat__v0.5.14-auto-rebase.md)
-- *... 81 more decisions ...*
+- **2026-05-31** — feat: Stream 1 Path A — historical clud-bug-review scrape + Layer 1 formula in Python *(feat/stream1-path-a-historical-scrape)* — [decisions-branches/feat__stream1-path-a-historical-scrape.md](decisions-branches/feat__stream1-path-a-historical-scrape.md)
+- *... 82 more decisions ...*
 - **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1 *(virtual-kurzweil)* — [decisions-branches/virtual-kurzweil.md](decisions-branches/virtual-kurzweil.md)
