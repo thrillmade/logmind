@@ -429,6 +429,61 @@ def check_stale_derived_docs_warning(project_root: Path) -> Optional[str]:
     )
 
 
+def check_clud_bug_skill_usage_integration(project_root: Path) -> Optional[str]:
+    """v0.6.6 — surface drift between consumer's clud-bug-review workflow
+    and the v0.6.29-v0.6.31 skill-usage upload-step contract.
+
+    Reports when a consumer's `.github/workflows/clud-bug-review.yml`:
+
+    1. Is missing the `Upload skill-usage artifact` step entirely
+       → consumer hasn't propagated v0.6.29+ (Component 4 workflow integration).
+       Run `npx clud-bug update`.
+
+    2. HAS the step but is missing `include-hidden-files: true`
+       → consumer is on v0.6.29 or v0.6.30 and is hitting the silent
+       artifact-drop bug (dot-file exclusion in upload-artifact@v4).
+       The CLI side works, but artifacts never reach GitHub. Run
+       `npx clud-bug update` to pick up the v0.6.31 hotfix.
+
+    Returns a one-line warning when drift is detected, else ``None``.
+    Silent no-op when clud-bug-review.yml doesn't exist (repo doesn't
+    use clud-bug — nothing to check).
+    """
+    workflow = project_root / ".github" / "workflows" / "clud-bug-review.yml"
+    if not workflow.is_file():
+        return None  # repo doesn't use clud-bug — silent no-op
+
+    try:
+        content = workflow.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+    has_upload_step = "Upload skill-usage artifact" in content
+    if not has_upload_step:
+        return (
+            "⚠ .github/workflows/clud-bug-review.yml is missing the "
+            "'Upload skill-usage artifact' step (clud-bug v0.6.29+ contract). "
+            "Skill-usage data won't accumulate. Run `npx clud-bug update`."
+        )
+
+    # Step exists; verify the include-hidden-files: true flag is also present
+    # (v0.6.31 hotfix). Use the same anchored regex pattern the release-
+    # discipline test in clud-bug uses, so the gates stay aligned.
+    upload_idx = content.find("Upload skill-usage artifact")
+    # 1500-byte window after the step name catches the multi-line block +
+    # comment context that v0.6.31 added.
+    step_block = content[upload_idx : upload_idx + 1500]
+    has_flag = bool(re.search(r"^\s+include-hidden-files:\s*true", step_block, re.MULTILINE))
+    if not has_flag:
+        return (
+            "⚠ .github/workflows/clud-bug-review.yml has the skill-usage upload "
+            "step but is missing `include-hidden-files: true` (clud-bug v0.6.31 "
+            "hotfix). Artifacts will silently drop. Run `npx clud-bug update`."
+        )
+
+    return None
+
+
 def _probe_post_rewrite_hook(project_root: Path) -> WorkflowStatus:
     """v0.5.11 / issue #58: .git/hooks/post-rewrite installed by logmind.
     Companion to the post-merge hook. Fires after `git rebase` or
@@ -629,6 +684,15 @@ def collect_status(project_root: Optional[Path] = None, *, offline: bool = False
     stale_warning = check_stale_derived_docs_warning(project_root)
     if stale_warning:
         suggestions.append(stale_warning)
+
+    # v0.6.6 — surface drift between consumer's clud-bug-review workflow
+    # and the v0.6.29+ skill-usage upload-step contract (esp. the v0.6.31
+    # `include-hidden-files: true` hotfix that fixed silent artifact-drop).
+    # Non-fatal: doesn't flip overall to DRIFT. Surfaces a concrete repair
+    # command (`npx clud-bug update`).
+    skill_usage_warning = check_clud_bug_skill_usage_integration(project_root)
+    if skill_usage_warning:
+        suggestions.append(skill_usage_warning)
 
     return StatusReport(
         project_root=project_root,

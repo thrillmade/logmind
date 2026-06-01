@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-06-01
+
+### Added — `logmind doctor` surfaces clud-bug skill-usage upload drift
+
+New diagnostic check that warns when a consumer's
+`.github/workflows/clud-bug-review.yml` is out of sync with the
+clud-bug v0.6.29-v0.6.31 skill-usage upload-step contract:
+
+- Missing `Upload skill-usage artifact` step → consumer pre-v0.6.29.
+  Skill-usage data won't accumulate. Suggests `npx clud-bug update`.
+- Has the step but missing `include-hidden-files: true` → consumer on
+  v0.6.29 or v0.6.30 and silently dropping every artifact (dot-file
+  exclusion bug). Suggests `npx clud-bug update` to pick up v0.6.31.
+- Step present + flag present → silent (everything's wired correctly).
+
+Surfaces propagation drift early — before the consumer wastes review
+cycles producing artifacts that never reach GitHub. Matches the shape
+of `check_stale_derived_docs_warning` (predictive heads-up in
+suggestions list, not a fatal DRIFT flip).
+
+#### Implementation
+
+- `src/logmind/core/doctor.py`: new `check_clud_bug_skill_usage_integration(project_root)`
+  function. Anchored-regex check (`^\s+include-hidden-files:\s*true`)
+  matches the v0.6.32 release-discipline guard's pattern in clud-bug —
+  the two gates stay aligned. Wired into `collect_status` after the
+  existing stale-derived-docs check.
+- `tests/test_clud_bug_skill_usage_check.py`: 6 new tests covering
+  no-workflow / pre-v0.6.29 / pre-v0.6.31 / current / commented-out /
+  defensive-directory cases.
+
+#### Recovery flow
+
+A consumer hitting either warning runs `npx clud-bug update`. That
+single command re-renders all workflow files from the latest
+templates + bumps composite pins. No manual editing required.
+
 ## [0.6.5] - 2026-06-01
 
 ### Added — `logmind skill suggest` (Stream 6 follow-on, killed-Stream-9 replacement)

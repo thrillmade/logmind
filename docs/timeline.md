@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (8 decisions)
+## 2026-06 (9 decisions)
 
-- **2026-06-01** — chore: propagate clud-bug v0.6.32 *(chore/clud-bug-v0.6.32)* — [decisions-branches/chore__clud-bug-v0.6.32.md](decisions-branches/chore__clud-bug-v0.6.32.md)
-- *... 6 more decisions ...*
+- **2026-06-01** — v0.6.6: doctor surfaces clud-bug skill-usage upload drift (post-v0.6.31 hardening) *(feat/v0.6.6-doctor-skill-usage-check)* — [decisions-branches/feat__v0.6.6-doctor-skill-usage-check.md](decisions-branches/feat__v0.6.6-doctor-skill-usage-check.md)
+- *... 7 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

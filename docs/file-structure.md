@@ -71,6 +71,7 @@ logmind
 │   ├── test_calibration_layer1.py
 │   ├── test_changelog.py
 │   ├── test_cli.py
+│   ├── test_clud_bug_skill_usage_check.py
 │   ├── test_config.py
 │   ├── test_decision_templates.py
 │   ├── test_decorators.py
