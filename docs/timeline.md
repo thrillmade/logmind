@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (16 decisions)
+## 2026-06 (17 decisions)
 
-- **2026-06-01** — feat(v0.6.10): hook-version drift detection (tokenomics 2026-06-01 bug report) *(feat/v0.6.10-hook-drift-detection)* — [decisions-branches/feat__v0.6.10-hook-drift-detection.md](decisions-branches/feat__v0.6.10-hook-drift-detection.md)
-- *... 14 more decisions ...*
+- **2026-06-01** — feat(v0.6.11): single-quoted pin regex + self-update template uses PAT for workflow refreshes *(feat/v0.6.11-pin-regex-and-self-update-pat)* — [decisions-branches/feat__v0.6.11-pin-regex-and-self-update-pat.md](decisions-branches/feat__v0.6.11-pin-regex-and-self-update-pat.md)
+- *... 15 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

@@ -163,3 +163,59 @@ def test_canonical_workflow_list_matches_doctor_LOGMIND_WORKFLOWS():
         "LOGMIND_PIN_WORKFLOWS (inserter.py) must match LOGMIND_WORKFLOWS "
         "(doctor.py) — drift would surface as inconsistent reports."
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.6.11 — quote-style coverage for the pin regex
+#
+# reporulez ships single-quoted pins (`pip install 'logmind==X.Y.Z'`); the
+# pre-v0.6.11 regex only matched bare or double-quoted forms, so
+# `logmind agents update --apply` silently returned "nothing to bump" on
+# reporulez during the v0.6.9 propagation cycle (manual sed required).
+# These tests pin all three styles so future regex changes don't regress.
+# ---------------------------------------------------------------------------
+
+
+def test_update_workflow_pin_handles_single_quoted_form():
+    """Single-quoted pins (`'logmind==X.Y.Z'`) are reporulez convention."""
+    content = "      run: pip install 'logmind==0.5.6'\n"
+    new_content, prev = update_workflow_pin(content, "0.6.11")
+    assert prev == "0.5.6"
+    assert new_content == "      run: pip install 'logmind==0.6.11'\n", (
+        "v0.6.11 must preserve the EXACT quote style — no churn to "
+        "double-quote on a single-quoted source."
+    )
+
+
+def test_update_workflow_pin_handles_double_quoted_form():
+    """Double-quoted pins (`\"logmind==X.Y.Z\"`) are the historic default."""
+    content = '      run: pip install "logmind==0.5.6"\n'
+    new_content, prev = update_workflow_pin(content, "0.6.11")
+    assert prev == "0.5.6"
+    assert new_content == '      run: pip install "logmind==0.6.11"\n'
+
+
+def test_update_workflow_pin_handles_bare_form():
+    """Bare pins (no quotes) also work."""
+    content = "      run: pip install logmind==0.5.6\n"
+    new_content, prev = update_workflow_pin(content, "0.6.11")
+    assert prev == "0.5.6"
+    assert new_content == "      run: pip install logmind==0.6.11\n"
+
+
+def test_find_outdated_workflow_pins_finds_single_quoted_pins(tmp_path):
+    """reporulez regression guard: single-quoted pins must be detected as
+    outdated when their version doesn't match `__version__`."""
+    from logmind import __version__ as current_version
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "regen-timeline.yml").write_text(
+        "name: x\njobs:\n  j:\n    steps:\n      - run: pip install 'logmind==0.5.6'\n",
+        encoding="utf-8",
+    )
+    outdated = find_outdated_workflow_pins(tmp_path)
+    assert len(outdated) == 1
+    path, found, target = outdated[0]
+    assert path.name == "regen-timeline.yml"
+    assert found == "0.5.6"
+    assert target == current_version
