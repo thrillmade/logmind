@@ -487,7 +487,7 @@ def test_doctor_reports_post_merge_hook_drift_when_binary_newer_than_hook(
 
 
 def test_doctor_reports_post_merge_hook_drift_when_version_marker_is_stale(
-    git_repo: Path, monkeypatch,
+    git_repo: Path,
 ):
     """Simulate a hook written by an older v0.6.10+ binary — same prefix
     but an older version embedded. Doctor must flag drift."""

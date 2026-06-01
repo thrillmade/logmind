@@ -193,12 +193,6 @@ def _build_post_merge_hook_body() -> str:
     )
 
 
-# Computed lazily so that tests/agents that swap __version__ at runtime
-# pick up the change. Kept as a module-level helper for callers that
-# still expect a constant (rare; most callers use _build_post_merge_hook_body()).
-_POST_MERGE_HOOK_BODY = _build_post_merge_hook_body()
-
-
 def install_post_merge_hook(repo_root: Path) -> bool:
     """Write `.git/hooks/post-merge` to re-regenerate derived files after
     every merge. Returns True if the hook was created or updated, False
@@ -355,12 +349,6 @@ def _build_post_rewrite_hook_body() -> str:
         "  fi\n"
         "fi\n"
     )
-
-
-# Lazy-init: same pattern as the post-merge body. Computed at module load,
-# but the test suite + agents can rebuild via _build_post_rewrite_hook_body()
-# to pick up a __version__ swap.
-_POST_REWRITE_HOOK_BODY = _build_post_rewrite_hook_body()
 
 
 def install_post_rewrite_hook(repo_root: Path) -> bool:
