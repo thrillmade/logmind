@@ -183,7 +183,7 @@ def _install_skdd_via_npx() -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.8", prog_name="logmind")
+@click.version_option(version="0.6.9", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -2694,6 +2694,14 @@ def tree_cmd(max_depth: Optional[int]):
     "Without this flag, prints to stdout.",
 )
 @click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Exit nonzero if writing would change the file. Used in CI to fail "
+    "the build before regen so the auto-commit step runs and updates the PR. "
+    "Mirrors `logmind timeline --check`.",
+)
+@click.option(
     "--max-depth",
     "max_depth",
     type=int,
@@ -2701,7 +2709,9 @@ def tree_cmd(max_depth: Optional[int]):
     help="Cap the tree at depth N (root is depth 0). Default: 2 (token-frugal). "
     "Pass 0 for unbounded (full tree); pass a positive integer to truncate.",
 )
-def file_structure_cmd(write_path: Optional[Path], max_depth: Optional[int]):
+def file_structure_cmd(
+    write_path: Optional[Path], check: bool, max_depth: Optional[int]
+):
     """
     Print or regenerate the derived docs/file-structure.md tree snapshot.
 
@@ -2711,9 +2721,10 @@ def file_structure_cmd(write_path: Optional[Path], max_depth: Optional[int]):
     parallel-PR rebases without falling through to textual three-way merge.
 
     Examples:
-        logmind file-structure                                # depth 2, stdout
-        logmind file-structure --max-depth 0                  # full tree
-        logmind file-structure --write docs/file-structure.md # regenerate file at depth 2
+        logmind file-structure                                       # depth 2, stdout
+        logmind file-structure --max-depth 0                         # full tree
+        logmind file-structure --write docs/file-structure.md        # regenerate file at depth 2
+        logmind file-structure --write docs/file-structure.md --check  # CI gate
     """
     from logmind.core.tree_gen import (
         DEFAULT_FILE_STRUCTURE_DEPTH,
@@ -2733,6 +2744,29 @@ def file_structure_cmd(write_path: Optional[Path], max_depth: Optional[int]):
     depth_label = "unbounded" if effective_depth is None else f"depth={effective_depth}"
 
     repo_root = Path.cwd()
+
+    if check:
+        if write_path is None:
+            click.secho(
+                "Error: --check requires --write PATH to compare against.",
+                fg="red",
+            )
+            sys.exit(2)
+        rendered = generate_file_structure(repo_root, max_depth=effective_depth)
+        existing = (
+            write_path.read_text(encoding="utf-8") if write_path.exists() else ""
+        )
+        if existing != rendered:
+            click.secho(
+                f"✗ {write_path} is stale — re-run "
+                f"`logmind file-structure --write {write_path}` and commit.",
+                fg="yellow",
+            )
+            sys.exit(1)
+        click.secho(f"✓ {write_path} is up to date", fg="green")
+        _ok(f"file-structure: {write_path} up to date")
+        return
+
     if write_path is None:
         rendered = generate_file_structure(repo_root, max_depth=effective_depth)
         # Use unpatched echo so the tree itself isn't suppressed by --quiet;

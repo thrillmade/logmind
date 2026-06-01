@@ -188,3 +188,78 @@ def test_log_updates_file_structure(tmp_path, monkeypatch):
     fs_content = (docs / "file-structure.md").read_text(encoding="utf-8")
     assert "interesting_new_file.py" in fs_content
     assert "# File Structure" in fs_content
+
+
+# ---------------------------------------------------------------------------
+# v0.6.9 — `file-structure --check` CI gate (symmetric with `timeline --check`)
+# ---------------------------------------------------------------------------
+
+
+def test_file_structure_cli_check_fails_when_stale(tmp_path, monkeypatch):
+    """--check exits 1 when on-disk file-structure.md differs from fresh regen."""
+    from click.testing import CliRunner
+
+    from logmind.cli import main as cli_main
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (tmp_path / "marker.txt").write_text("ok", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    target = docs / "file-structure.md"
+    target.write_text("stale\n", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main, ["file-structure", "--write", str(target), "--check"]
+    )
+    assert result.exit_code == 1
+    assert "stale" in result.output.lower() or "re-run" in result.output.lower()
+    # Regression guard: the remediation hint must interpolate the actual path,
+    # not print literal `{write_path}` (mirrors timeline's clud-bug PR #36 fix).
+    assert str(target) in result.output
+    assert "{write_path}" not in result.output
+
+
+def test_file_structure_cli_check_passes_when_fresh(tmp_path, monkeypatch):
+    """--check exits 0 + says 'up to date' when on-disk matches fresh regen.
+
+    Subtlety: `write_file_structure` walks the tree, so creating
+    docs/file-structure.md itself *changes the tree* — meaning a single
+    --write on a brand-new repo isn't immediately stable. Real CI has
+    the file already committed (the v0.6.x init scaffold writes it once);
+    second invocations are then stable. To model the steady state in the
+    test, we --write twice: first creates the file, second stabilizes
+    content to reflect the file's now-present-in-tree status.
+    """
+    from click.testing import CliRunner
+
+    from logmind.cli import main as cli_main
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (tmp_path / "marker.txt").write_text("ok", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    target = docs / "file-structure.md"
+    runner = CliRunner()
+    # 1st write — creates file; tree now includes it.
+    runner.invoke(cli_main, ["file-structure", "--write", str(target)])
+    # 2nd write — stabilizes content with the file's tree presence.
+    runner.invoke(cli_main, ["file-structure", "--write", str(target)])
+    # --check now reflects steady state and should pass.
+    result = runner.invoke(
+        cli_main, ["file-structure", "--write", str(target), "--check"]
+    )
+    assert result.exit_code == 0
+    assert "up to date" in result.output
+
+
+def test_file_structure_cli_check_requires_write_path(tmp_path, monkeypatch):
+    """--check without --write is a user error (exit 2) — same shape as timeline."""
+    from click.testing import CliRunner
+
+    from logmind.cli import main as cli_main
+
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cli_main, ["file-structure", "--check"])
+    assert result.exit_code == 2
+    assert "requires --write" in result.output.lower()
