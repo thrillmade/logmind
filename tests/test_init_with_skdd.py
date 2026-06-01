@@ -32,27 +32,47 @@ def test_init_with_skdd_flag_is_accepted(tmp_path: Path, monkeypatch):
     assert result.exit_code == 0, result.output
 
 
+def _selective_subprocess_mock(npx_returncode: int = 0):
+    """Build a selective subprocess.run mock that intercepts ONLY npx
+    invocations, leaving other subprocess.run calls (git status checks,
+    etc.) to the real implementation.
+
+    Returns (side_effect_fn, npx_calls_list). After invocation, inspect
+    npx_calls_list to assert on call args.
+    """
+    real_run = subprocess.run
+    npx_calls = []
+
+    def selective_run(cmd, *a, **kw):
+        if isinstance(cmd, list) and cmd and cmd[0] == "npx":
+            npx_calls.append(cmd)
+            mock_result = MagicMock()
+            mock_result.returncode = npx_returncode
+            return mock_result
+        return real_run(cmd, *a, **kw)
+
+    return selective_run, npx_calls
+
+
 def test_init_without_skdd_flag_does_not_invoke_npx(tmp_path: Path, monkeypatch):
     """Default behavior (no --with-skdd) skips the subprocess entirely."""
     monkeypatch.chdir(tmp_path)
-    with patch("logmind.cli.subprocess.run") as mock_run, \
+    selective_run, npx_calls = _selective_subprocess_mock()
+    with patch("logmind.cli.subprocess.run", side_effect=selective_run), \
          patch("logmind.cli.shutil.which", return_value="/usr/bin/npx"):
         runner = CliRunner()
         result = runner.invoke(
             cli_main, ["init", "--no-git", "--no-skill-install"]
         )
-        assert result.exit_code == 0, result.output
-        # Subprocess.run should NOT have been called for npx (no flag).
-        npx_calls = [c for c in mock_run.call_args_list if c.args[0][0] == "npx"]
-        assert len(npx_calls) == 0, "npx should not run without --with-skdd"
+    assert result.exit_code == 0, result.output
+    assert len(npx_calls) == 0, "npx should not run without --with-skdd"
 
 
 def test_init_with_skdd_invokes_npx_when_available(tmp_path: Path, monkeypatch):
     """When --with-skdd is passed AND npx is on PATH, subprocess fires."""
     monkeypatch.chdir(tmp_path)
-    fake_result = MagicMock()
-    fake_result.returncode = 0
-    with patch("logmind.cli.subprocess.run", return_value=fake_result) as mock_run, \
+    selective_run, npx_calls = _selective_subprocess_mock(npx_returncode=0)
+    with patch("logmind.cli.subprocess.run", side_effect=selective_run), \
          patch("logmind.cli.shutil.which", return_value="/usr/bin/npx"):
         runner = CliRunner()
         result = runner.invoke(
@@ -60,10 +80,8 @@ def test_init_with_skdd_invokes_npx_when_available(tmp_path: Path, monkeypatch):
             ["init", "--no-git", "--no-skill-install", "--with-skdd"],
         )
     assert result.exit_code == 0, result.output
-    # Find the npx call specifically.
-    npx_calls = [c for c in mock_run.call_args_list if c.args[0][0] == "npx"]
     assert len(npx_calls) == 1, "exactly one npx call expected"
-    assert npx_calls[0].args[0] == ["npx", "--yes", "clud-bug@latest", "init"]
+    assert npx_calls[0] == ["npx", "--yes", "clud-bug@latest", "init"]
 
 
 def test_init_with_skdd_warns_when_npx_missing(tmp_path: Path, monkeypatch):
@@ -85,9 +103,8 @@ def test_init_with_skdd_warns_when_npx_missing(tmp_path: Path, monkeypatch):
 def test_init_with_skdd_warns_when_npx_exits_nonzero(tmp_path: Path, monkeypatch):
     """If npx subprocess returns non-zero, warn but do not fail init."""
     monkeypatch.chdir(tmp_path)
-    fake_result = MagicMock()
-    fake_result.returncode = 7
-    with patch("logmind.cli.subprocess.run", return_value=fake_result), \
+    selective_run, _ = _selective_subprocess_mock(npx_returncode=7)
+    with patch("logmind.cli.subprocess.run", side_effect=selective_run), \
          patch("logmind.cli.shutil.which", return_value="/usr/bin/npx"):
         runner = CliRunner()
         result = runner.invoke(

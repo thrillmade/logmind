@@ -10,3 +10,11 @@
 - Subprocess errors warn but don't fail logmind init — clud-bug is an additive layer; logmind side has already succeeded by the time --with-skdd runs
 
 ---
+## 2026-06-01 14:04 - v0.6.8 fix: selective subprocess mock in tests (Windows OSError 22)
+
+**Reasoning:** Windows CI failed: blanket subprocess.run mock intercepted ALL subprocess calls in cli.py, breaking git-status checks etc. that need real behavior on Windows. The 6th test (OSError case) already used selective mocking; applying same pattern to the other 2 tests
+
+**Implications:**
+- Selective mock pattern: intercept only when cmd[0] == 'npx', delegate everything else to real subprocess.run. Standard test isolation that should have been the original implementation
+
+---
