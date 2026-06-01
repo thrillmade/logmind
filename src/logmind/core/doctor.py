@@ -319,22 +319,48 @@ def _probe_post_merge_hook(project_root: Path) -> WorkflowStatus:
     the merge driver — re-regenerates derived files with the full
     post-merge tree (the driver alone can fire before all merged-in
     files are checked out, producing an incomplete regen).
+
+    v0.6.10: the hook now embeds a ``# logmind-hook-version: <X.Y.Z>``
+    marker so this probe can compare the on-disk hook's version to the
+    currently-running CLI binary's version. Drift means the user's
+    local binary that last wrote the hook is stale relative to the
+    workflow's installed version (the root cause of the tokenomics
+    2026-06-01 bug recurrence).
     """
-    from logmind.core.gitattributes import post_merge_hook_installed
+    from logmind.core.gitattributes import (
+        installed_post_merge_hook_version,
+        post_merge_hook_installed,
+    )
+    from logmind import __version__ as current_version
 
     if not (project_root / ".git").exists():
         return WorkflowStatus(
             name="post-merge hook", installed=False,
             marker=None, bundled_marker=None, drift="missing",
         )
-    if post_merge_hook_installed(project_root):
+    if not post_merge_hook_installed(project_root):
+        return WorkflowStatus(
+            name="post-merge hook", installed=False,
+            marker=None, bundled_marker=current_version, drift="missing",
+        )
+    hook_version = installed_post_merge_hook_version(project_root)
+    if hook_version is None:
+        # Pre-v0.6.10 logmind hook (no marker line). Surface as stale
+        # so the user knows to refresh — older bodies had bugs like
+        # the v0.6.7 staging issue.
         return WorkflowStatus(
             name="post-merge hook", installed=True,
-            marker="installed", bundled_marker="installed", drift="current",
+            marker="markerless (pre-v0.6.10)", bundled_marker=current_version,
+            drift="markerless",
+        )
+    if hook_version != current_version:
+        return WorkflowStatus(
+            name="post-merge hook", installed=True,
+            marker=hook_version, bundled_marker=current_version, drift="stale",
         )
     return WorkflowStatus(
-        name="post-merge hook", installed=False,
-        marker=None, bundled_marker="installed", drift="missing",
+        name="post-merge hook", installed=True,
+        marker=hook_version, bundled_marker=current_version, drift="current",
     )
 
 
@@ -490,22 +516,41 @@ def _probe_post_rewrite_hook(project_root: Path) -> WorkflowStatus:
     `git commit --amend` (which the merge driver and post-merge hook
     don't cover), regenerating derived docs against the post-rewrite
     tree so multi-commit rebases don't leave docs/timeline.md stale.
+
+    v0.6.10: extracts the embedded hook-version marker the same way
+    :func:`_probe_post_merge_hook` does.
     """
-    from logmind.core.gitattributes import post_rewrite_hook_installed
+    from logmind.core.gitattributes import (
+        installed_post_rewrite_hook_version,
+        post_rewrite_hook_installed,
+    )
+    from logmind import __version__ as current_version
 
     if not (project_root / ".git").exists():
         return WorkflowStatus(
             name="post-rewrite hook", installed=False,
             marker=None, bundled_marker=None, drift="missing",
         )
-    if post_rewrite_hook_installed(project_root):
+    if not post_rewrite_hook_installed(project_root):
+        return WorkflowStatus(
+            name="post-rewrite hook", installed=False,
+            marker=None, bundled_marker=current_version, drift="missing",
+        )
+    hook_version = installed_post_rewrite_hook_version(project_root)
+    if hook_version is None:
         return WorkflowStatus(
             name="post-rewrite hook", installed=True,
-            marker="installed", bundled_marker="installed", drift="current",
+            marker="markerless (pre-v0.6.10)", bundled_marker=current_version,
+            drift="markerless",
+        )
+    if hook_version != current_version:
+        return WorkflowStatus(
+            name="post-rewrite hook", installed=True,
+            marker=hook_version, bundled_marker=current_version, drift="stale",
         )
     return WorkflowStatus(
-        name="post-rewrite hook", installed=False,
-        marker=None, bundled_marker="installed", drift="missing",
+        name="post-rewrite hook", installed=True,
+        marker=hook_version, bundled_marker=current_version, drift="current",
     )
 
 

@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (15 decisions)
+## 2026-06 (16 decisions)
 
-- **2026-06-01** — feat: `logmind file-structure --check` (v0.6.9 — symmetric CI gate with timeline) *(feat/file-structure-check)* — [decisions-branches/feat__file-structure-check.md](decisions-branches/feat__file-structure-check.md)
-- *... 13 more decisions ...*
+- **2026-06-01** — feat(v0.6.10): hook-version drift detection (tokenomics 2026-06-01 bug report) *(feat/v0.6.10-hook-drift-detection)* — [decisions-branches/feat__v0.6.10-hook-drift-detection.md](decisions-branches/feat__v0.6.10-hook-drift-detection.md)
+- *... 14 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

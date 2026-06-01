@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-06-01
+
+### Added — Hook-version drift detection (tokenomics 2026-06-01 bug report)
+
+The tokenomics agent flagged a recurrence of the post-merge hook
+checkout-blocking bug AFTER v0.6.9 propagation. Root cause (correctly
+diagnosed by the reporter): the local CLI binary was still v0.3.4, so
+every `logmind log` overwrote `.git/hooks/post-merge` with v0.3.4's
+body (which stages). The workflow-pin upgrade alone does NOT refresh
+local hooks; that requires a binary upgrade on the user's box.
+
+v0.6.10 makes this drift LOUDLY visible:
+
+1. **Hook bodies now embed a version marker** — every installed
+   post-merge + post-rewrite hook contains a
+   `# logmind-hook-version: <X.Y.Z>` line written by the binary that
+   created it.
+
+2. **`logmind doctor` extracts the marker** and compares to the
+   currently-running binary's `__version__`. Drift surfaces as
+   `stale` (marker version differs) or `markerless` (pre-v0.6.10
+   hook). Both are aggregated into the overall-drift signal so
+   doctor exits non-zero.
+
+3. **`install_post_merge_hook` always rewrites when the body
+   differs** — so when a user upgrades binary (v0.3.4 → v0.6.10),
+   the next `logmind log` automatically refreshes the local hook
+   to v0.6.10's body. Self-healing on first upgrade.
+
+### What this fixes vs doesn't fix
+
+- **Fixes**: future drift is loud. After upgrading to v0.6.10+,
+  `logmind doctor` always tells the user when their on-disk hook
+  is stale relative to the binary running. One-command fix:
+  `pip install --upgrade logmind && logmind log` self-heals.
+- **Doesn't fix on its own**: a user stuck at v0.3.4 today can't
+  benefit until they upgrade. The reporter's immediate remediation:
+  `PYENV_VERSION=3.11.8 pip install --upgrade logmind` then
+  `logmind log` once.
+
+### Code
+
+- `src/logmind/core/gitattributes.py` — `HOOK_VERSION_PREFIX` constant,
+  `_build_post_merge_hook_body()` + `_build_post_rewrite_hook_body()`
+  builders that inject `__version__`, new helpers
+  `installed_post_merge_hook_version` / `installed_post_rewrite_hook_version`.
+- `src/logmind/core/doctor.py` — probes now extract the marker,
+  compare versions, return `drift="stale" | "markerless" | "current"`.
+- `tests/test_merge_driver.py` — 5 new tests pinning marker shape,
+  extractor, doctor drift detection, and auto-refresh path.
+
+### Deferred to v0.6.11
+
+The full root-cause fix (skip regen when current branch is orphaned
+post-merge-away) is captured in the plan as a v0.6.11 candidate. Ships
+after v0.6.10 propagates if the doctor warning isn't enough to close
+the loop in practice.
+
 ## [0.6.9] - 2026-06-01
 
 ### Added — `logmind file-structure --check` (symmetric with `timeline --check`)
