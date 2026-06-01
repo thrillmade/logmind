@@ -447,3 +447,187 @@ def test_check_frontmatter_no_false_positive_on_description_nested():
     ok, msg = check_frontmatter_required_fields(content)
     assert ok is False
     assert "description" in msg
+
+
+# ---------------------------------------------------------------------------
+# v0.6.3 — bench_skill
+# ---------------------------------------------------------------------------
+
+
+def _bench_skill():
+    """Late import so the rest of the test file doesn't pay the cost."""
+    from logmind.core.skill_cli import bench_skill
+    return bench_skill
+
+
+def test_bench_skill_tight():
+    """A short skill lands in the 'tight' bucket."""
+    bench_skill = _bench_skill()
+    content = (
+        "---\nname: x\ndescription: y\n---\n"
+        "# Title\n\n## When to use\n- a\n- b\n\n## Steps\n1. one\n"
+    )
+    out = bench_skill(content)
+    assert out["status"] == "tight"
+    assert out["bytes"] < 2000
+    assert out["est_tokens"] == out["bytes"] // 4
+    assert out["suggestions"] == []
+
+
+def test_bench_skill_typical():
+    """Between tight and budget = 'typical'."""
+    bench_skill = _bench_skill()
+    body = "x " * 1500  # ~3000 bytes — between tight (2000) and budget (6000)
+    content = f"---\nname: x\ndescription: y\n---\n# T\n{body}"
+    out = bench_skill(content)
+    assert out["status"] == "typical"
+    assert out["suggestions"] == []
+
+
+def test_bench_skill_verbose_emits_suggestions():
+    """Past budget = 'verbose' AND gets at least one suggestion."""
+    bench_skill = _bench_skill()
+    body = "y " * 3500  # ~7000 bytes, past 6000 budget but under 8000 cap
+    content = f"---\nname: x\ndescription: y\n---\n# T\n## Examples\n{body}"
+    out = bench_skill(content)
+    assert out["status"] == "verbose"
+    assert len(out["suggestions"]) >= 1
+
+
+def test_bench_skill_over_budget_recommends_split():
+    """Past 8KB hard cap = 'over-budget' AND suggestion mentions splitting."""
+    bench_skill = _bench_skill()
+    body = "z " * 5000  # ~10000 bytes — past the 8000 cap
+    content = f"---\nname: x\ndescription: y\n---\n# T\n## Examples\n{body}"
+    out = bench_skill(content)
+    assert out["status"] == "over-budget"
+    assert any("split" in s.lower() for s in out["suggestions"])
+
+
+def test_bench_skill_section_breakdown():
+    """Each ## section appears in the breakdown with its byte count."""
+    bench_skill = _bench_skill()
+    content = (
+        "---\nname: x\ndescription: y\n---\n"
+        "# Title\n\n"
+        "## When to use\n- short trigger\n\n"
+        "## Steps\n1. first\n2. second\n\n"
+        "## Examples\nlorem ipsum dolor sit amet " * 30 + "\n"
+    )
+    out = bench_skill(content)
+    section_names = [s["name"] for s in out["sections"]]
+    assert "frontmatter" in section_names
+    assert "When to use" in section_names
+    assert "Steps" in section_names
+    assert "Examples" in section_names
+    # Each pct is non-negative + sums roughly to 100% (rounding).
+    assert all(0 <= s["pct"] <= 100 for s in out["sections"])
+
+
+def test_bench_skill_dominant_section_flagged():
+    """A section taking >30% of the total gets called out in suggestions."""
+    bench_skill = _bench_skill()
+    # Make the Examples section dominate (over budget + over 30%).
+    big_examples = "example " * 1200  # ~9600 bytes — definitively dominant
+    content = (
+        "---\nname: x\ndescription: y\n---\n"
+        "# T\n## When to use\n- a\n\n## Examples\n" + big_examples
+    )
+    out = bench_skill(content)
+    assert any("Examples" in s for s in out["suggestions"])
+
+
+def test_bench_skill_html_comments_flagged_when_large():
+    """Many HTML comments are flagged as wasted bytes."""
+    bench_skill = _bench_skill()
+    big_comment = "<!-- " + ("authoring note " * 50) + "-->"  # ~750 bytes
+    body = "real prose " * 1000  # ~11000 bytes, pushes past 8KB
+    content = (
+        f"---\nname: x\ndescription: y\n---\n"
+        f"# T\n## When\n{big_comment}\n\n## Body\n{body}"
+    )
+    out = bench_skill(content)
+    assert any("HTML comments" in s for s in out["suggestions"])
+
+
+def test_bench_skill_no_headers_falls_into_body():
+    """A skill with no ## headers gets a single 'body' section."""
+    bench_skill = _bench_skill()
+    content = "---\nname: x\ndescription: y\n---\n# Title\njust prose, no sections.\n"
+    out = bench_skill(content)
+    names = [s["name"] for s in out["sections"]]
+    assert "body" in names
+
+
+def test_bench_skill_honors_custom_budget():
+    """PR #99 regression: target + budget kwargs must thread through to
+    _bench_status + _trim_suggestions, not be silently ignored.
+
+    A 3KB skill is 'typical' under the default 6KB budget, but should
+    be 'verbose' when the caller passes budget=2000.
+    """
+    bench_skill = _bench_skill()
+    body = "y " * 1500  # ~3000 bytes
+    content = f"---\nname: x\ndescription: y\n---\n# T\n## Examples\n{body}"
+    default = bench_skill(content)
+    custom = bench_skill(content, target=500, budget=2000)
+    assert default["status"] == "typical"
+    assert custom["status"] == "verbose", (
+        f"PR #99 review fix: custom budget=2000 should be honored. "
+        f"Got status={custom['status']}"
+    )
+    # Suggestions should fire under the tighter budget.
+    assert len(custom["suggestions"]) >= 1
+    # And not under the looser default.
+    assert default["suggestions"] == []
+
+
+def test_skill_bench_cli_emits_status_line(tmp_path: Path):
+    """End-to-end: `logmind skill bench <name>` exits 0 + prints status."""
+    skill_dir = tmp_path / ".claude" / "skills" / "my-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: my-skill\ndescription: trigger\n---\n# My\n## When\n- a\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as fs:
+        # Re-create the skill under the isolated cwd.
+        from pathlib import Path as _P
+        target = _P(fs) / ".claude" / "skills" / "my-skill"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: trigger\n---\n# My\n## When\n- a\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli_main, ["skill", "bench", "my-skill"])
+    assert result.exit_code == 0, result.output
+    assert "my-skill" in result.output
+    assert "tight" in result.output or "typical" in result.output
+
+
+def test_skill_bench_cli_json(tmp_path: Path):
+    """--json emits a parseable JSON object."""
+    import json
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as fs:
+        from pathlib import Path as _P
+        target = _P(fs) / ".claude" / "skills" / "x"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text(
+            "---\nname: x\ndescription: y\n---\n# X\n## Y\nz\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli_main, ["skill", "bench", "x", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output.split("ok ")[0].strip())
+    assert "bytes" in data and "status" in data and "sections" in data
+
+
+def test_skill_bench_cli_missing_skill_exits_1(tmp_path: Path):
+    """Missing skill = non-zero exit."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)):
+        result = runner.invoke(cli_main, ["skill", "bench", "does-not-exist"])
+    assert result.exit_code == 1
+    assert "not found" in result.output

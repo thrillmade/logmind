@@ -110,7 +110,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.2", prog_name="logmind")
+@click.version_option(version="0.6.3", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -1990,6 +1990,78 @@ def skill_test(name: str):
         _ok(f"skill: {name} FAILED validation")
         sys.exit(1)
     _ok(f"skill: {name} validated")
+
+
+# v0.6.3 — `logmind skill bench` (per-call token-cost measurement).
+@skill.command("bench")
+@click.argument("name")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit machine-readable JSON instead of the human-readable table.",
+)
+def skill_bench(name: str, as_json: bool):
+    """Measure per-call token cost of a SKILL.md.
+
+    Every time an agent loads this skill, the entire SKILL.md goes into
+    the context window. This command reports the byte size, an estimated
+    token count, a status bucket (tight / typical / verbose /
+    over-budget), and per-section breakdown. Over-budget skills get
+    trim suggestions.
+
+    Pair with `clud-bug usage --health` for the complete picture: bench
+    tells you what each skill COSTS, usage tells you whether it EARNS
+    that cost in citations.
+    """
+    from logmind.core.skill_cli import bench_skill, skill_md_path
+
+    repo_root = Path.cwd()
+    target = skill_md_path(repo_root, name)
+    if not target.exists():
+        click.secho(
+            f"Error: skill '{name}' not found at {target}",
+            fg="red",
+        )
+        sys.exit(1)
+
+    content = target.read_text(encoding="utf-8")
+    result = bench_skill(content)
+
+    if as_json:
+        import json
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    status_color = {
+        "tight": "green",
+        "typical": "green",
+        "verbose": "yellow",
+        "over-budget": "red",
+    }.get(result["status"], "white")
+
+    click.secho(
+        f"{name}: {result['bytes']} bytes (~{result['est_tokens']} tokens) "
+        f"— {result['status']}",
+        fg=status_color,
+    )
+    click.echo(
+        f"  target: {result['target']} bytes  budget: {result['budget']} bytes"
+    )
+
+    if result["sections"]:
+        click.echo("\n  Section breakdown:")
+        for sec in result["sections"]:
+            click.echo(
+                f"    {sec['name']:30s} {sec['bytes']:>6d} bytes  ({sec['pct']:>3d}%)"
+            )
+
+    if result["suggestions"]:
+        click.echo("\n  Suggestions:")
+        for s in result["suggestions"]:
+            click.echo(f"    • {s}")
+
+    _ok(f"skill: bench {name} {result['status']}")
 
 
 # Config command group
