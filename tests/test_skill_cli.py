@@ -559,6 +559,29 @@ def test_bench_skill_no_headers_falls_into_body():
     assert "body" in names
 
 
+def test_bench_skill_honors_custom_budget():
+    """PR #99 regression: target + budget kwargs must thread through to
+    _bench_status + _trim_suggestions, not be silently ignored.
+
+    A 3KB skill is 'typical' under the default 6KB budget, but should
+    be 'verbose' when the caller passes budget=2000.
+    """
+    bench_skill = _bench_skill()
+    body = "y " * 1500  # ~3000 bytes
+    content = f"---\nname: x\ndescription: y\n---\n# T\n## Examples\n{body}"
+    default = bench_skill(content)
+    custom = bench_skill(content, target=500, budget=2000)
+    assert default["status"] == "typical"
+    assert custom["status"] == "verbose", (
+        f"PR #99 review fix: custom budget=2000 should be honored. "
+        f"Got status={custom['status']}"
+    )
+    # Suggestions should fire under the tighter budget.
+    assert len(custom["suggestions"]) >= 1
+    # And not under the looser default.
+    assert default["suggestions"] == []
+
+
 def test_skill_bench_cli_emits_status_line(tmp_path: Path):
     """End-to-end: `logmind skill bench <name>` exits 0 + prints status."""
     skill_dir = tmp_path / ".claude" / "skills" / "my-skill"

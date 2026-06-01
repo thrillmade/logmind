@@ -10,3 +10,13 @@
 - Thresholds (2KB/6KB/8KB) match the existing soft cap from v0.6.0's check_size_cap so behavior is consistent across logmind skill commands
 
 ---
+## 2026-06-01 00:29 - v0.6.3 fix: bench_skill threads target+budget through to helpers (PR #99)
+
+**Reasoning:** clud-bug-review caught a silent-failure bug on PR #99: bench_skill accepted target+budget kwargs but _bench_status() + _trim_suggestions() used the module-level constants instead. Calling bench_skill(content, budget=2000) returned budget=2000 in the dict but computed status against the hardcoded 6000. Threading the values through fixes it; added regression test that asserts custom budget actually changes the status bucket.
+
+**Alternatives considered:** Make target+budget required kwargs (rejected: breaks the existing CLI which calls bench_skill() with no args; default-using callers shouldn't have to pass them), Read target+budget from env vars (rejected: kwarg passing is the standard Python idiom; env vars are reserved for runtime-tuning not API-shape changes)
+
+**Implications:**
+- Now bench_skill is parameterized end-to-end; future automations (e.g., per-skill budget overrides in .clud-bug.json) can tune thresholds without modifying the module
+
+---

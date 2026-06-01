@@ -311,25 +311,32 @@ def _split_into_sections(content: str) -> "list[Tuple[str, int]]":
     return sections
 
 
-def _bench_status(size: int) -> str:
-    """Bucket the size into a status label."""
-    if size <= _LOGMIND_SKILL_TIGHT_BYTES:
+def _bench_status(size: int, target: int, budget: int) -> str:
+    """Bucket the size into a status label using the caller's thresholds."""
+    if size <= target:
         return "tight"
-    if size <= _LOGMIND_SKILL_BUDGET_BYTES:
+    if size <= budget:
         return "typical"
     if size <= _LOGMIND_SKILL_BYTE_CAP:
         return "verbose"
     return "over-budget"
 
 
-def _trim_suggestions(content: str, sections: "list[Tuple[str, int]]", total: int) -> "list[str]":
+def _trim_suggestions(
+    content: str,
+    sections: "list[Tuple[str, int]]",
+    total: int,
+    *,
+    target: int,
+    budget: int,
+) -> "list[str]":
     """Heuristic suggestions for trimming an oversized skill.
 
-    Triggered only when total > _LOGMIND_SKILL_BUDGET_BYTES. Returns
-    empty list when the skill is already tight.
+    Triggered only when total > budget. Returns empty list when the
+    skill is at or under budget.
     """
     suggestions: list[str] = []
-    if total <= _LOGMIND_SKILL_BUDGET_BYTES:
+    if total <= budget:
         return suggestions
 
     # Heuristic 1: any single section taking >30% of the total is a
@@ -363,9 +370,8 @@ def _trim_suggestions(content: str, sections: "list[Tuple[str, int]]", total: in
     elif not suggestions:
         # Generic fallback when the skill is verbose but no clear culprit section.
         suggestions.append(
-            f"Total is {total} bytes (target: {_LOGMIND_SKILL_TIGHT_BYTES}, "
-            f"budget: {_LOGMIND_SKILL_BUDGET_BYTES}). Tighten the largest "
-            f"sections or move detailed examples behind links."
+            f"Total is {total} bytes (target: {target}, budget: {budget}). "
+            f"Tighten the largest sections or move detailed examples behind links."
         )
 
     return suggestions
@@ -378,6 +384,11 @@ def bench_skill(
     budget: int = _LOGMIND_SKILL_BUDGET_BYTES,
 ) -> dict:
     """Measure per-call token cost of a skill body.
+
+    ``target`` and ``budget`` are honored by the status bucketer + the
+    suggestion heuristics (PR #99 review fix — prior versions accepted
+    these kwargs but threaded only the module-level constants through
+    to the helpers, silently ignoring the caller's overrides).
 
     Returns a dict with:
 
@@ -402,9 +413,11 @@ def bench_skill(
     return {
         "bytes": total,
         "est_tokens": total // 4,
-        "status": _bench_status(total),
+        "status": _bench_status(total, target, budget),
         "target": target,
         "budget": budget,
         "sections": sections,
-        "suggestions": _trim_suggestions(content, sections_raw, total),
+        "suggestions": _trim_suggestions(
+            content, sections_raw, total, target=target, budget=budget
+        ),
     }
