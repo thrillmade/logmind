@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (4 decisions)
+## 2026-06 (5 decisions)
 
-- **2026-06-01** — v0.6.4: skill audit — author's-side staleness read (Stream 6 follow-on) *(feat/v0.6.4-skill-audit)* — [decisions-branches/feat__v0.6.4-skill-audit.md](decisions-branches/feat__v0.6.4-skill-audit.md)
-- *... 2 more decisions ...*
+- **2026-06-01** — v0.6.5: skill suggest — human-gated pattern detection (closes Stream 6 follow-ons) *(feat/v0.6.5-skill-suggest)* — [decisions-branches/feat__v0.6.5-skill-suggest.md](decisions-branches/feat__v0.6.5-skill-suggest.md)
+- *... 3 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
