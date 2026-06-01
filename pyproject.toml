@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logmind"
-version = "0.6.6"
+version = "0.6.7"
 description = "Decision logging for AI-assisted development - automatic tracking, git integration, and context for AI agents"
 readme = "README.md"
 requires-python = ">=3.8"

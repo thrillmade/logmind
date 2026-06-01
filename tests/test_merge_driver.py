@@ -234,6 +234,45 @@ def test_install_post_merge_hook_creates_executable_hook(git_repo: Path):
     assert "logmind file-structure --write" in body
 
 
+def test_post_merge_hook_does_not_stage_derived_docs(git_repo: Path):
+    """v0.6.7 regression guard: the hook must regenerate but NOT stage.
+
+    Background: pre-v0.6.7 hook ran `git add docs/timeline.md
+    docs/file-structure.md` after the regen. The staged-but-uncommitted
+    files then blocked `git checkout main` on every PR cycle (a
+    downstream agent reported the friction). Removing the auto-stage
+    fixes the bug; this test prevents accidental re-addition.
+
+    Anchored regex: match `git add docs/timeline.md` only on a line
+    where it's the actual command (start-of-line + optional whitespace),
+    not inside a comment. Mirrors clud-bug's v0.6.32 release-discipline
+    pattern.
+    """
+    import re
+    install_post_merge_hook(git_repo)
+    hook = git_repo / ".git" / "hooks" / "post-merge"
+    body = hook.read_text(encoding="utf-8")
+    forbidden = re.search(
+        r"^\s*git add docs/timeline\.md", body, re.MULTILINE,
+    )
+    assert forbidden is None, (
+        "post-merge hook must NOT auto-stage docs/timeline.md.\n"
+        "Background: the staged-but-uncommitted files block `git "
+        "checkout main` on every PR cycle. See v0.6.7 CHANGELOG + the "
+        "downstream bug report. Regen should leave files unstaged so "
+        "the next `logmind log` (or explicit `git add`) picks them up "
+        "cleanly without blocking branch switches.\n"
+        f"Found forbidden line: {forbidden.group(0) if forbidden else '(none)'}"
+    )
+    # Sibling assertion for docs/file-structure.md — same contract.
+    forbidden_fs = re.search(
+        r"^\s*git add docs/file-structure\.md", body, re.MULTILINE,
+    )
+    assert forbidden_fs is None, (
+        "post-merge hook must NOT auto-stage docs/file-structure.md either."
+    )
+
+
 def test_install_post_merge_hook_does_not_overwrite_foreign_hook(git_repo: Path):
     """If a non-logmind hook is already in place, leave it. The user's
     custom hook isn't our problem to inherit."""

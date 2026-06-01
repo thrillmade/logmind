@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-06-01
+
+### Fixed — post-merge hook no longer blocks `git checkout main`
+
+Bug surfaced by a downstream agent (2026-06-01): the post-merge hook
+auto-staged `docs/timeline.md` + `docs/file-structure.md` after every
+merge. The staged-but-uncommitted files then blocked `git checkout main`
+on every PR cycle with:
+
+> `Your local changes to the following files would be overwritten by checkout.`
+
+Required the workaround `git reset HEAD <files> && git checkout -- <files>`
+every time. Hit every contributor every PR.
+
+#### Root cause
+
+`_POST_MERGE_HOOK_BODY` in `src/logmind/core/gitattributes.py` had a
+`git add docs/timeline.md docs/file-structure.md` line after the
+regen invocations. The auto-stage is correct semantics INSIDE
+`logmind log` (where the regens bundle into the decision commit) but
+WRONG from the post-merge hook (which fires after a `git pull --rebase`
+following a squash merge — there's no commit being constructed, so
+staging just blocks subsequent checkouts).
+
+#### Fix
+
+Remove the `git add` line. The hook now regenerates but leaves the
+files as unstaged modifications. The next `logmind log` (or any
+explicit `git add`) picks them up cleanly. `git checkout main` no
+longer blocks.
+
+#### Auto-propagation
+
+v0.5.12+ `logmind log` self-installs the post-merge hook on every
+invocation, with content-drift detection that rewrites stale hooks
+(marker + body comparison). So once a consumer pip-upgrades to
+v0.6.7 and runs ANY `logmind log`, the fix is in place — no
+`logmind init` re-run required.
+
+#### Regression guard
+
+`tests/test_merge_driver.py::test_post_merge_hook_does_not_stage_derived_docs`
+asserts the installed hook body contains no anchored `git add docs/timeline.md`
+or `git add docs/file-structure.md` line. Future template edits that
+accidentally re-add the auto-stage will fail CI with a citation-style
+error message pointing back to this entry.
+
 ## [0.6.6] - 2026-06-01
 
 ### Added — `logmind doctor` surfaces clud-bug skill-usage upload drift
