@@ -245,3 +245,166 @@ def check_size_cap(content: str, cap: int = _LOGMIND_SKILL_BYTE_CAP) -> Tuple[bo
             f"into multiple focused skills."
         )
     return (True, f"{size} bytes (cap: {cap})")
+
+
+# v0.6.3 — `logmind skill bench <name>`. Per-call token-cost measurement.
+#
+# Every time a skill triggers, its SKILL.md gets loaded into the agent's
+# context window. The per-call cost is the byte size translated to an
+# approximate token count (English text ≈ 4 bytes/token). This is the
+# "measure" arrow of the SkDD loop — pairs with clud-bug's
+# `usage --health` (the enforcement read) for a complete picture of
+# whether each skill earns its token budget.
+
+_LOGMIND_SKILL_TIGHT_BYTES = 2000   # ~500 tokens — a focused, well-trimmed skill
+_LOGMIND_SKILL_BUDGET_BYTES = 6000  # ~1500 tokens — past this, splitting helps
+
+
+_HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def _split_into_sections(content: str) -> "list[Tuple[str, int]]":
+    """Return [(header_text, body_bytes)] for each top-level (##) section.
+
+    Frontmatter (the leading --- block) is counted as its own section
+    named "frontmatter". The body before the first ## is named "intro".
+    Bytes per section = UTF-8 byte count of the SECTION BODY (not the
+    header line itself), so trimming suggestions point at the prose,
+    not the structural markers.
+    """
+    sections: "list[Tuple[str, int]]" = []
+
+    # Frontmatter — leading ---...--- block.
+    rest = content
+    if content.startswith("---"):
+        end = content.find("\n---", 4)
+        if end != -1:
+            frontmatter = content[: end + 4]
+            sections.append(("frontmatter", len(frontmatter.encode("utf-8"))))
+            rest = content[end + 4 :].lstrip("\n")
+
+    # Find every ## section header (level 2) in the body.
+    headers = [
+        (m.start(), len(m.group(1)), m.group(2))
+        for m in _HEADER_RE.finditer(rest)
+        if len(m.group(1)) == 2
+    ]
+
+    if not headers:
+        # Whole body is one chunk.
+        body = rest.strip()
+        if body:
+            sections.append(("body", len(body.encode("utf-8"))))
+        return sections
+
+    # Intro = anything before the first ## header.
+    intro = rest[: headers[0][0]].strip()
+    if intro:
+        sections.append(("intro", len(intro.encode("utf-8"))))
+
+    for i, (pos, _level, title) in enumerate(headers):
+        end = headers[i + 1][0] if i + 1 < len(headers) else len(rest)
+        section_body = rest[pos:end].strip()
+        sections.append((title, len(section_body.encode("utf-8"))))
+
+    return sections
+
+
+def _bench_status(size: int) -> str:
+    """Bucket the size into a status label."""
+    if size <= _LOGMIND_SKILL_TIGHT_BYTES:
+        return "tight"
+    if size <= _LOGMIND_SKILL_BUDGET_BYTES:
+        return "typical"
+    if size <= _LOGMIND_SKILL_BYTE_CAP:
+        return "verbose"
+    return "over-budget"
+
+
+def _trim_suggestions(content: str, sections: "list[Tuple[str, int]]", total: int) -> "list[str]":
+    """Heuristic suggestions for trimming an oversized skill.
+
+    Triggered only when total > _LOGMIND_SKILL_BUDGET_BYTES. Returns
+    empty list when the skill is already tight.
+    """
+    suggestions: list[str] = []
+    if total <= _LOGMIND_SKILL_BUDGET_BYTES:
+        return suggestions
+
+    # Heuristic 1: any single section taking >30% of the total is a
+    # prime candidate for trimming or linking out.
+    for name, size in sections:
+        if name in ("frontmatter", "intro", "body"):
+            continue
+        if total > 0 and size / total > 0.30:
+            suggestions.append(
+                f"Section '{name}' is {size} bytes ({size * 100 // total}% of total) — "
+                f"consider linking out to docs OR moving to its own skill."
+            )
+
+    # Heuristic 2: many HTML comments inflate size without paying back
+    # — they're invisible to the rendered prompt but charged in tokens.
+    comment_bytes = sum(
+        len(m.encode("utf-8")) for m in _HTML_COMMENT_RE.findall(content)
+    )
+    if comment_bytes >= 200:
+        suggestions.append(
+            f"{comment_bytes} bytes of HTML comments — agents load them too. "
+            f"Move authoring notes to a sibling NOTES.md if they're not for the agent."
+        )
+
+    # Heuristic 3: if over the hard cap, recommend split.
+    if total > _LOGMIND_SKILL_BYTE_CAP:
+        suggestions.append(
+            f"Total exceeds {_LOGMIND_SKILL_BYTE_CAP}-byte cap — split into "
+            f"multiple focused skills."
+        )
+    elif not suggestions:
+        # Generic fallback when the skill is verbose but no clear culprit section.
+        suggestions.append(
+            f"Total is {total} bytes (target: {_LOGMIND_SKILL_TIGHT_BYTES}, "
+            f"budget: {_LOGMIND_SKILL_BUDGET_BYTES}). Tighten the largest "
+            f"sections or move detailed examples behind links."
+        )
+
+    return suggestions
+
+
+def bench_skill(
+    content: str,
+    *,
+    target: int = _LOGMIND_SKILL_TIGHT_BYTES,
+    budget: int = _LOGMIND_SKILL_BUDGET_BYTES,
+) -> dict:
+    """Measure per-call token cost of a skill body.
+
+    Returns a dict with:
+
+      - bytes: UTF-8 byte size of the whole SKILL.md
+      - est_tokens: bytes / 4 (rough English-text approximation)
+      - status: 'tight' | 'typical' | 'verbose' | 'over-budget'
+      - target: the tight-skill target (info)
+      - budget: the soft-budget threshold (info)
+      - sections: [{name, bytes, pct}] per ## section
+      - suggestions: trim hints when status is 'verbose' or worse
+    """
+    total = len(content.encode("utf-8"))
+    sections_raw = _split_into_sections(content)
+    sections = [
+        {
+            "name": name,
+            "bytes": size,
+            "pct": (size * 100 // total) if total else 0,
+        }
+        for name, size in sections_raw
+    ]
+    return {
+        "bytes": total,
+        "est_tokens": total // 4,
+        "status": _bench_status(total),
+        "target": target,
+        "budget": budget,
+        "sections": sections,
+        "suggestions": _trim_suggestions(content, sections_raw, total),
+    }
