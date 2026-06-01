@@ -698,14 +698,13 @@ def _gather_recent_decisions(docs_dir: Path, threshold_date) -> "list[dict]":
         candidates.extend(sorted(branches.glob("*.md")))
 
     for path in candidates:
-        try:
-            mtime = _dt.date.fromtimestamp(path.stat().st_mtime)
-        except OSError:
-            continue
-        if mtime < threshold_date:
-            continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         rel = path.name
+        try:
+            file_mtime = _dt.date.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            file_mtime = None
+
         parts = re.split(r"\n## ", text)
         for i, part in enumerate(parts):
             if not part.strip():
@@ -715,12 +714,51 @@ def _gather_recent_decisions(docs_dir: Path, threshold_date) -> "list[dict]":
             header_end = part.find("\n")
             header = part[:header_end].strip() if header_end != -1 else part.strip()
             body = part[header_end:].strip() if header_end != -1 else ""
+
+            # v0.6.5 PR #101 review fix: filter at the ENTRY level, not
+            # the file level. decisions.md is appended on every log call,
+            # so its mtime is always today — file-mtime filtering would
+            # leak every decision ever logged in any active repo.
+            entry_date = _extract_entry_date(body)
+            if entry_date is None:
+                # No date on this entry. Fall back to file mtime as a
+                # coarse window — but only for branch files. decisions.md
+                # without dates is too ambiguous (could be entries from
+                # months ago); skip them rather than include everything.
+                if rel == "decisions.md":
+                    continue
+                if file_mtime is None or file_mtime < threshold_date:
+                    continue
+            elif entry_date < threshold_date:
+                continue
+
             entries.append({
                 "file": rel,
                 "header": header,
                 "body": body,
             })
     return entries
+
+
+# Match "**Date**: YYYY-MM-DD" or "Date: YYYY-MM-DD" in decision-entry
+# bodies. logmind's `log` writes the **Date** line; older entries may
+# use the bare form. Both anchored to start-of-line.
+_ENTRY_DATE_RE = re.compile(
+    r"^\s*\*{0,2}Date\*{0,2}\s*:\s*(\d{4}-\d{2}-\d{2})",
+    re.MULTILINE,
+)
+
+
+def _extract_entry_date(body: str):
+    """Pull an ISO date out of a decision-entry body, or None if absent."""
+    import datetime as _dt
+    m = _ENTRY_DATE_RE.search(body)
+    if not m:
+        return None
+    try:
+        return _dt.date.fromisoformat(m.group(1))
+    except (ValueError, TypeError):
+        return None
 
 
 def _excerpt_around(text: str, idx: int, *, width: int = 80) -> str:

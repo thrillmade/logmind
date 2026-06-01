@@ -2229,8 +2229,14 @@ def skill_suggest(since: str, min_decisions: int, top_n: int, write_drafts, as_j
         )
         click.echo(f"  suggested-slug: {sug['slug']}")
         click.echo(f"  phrase: {sug['phrase']}")
-        click.echo(f"  evidence (first {len(sug['evidence'])}):")
-        for e in sug["evidence"][:3]:
+        # v0.6.5 PR #101 review fix: label + slice were inconsistent
+        # ("first 5" header with only 3 rows below). Cap both at the
+        # same value so the count always matches the display.
+        evidence_shown = sug["evidence"][:3]
+        click.echo(
+            f"  evidence (showing {len(evidence_shown)} of {len(sug['evidence'])}):"
+        )
+        for e in evidence_shown:
             click.echo(f"    - {e['file']}: {e['snippet']}")
         click.echo()
 

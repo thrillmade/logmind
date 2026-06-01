@@ -10,3 +10,14 @@
 - PostgreSQL → 'postgre-sql' (not 'postgresql') because the regex splits at lowercase→Uppercase. Acceptable for slugs; documented in test_kebab_slug
 
 ---
+## 2026-06-01 01:13 - v0.6.5 fix: --since filters by entry **Date** stamp + suggest UI count mismatch (PR #101)
+
+**Reasoning:** clud-bug-review caught two issues on PR #101: (1) my _gather_recent_decisions filtered by file mtime, but decisions.md is appended on every log call so its mtime is always today — --since effectively no-op on decisions.md. (2) The display loop emitted 'evidence (first 5):' but only rendered 3 items below. Fixed: now parses **Date** field per-entry, drops undated entries in decisions.md (too ambiguous), keeps branch-file mtime fallback (scoped to the branch lifetime). Display label now reads 'showing N of M' matching actual rendered count.
+
+**Alternatives considered:** Treat undated decisions.md entries as 'recent' instead of skipping (rejected: same bug as before), Read entry timestamps from git blame instead of **Date** field (rejected: heavy; **Date** is already there in every entry logmind writes)
+
+**Implications:**
+- Pre-v0.6.5 entries without **Date** stamps get filtered out — acceptable trade-off because all logmind log invocations since v0.5.x include the date. Hand-written legacy entries will be silently excluded; users can backfill **Date** lines if needed
+- Added 2 regression tests: one verifies old-dated entry is filtered out under --since, the other verifies undated entries in decisions.md are skipped
+
+---

@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (5 decisions)
+## 2026-06 (6 decisions)
 
-- **2026-06-01** — v0.6.5: skill suggest — human-gated pattern detection (closes Stream 6 follow-ons) *(feat/v0.6.5-skill-suggest)* — [decisions-branches/feat__v0.6.5-skill-suggest.md](decisions-branches/feat__v0.6.5-skill-suggest.md)
-- *... 3 more decisions ...*
+- **2026-06-01** — v0.6.5 fix: --since filters by entry **Date** stamp + suggest UI count mismatch (PR #101) *(feat/v0.6.5-skill-suggest)* — [decisions-branches/feat__v0.6.5-skill-suggest.md](decisions-branches/feat__v0.6.5-skill-suggest.md)
+- *... 4 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
