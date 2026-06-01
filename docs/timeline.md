@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (14 decisions)
+## 2026-06 (15 decisions)
 
-- **2026-06-01** — fix(README): use full skill path in skills.sh badge URL *(fix/skills-sh-badge-url)* — [decisions-branches/fix__skills-sh-badge-url.md](decisions-branches/fix__skills-sh-badge-url.md)
-- *... 12 more decisions ...*
+- **2026-06-01** — feat: `logmind file-structure --check` (v0.6.9 — symmetric CI gate with timeline) *(feat/file-structure-check)* — [decisions-branches/feat__file-structure-check.md](decisions-branches/feat__file-structure-check.md)
+- *... 13 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

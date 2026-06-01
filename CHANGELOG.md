@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-06-01
+
+### Added — `logmind file-structure --check` (symmetric with `timeline --check`)
+
+`logmind timeline --check` has shipped since v0.5.13 — exits non-zero when
+the on-disk `docs/timeline.md` differs from a fresh regen, so CI can fail
+the build before the auto-fix step. The mirror command `logmind
+file-structure` has been missing the same flag; v0.6.9 closes that
+asymmetry.
+
+```bash
+# Used by CI / pre-commit gates: "are derived docs stale?"
+logmind file-structure --write docs/file-structure.md --check
+#   → exit 0 + "✓ up to date"  if current
+#   → exit 1 + "✗ stale — re-run …" if regen would change the file
+#   → exit 2 + "requires --write" if --write is missing
+```
+
+The `regen-timeline.yml` workflow template can now use explicit `--check`
+calls for both derived docs (cleaner than the current
+`--write` + `git diff --quiet` pattern, though that still works fine).
+
+### Context — closes #93 (the v0.5.14 "conflict-tolerant regen merge driver" candidate)
+
+The original framing of "always-fire merge driver to catch silent-success
+3-way merge interleaves on `docs/timeline.md`" turned out to be infeasible
+by git design — merge drivers only invoke on conflict, and
+`pre-merge-commit` hooks don't fire on GitHub's server-side squash-merge
+flow (the dominant case). Practical coverage of the original problem has
+been built up across multiple releases:
+
+- **v0.5.11** post-rewrite hook (rebases + amends regen + stage)
+- **v0.5.12** driver auto-install on fresh clones / CI
+- **v0.5.13** `logmind rebase` convenience + doctor stale-derived warning
+- **v0.6.7** post-merge leaves regen unstaged (next `logmind log` picks
+  up cleanly)
+- `regen-timeline.yml` v3 template with `LOGMIND_AUTO_REGEN_PAT`-driven
+  auto-fix mode (regenerates derived docs + pushes back to the PR branch
+  when the PAT secret is configured; PAT-pushed commits re-trigger
+  downstream checks, unlike GITHUB_TOKEN-pushed ones)
+- `logmind timeline --check` (CI gate) since v0.5.13
+
+v0.6.9's `file-structure --check` completes the CI-gate symmetry. The
+practical problem #93 surfaced is now covered end-to-end:
+
+```text
+local merge → post-merge hook regens → unstaged → next `logmind log` stages
+       OR
+GitHub squash-merge → check-derived-docs workflow on next PR catches stale
+       OR (with PAT)
+GitHub squash-merge → check-derived-docs auto-regens + pushes back
+       OR (in pre-commit / CI)
+`logmind timeline --check` + `logmind file-structure --check` exit non-zero
+```
+
+No new merge-driver mechanism is shipping. Issue #93 closed with this
+context.
+
 ## [0.6.8] - 2026-06-01
 
 ### Added — `logmind init --with-skdd` (unified install, Python entry)
