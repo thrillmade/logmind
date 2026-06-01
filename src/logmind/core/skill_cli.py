@@ -544,3 +544,289 @@ def classify_audit_row(row: dict, now=None) -> str:
         except (ValueError, TypeError):
             pass
     return "active"
+
+
+# v0.6.5 — `logmind skill suggest`. Human-initiated pattern detection.
+#
+# Replaces the killed-Stream-9 autonomous bot direction. The CLI scans
+# recent decision-log entries for terms appearing across many distinct
+# decisions — a heuristic signal that "we keep talking about X, maybe
+# X should have its own skill." Output is a PRE-FILLED issue draft
+# matching agent-skills/.github/ISSUE_TEMPLATE/new-skill.yml. The
+# HUMAN reads, decides, and either opens the issue or discards.
+#
+# Never auto-PR. Never auto-create the skill. The whole point of the
+# pragmatic SkDD pivot is that humans gate skill lifecycle.
+
+_SUGGEST_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "but", "if", "then", "else", "of", "to",
+    "for", "in", "on", "at", "by", "with", "as", "is", "are", "was", "were",
+    "be", "been", "being", "have", "has", "had", "do", "does", "did", "this",
+    "that", "these", "those", "it", "its", "we", "our", "us", "they", "them",
+    "their", "i", "my", "me", "you", "your", "he", "she", "his", "her",
+    "use", "uses", "used", "using", "make", "made", "makes", "ship", "shipped",
+    "ships", "add", "added", "adds", "remove", "removes", "removed", "fix",
+    "fixed", "fixes", "build", "built", "test", "tests", "tested", "run",
+    "ran", "runs", "see", "saw", "seen", "get", "got", "want", "wants",
+    "need", "needs", "needed", "should", "could", "would", "will", "can",
+    "may", "might", "must", "let", "lets",
+    "code", "file", "files", "function", "functions", "method", "methods",
+    "class", "classes", "module", "modules", "library", "libraries",
+    "feature", "features", "change", "changes", "release", "releases",
+    "version", "versions", "branch", "branches", "commit", "commits",
+    "main", "now", "today", "all", "any", "some", "one", "two", "three",
+    "first", "second", "next", "last", "new", "old", "before", "after",
+    "decision", "decisions", "reasoning", "reason", "alternatives",
+    "alternative", "implications", "implication", "summary", "context",
+    "date", "pr",
+})
+
+_INTERESTING_TOKEN_RE = re.compile(
+    r"\b("
+    r"[a-z]+(?:-[a-z]+)+"            # kebab-case multi-word
+    r"|[A-Z][a-z]+(?:[A-Z][a-z]+)+"  # PascalCase / camelCase
+    r"|[A-Z]{2,}"                    # acronyms (API, JWT, CI)
+    r"|[a-z]+_[a-z]+(?:_[a-z]+)*"    # snake_case
+    r")\b"
+)
+
+
+def suggest_skills_from_decisions(
+    repo_root: Path,
+    *,
+    since_days: int = 30,
+    min_decisions: int = 3,
+    top_n: int = 5,
+) -> "list[dict]":
+    """Scan recent decision entries for repeated patterns.
+
+    Returns up to ``top_n`` suggestions, each a dict:
+
+      - ``phrase``: raw token (e.g. "api-versioning", "PostgreSQL", "JWT")
+      - ``slug``: kebab-cased normalization for issue title + skill slug
+      - ``decision_count``: # distinct decisions citing the phrase
+      - ``evidence``: list of {file, snippet} — first occurrence per decision
+      - ``draft_description``: one-sentence placeholder description
+
+    Filters:
+      - Excludes phrases already used as existing skill names.
+      - Excludes stop words + generic structural terms.
+      - Requires ≥``min_decisions`` distinct decisions.
+
+    HUMAN-INITIATED only. Caller decides whether to open the issue.
+    """
+    import datetime as _dt
+    threshold_date = _dt.date.today() - _dt.timedelta(days=since_days)
+
+    docs_dir = repo_root / "docs"
+    if not docs_dir.is_dir():
+        return []
+
+    decision_entries = _gather_recent_decisions(docs_dir, threshold_date)
+    if not decision_entries:
+        return []
+
+    existing_skill_names: set[str] = set()
+    skills_dir = default_skills_dir(repo_root)
+    if skills_dir.is_dir():
+        for child in skills_dir.iterdir():
+            if child.is_dir() and (child / "SKILL.md").is_file():
+                existing_skill_names.add(child.name.lower())
+
+    token_evidence: "dict[str, list[Tuple[int, dict]]]" = {}
+    for idx, entry in enumerate(decision_entries):
+        seen_in_entry: set[str] = set()
+        body = entry["body"]
+        for match in _INTERESTING_TOKEN_RE.finditer(body):
+            tok = match.group(1)
+            tok_lower = tok.lower()
+            if tok_lower in _SUGGEST_STOPWORDS:
+                continue
+            if tok_lower in seen_in_entry:
+                continue
+            seen_in_entry.add(tok_lower)
+            snippet = _excerpt_around(body, match.start(), width=80)
+            token_evidence.setdefault(tok, []).append(
+                (idx, {"file": entry["file"], "snippet": snippet})
+            )
+
+    ranked: "list[Tuple[str, list]]" = []
+    for tok, hits in token_evidence.items():
+        if len(hits) < min_decisions:
+            continue
+        slug = _kebab_slug(tok)
+        if slug in existing_skill_names:
+            continue
+        ranked.append((tok, hits))
+
+    ranked.sort(key=lambda kv: (-len(kv[1]), kv[0].lower()))
+    top = ranked[:top_n]
+
+    suggestions = []
+    for tok, hits in top:
+        slug = _kebab_slug(tok)
+        evidence = [h[1] for h in hits[:5]]
+        suggestions.append({
+            "phrase": tok,
+            "slug": slug,
+            "decision_count": len(hits),
+            "evidence": evidence,
+            "draft_description": (
+                f"When working on {tok}, follow consistent conventions across "
+                f"the codebase. (TODO: replace with concrete trigger + steps.)"
+            ),
+        })
+    return suggestions
+
+
+def _gather_recent_decisions(docs_dir: Path, threshold_date) -> "list[dict]":
+    """Collect decision entries from docs/decisions.md + branch files
+    that fall within the threshold window.
+
+    Each entry is parsed by '## ' header boundaries. Returns list of
+    ``{file, header, body}``. The decision-file mtime is used as a
+    coarse window filter when entries don't carry their own dates.
+    """
+    import datetime as _dt
+    entries: "list[dict]" = []
+    candidates: "list[Path]" = []
+    main = docs_dir / "decisions.md"
+    if main.exists():
+        candidates.append(main)
+    branches = docs_dir / "decisions-branches"
+    if branches.is_dir():
+        candidates.extend(sorted(branches.glob("*.md")))
+
+    for path in candidates:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        rel = path.name
+        try:
+            file_mtime = _dt.date.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            file_mtime = None
+
+        parts = re.split(r"\n## ", text)
+        for i, part in enumerate(parts):
+            if not part.strip():
+                continue
+            if i == 0 and not part.startswith("## "):
+                continue
+            header_end = part.find("\n")
+            header = part[:header_end].strip() if header_end != -1 else part.strip()
+            body = part[header_end:].strip() if header_end != -1 else ""
+
+            # v0.6.5 PR #101 review fix: filter at the ENTRY level, not
+            # the file level. decisions.md is appended on every log call,
+            # so its mtime is always today — file-mtime filtering would
+            # leak every decision ever logged in any active repo.
+            entry_date = _extract_entry_date(body)
+            if entry_date is None:
+                # No date on this entry. Fall back to file mtime as a
+                # coarse window — but only for branch files. decisions.md
+                # without dates is too ambiguous (could be entries from
+                # months ago); skip them rather than include everything.
+                if rel == "decisions.md":
+                    continue
+                if file_mtime is None or file_mtime < threshold_date:
+                    continue
+            elif entry_date < threshold_date:
+                continue
+
+            entries.append({
+                "file": rel,
+                "header": header,
+                "body": body,
+            })
+    return entries
+
+
+# Match "**Date**: YYYY-MM-DD" or "Date: YYYY-MM-DD" in decision-entry
+# bodies. logmind's `log` writes the **Date** line; older entries may
+# use the bare form. Both anchored to start-of-line.
+_ENTRY_DATE_RE = re.compile(
+    r"^\s*\*{0,2}Date\*{0,2}\s*:\s*(\d{4}-\d{2}-\d{2})",
+    re.MULTILINE,
+)
+
+
+def _extract_entry_date(body: str):
+    """Pull an ISO date out of a decision-entry body, or None if absent."""
+    import datetime as _dt
+    m = _ENTRY_DATE_RE.search(body)
+    if not m:
+        return None
+    try:
+        return _dt.date.fromisoformat(m.group(1))
+    except (ValueError, TypeError):
+        return None
+
+
+def _excerpt_around(text: str, idx: int, *, width: int = 80) -> str:
+    """Return a short readable snippet around position ``idx``."""
+    start = max(0, idx - width // 2)
+    end = min(len(text), idx + width // 2)
+    snippet = text[start:end].replace("\n", " ").strip()
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(text):
+        snippet = snippet + "…"
+    return snippet
+
+
+def _kebab_slug(token: str) -> str:
+    """Normalize a token to a kebab-case slug suitable for skill names.
+
+    Examples:
+      - "api-versioning" → "api-versioning"
+      - "PostgreSQL" → "postgresql"
+      - "JWT" → "jwt"
+      - "snake_case_name" → "snake-case-name"
+      - "PascalCaseClass" → "pascal-case-class"
+    """
+    spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", "-", token)
+    spaced = spaced.replace("_", "-")
+    slug = re.sub(r"-+", "-", spaced.lower()).strip("-")
+    return slug
+
+
+def format_suggest_issue_draft(suggestion: dict) -> str:
+    """Render one suggestion as a pre-filled GH-issue body matching
+    agent-skills/.github/ISSUE_TEMPLATE/new-skill.yml.
+
+    Output is markdown the user can paste into a GH issue body. The
+    fields match the agent-skills template form so the human can
+    paste directly.
+    """
+    evidence_lines = "\n".join(
+        f"- `{e['file']}`: {e['snippet']}" for e in suggestion["evidence"]
+    )
+    return (
+        f"## New skill proposal: {suggestion['slug']}\n"
+        f"\n"
+        f"### Slug\n"
+        f"`{suggestion['slug']}`\n"
+        f"\n"
+        f"### Trigger\n"
+        f"When working on `{suggestion['phrase']}` — pattern emerged in "
+        f"{suggestion['decision_count']} recent decisions.\n"
+        f"\n"
+        f"### Evidence (auto-extracted from decision log)\n"
+        f"{evidence_lines}\n"
+        f"\n"
+        f"### Draft frontmatter description\n"
+        f"{suggestion['draft_description']}\n"
+        f"\n"
+        f"### Review mode\n"
+        f"`critical-only` (default — adjust if needed)\n"
+        f"\n"
+        f"### Scope\n"
+        f"_(choose: cross-repo catalog vs single-repo custom)_\n"
+        f"\n"
+        f"### Applies to\n"
+        f"_(globs — leave blank for repo-wide)_\n"
+        f"\n"
+        f"---\n"
+        f"\n"
+        f"_Generated by `logmind skill suggest`. Auto-extracted patterns "
+        f"are heuristic — please review evidence and refine before opening._"
+    )

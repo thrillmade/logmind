@@ -802,3 +802,310 @@ def test_skill_audit_cli_json(tmp_path: Path):
     assert len(data) == 1
     assert data[0]["name"] == "zeta"
     assert "status" in data[0]
+
+
+# ---------------------------------------------------------------------------
+# v0.6.5 — suggest_skills_from_decisions / format_suggest_issue_draft / CLI
+# ---------------------------------------------------------------------------
+
+
+def _suggest_helpers():
+    from logmind.core.skill_cli import (
+        suggest_skills_from_decisions,
+        format_suggest_issue_draft,
+        _kebab_slug,
+    )
+    return suggest_skills_from_decisions, format_suggest_issue_draft, _kebab_slug
+
+
+def _seed_decisions(tmp_path: Path, content_by_file: dict) -> None:
+    """Helper: write docs/decisions.md + branch files.
+
+    Auto-stamps each `## ` entry with a today-dated **Date** line so
+    entries pass the v0.6.5 PR #101 entry-level date filter.
+    """
+    import datetime as _dt
+    import re as _re
+    today = _dt.date.today().isoformat()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    def _stamp(text: str) -> str:
+        # Insert a "**Date**: <today>" line after every `## ` header
+        # that doesn't already carry one.
+        def repl(m):
+            entry = m.group(0)
+            if "Date:" in entry:
+                return entry
+            # Header line is the `## ...\n` matched; append date after.
+            return entry + f"**Date**: {today}\n"
+        return _re.sub(r"^## .+\n", repl, text, flags=_re.MULTILINE)
+
+    for name, content in content_by_file.items():
+        stamped = _stamp(content)
+        if "/" in name:
+            sub, fname = name.split("/", 1)
+            d = docs / sub
+            d.mkdir(exist_ok=True)
+            (d / fname).write_text(stamped, encoding="utf-8")
+        else:
+            (docs / name).write_text(stamped, encoding="utf-8")
+
+
+def test_suggest_no_docs_returns_empty(tmp_path: Path):
+    suggest, _, _ = _suggest_helpers()
+    assert suggest(tmp_path) == []
+
+
+def test_suggest_finds_repeated_kebab_case_pattern(tmp_path: Path):
+    suggest, _, _ = _suggest_helpers()
+    _seed_decisions(tmp_path, {
+        "decisions.md": (
+            "# Decisions\n\n"
+            "## D1\nbody mentions api-versioning here.\n\n"
+            "## D2\nrationale for api-versioning across services.\n\n"
+            "## D3\nshipped api-versioning module.\n\n"
+            "## D4\ncompletely unrelated content.\n"
+        ),
+    })
+    out = suggest(tmp_path, min_decisions=3)
+    slugs = [s["slug"] for s in out]
+    assert "api-versioning" in slugs
+    api_sug = next(s for s in out if s["slug"] == "api-versioning")
+    assert api_sug["decision_count"] == 3
+    assert len(api_sug["evidence"]) == 3
+
+
+def test_suggest_excludes_existing_skill(tmp_path: Path):
+    """If a skill named 'api-versioning' already exists, don't propose it."""
+    suggest, _, _ = _suggest_helpers()
+    _seed_decisions(tmp_path, {
+        "decisions.md": (
+            "# Decisions\n\n"
+            "## D1\nmention api-versioning.\n\n"
+            "## D2\nmention api-versioning.\n\n"
+            "## D3\nmention api-versioning.\n"
+        ),
+    })
+    skill_dir = tmp_path / ".claude" / "skills" / "api-versioning"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: api-versioning\ndescription: x\n---\n", encoding="utf-8")
+    out = suggest(tmp_path, min_decisions=3)
+    slugs = [s["slug"] for s in out]
+    assert "api-versioning" not in slugs
+
+
+def test_suggest_filters_stopwords(tmp_path: Path):
+    """Stop words like 'use' / 'main' must never surface as suggestions."""
+    suggest, _, _ = _suggest_helpers()
+    _seed_decisions(tmp_path, {
+        "decisions.md": (
+            "# Decisions\n\n"
+            "## D1\nused main and want use main again.\n\n"
+            "## D2\nuse main approach.\n\n"
+            "## D3\nuse main pattern.\n"
+        ),
+    })
+    out = suggest(tmp_path, min_decisions=3)
+    assert all(s["slug"] not in {"use", "used", "main"} for s in out)
+
+
+def test_suggest_respects_min_decisions(tmp_path: Path):
+    suggest, _, _ = _suggest_helpers()
+    _seed_decisions(tmp_path, {
+        "decisions.md": (
+            "# Decisions\n\n"
+            "## D1\nrate-limiting concern.\n\n"
+            "## D2\nrate-limiting again.\n"
+        ),
+    })
+    out = suggest(tmp_path, min_decisions=3)
+    assert all(s["slug"] != "rate-limiting" for s in out)
+    out_lower = suggest(tmp_path, min_decisions=2)
+    slugs = [s["slug"] for s in out_lower]
+    assert "rate-limiting" in slugs
+
+
+def test_suggest_dedupes_within_single_entry(tmp_path: Path):
+    """Mentioning a token 5 times in one decision = 1 entry-citation."""
+    suggest, _, _ = _suggest_helpers()
+    _seed_decisions(tmp_path, {
+        "decisions.md": (
+            "# Decisions\n\n"
+            "## D1\napi-versioning api-versioning api-versioning api-versioning.\n\n"
+            "## D2\napi-versioning once.\n"
+        ),
+    })
+    out = suggest(tmp_path, min_decisions=2)
+    api = next((s for s in out if s["slug"] == "api-versioning"), None)
+    assert api is not None
+    assert api["decision_count"] == 2  # NOT 5+
+
+
+def test_suggest_combines_main_and_branch_files(tmp_path: Path):
+    suggest, _, _ = _suggest_helpers()
+    _seed_decisions(tmp_path, {
+        "decisions.md": "# D\n\n## D1\nrate-limiting one.\n",
+        "decisions-branches/feat__x.md": "# Branch\n\n## A\nrate-limiting two.\n",
+        "decisions-branches/feat__y.md": "# Branch\n\n## B\nrate-limiting three.\n",
+    })
+    out = suggest(tmp_path, min_decisions=3)
+    slugs = [s["slug"] for s in out]
+    assert "rate-limiting" in slugs
+
+
+def test_kebab_slug():
+    _, _, _kebab_slug = _suggest_helpers()
+    assert _kebab_slug("api-versioning") == "api-versioning"
+    # "PostgreSQL" splits at lowercase→Uppercase boundary → postgre-sql.
+    # Not as pretty as "postgresql" but a reasonable, deterministic slug.
+    assert _kebab_slug("PostgreSQL") == "postgre-sql"
+    assert _kebab_slug("JWT") == "jwt"
+    assert _kebab_slug("snake_case_name") == "snake-case-name"
+    assert _kebab_slug("PascalCaseClass") == "pascal-case-class"
+
+
+def test_format_suggest_issue_draft_includes_all_fields():
+    _, format_draft, _ = _suggest_helpers()
+    sug = {
+        "phrase": "api-versioning",
+        "slug": "api-versioning",
+        "decision_count": 3,
+        "evidence": [
+            {"file": "decisions.md", "snippet": "…body mentions api-versioning here…"},
+        ],
+        "draft_description": "When working on api-versioning, ...",
+    }
+    body = format_draft(sug)
+    assert "api-versioning" in body
+    assert "Evidence" in body
+    assert "decisions.md" in body
+    assert "critical-only" in body
+    assert "Generated by `logmind skill suggest`" in body
+
+
+def _today_stamp() -> str:
+    """ISO 'today' string for inline test fixtures (matches _seed_decisions)."""
+    import datetime as _dt
+    return _dt.date.today().isoformat()
+
+
+def test_skill_suggest_cli_no_patterns(tmp_path: Path):
+    """Empty decision log → friendly message + exit 0."""
+    today = _today_stamp()
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as fs:
+        (Path(fs) / "docs").mkdir()
+        (Path(fs) / "docs" / "decisions.md").write_text(
+            f"# Decisions\n\n## one\n**Date**: {today}\nnothing useful here.\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli_main, ["skill", "suggest"])
+    assert result.exit_code == 0
+    assert "No skill-proposal patterns" in result.output
+
+
+def test_skill_suggest_cli_emits_pattern_list(tmp_path: Path):
+    today = _today_stamp()
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as fs:
+        (Path(fs) / "docs").mkdir()
+        (Path(fs) / "docs" / "decisions.md").write_text(
+            "# Decisions\n\n"
+            f"## D1\n**Date**: {today}\napi-versioning needed.\n\n"
+            f"## D2\n**Date**: {today}\napi-versioning revisited.\n\n"
+            f"## D3\n**Date**: {today}\napi-versioning shipped.\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli_main, ["skill", "suggest"])
+    assert result.exit_code == 0, result.output
+    assert "api-versioning" in result.output
+    assert "Pattern A" in result.output
+
+
+def test_skill_suggest_cli_write_drafts(tmp_path: Path):
+    """--write-drafts writes one .md file per suggestion."""
+    today = _today_stamp()
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as fs:
+        repo = Path(fs)
+        (repo / "docs").mkdir()
+        (repo / "docs" / "decisions.md").write_text(
+            "# Decisions\n\n"
+            f"## D1\n**Date**: {today}\nrate-limiting concern.\n\n"
+            f"## D2\n**Date**: {today}\nrate-limiting fix.\n\n"
+            f"## D3\n**Date**: {today}\nrate-limiting test.\n",
+            encoding="utf-8",
+        )
+        drafts_dir = repo / "drafts"
+        result = runner.invoke(
+            cli_main,
+            ["skill", "suggest", "--write-drafts", str(drafts_dir)],
+        )
+        assert result.exit_code == 0, result.output
+        draft_files = list(drafts_dir.glob("skill-proposal-*.md"))
+        assert len(draft_files) >= 1
+        content = draft_files[0].read_text(encoding="utf-8")
+        assert "rate-limiting" in content
+
+
+def test_skill_suggest_cli_rejects_bad_since(tmp_path: Path):
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)):
+        result = runner.invoke(cli_main, ["skill", "suggest", "--since", "garbage"])
+    assert result.exit_code == 1
+    assert "--since must be" in result.output
+
+
+def test_suggest_filters_entries_by_entry_date_not_file_mtime(tmp_path: Path):
+    """PR #101 review fix: --since must filter by per-entry **Date** stamp,
+    not by file mtime. decisions.md is appended on every `logmind log` so
+    its mtime is always today — file-mtime filtering would leak every
+    decision ever logged.
+    """
+    suggest, _, _ = _suggest_helpers()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    # Write decisions.md with one OLD entry + one RECENT entry. Both
+    # mention the same pattern.
+    (docs / "decisions.md").write_text(
+        "# Decisions\n\n"
+        "## old\n**Date**: 2020-01-01\nrate-limiting old reference.\n\n"
+        "## recent-1\n**Date**: 2026-05-30\nrate-limiting recent one.\n\n"
+        "## recent-2\n**Date**: 2026-05-31\nrate-limiting recent two.\n",
+        encoding="utf-8",
+    )
+    # With --since 30d, only the 2 recent decisions should count.
+    # Threshold of min_decisions=3 should NOT surface the pattern,
+    # because the old entry is filtered out by date.
+    import datetime as _dt
+    # Use a fixed `since_days` that's recent enough to exclude the 2020
+    # entry but include the 2026-05-* entries.
+    days_since_recent = (_dt.date.today() - _dt.date(2026, 5, 30)).days + 5
+    out = suggest(tmp_path, since_days=days_since_recent, min_decisions=3)
+    assert all(s["slug"] != "rate-limiting" for s in out), (
+        "--since must filter by entry date; old entry should not count"
+    )
+    # With min_decisions=2, the two recent entries qualify.
+    out_lower = suggest(tmp_path, since_days=days_since_recent, min_decisions=2)
+    slugs = [s["slug"] for s in out_lower]
+    assert "rate-limiting" in slugs
+
+
+def test_suggest_skips_undated_entries_in_decisions_md(tmp_path: Path):
+    """Undated entries in decisions.md should be excluded — without a
+    date, we can't tell if they're recent or ancient. Branch files
+    can fall back to file mtime since branches are typically scoped.
+    """
+    suggest, _, _ = _suggest_helpers()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text(
+        "# Decisions\n\n"
+        "## no-date-1\nrate-limiting first undated.\n\n"
+        "## no-date-2\nrate-limiting second undated.\n\n"
+        "## no-date-3\nrate-limiting third undated.\n",
+        encoding="utf-8",
+    )
+    out = suggest(tmp_path, min_decisions=3)
+    assert all(s["slug"] != "rate-limiting" for s in out)

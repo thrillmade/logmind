@@ -110,7 +110,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.4", prog_name="logmind")
+@click.version_option(version="0.6.5", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -2128,6 +2128,132 @@ def skill_audit(as_json: bool):
 
     summary = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
     _ok(f"skill: audit {len(rows)} skill{'s' if len(rows) != 1 else ''} ({summary})")
+
+
+# v0.6.5 — `logmind skill suggest` (HUMAN-initiated pattern detection).
+@skill.command("suggest")
+@click.option(
+    "--since",
+    default="30d",
+    help="Lookback window for decision-log scan (e.g., 7d, 30d, 90d).",
+)
+@click.option(
+    "--min-decisions",
+    default=3,
+    type=int,
+    help="Minimum # distinct decisions a pattern must appear in to surface.",
+)
+@click.option(
+    "--top",
+    "top_n",
+    default=5,
+    type=int,
+    help="Maximum # suggestions to emit.",
+)
+@click.option(
+    "--write-drafts",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Write each suggestion's pre-filled GH-issue body to this directory.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit machine-readable JSON instead of the human-readable list.",
+)
+def skill_suggest(since: str, min_decisions: int, top_n: int, write_drafts, as_json: bool):
+    """Scan recent decisions for repeated patterns that might justify a new skill.
+
+    The killed-Stream-9 replacement: HUMAN-INITIATED. This command never
+    auto-creates skills, opens PRs, or creates issues. It emits a
+    pre-filled GH-issue draft (matching the agent-skills new-skill
+    template) for each surfaced pattern. The human reads, decides,
+    and either opens the issue or discards.
+
+    Pattern detection is heuristic:
+      - Tokenize decision-log entries into kebab-case / PascalCase /
+        ACRONYM / snake_case identifiers.
+      - Filter stop words + generic structural terms.
+      - Surface tokens appearing in ≥--min-decisions distinct entries.
+      - Drop tokens that match an existing skill name.
+
+    Examples:
+      logmind skill suggest                          # default: --since 30d
+      logmind skill suggest --since 7d --top 10
+      logmind skill suggest --write-drafts /tmp/skill-proposals/
+    """
+    from logmind.core.skill_cli import (
+        suggest_skills_from_decisions,
+        format_suggest_issue_draft,
+    )
+
+    # Parse --since into days. Accept Nd / Nw / Nm / Ny like other commands.
+    m = __import__("re").match(r"^(\d+)([dwmy])$", since)
+    if not m:
+        click.secho(
+            f"Error: --since must be of the form Nd / Nw / Nm / Ny (got '{since}')",
+            fg="red",
+        )
+        sys.exit(1)
+    n = int(m.group(1))
+    days = {"d": n, "w": n * 7, "m": n * 30, "y": n * 365}[m.group(2)]
+
+    repo_root = Path.cwd()
+    suggestions = suggest_skills_from_decisions(
+        repo_root,
+        since_days=days,
+        min_decisions=min_decisions,
+        top_n=top_n,
+    )
+
+    if as_json:
+        import json
+        click.echo(json.dumps(suggestions, indent=2))
+        return
+
+    if not suggestions:
+        click.echo(
+            f"No skill-proposal patterns found in the last {since} "
+            f"(threshold: ≥{min_decisions} distinct decisions). "
+            f"Try lowering --min-decisions or widening --since."
+        )
+        _ok("skill: suggest 0 patterns")
+        return
+
+    click.echo(f"Found {len(suggestions)} pattern{'s' if len(suggestions) != 1 else ''} in the last {since}:\n")
+    for i, sug in enumerate(suggestions, 1):
+        click.secho(
+            f"Pattern {chr(64 + i)} (cited in {sug['decision_count']} decisions):",
+            bold=True,
+        )
+        click.echo(f"  suggested-slug: {sug['slug']}")
+        click.echo(f"  phrase: {sug['phrase']}")
+        # v0.6.5 PR #101 review fix: label + slice were inconsistent
+        # ("first 5" header with only 3 rows below). Cap both at the
+        # same value so the count always matches the display.
+        evidence_shown = sug["evidence"][:3]
+        click.echo(
+            f"  evidence (showing {len(evidence_shown)} of {len(sug['evidence'])}):"
+        )
+        for e in evidence_shown:
+            click.echo(f"    - {e['file']}: {e['snippet']}")
+        click.echo()
+
+    if write_drafts:
+        out_dir = Path(write_drafts)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for sug in suggestions:
+            draft_path = out_dir / f"skill-proposal-{sug['slug']}.md"
+            draft_path.write_text(format_suggest_issue_draft(sug), encoding="utf-8")
+        click.echo(f"⮕ Pre-filled drafts written to {out_dir}/ ({len(suggestions)} files)")
+    else:
+        click.echo(
+            "Tip: pass --write-drafts <dir> to save pre-filled GH-issue bodies "
+            "to disk for review + paste."
+        )
+
+    _ok(f"skill: suggest {len(suggestions)} pattern{'s' if len(suggestions) != 1 else ''}")
 
 
 # Config command group

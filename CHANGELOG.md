@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-06-01
+
+### Added — `logmind skill suggest` (Stream 6 follow-on, killed-Stream-9 replacement)
+
+Human-initiated pattern detection that scans recent decision-log
+entries for tokens appearing across many distinct decisions — a
+heuristic signal that "we keep talking about X, maybe X should have
+its own skill." Output is a pre-filled GH-issue draft matching
+agent-skills's `new-skill.yml` template. The human reads, decides,
+opens (or discards).
+
+**Never auto-PR. Never auto-create a skill.** The whole point of the
+pragmatic SkDD pivot (2026-05-30) is that humans gate skill lifecycle.
+
+#### Detection heuristics
+
+- Tokenize decision entries into kebab-case / PascalCase / acronym /
+  snake_case identifiers (regex: `_INTERESTING_TOKEN_RE`).
+- Filter stop words + generic structural terms (`_SUGGEST_STOPWORDS`).
+- Count distinct-decision occurrences (a token mentioned 5x in one
+  decision = 1 entry, not 5).
+- Drop tokens that match an existing skill name (already covered).
+- Rank by # distinct decisions; cap at `--top` results.
+
+#### CLI surface
+
+- `logmind skill suggest` — scan last 30 days, ≥3 decisions, top 5.
+- `logmind skill suggest --since 7d --top 10`
+- `logmind skill suggest --min-decisions 5` — tighter signal
+- `logmind skill suggest --write-drafts /tmp/proposals/` — write each
+  suggestion's pre-filled GH-issue body to a `.md` file
+- `logmind skill suggest --json` — machine-readable output
+
+#### Implementation
+
+- `src/logmind/core/skill_cli.py`:
+  - `suggest_skills_from_decisions(repo_root, since_days, min_decisions, top_n)`
+    — returns ranked suggestions
+  - `format_suggest_issue_draft(suggestion)` — renders one suggestion
+    as the pre-filled GH-issue markdown body
+  - `_gather_recent_decisions`, `_excerpt_around`, `_kebab_slug` —
+    internal helpers
+- `src/logmind/cli.py`: `@skill.command("suggest")` with `--since`,
+  `--min-decisions`, `--top`, `--write-drafts`, `--json`.
+- `tests/test_skill_cli.py`: 14 new tests (kebab-case detection,
+  stopword filter, existing-skill exclusion, threshold semantics,
+  intra-entry dedup, main + branch file aggregation, slug
+  normalization, draft formatting, CLI rendering, JSON output,
+  --write-drafts, bad --since validation).
+
 ## [0.6.4] - 2026-06-01
 
 ### Added — `logmind skill audit` (Stream 6 follow-on)
