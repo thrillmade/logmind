@@ -116,6 +116,33 @@ def test_init_with_skdd_warns_when_npx_exits_nonzero(tmp_path: Path, monkeypatch
     assert "exited 7" in result.output or "warning" in result.output.lower()
 
 
+def test_init_with_skdd_warns_when_npx_times_out(tmp_path: Path, monkeypatch):
+    """PR #106 regression guard: subprocess.TimeoutExpired must be caught.
+    Before the fix, npx had no timeout AND no except for TimeoutExpired,
+    so a slow npm registry could block init forever with no recovery.
+    """
+    monkeypatch.chdir(tmp_path)
+    real_run = subprocess.run
+
+    def selective_run(cmd, *a, **kw):
+        if isinstance(cmd, list) and cmd and cmd[0] == "npx":
+            # Verify the implementation passed timeout=, then raise the
+            # exception the implementation should catch.
+            assert "timeout" in kw, "npx invocation must include timeout="
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+        return real_run(cmd, *a, **kw)
+
+    with patch("logmind.cli.subprocess.run", side_effect=selective_run), \
+         patch("logmind.cli.shutil.which", return_value="/usr/bin/npx"):
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_main,
+            ["init", "--no-git", "--no-skill-install", "--with-skdd"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "timed out" in result.output.lower()
+
+
 def test_init_with_skdd_warns_when_npx_raises_oserror(tmp_path: Path, monkeypatch):
     """Defensive: if subprocess raises OSError (e.g., permission error)
     when invoking npx, catch + warn + still succeed.

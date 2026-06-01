@@ -143,10 +143,18 @@ def _install_skdd_via_npx() -> None:
         "→ --with-skdd: installing clud-bug (npx --yes clud-bug@latest init)",
         fg="cyan",
     )
+    # 5-minute ceiling: npm package install + clud-bug init typically
+    # complete in 30-60s. 5 minutes is generous enough to absorb cold
+    # caches + slow networks; past that, the user is better off bailing
+    # and re-running manually rather than blocking init forever.
+    # PR #106 review fix: SkDD was previously missing both timeout=
+    # and the TimeoutExpired catch — npm registry hiccup = infinite hang.
+    NPX_TIMEOUT_SECONDS = 5 * 60
     try:
         result = subprocess.run(
             ["npx", "--yes", "clud-bug@latest", "init"],
             check=False,
+            timeout=NPX_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
             click.secho(
@@ -157,6 +165,14 @@ def _install_skdd_via_npx() -> None:
             )
         else:
             click.secho("✓ clud-bug installed via --with-skdd", fg="green")
+    except subprocess.TimeoutExpired:
+        click.secho(
+            f"Warning: `npx clud-bug init` timed out after "
+            f"{NPX_TIMEOUT_SECONDS}s (slow npm registry or hung subprocess). "
+            f"logmind side succeeded. Re-run `npx --yes clud-bug@latest init` "
+            f"manually to complete the SkDD bundle install.",
+            fg="yellow",
+        )
     except (FileNotFoundError, OSError) as e:
         click.secho(
             f"Warning: --with-skdd subprocess failed: {e}. "

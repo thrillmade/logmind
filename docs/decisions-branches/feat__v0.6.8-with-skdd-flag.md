@@ -18,3 +18,11 @@
 - Selective mock pattern: intercept only when cmd[0] == 'npx', delegate everything else to real subprocess.run. Standard test isolation that should have been the original implementation
 
 ---
+## 2026-06-01 14:23 - v0.6.8 fix: 5-min timeout on npx subprocess + catch TimeoutExpired (PR #106)
+
+**Reasoning:** clud-bug-review caught: subprocess.run had no timeout= AND the except clause didn't catch TimeoutExpired. Slow/down npm registry could block logmind init indefinitely with no recovery. Added NPX_TIMEOUT_SECONDS = 5*60 (generous for cold caches + slow networks) + dedicated TimeoutExpired handler with a clear recovery message
+
+**Implications:**
+- Regression test asserts timeout= is actually passed to subprocess.run + that TimeoutExpired surfaces the right warning. Mirrors v0.6.5's --since fix pattern (don't trust kwargs, verify they thread through)
+
+---

@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (12 decisions)
+## 2026-06 (13 decisions)
 
-- **2026-06-01** — v0.6.8 fix: selective subprocess mock in tests (Windows OSError 22) *(feat/v0.6.8-with-skdd-flag)* — [decisions-branches/feat__v0.6.8-with-skdd-flag.md](decisions-branches/feat__v0.6.8-with-skdd-flag.md)
-- *... 10 more decisions ...*
+- **2026-06-01** — v0.6.8 fix: 5-min timeout on npx subprocess + catch TimeoutExpired (PR #106) *(feat/v0.6.8-with-skdd-flag)* — [decisions-branches/feat__v0.6.8-with-skdd-flag.md](decisions-branches/feat__v0.6.8-with-skdd-flag.md)
+- *... 11 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
