@@ -135,14 +135,19 @@ _POST_MERGE_HOOK_BODY = """#!/bin/sh
 # the merged-in branch's docs/decisions-branches/<branch>.md) are
 # checked out. This hook runs once at the end and sweeps any incomplete
 # regenerations.
+#
+# v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook
+# auto-staged docs/timeline.md + docs/file-structure.md, but the
+# staged-but-uncommitted files then blocked `git checkout main` on
+# every PR cycle (post-merge fires from `git pull --rebase` after a
+# squash merge — there's no commit being constructed, so staging was
+# wrong). Leaving them as unstaged modifications lets the next
+# `logmind log` pick them up cleanly without blocking branch switches.
 
 if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
   if [ -d docs ]; then
     logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
     logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
-    # Stage the regens if they changed anything; user can `git commit --amend`
-    # or include in their next commit.
-    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true
   fi
 fi
 """
