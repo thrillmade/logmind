@@ -631,3 +631,174 @@ def test_skill_bench_cli_missing_skill_exits_1(tmp_path: Path):
         result = runner.invoke(cli_main, ["skill", "bench", "does-not-exist"])
     assert result.exit_code == 1
     assert "not found" in result.output
+
+
+# ---------------------------------------------------------------------------
+# v0.6.4 — audit_skills / classify_audit_row / `logmind skill audit` CLI
+# ---------------------------------------------------------------------------
+
+
+def _audit_helpers():
+    from logmind.core.skill_cli import audit_skills, classify_audit_row
+    return audit_skills, classify_audit_row
+
+
+def _git_init_with_skill(tmp_path: Path, name: str, content: str) -> Path:
+    """Helper: init a git repo with one SKILL.md committed."""
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=tmp_path, check=True)
+    skill_dir = tmp_path / ".claude" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    return skill_dir / "SKILL.md"
+
+
+def test_audit_skills_no_directory_returns_empty(tmp_path: Path):
+    audit_skills, _ = _audit_helpers()
+    out = audit_skills(tmp_path)
+    assert out == []
+
+
+def test_audit_skills_empty_directory_returns_empty(tmp_path: Path):
+    (tmp_path / ".claude" / "skills").mkdir(parents=True)
+    audit_skills, _ = _audit_helpers()
+    assert audit_skills(tmp_path) == []
+
+
+def test_audit_skills_reports_each_skill(tmp_path: Path):
+    audit_skills, _ = _audit_helpers()
+    _git_init_with_skill(
+        tmp_path, "alpha", "---\nname: alpha\ndescription: a\n---\nbody\n"
+    )
+    second = tmp_path / ".claude" / "skills" / "beta"
+    second.mkdir(parents=True)
+    (second / "SKILL.md").write_text(
+        "---\nname: beta\ndescription: b\n---\nbody\n", encoding="utf-8"
+    )
+    out = audit_skills(tmp_path)
+    names = sorted(r["name"] for r in out)
+    assert names == ["alpha", "beta"]
+    for row in out:
+        assert "bytes" in row
+        assert "last_modified" in row
+        assert "decision_count" in row
+        assert row["bytes"] > 0
+
+
+def test_audit_skills_counts_decision_mentions(tmp_path: Path):
+    """Skill name appearing in docs/decisions.md → decision_count > 0."""
+    audit_skills, _ = _audit_helpers()
+    _git_init_with_skill(
+        tmp_path, "gamma", "---\nname: gamma\ndescription: g\n---\nbody\n"
+    )
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "decisions.md").write_text(
+        "## Decision 1\nUsed gamma for X.\n\n## Decision 2\ngamma iterated.\n",
+        encoding="utf-8",
+    )
+    out = audit_skills(tmp_path)
+    row = next(r for r in out if r["name"] == "gamma")
+    assert row["decision_count"] == 2
+
+
+def test_audit_skills_includes_decision_branches(tmp_path: Path):
+    """Branch decision files under docs/decisions-branches/ also counted."""
+    audit_skills, _ = _audit_helpers()
+    _git_init_with_skill(
+        tmp_path, "delta", "---\nname: delta\ndescription: d\n---\nbody\n"
+    )
+    branches = tmp_path / "docs" / "decisions-branches"
+    branches.mkdir(parents=True)
+    (branches / "feat__x.md").write_text("delta was extended.\n", encoding="utf-8")
+    (branches / "feat__y.md").write_text("delta refactored.\n", encoding="utf-8")
+    out = audit_skills(tmp_path)
+    row = next(r for r in out if r["name"] == "delta")
+    assert row["decision_count"] == 2
+
+
+def test_classify_audit_row_active():
+    _, classify_audit_row = _audit_helpers()
+    import datetime as _dt
+    today = _dt.date(2026, 6, 1)
+    row = {"bytes": 1500, "decision_count": 2, "last_modified": "2026-05-15"}
+    assert classify_audit_row(row, now=today) == "active"
+
+
+def test_classify_audit_row_ghost():
+    """Big skill with no decision-log mentions = ghost."""
+    _, classify_audit_row = _audit_helpers()
+    import datetime as _dt
+    today = _dt.date(2026, 6, 1)
+    row = {"bytes": 5000, "decision_count": 0, "last_modified": "2026-05-15"}
+    assert classify_audit_row(row, now=today) == "ghost"
+
+
+def test_classify_audit_row_aging():
+    """Last touched > 90 days = aging (even with decisions + small)."""
+    _, classify_audit_row = _audit_helpers()
+    import datetime as _dt
+    today = _dt.date(2026, 6, 1)
+    row = {"bytes": 500, "decision_count": 5, "last_modified": "2026-01-01"}
+    assert classify_audit_row(row, now=today) == "aging"
+
+
+def test_classify_audit_row_small_no_decisions_is_active():
+    """Tight skill with no decisions = active (could be new or just simple)."""
+    _, classify_audit_row = _audit_helpers()
+    import datetime as _dt
+    today = _dt.date(2026, 6, 1)
+    row = {"bytes": 500, "decision_count": 0, "last_modified": "2026-05-30"}
+    assert classify_audit_row(row, now=today) == "active"
+
+
+def test_classify_audit_row_handles_invalid_date():
+    _, classify_audit_row = _audit_helpers()
+    row = {"bytes": 500, "decision_count": 1, "last_modified": "not-a-date"}
+    assert classify_audit_row(row) == "active"
+
+
+def test_skill_audit_cli_no_skills(tmp_path: Path):
+    """No .claude/skills/ → friendly message + exit 0."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)):
+        result = runner.invoke(cli_main, ["skill", "audit"])
+    assert result.exit_code == 0
+    assert "No skills found" in result.output
+
+
+def test_skill_audit_cli_renders_table(tmp_path: Path):
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as fs:
+        from pathlib import Path as _P
+        repo = _P(fs)
+        _git_init_with_skill(
+            repo, "epsilon", "---\nname: epsilon\ndescription: e\n---\nbody\n"
+        )
+        result = runner.invoke(cli_main, ["skill", "audit"])
+    assert result.exit_code == 0, result.output
+    assert "epsilon" in result.output
+    assert "skill: audit 1 skill" in result.output
+
+
+def test_skill_audit_cli_json(tmp_path: Path):
+    """--json emits a parseable JSON array."""
+    import json
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as fs:
+        from pathlib import Path as _P
+        repo = _P(fs)
+        _git_init_with_skill(
+            repo, "zeta", "---\nname: zeta\ndescription: z\n---\nbody\n"
+        )
+        result = runner.invoke(cli_main, ["skill", "audit", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = result.output.split("ok ")[0].strip()
+    data = json.loads(payload)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["name"] == "zeta"
+    assert "status" in data[0]

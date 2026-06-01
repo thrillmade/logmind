@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-06-01
+
+### Added — `logmind skill audit` (Stream 6 follow-on)
+
+Author's-side staleness read for every SKILL.md in `.claude/skills/`.
+Pairs with clud-bug's `usage --health` (the enforcement read) for a
+complete picture of skill lifecycle:
+
+- **audit**: what's HERE, how big, last-touched, decision-log mention
+  count, and a deterministic status (`active` / `aging` / `ghost`).
+- **usage --health**: which skills earn their context budget (loads
+  vs. citations from real review runs).
+
+#### Status thresholds
+
+- **ghost**: `decision_count == 0` AND `bytes > 2000` — loaded into
+  every context but author never iterates; candidate for usage-side
+  confirmation + archive.
+- **aging**: last-modified > 90 days ago — was useful once, hasn't
+  been touched in a quarter.
+- **active**: otherwise.
+
+#### CLI surface
+
+- `logmind skill audit` — human-readable table sorted by skill name
+  with `name`, `status`, `bytes`, `decisions`, `last touched`. Summary
+  line: `ok skill: audit 7 skills (3 active, 2 aging, 2 ghost)`.
+- `logmind skill audit --json` — machine-readable array per skill,
+  status enriched.
+
+#### Implementation
+
+- `src/logmind/core/skill_cli.py`: `audit_skills(repo_root)` walks
+  `.claude/skills/*/SKILL.md`, counts decision-log mentions across
+  `docs/decisions.md` + `docs/decisions-branches/*.md`, prefers
+  `git log -1 --format=%cs --` for `last_modified` (falls back to
+  file mtime). `classify_audit_row(row, now=)` applies thresholds;
+  injectable `now` for testability.
+- `src/logmind/cli.py`: `@skill.command("audit")` wiring.
+- `tests/test_skill_cli.py`: 13 new tests covering directory walking,
+  decision counting (incl. branch decision files), every status
+  bucket, CLI rendering, JSON output, edge cases (no skills, empty
+  directory, invalid date).
+
 ## [0.6.3] - 2026-06-01
 
 ### Added — `logmind skill bench <name>` (Stream 6 follow-on)

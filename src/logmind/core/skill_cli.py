@@ -421,3 +421,126 @@ def bench_skill(
             content, sections_raw, total, target=target, budget=budget
         ),
     }
+
+
+# v0.6.4 — `logmind skill audit`. Author's-side staleness read for every
+# SKILL.md in `.claude/skills/`. Pairs with clud-bug `usage --health`:
+#
+#   audit:    What's HERE and how stale is it (file-system + git side).
+#   usage:    Which skills earn their context budget (load + cite side).
+#
+# Together: a complete read on whether each skill earns its place.
+
+_LOGMIND_SKILL_AUDIT_TIGHT_BYTES = 2000  # mirror of _LOGMIND_SKILL_TIGHT_BYTES;
+                                          # declared standalone so audit doesn't
+                                          # break if bench is ever extracted.
+
+
+def audit_skills(repo_root: Path) -> "list[dict]":
+    """List every `.claude/skills/*/SKILL.md` with staleness signals.
+
+    For each skill returns:
+
+      - ``name``: directory name under ``.claude/skills/``
+      - ``path``: relative path to SKILL.md
+      - ``bytes``: UTF-8 byte size
+      - ``last_modified``: ISO date of last git commit touching SKILL.md
+        (falls back to file mtime when not in git history)
+      - ``decision_count``: # times skill name appears in
+        ``docs/decisions.md`` + ``docs/decisions-branches/*.md`` (rough
+        signal of author-side iteration cadence)
+
+    Returns empty list if `.claude/skills/` doesn't exist OR no SKILL.md
+    files are present.
+    """
+    skills_dir = default_skills_dir(repo_root)
+    if not skills_dir.is_dir():
+        return []
+
+    decision_files: list[Path] = []
+    docs_dir = repo_root / "docs"
+    if (docs_dir / "decisions.md").exists():
+        decision_files.append(docs_dir / "decisions.md")
+    branches_dir = docs_dir / "decisions-branches"
+    if branches_dir.is_dir():
+        decision_files.extend(sorted(branches_dir.glob("*.md")))
+
+    decision_text = "\n".join(
+        f.read_text(encoding="utf-8", errors="ignore")
+        for f in decision_files
+    )
+
+    results: "list[dict]" = []
+    for skill_subdir in sorted(skills_dir.iterdir()):
+        if not skill_subdir.is_dir():
+            continue
+        skill_md = skill_subdir / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+
+        rel_path = skill_md.relative_to(repo_root).as_posix()
+        size = skill_md.stat().st_size
+        name = skill_subdir.name
+
+        last_modified = _git_last_touched(repo_root, rel_path)
+        if last_modified is None:
+            import datetime as _dt
+            last_modified = _dt.date.fromtimestamp(skill_md.stat().st_mtime).isoformat()
+
+        decision_count = decision_text.count(name) if name and decision_text else 0
+
+        results.append({
+            "name": name,
+            "path": rel_path,
+            "bytes": size,
+            "last_modified": last_modified,
+            "decision_count": decision_count,
+        })
+
+    return results
+
+
+def _git_last_touched(repo_root: Path, rel_path: str) -> Optional[str]:
+    """Return ISO date of last commit touching ``rel_path``, or None."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%cs", "--", rel_path],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    out = result.stdout.strip()
+    return out if out else None
+
+
+def classify_audit_row(row: dict, now=None) -> str:
+    """Apply deterministic thresholds to an audit row.
+
+    - ``ghost``: ``decision_count == 0`` AND ``bytes > _LOGMIND_SKILL_AUDIT_TIGHT_BYTES``
+      (loaded into every context but author never iterates — candidate
+      for clud-bug usage --health to confirm + archive).
+    - ``aging``: ``last_modified > 90 days ago``.
+    - ``active``: otherwise.
+
+    ``now`` is injectable for testability; defaults to today.
+    """
+    import datetime as _dt
+    if now is None:
+        now = _dt.date.today()
+    if row.get("decision_count", 0) == 0 and row.get("bytes", 0) > _LOGMIND_SKILL_AUDIT_TIGHT_BYTES:
+        return "ghost"
+    last = row.get("last_modified")
+    if last:
+        try:
+            last_date = _dt.date.fromisoformat(last)
+            if (now - last_date).days > 90:
+                return "aging"
+        except (ValueError, TypeError):
+            pass
+    return "active"

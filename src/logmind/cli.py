@@ -110,7 +110,7 @@ def _ok(msg: str, *, err: bool = False) -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.3", prog_name="logmind")
+@click.version_option(version="0.6.4", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -2062,6 +2062,72 @@ def skill_bench(name: str, as_json: bool):
             click.echo(f"    • {s}")
 
     _ok(f"skill: bench {name} {result['status']}")
+
+
+# v0.6.4 — `logmind skill audit` (author's-side staleness read).
+@skill.command("audit")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit machine-readable JSON instead of the human-readable table.",
+)
+def skill_audit(as_json: bool):
+    """List every SKILL.md in .claude/skills/ with staleness signals.
+
+    For each skill: name, byte size, last-modified date (last git
+    commit touching SKILL.md), decision count (# times referenced in
+    docs/decisions.md + branch decision files), and a classification:
+
+      - ghost: never decision-logged AND larger than the tight cap
+        — loaded into every context but author never iterates;
+        candidate for clud-bug usage --health to confirm + archive.
+      - aging: last touched > 90 days ago.
+      - active: otherwise.
+
+    Pairs with clud-bug usage --health: audit tells you what's HERE
+    and how stale it is (author-side); usage tells you which skills
+    earn their context budget (load-side). Together = complete picture.
+    """
+    from logmind.core.skill_cli import audit_skills, classify_audit_row
+
+    repo_root = Path.cwd()
+    rows = audit_skills(repo_root)
+
+    if as_json:
+        import json
+        enriched = [{**r, "status": classify_audit_row(r)} for r in rows]
+        click.echo(json.dumps(enriched, indent=2))
+        return
+
+    if not rows:
+        click.echo(
+            "No skills found in .claude/skills/. Run "
+            "`logmind skill new <name>` to create one."
+        )
+        _ok("skill: audit 0 skills")
+        return
+
+    status_color = {
+        "active": "green",
+        "aging": "yellow",
+        "ghost": "red",
+    }
+
+    click.echo(f"{'name':30s} {'status':>8s} {'bytes':>7s} {'decisions':>9s} {'last touched':>14s}")
+    click.echo("-" * 78)
+    counts: "dict[str, int]" = {}
+    for row in rows:
+        status = classify_audit_row(row)
+        counts[status] = counts.get(status, 0) + 1
+        click.secho(
+            f"{row['name'][:30]:30s} {status:>8s} {row['bytes']:>7d} "
+            f"{row['decision_count']:>9d} {row['last_modified']:>14s}",
+            fg=status_color.get(status, "white"),
+        )
+
+    summary = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+    _ok(f"skill: audit {len(rows)} skill{'s' if len(rows) != 1 else ''} ({summary})")
 
 
 # Config command group
