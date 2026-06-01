@@ -1,6 +1,7 @@
 """Command-line interface for logmind."""
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -109,8 +110,80 @@ def _ok(msg: str, *, err: bool = False) -> None:
     _orig_click_echo(f"ok {msg}", err=err)
 
 
+def _install_skdd_via_npx() -> None:
+    """v0.6.8 — `logmind init --with-skdd` handler.
+
+    Subprocesses to `npx --yes clud-bug@latest init` in the current cwd.
+    Best-effort: warns but does NOT fail logmind init if the subprocess
+    errors (the logmind side has already succeeded; clud-bug is an
+    additive layer).
+
+    Graceful when Node.js / npx isn't installed — emits an actionable
+    message + how to recover.
+    """
+    if shutil.which("npx") is None:
+        click.secho(
+            "Warning: --with-skdd requested but `npx` is not on PATH.",
+            fg="yellow",
+        )
+        click.echo(
+            "  Install Node.js 20+ (https://nodejs.org), then run:"
+        )
+        click.secho(
+            "    npx --yes clud-bug@latest init",
+            fg="cyan",
+        )
+        click.echo(
+            "  Or skip this flag if you only want logmind standalone."
+        )
+        return
+
+    click.echo()
+    click.secho(
+        "→ --with-skdd: installing clud-bug (npx --yes clud-bug@latest init)",
+        fg="cyan",
+    )
+    # 5-minute ceiling: npm package install + clud-bug init typically
+    # complete in 30-60s. 5 minutes is generous enough to absorb cold
+    # caches + slow networks; past that, the user is better off bailing
+    # and re-running manually rather than blocking init forever.
+    # PR #106 review fix: SkDD was previously missing both timeout=
+    # and the TimeoutExpired catch — npm registry hiccup = infinite hang.
+    NPX_TIMEOUT_SECONDS = 5 * 60
+    try:
+        result = subprocess.run(
+            ["npx", "--yes", "clud-bug@latest", "init"],
+            check=False,
+            timeout=NPX_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0:
+            click.secho(
+                f"Warning: `npx clud-bug init` exited {result.returncode}. "
+                f"logmind side succeeded; clud-bug install is incomplete. "
+                f"Inspect output above and re-run manually if needed.",
+                fg="yellow",
+            )
+        else:
+            click.secho("✓ clud-bug installed via --with-skdd", fg="green")
+    except subprocess.TimeoutExpired:
+        click.secho(
+            f"Warning: `npx clud-bug init` timed out after "
+            f"{NPX_TIMEOUT_SECONDS}s (slow npm registry or hung subprocess). "
+            f"logmind side succeeded. Re-run `npx --yes clud-bug@latest init` "
+            f"manually to complete the SkDD bundle install.",
+            fg="yellow",
+        )
+    except (FileNotFoundError, OSError) as e:
+        click.secho(
+            f"Warning: --with-skdd subprocess failed: {e}. "
+            f"logmind side succeeded; run `npx --yes clud-bug@latest init` "
+            f"manually to complete the SkDD bundle install.",
+            fg="yellow",
+        )
+
+
 @click.group()
-@click.version_option(version="0.6.7", prog_name="logmind")
+@click.version_option(version="0.6.8", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -345,6 +418,16 @@ def _install_github_action_templates(
         "so each contributor must run this once on their machine."
     ),
 )
+@click.option(
+    "--with-skdd",
+    is_flag=True,
+    help=(
+        "Also install the rest of the SkDD toolchain (currently: clud-bug "
+        "for skill-driven PR review). Subprocesses to `npx --yes clud-bug@latest "
+        "init` after logmind setup completes. Requires Node.js on PATH; "
+        "skip this flag if you only want logmind standalone."
+    ),
+)
 def init(
     no_git: bool,
     agents_list: Optional[str],
@@ -352,6 +435,7 @@ def init(
     github_actions: bool,
     skill_install_flag: Optional[bool],
     install_hook: bool,
+    with_skdd: bool,
 ):
     """
     Initialize logmind in the current project.
@@ -609,6 +693,16 @@ def init(
             ctx.invoke(install_hook_cmd, force=True)
         except Exception as e:
             click.secho(f"Warning: --install-hook failed: {e}", fg="yellow")
+
+    # v0.6.8 — opt-in unified install: also bring in clud-bug (and any
+    # future SkDD-bundle tools) via the same one-command path.
+    # Subprocess invokes `npx clud-bug@latest init` IN this cwd. The
+    # flag name (`--with-skdd`) describes the bundle target, not a
+    # specific tool, so future toolchain growth doesn't change the API.
+    # IMPORTANT: invoke `clud-bug init` (NOT `clud-bug init --with-skdd`)
+    # to avoid mutual-recursion. Each opt-in only goes one level deep.
+    if with_skdd:
+        _install_skdd_via_npx()
 
     click.echo()
     click.secho("logmind initialized successfully!", fg="green")
