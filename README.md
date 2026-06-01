@@ -76,6 +76,9 @@ curl -fsSL https://raw.githubusercontent.com/thrillmade/reporulez/main/bin/apply
 cd your-project
 logmind init
 
+# OR — install the full SkDD toolchain (logmind + clud-bug) in one go:
+logmind init --with-skdd      # subprocesses to `npx clud-bug init` (requires Node 20+)
+
 # Log decisions - Python API
 from logmind import log
 log("Chose FastAPI over Flask",

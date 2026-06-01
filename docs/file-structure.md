@@ -80,6 +80,7 @@ logmind
 │   ├── test_file_structure_updates.py
 │   ├── test_git_handler.py
 │   ├── test_gitignore_management.py
+│   ├── test_init_with_skdd.py
 │   ├── test_inserter.py
 │   ├── test_integrations.py
 │   ├── test_link_check.py
