@@ -37,7 +37,12 @@ CLUD_BUG_WORKFLOWS = (
     "clud-bug-self-update.yml",
 )
 
-_LOGMIND_PIN_RE = re.compile(r'pip install\s+"?logmind==([\d.]+)"?')
+# v0.6.11: widened to accept all three pin-quote styles seen in consumer
+# workflows — no quotes, double quotes, OR single quotes (reporulez
+# convention). The previous double-quote-only pattern silently returned
+# None on single-quoted pins, causing logmind to report "no version
+# detected" when in fact the workflow was perfectly well-pinned.
+_LOGMIND_PIN_RE = re.compile(r"""pip install\s+["']?logmind==([\d.]+)["']?""")
 _LOGMIND_MARKER_RE = re.compile(r"^# logmind-template-version:\s*(\S+)")
 _CLUD_BUG_MARKER_RE = re.compile(r"^# clud-bug-template-version:\s*(\S+)")
 # AGENTS.md ships a `<!-- logmind-block-version: vN -->` comment marking the

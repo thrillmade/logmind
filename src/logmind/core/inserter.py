@@ -215,12 +215,20 @@ LOGMIND_PIN_WORKFLOWS = (
     "check-decisions.yml",
 )
 
-# Captures the pin line: prefix up through `==` (group 1), version (group 2),
-# trailing quote (group 3). Matches both `"logmind==X.Y.Z"` and bare
-# `logmind==X.Y.Z` forms. Anchored to `pip install` so we don't false-positive
-# on a comment that happens to mention the package name + version.
+# Captures the pin line: leading quote (group 1, optional), prefix
+# `pip install <q?>logmind==` (group 2), version (group 3), trailing quote
+# (group 4, must match group 1 form). Matches three styles seen across
+# consumer repos:
+#   pip install logmind==X.Y.Z           (no quotes)
+#   pip install "logmind==X.Y.Z"         (double quotes — historic default)
+#   pip install 'logmind==X.Y.Z'         (single quotes — reporulez convention)
+#
+# v0.6.11: widened from the previous double-quote-or-bare-only pattern
+# that silently no-op'd against reporulez-style single-quoted pins.
+# Anchored to `pip install` so we don't false-positive on a comment that
+# happens to mention the package name + version.
 _PIN_LINE_RE = re.compile(
-    r'(pip install\s+"?logmind==)([\d.]+)("?)'
+    r'''(pip install\s+)(["']?)(logmind==)([\d.]+)(["']?)'''
 )
 
 
@@ -262,7 +270,7 @@ def find_outdated_workflow_pins(
         m = _PIN_LINE_RE.search(content)
         if m is None:
             continue  # no pin → nothing to update (dogfood-style installs)
-        found_version = m.group(2)
+        found_version = m.group(4)
         if found_version != current_version:
             outdated.append((wf_path, found_version, current_version))
 
@@ -284,17 +292,21 @@ def update_workflow_pin(content: str, new_version: str) -> Tuple[str, Optional[s
       - ``(content, "X.Y.Z")`` — pin already matches ``new_version``; idempotent no-op
       - ``(rewritten_content, "OLD")`` — pin bumped; old version surfaced for logging
 
+    v0.6.11: the rewrite preserves the EXACT quote style found in source
+    (none, single, or double) so we don't churn reporulez-style
+    single-quoted pins into double quotes.
+
     Idempotent: re-applying the same version is a no-op (content unchanged).
     """
     m = _PIN_LINE_RE.search(content)
     if m is None:
         return content, None
-    previous = m.group(2)
+    previous = m.group(4)
     if previous == new_version:
         return content, previous
 
     new_content = _PIN_LINE_RE.sub(
-        lambda mo: f"{mo.group(1)}{new_version}{mo.group(3)}",
+        lambda mo: f"{mo.group(1)}{mo.group(2)}{mo.group(3)}{new_version}{mo.group(5)}",
         content,
     )
     return new_content, previous

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-06-01
+
+### Fixed — Single-quoted workflow pin regex (reporulez silent-miss)
+
+`_PIN_LINE_RE` (inserter.py) + `_LOGMIND_PIN_RE` (doctor.py) only matched bare or double-quoted forms. Single-quoted pins (reporulez convention) silently returned no match → `logmind agents update --apply` reported "nothing to bump" while pins were stale. v0.6.11 widens both regexes to accept all three styles AND preserves the exact quote style on rewrite (no churn).
+
+### Fixed — `logmind-self-update.yml` template uses PAT for workflow refreshes
+
+GitHub blocks `GITHUB_TOKEN` from pushing changes to `.github/workflows/*.yml` for security. When a logmind release touches a workflow template body, the self-update auto-PR step previously failed with a cryptic 403. v5 of the template:
+- Uses `secrets.LOGMIND_AUTO_REGEN_PAT` (same PAT regen-timeline.yml v3 uses) for checkout token + push when available.
+- Falls back to `GITHUB_TOKEN` when missing — but DETECTS when the refresh touches workflow files AND emits a clear actionable `::error::` directing the user to configure the PAT.
+
+3-of-3 propagation blocker on tokenomics / agent-skills / clud-bug during the v0.6.9 cycle today; closed in v0.6.11.
+
+### Code
+
+- `src/logmind/core/inserter.py` — `_PIN_LINE_RE` widened to 5-group capture; rewrite preserves opening + closing quote styles.
+- `src/logmind/core/doctor.py` — `_LOGMIND_PIN_RE` widened (read-path only).
+- `src/logmind/templates/github/logmind-self-update.yml.template` — bumped to v5, uses `LOGMIND_AUTO_REGEN_PAT` for checkout + push.
+- `tests/test_workflow_pin_update.py` — 4 new tests pinning all three quote styles + reporulez regression guard.
+
 ## [0.6.10] - 2026-06-01
 
 ### Added — Hook-version drift detection (tokenomics 2026-06-01 bug report)
