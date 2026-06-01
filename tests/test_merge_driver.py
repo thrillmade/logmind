@@ -388,3 +388,160 @@ def test_logmind_init_installs_post_rewrite_hook(git_repo: Path, monkeypatch):
         f"init output:\n{result.output}"
     )
     assert "logmind timeline --write" in hook.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# v0.6.10 — hook-version drift detection (tokenomics 2026-06-01 bug recurrence)
+#
+# Root cause we want surfaced loudly: the local CLI binary writes the hook
+# body, so if the binary is stale relative to the workflow's pinned version,
+# the hook on disk is stale too. doctor must report this as drift so the
+# user knows to upgrade + refresh.
+# ---------------------------------------------------------------------------
+
+
+def test_post_merge_hook_embeds_logmind_version_marker(git_repo: Path):
+    """v0.6.10: the installed hook body MUST embed a `# logmind-hook-version: …`
+    line so doctor can detect drift between the binary that wrote it and
+    the binary running now."""
+    from logmind import __version__ as current_version
+    from logmind.core.gitattributes import (
+        HOOK_VERSION_PREFIX,
+        install_post_merge_hook,
+    )
+
+    install_post_merge_hook(git_repo)
+    body = (git_repo / ".git" / "hooks" / "post-merge").read_text(
+        encoding="utf-8"
+    )
+    assert HOOK_VERSION_PREFIX in body, (
+        "v0.6.10: post-merge hook must embed the version marker prefix."
+    )
+    assert f"{HOOK_VERSION_PREFIX}{current_version}" in body, (
+        f"v0.6.10: marker must include the CURRENT logmind version "
+        f"({current_version}), not a stale one."
+    )
+
+
+def test_post_rewrite_hook_embeds_logmind_version_marker(git_repo: Path):
+    """Same as the post-merge test — companion hook."""
+    from logmind import __version__ as current_version
+    from logmind.core.gitattributes import (
+        HOOK_VERSION_PREFIX,
+        install_post_rewrite_hook,
+    )
+
+    install_post_rewrite_hook(git_repo)
+    body = (git_repo / ".git" / "hooks" / "post-rewrite").read_text(
+        encoding="utf-8"
+    )
+    assert HOOK_VERSION_PREFIX in body
+    assert f"{HOOK_VERSION_PREFIX}{current_version}" in body
+
+
+def test_installed_post_merge_hook_version_extracts_marker(git_repo: Path):
+    """`installed_post_merge_hook_version` returns the embedded version."""
+    from logmind import __version__ as current_version
+    from logmind.core.gitattributes import (
+        install_post_merge_hook,
+        installed_post_merge_hook_version,
+    )
+
+    assert installed_post_merge_hook_version(git_repo) is None  # No hook yet.
+    install_post_merge_hook(git_repo)
+    assert installed_post_merge_hook_version(git_repo) == current_version
+
+
+def test_doctor_reports_post_merge_hook_drift_when_binary_newer_than_hook(
+    git_repo: Path,
+):
+    """The tokenomics 2026-06-01 case in miniature: a v0.3.4 binary wrote
+    a stale hook (no marker line at all), then the user upgraded to v0.6.10.
+    Doctor must surface this as drift, not report 'current'."""
+    from logmind.core import doctor
+    from logmind.core.gitattributes import _POST_MERGE_HOOK_MARKER
+
+    # Plant a pre-v0.6.10 hook (markerless, but with our hook marker so
+    # we know it's a logmind hook, not a foreign one).
+    hooks_dir = git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    legacy_body = (
+        "#!/bin/sh\n"
+        f"{_POST_MERGE_HOOK_MARKER}\n"
+        "# Installed by `logmind init` (v0.3.0+).\n"
+        "logmind timeline --write docs/timeline.md\n"
+    )
+    legacy_hook = hooks_dir / "post-merge"
+    legacy_hook.write_text(legacy_body, encoding="utf-8")
+    legacy_hook.chmod(0o755)
+
+    report = doctor.collect_status(git_repo, offline=True)
+    hook_status = next(
+        w for w in report.tools[0].workflows if "post-merge" in w.name
+    )
+    assert hook_status.installed is True
+    assert hook_status.drift == "markerless", (
+        f"Doctor must surface markerless (pre-v0.6.10) hook as drift so "
+        f"the user knows to refresh. Got drift={hook_status.drift!r}."
+    )
+
+
+def test_doctor_reports_post_merge_hook_drift_when_version_marker_is_stale(
+    git_repo: Path,
+):
+    """Simulate a hook written by an older v0.6.10+ binary — same prefix
+    but an older version embedded. Doctor must flag drift."""
+    from logmind.core import doctor
+    from logmind.core.gitattributes import (
+        HOOK_VERSION_PREFIX,
+        _POST_MERGE_HOOK_MARKER,
+    )
+
+    hooks_dir = git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    stale_body = (
+        "#!/bin/sh\n"
+        f"{_POST_MERGE_HOOK_MARKER}\n"
+        f"{HOOK_VERSION_PREFIX}0.6.7\n"   # Pretend a v0.6.7 binary wrote this.
+        "logmind timeline --write docs/timeline.md\n"
+    )
+    (hooks_dir / "post-merge").write_text(stale_body, encoding="utf-8")
+    (hooks_dir / "post-merge").chmod(0o755)
+
+    report = doctor.collect_status(git_repo, offline=True)
+    hook_status = next(
+        w for w in report.tools[0].workflows if "post-merge" in w.name
+    )
+    assert hook_status.drift == "stale"
+    assert hook_status.marker == "0.6.7"
+
+
+def test_install_post_merge_hook_refreshes_stale_marker(
+    git_repo: Path,
+):
+    """When `logmind log` (or `init`) runs and the hook on disk has a
+    stale version marker, the hook must be rewritten with the current
+    binary's body. This is the auto-self-heal path."""
+    from logmind import __version__ as current_version
+    from logmind.core.gitattributes import (
+        HOOK_VERSION_PREFIX,
+        _POST_MERGE_HOOK_MARKER,
+        install_post_merge_hook,
+        installed_post_merge_hook_version,
+    )
+
+    hooks_dir = git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    stale_body = (
+        "#!/bin/sh\n"
+        f"{_POST_MERGE_HOOK_MARKER}\n"
+        f"{HOOK_VERSION_PREFIX}0.6.7\n"
+        "logmind timeline --write docs/timeline.md\n"
+    )
+    hook = hooks_dir / "post-merge"
+    hook.write_text(stale_body, encoding="utf-8")
+    hook.chmod(0o755)
+
+    changed = install_post_merge_hook(git_repo)
+    assert changed is True
+    assert installed_post_merge_hook_version(git_repo) == current_version

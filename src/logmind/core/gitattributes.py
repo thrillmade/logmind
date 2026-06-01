@@ -16,11 +16,37 @@ runs the matching ``git config`` calls every time it runs; see
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 LOGMIND_GITATTRIBUTES_START = "# >>> logmind >>>"
 LOGMIND_GITATTRIBUTES_END = "# <<< logmind <<<"
+
+# v0.6.10 — embed a version marker in every installed hook so doctor can
+# detect drift between the CLI binary that wrote the hook and the binary
+# currently running. The tokenomics agent's 2026-06-01 bug report
+# (post-merge hook still stages after v0.6.9 propagation) had the root
+# cause: their local CLI binary was v0.3.4, so every `logmind log`
+# overwrote the hook with v0.3.4's body even though the workflow pin
+# said v0.6.9. Doctor needs to read THIS marker (not just check
+# presence) to surface the drift loudly.
+HOOK_VERSION_PREFIX = "# logmind-hook-version: "
+_HOOK_VERSION_RE = re.compile(r"^# logmind-hook-version:\s*(\S+)\s*$", re.MULTILINE)
+
+
+def _current_logmind_version() -> str:
+    """Return the version string of the currently-running logmind package.
+
+    Imported lazily to avoid circular imports — `gitattributes` is loaded
+    during `logmind` package init, before `__version__` is necessarily
+    bound.
+    """
+    try:
+        from logmind import __version__
+        return __version__
+    except (ImportError, AttributeError):
+        return "unknown"
 
 # Lines that go inside the managed block. Each registers a merge driver
 # for one of logmind's derived files. The driver names match what
@@ -126,37 +152,52 @@ def configure_merge_drivers(repo_root: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 _POST_MERGE_HOOK_MARKER = "# logmind post-merge hook"
-_POST_MERGE_HOOK_BODY = """#!/bin/sh
-# logmind post-merge hook
-# Installed by `logmind init` (v0.3.0+). After every merge, regenerate
-# derived docs from the FULL post-merge working tree. Belt + suspenders
-# with the merge driver in .gitattributes — the driver fires per-file
-# during conflict resolution, before sibling non-conflicted files (e.g.
-# the merged-in branch's docs/decisions-branches/<branch>.md) are
-# checked out. This hook runs once at the end and sweeps any incomplete
-# regenerations.
-#
-# v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook
-# auto-staged docs/timeline.md + docs/file-structure.md, but the
-# staged-but-uncommitted files then blocked `git checkout main` on
-# every PR cycle (post-merge fires from `git pull --rebase` after a
-# squash merge — there's no commit being constructed, so staging was
-# wrong). Leaving them as unstaged modifications lets the next
-# `logmind log` pick them up cleanly without blocking branch switches.
 
-if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
-  if [ -d docs ]; then
-    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
-    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
-  fi
-fi
-"""
+
+def _build_post_merge_hook_body() -> str:
+    """Build the canonical post-merge hook body for the current binary
+    version. The embedded ``# logmind-hook-version:`` line lets ``logmind
+    doctor`` detect drift between the CLI binary that wrote this hook
+    and the binary currently running.
+    """
+    return (
+        "#!/bin/sh\n"
+        "# logmind post-merge hook\n"
+        f"{HOOK_VERSION_PREFIX}{_current_logmind_version()}\n"
+        "# Installed by `logmind init` (v0.3.0+). After every merge, regenerate\n"
+        "# derived docs from the FULL post-merge working tree. Belt + suspenders\n"
+        "# with the merge driver in .gitattributes — the driver fires per-file\n"
+        "# during conflict resolution, before sibling non-conflicted files (e.g.\n"
+        "# the merged-in branch's docs/decisions-branches/<branch>.md) are\n"
+        "# checked out. This hook runs once at the end and sweeps any incomplete\n"
+        "# regenerations.\n"
+        "#\n"
+        "# v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook\n"
+        "# auto-staged docs/timeline.md + docs/file-structure.md, but the\n"
+        "# staged-but-uncommitted files then blocked `git checkout main` on\n"
+        "# every PR cycle (post-merge fires from `git pull --rebase` after a\n"
+        "# squash merge — there's no commit being constructed, so staging was\n"
+        "# wrong). Leaving them as unstaged modifications lets the next\n"
+        "# `logmind log` pick them up cleanly without blocking branch switches.\n"
+        "#\n"
+        "# v0.6.10: the line above embeds the binary version that wrote this hook,\n"
+        "# so doctor reports stale-hook drift loudly when the user's local CLI\n"
+        "# binary is stale relative to the workflow's installed version.\n"
+        "\n"
+        "if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then\n"
+        "  if [ -d docs ]; then\n"
+        "    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n"
+        "    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n"
+        "  fi\n"
+        "fi\n"
+    )
 
 
 def install_post_merge_hook(repo_root: Path) -> bool:
     """Write `.git/hooks/post-merge` to re-regenerate derived files after
     every merge. Returns True if the hook was created or updated, False
-    if logmind's version was already present.
+    if logmind's version was already present at the CURRENT binary's
+    version.
 
     Refuses to overwrite a non-logmind hook (someone may have custom
     hook content; we leave it alone and let `logmind doctor` flag the
@@ -166,20 +207,23 @@ def install_post_merge_hook(repo_root: Path) -> bool:
     if not hooks_dir.exists():
         return False
     hook = hooks_dir / "post-merge"
+    body = _build_post_merge_hook_body()
     if hook.exists():
         existing = hook.read_text(encoding="utf-8", errors="ignore")
         if _POST_MERGE_HOOK_MARKER in existing:
-            # Our hook already present (or some legacy version of it).
-            # Rewrite to current canonical contents; same idempotency
-            # contract as the merge-driver git config.
-            if existing == _POST_MERGE_HOOK_BODY:
+            # Our hook (or some prior-version of it) is present. Rewrite
+            # to the current binary's canonical body. The idempotency
+            # contract: if the body byte-matches, no-op; otherwise
+            # overwrite — this handles upgrades cleanly (v0.3.x -> v0.6.10
+            # automatically refreshes the hook on the next `logmind log`).
+            if existing == body:
                 return False
-            hook.write_text(_POST_MERGE_HOOK_BODY, encoding="utf-8")
+            hook.write_text(body, encoding="utf-8")
             hook.chmod(0o755)
             return True
         # Foreign hook — don't trample.
         return False
-    hook.write_text(_POST_MERGE_HOOK_BODY, encoding="utf-8")
+    hook.write_text(body, encoding="utf-8")
     hook.chmod(0o755)
     return True
 
@@ -192,6 +236,55 @@ def post_merge_hook_installed(repo_root: Path) -> bool:
         return _POST_MERGE_HOOK_MARKER in hook.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return False
+
+
+def extract_hook_version(hook_path: Path) -> Optional[str]:
+    """Read ``hook_path`` and extract the embedded ``# logmind-hook-version: …``
+    marker. Returns the version string, ``None`` if no marker is present
+    (pre-v0.6.10 hooks), or ``None`` if the file is missing / unreadable.
+
+    Used by ``logmind doctor`` to surface drift between the binary that
+    wrote the hook and the binary currently running — the root cause of
+    the tokenomics agent's 2026-06-01 post-merge bug recurrence.
+    """
+    if not hook_path.exists():
+        return None
+    try:
+        content = hook_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    match = _HOOK_VERSION_RE.search(content)
+    return match.group(1) if match else None
+
+
+def installed_post_merge_hook_version(repo_root: Path) -> Optional[str]:
+    """Return the version marker embedded in ``.git/hooks/post-merge``
+    when it exists + is a logmind hook + has a v0.6.10+ marker. Returns
+    ``None`` for pre-v0.6.10 hooks (markerless), missing hooks, or
+    foreign hooks.
+    """
+    hook = repo_root / ".git" / "hooks" / "post-merge"
+    if not hook.exists():
+        return None
+    content = hook.read_text(encoding="utf-8", errors="ignore")
+    if _POST_MERGE_HOOK_MARKER not in content:
+        return None  # Foreign hook; not ours.
+    match = _HOOK_VERSION_RE.search(content)
+    return match.group(1) if match else None
+
+
+def installed_post_rewrite_hook_version(repo_root: Path) -> Optional[str]:
+    """Same as :func:`installed_post_merge_hook_version` but for the
+    post-rewrite hook.
+    """
+    hook = repo_root / ".git" / "hooks" / "post-rewrite"
+    if not hook.exists():
+        return None
+    content = hook.read_text(encoding="utf-8", errors="ignore")
+    if _POST_REWRITE_HOOK_MARKER not in content:
+        return None
+    match = _HOOK_VERSION_RE.search(content)
+    return match.group(1) if match else None
 
 
 # ---------------------------------------------------------------------------
@@ -218,40 +311,51 @@ def post_merge_hook_installed(repo_root: Path) -> bool:
 
 
 _POST_REWRITE_HOOK_MARKER = "# logmind post-rewrite hook"
-_POST_REWRITE_HOOK_BODY = """#!/bin/sh
-# logmind post-rewrite hook
-# Installed by `logmind init` (v0.5.11+). Companion to the post-merge
-# hook. Fires after `git rebase` or `git commit --amend` and
-# regenerates derived docs from the FULL post-rewrite working tree.
-#
-# Why: the merge driver in .gitattributes only fires when a merge
-# produces conflicts on the derived files. A clean rebase rewrites
-# multiple commits without ever invoking the driver — leaving
-# docs/timeline.md and docs/file-structure.md stale relative to the
-# replayed `docs/decisions-branches/<branch>.md` entries. This hook
-# sweeps the final state once and stages the regen for inclusion in
-# the user's next commit / amend cycle.
-#
-# Git invokes post-rewrite with $1 = "rebase" or "amend"; the regen
-# behaviour is identical in both, so we don't branch on $1.
 
-if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
-  if [ -d docs ]; then
-    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
-    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
-    # Stage the regens if they changed anything; user can `git commit --amend`
-    # or include in their next commit.
-    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true
-  fi
-fi
-"""
+
+def _build_post_rewrite_hook_body() -> str:
+    """Build the canonical post-rewrite hook body for the current binary
+    version. v0.6.10 embeds the binary version so doctor can detect drift
+    between the binary that wrote this hook vs the current binary.
+    """
+    return (
+        "#!/bin/sh\n"
+        "# logmind post-rewrite hook\n"
+        f"{HOOK_VERSION_PREFIX}{_current_logmind_version()}\n"
+        "# Installed by `logmind init` (v0.5.11+). Companion to the post-merge\n"
+        "# hook. Fires after `git rebase` or `git commit --amend` and\n"
+        "# regenerates derived docs from the FULL post-rewrite working tree.\n"
+        "#\n"
+        "# Why: the merge driver in .gitattributes only fires when a merge\n"
+        "# produces conflicts on the derived files. A clean rebase rewrites\n"
+        "# multiple commits without ever invoking the driver — leaving\n"
+        "# docs/timeline.md and docs/file-structure.md stale relative to the\n"
+        "# replayed `docs/decisions-branches/<branch>.md` entries. This hook\n"
+        "# sweeps the final state once and stages the regen for inclusion in\n"
+        "# the user's next commit / amend cycle.\n"
+        "#\n"
+        "# Git invokes post-rewrite with $1 = \"rebase\" or \"amend\"; the regen\n"
+        "# behaviour is identical in both, so we don't branch on $1.\n"
+        "#\n"
+        "# v0.6.10: hook-version marker embedded above for doctor drift detection.\n"
+        "\n"
+        "if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then\n"
+        "  if [ -d docs ]; then\n"
+        "    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n"
+        "    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n"
+        "    # Stage the regens if they changed anything; user can `git commit --amend`\n"
+        "    # or include in their next commit.\n"
+        "    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true\n"
+        "  fi\n"
+        "fi\n"
+    )
 
 
 def install_post_rewrite_hook(repo_root: Path) -> bool:
     """Write `.git/hooks/post-rewrite` to re-regenerate derived files
     after every rebase or `git commit --amend`. Returns True if the
     hook was created or updated, False if logmind's version was
-    already present.
+    already present at the CURRENT binary's version.
 
     Refuses to overwrite a non-logmind hook (someone may have custom
     hook content; we leave it alone and let `logmind doctor` flag the
@@ -261,17 +365,17 @@ def install_post_rewrite_hook(repo_root: Path) -> bool:
     if not hooks_dir.exists():
         return False
     hook = hooks_dir / "post-rewrite"
+    body = _build_post_rewrite_hook_body()
     if hook.exists():
         existing = hook.read_text(encoding="utf-8", errors="ignore")
         if _POST_REWRITE_HOOK_MARKER in existing:
-            if existing == _POST_REWRITE_HOOK_BODY:
+            if existing == body:
                 return False
-            hook.write_text(_POST_REWRITE_HOOK_BODY, encoding="utf-8")
+            hook.write_text(body, encoding="utf-8")
             hook.chmod(0o755)
             return True
-        # Foreign hook — don't trample.
         return False
-    hook.write_text(_POST_REWRITE_HOOK_BODY, encoding="utf-8")
+    hook.write_text(body, encoding="utf-8")
     hook.chmod(0o755)
     return True
 
