@@ -47,12 +47,16 @@ test:
 # command's stdout shape; commit the regenerated goldens alongside the
 # change so CI's `make test` stays green.
 #
-# Implementation: each snapshot test honours `-update`. Future waves add
-# more goldens under internal/<pkg>/testdata/; this target sweeps them
-# all by re-running the whole test binary with the flag.
+# Implementation note: `-update` is a custom flag registered by the
+# snapshot tests. Passing it to packages that DON'T register the flag
+# would fail the test binary with "flag provided but not defined: -update"
+# (Go exits 2 on unrecognised flags). So we explicitly enumerate the
+# packages that ship golden files. When a future wave adds testdata/
+# under a new package, add its import path to SNAPSHOT_PKGS below.
+SNAPSHOT_PKGS := ./internal/cli/...
 .PHONY: snapshot
 snapshot:
-	$(GO) test $(PKG) -update
+	$(GO) test $(SNAPSHOT_PKGS) -update
 
 # Placeholder for the byte-identical parity gate vs Python v0.6.14.
 # Wired up in a later wave once the Go binary covers enough subcommands

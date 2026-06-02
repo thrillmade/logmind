@@ -6,18 +6,17 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/thrillmade/logmind/internal/cli"
 )
 
 func main() {
+	// cobra (with SilenceErrors=false, the default) already prints the
+	// returned error to stderr via PrintErrln before Execute returns.
+	// We only need to set the non-zero exit code here — any extra
+	// fmt.Fprintln would duplicate the error message on stderr.
 	if err := cli.Execute(); err != nil {
-		// cobra already prints its own errors; emit a fallback line so
-		// non-cobra failures (rare here, but possible from RunE returns)
-		// still surface on stderr before we exit non-zero.
-		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

@@ -11,3 +11,14 @@
 - Go 1.22 toolchain floor — picked to match the GitHub-hosted runner default at time of writing; bump deliberately if a stdlib feature requires it.
 
 ---
+## 2026-06-02 00:19 - fix(go-b1): resolve clud-bug-review threads (duplicate error output, fragile snapshot flag)
+
+**Reasoning:** clud-bug-review on PR #116 flagged 2 legitimate Go issues. (1) main.go printed err to stderr but cobra default SilenceErrors=false ALREADY does this via PrintErrln — every error case had duplicate stderr output. Removed the duplicate fmt.Fprintln; main() now just sets exit code. (2) Makefile snapshot target ran 'go test $(PKG) -update' across ALL of ./cmd/... ./internal/... — but -update is a custom test flag only registered by snapshot tests; any future package without registration would fail with 'flag provided but not defined: -update' (Go exits 2 on unrecognised flags). Scoped snapshot target to SNAPSHOT_PKGS := ./internal/cli/...; comment explains future waves must explicitly opt in when adding new testdata/.
+
+**Alternatives considered:** Resolve threads without fixing — would violate dogfood discipline on the very first wave of the rewrite, Set SilenceErrors: true on root + keep explicit fmt.Fprintln in main.go — less clean than letting cobra handle errors uniformly, Make snapshot use 'go test ./... -update -run ^TestSnapshot' — fragile naming convention
+
+**Implications:**
+- Wave B1 pattern: scope -update to packages with testdata. B2+B7 must update SNAPSHOT_PKGS when adding new golden files
+- Reinforces dogfood mantra: clud-bug-review findings address resolved with code + tests, not thread-resolution; even on the first wave
+
+---

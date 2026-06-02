@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (22 decisions)
+## 2026-06 (23 decisions)
 
-- **2026-06-02** — feat(go-b1): scaffold Go module + cobra + version + snapshot infra *(feat/go-b1-scaffold)* — [decisions-branches/feat__go-b1-scaffold.md](decisions-branches/feat__go-b1-scaffold.md)
-- *... 20 more decisions ...*
+- **2026-06-02** — fix(go-b1): resolve clud-bug-review threads (duplicate error output, fragile snapshot flag) *(feat/go-b1-scaffold)* — [decisions-branches/feat__go-b1-scaffold.md](decisions-branches/feat__go-b1-scaffold.md)
+- *... 21 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
