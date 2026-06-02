@@ -266,8 +266,17 @@ func walk(b *strings.Builder, repoRoot, dir, prefix string, rules IgnoreRules, m
 
 	// Sort: directories first, then alphabetical case-insensitive.
 	// Match Python `(not p.is_dir(), p.name.lower())`.
+	//
+	// Python's `pathlib.Path.is_dir()` follows symlinks by default
+	// (returns true for symlinks-to-directories). Go's
+	// `os.DirEntry.IsDir()` uses lstat — returns FALSE for a symlink
+	// even when its target is a directory. Use `isDirFollow` so the
+	// sort matches Python on repos with symlinks-to-dirs.
+	//
+	// Loop safety is still preserved: walk() below checks ModeSymlink
+	// on the resolved entry and skips recursion into symlinks.
 	sort.SliceStable(dirEntries, func(i, j int) bool {
-		ai, bi := dirEntries[i].IsDir(), dirEntries[j].IsDir()
+		ai, bi := isDirFollow(dir, dirEntries[i]), isDirFollow(dir, dirEntries[j])
 		if ai != bi {
 			return ai // true (is dir) sorts BEFORE false (file)
 		}
@@ -387,4 +396,27 @@ func WriteFileStructure(targetPath, repoRoot string, maxDepth int) (bool, error)
 		return false, fmt.Errorf("rename tmp file: %w", err)
 	}
 	return true, nil
+}
+
+// isDirFollow reports whether `entry` is (or symlinks to) a directory.
+// Mirrors Python's `pathlib.Path.is_dir()` which follows symlinks by
+// default. Used in sort comparisons so symlinks-to-directories sort
+// with directories (Python-compatible) rather than with files
+// (Go's lstat-based IsDir would do that).
+//
+// Walk-time recursion still guards on ModeSymlink to avoid loops —
+// matching Python's `if item.is_dir() and not item.is_symlink()`.
+func isDirFollow(parent string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	if entry.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	// Symlink. Follow it.
+	info, err := os.Stat(filepath.Join(parent, entry.Name()))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }

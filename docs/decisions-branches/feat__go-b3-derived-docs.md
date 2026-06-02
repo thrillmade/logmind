@@ -10,3 +10,14 @@
 - Makefile SNAPSHOT_PKGS now includes internal/timeline + internal/tree; make snapshot regenerates 7 golden files.
 
 ---
+## 2026-06-02 01:47 - fix(go-b3): rebase against B4 + follow symlinks in sort (matches Python pathlib.is_dir) — clud-bug PR #119
+
+**Reasoning:** Two fixes for PR #119: (1) Rebase against v1-go-rewrite after B4 merged — conflicts in internal/cli/root.go (two waves adding subcommand registrations) + docs/timeline.md + docs/file-structure.md (derived; took B4's version then regenerated). (2) Tree sort divergence flagged by clud-bug-review: Python's pathlib.Path.is_dir() follows symlinks by default; Go's os.DirEntry.IsDir() uses lstat semantics and returns false for symlinks-to-directories. Result: any unignored symlink-to-dir sorted with files in Go but with directories in Python → non-byte-identical output. Added isDirFollow helper that follows symlinks (Stat instead of lstat) and uses it in the sort comparator. Walk-time loop guard (don't recurse into symlinks) still applies — matches Python's 'if item.is_dir() and not item.is_symlink()'.
+
+**Alternatives considered:** Skip symlinks entirely in the walk — would diverge from Python (Python lists them, just doesn't recurse), Document the divergence — fails the byte-identical contract, Use Type() bit-mask instead of Stat — Type() reflects ENTRY type (always symlink), not target type
+
+**Implications:**
+- Future repos with symlinks-to-dirs (rare but possible for monorepo-style code organization) get correct output
+- Performance: one extra Stat() per symlink encountered during sort; negligible because symlinks are rare and the sort runs once per directory
+
+---
