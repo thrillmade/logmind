@@ -22,3 +22,15 @@
 - Signed binary inside .tar.gz means Gatekeeper queries Apple's notary service by hash on first run — no staple needed
 
 ---
+## 2026-06-02 17:37 - B7: Homebrew tap auto-bump via homebrew_casks block (not brews; not separate publish job)
+
+**Reasoning:** GoReleaser's homebrew_casks block opens a PR on thrillmade/homebrew-tap with the new tag URL + per-arch SHA256 baked in. brews block is deprecated in v2.10 and fully removed in v2.16 (we installed 2.16 locally; CI uses 'latest'). homebrew_casks works fine for CLI binaries via the binaries: [] field — the cask form gives us a cleaner Gatekeeper quarantine attr strip via postflight hook than a Formula would. Cross-repo write requires HOMEBREW_TAP_PAT (fine-grained PAT on thrillmade/homebrew-tap with Contents+PullRequests write) — already provisioned and surfaced from release.yml env.
+
+**Alternatives considered:** Hand-rolled brew-bump workflow (mirrors existing v0.x homebrew-bump.yml but for the Go binary tap; adds maintenance burden, no payoff), Use the deprecated brews: block (would have worked on v2.15 but breaks on v2.16+; unstable choice), Open a manual PR per release (defeats the automation purpose of the wave)
+
+**Implications:**
+- Cask file path: thrillmade/homebrew-tap/Casks/logmind.rb (was Formula/logmind.rb on the old v0.x tap)
+- User-facing install command: brew install thrillmade/tap/logmind (was brew install thrillmade/logmind/logmind on the old tap)
+- Old homebrew-bump.yml (v0.x PyPI path) and new release.yml coexist via tag-pattern gating: v0.* fires homebrew-bump, v1.* fires release.yml
+
+---
