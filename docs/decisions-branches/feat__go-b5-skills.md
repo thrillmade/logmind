@@ -28,3 +28,13 @@
 - Audit DecisionCount column is now accurate for all skill name lengths. Ghost classifier (DecisionCount==0 gate) becomes useful for short-name skills. Python v0.6.x retains the substring bug — when that's fixed in Python this Go behaviour stays unchanged.
 
 ---
+## 2026-06-02 17:19 - chore: rebase __version__ bump from v1-go-rewrite into B5 branch
+
+**Reasoning:** v1-go-rewrite #126 merged the 0.6.14 → 0.6.16 pin bump on the base. B5 PR #124 needs the bump too for pytest CI to go green. gh pr update-branch reported conflicts (cause unclear); pushing bump directly to PR HEAD is simpler
+
+**Alternatives considered:** rebase B5 onto post-#126 v1-go-rewrite — rejected: gh reported conflicts; would need manual conflict resolution for unclear cause, wait for B5 reviewer to handle the rebase — rejected: blocks Step 2 of the prod ladder; cheap to fix
+
+**Implications:**
+- B5 PR #124 CI re-runs and goes green; auto-merge fires when configured (currently blocked on missing branch protection on v1-go-rewrite — manual merge OK)
+
+---
