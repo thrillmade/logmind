@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (25 decisions)
+## 2026-06 (26 decisions)
 
-- **2026-06-02** — fix(v0.6.15): unreachable || fallback in default-branch resolution (clud-bug PR #122) *(feat/v0.6.15-default-branch-hook-skip)* — [decisions-branches/feat__v0.6.15-default-branch-hook-skip.md](decisions-branches/feat__v0.6.15-default-branch-hook-skip.md)
-- *... 23 more decisions ...*
+- **2026-06-02** — v0.6.16: multi-branch self-heal + PATH probe + commit-msg hook + AGENTS.md v6/v8 *(feat/v0.6.16-doctor-path-commit-msg-hook)* — [decisions-branches/feat__v0.6.16-doctor-path-commit-msg-hook.md](decisions-branches/feat__v0.6.16-doctor-path-commit-msg-hook.md)
+- *... 24 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

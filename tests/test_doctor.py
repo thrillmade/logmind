@@ -19,6 +19,32 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def _stub_path_probe_in_clean_state(monkeypatch, request):
+    """Tests in this file generally assert on workflow drift, NOT on the
+    PATH-resolution probe. In the editable-install + pyenv-shim test
+    environment, `shutil.which("logmind")` resolves to a shim that may
+    invoke a SLIGHTLY OLDER version (the previous editable rebuild)
+    than what the running Python module reports — a real signal in
+    production but a noisy false-positive in tests that aren't about it.
+
+    Tests opt OUT by including "path_probe" or "path_stale" in their
+    name; those tests want the real probe to run.
+    """
+    if "path_probe" in request.node.name or "path_stale" in request.node.name:
+        return
+    from logmind.core import doctor as doctor_mod
+    from logmind.core.doctor import WorkflowStatus
+
+    def _stubbed_probe():
+        return WorkflowStatus(
+            name="logmind on PATH", installed=True,
+            marker="(stubbed for test)", bundled_marker="(stubbed)",
+            drift="current",
+        )
+    monkeypatch.setattr(doctor_mod, "_probe_path_resolution", _stubbed_probe)
+
+
 def _write_workflow(project: Path, name: str, content: str) -> None:
     (project / ".github" / "workflows" / name).write_text(content, encoding="utf-8")
 
@@ -47,6 +73,10 @@ def test_offline_no_workflows_reports_clean_unknown_versions(project: Path):
     # (v0.3.0: gitattributes block, git config, post-merge; v0.5.11:
     # post-rewrite) are reported as missing. None should be `stale` —
     # that would false-positive every fresh fixture.
+    # v0.6.16: the `logmind on PATH` probe is also added unconditionally
+    # (it surfaces tokenomics-style stale-binary cases). In a fresh test
+    # fixture it typically reports `current` (running matches PATH) — it
+    # isn't a "missing" row and shouldn't be counted as drift.
     names = {w.name for w in logmind.workflows}
     expected = (
         set(doctor.LOGMIND_WORKFLOWS)
@@ -56,10 +86,14 @@ def test_offline_no_workflows_reports_clean_unknown_versions(project: Path):
             "git config (merge driver)",
             "post-merge hook",
             "post-rewrite hook",
+            "commit-msg hook",
+            "logmind on PATH",
         }
     )
     assert names == expected
-    assert all(w.drift == "missing" for w in logmind.workflows)
+    # All probes EXCEPT the PATH probe report `missing` in this fixture.
+    non_path = [w for w in logmind.workflows if w.name != "logmind on PATH"]
+    assert all(w.drift == "missing" for w in non_path)
 
 
 def test_pinned_workflow_with_matching_marker_is_current(project: Path, monkeypatch):
@@ -377,3 +411,136 @@ def test_cli_json_output_parses(project: Path, monkeypatch):
     assert "overall" in payload
     assert "network_used" in payload
     assert payload["network_used"] is False
+
+
+# ---------------------------------------------------------------------------
+# v0.6.16 — PATH-resolution conflict probe (tokenomics-agent 2026-06-01
+# recurrence root cause: stale `logmind` ahead on shell PATH while doctor
+# inspects a different binary via `python -m logmind`).
+# ---------------------------------------------------------------------------
+
+
+def test_path_probe_returns_current_when_path_matches_running(monkeypatch, tmp_path: Path):
+    """Common case: `shutil.which("logmind")` resolves to a binary whose
+    --version matches the currently-running version. Drift = "current"."""
+    from logmind import __version__ as running_version
+    from logmind.core.doctor import _probe_path_resolution
+    import subprocess as real_subprocess
+
+    fake_path = "/usr/local/bin/logmind"
+    monkeypatch.setattr("shutil.which", lambda _name: fake_path)
+
+    def fake_run(cmd, *args, **kwargs):
+        class R:
+            returncode = 0
+            stdout = f"logmind, version {running_version}\n"
+            stderr = ""
+        return R()
+    monkeypatch.setattr(real_subprocess, "run", fake_run)
+
+    status = _probe_path_resolution()
+    assert status.installed is True
+    assert status.drift == "current"
+    assert running_version in (status.marker or "")
+
+
+def test_path_probe_flags_stale_when_path_version_differs(monkeypatch):
+    """Tokenomics-recurrence scenario: PATH binary reports an OLDER version
+    than the currently-running binary. drift="stale" so doctor exits non-
+    zero. Marker must include both versions + path for one-glance fix."""
+    from logmind import __version__ as running_version
+    from logmind.core.doctor import _probe_path_resolution
+    import subprocess as real_subprocess
+
+    fake_path = "/Users/x/local/bin/logmind"
+    monkeypatch.setattr("shutil.which", lambda _name: fake_path)
+
+    def fake_run(cmd, *args, **kwargs):
+        class R:
+            returncode = 0
+            stdout = "logmind, version 0.3.4\n"
+            stderr = ""
+        return R()
+    monkeypatch.setattr(real_subprocess, "run", fake_run)
+
+    status = _probe_path_resolution()
+    assert status.installed is True
+    assert status.drift == "stale", (
+        f"PATH-conflict must surface as stale so doctor exits non-zero; "
+        f"got drift={status.drift!r}"
+    )
+    marker = status.marker or ""
+    assert "0.3.4" in marker, "marker must include PATH binary's version"
+    assert running_version in marker, "marker must include currently-running version"
+    assert fake_path in marker, "marker must include the conflicting path"
+
+
+def test_path_probe_reports_missing_when_logmind_not_on_path(monkeypatch):
+    """No `logmind` on PATH at all → drift="missing". The merge driver
+    shell-out would fail in this state. Not as severe as stale, but worth
+    surfacing."""
+    from logmind.core.doctor import _probe_path_resolution
+
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    status = _probe_path_resolution()
+    assert status.installed is False
+    assert status.drift == "missing"
+
+
+def test_path_probe_tolerates_unparseable_version_output(monkeypatch):
+    """Defensive: PATH binary exists but --version emits something we
+    can't parse (truncated, mangled, foreign CLI named `logmind`).
+    Drift = "markerless" so we report the binary's existence without
+    falsely claiming drift OR claiming current."""
+    from logmind.core.doctor import _probe_path_resolution
+    import subprocess as real_subprocess
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/logmind")
+
+    def fake_run(cmd, *args, **kwargs):
+        class R:
+            returncode = 0
+            stdout = "(garbled output: no semver here)\n"
+            stderr = ""
+        return R()
+    monkeypatch.setattr(real_subprocess, "run", fake_run)
+
+    status = _probe_path_resolution()
+    assert status.installed is True
+    assert status.drift == "markerless"
+
+
+def test_doctor_overall_flips_to_drift_when_path_stale(monkeypatch, project: Path):
+    """End-to-end: a PATH-stale probe flows through collect_logmind_status
+    → ToolStatus.drift = "stale" → overall = "DRIFT" → cli exits 1."""
+    from logmind import __version__ as running_version
+    from logmind.core import doctor as doctor_mod
+    import subprocess as real_subprocess
+
+    monkeypatch.setattr(doctor_mod, "_http_get_json", lambda *_a, **_kw: None)
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/local/bin/logmind")
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and len(cmd) >= 2 and cmd[1] == "--version":
+            class R:
+                returncode = 0
+                stdout = "logmind, version 0.3.4\n"
+                stderr = ""
+            return R()
+        # Pass-through for all other subprocess.run calls
+        return real_subprocess.run.__wrapped__(cmd, *args, **kwargs) if hasattr(real_subprocess.run, "__wrapped__") else None
+
+    # We don't actually need to call real subprocess for this test — just
+    # for the --version probe. Other subprocess calls in collect_status
+    # may happen (git remote, gh secret list); they all degrade gracefully.
+    monkeypatch.setattr(real_subprocess, "run", fake_run)
+
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+    result = runner.invoke(main, ["doctor", "--offline"])
+    assert "Stack status: DRIFT" in result.output, (
+        f"PATH-stale must drive overall=DRIFT.\nOutput:\n{result.output}"
+    )
+    assert result.exit_code != 0, (
+        f"Doctor must exit non-zero on PATH-stale drift; got exit_code={result.exit_code}"
+    )

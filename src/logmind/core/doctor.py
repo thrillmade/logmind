@@ -533,6 +533,62 @@ def check_clud_bug_skill_usage_integration(project_root: Path) -> Optional[str]:
     return None
 
 
+def _probe_commit_msg_hook(project_root: Path) -> WorkflowStatus:
+    """v0.6.16 — dogfood enforcement hook. Surfaces drift between the
+    binary that wrote the hook and the binary currently running, same
+    pattern as post-merge / post-rewrite probes. The commit-msg hook
+    enforces `logmind log`-vs-`git commit` discipline for substantive
+    changes; stale hook body means the discipline is mis-enforced.
+    """
+    from logmind.core.gitattributes import (
+        _build_commit_msg_hook_body,
+        _COMMIT_MSG_HOOK_MARKER,
+        commit_msg_hook_installed,
+        installed_commit_msg_hook_version,
+    )
+    from logmind import __version__ as current_version
+
+    if not (project_root / ".git").exists():
+        return WorkflowStatus(
+            name="commit-msg hook", installed=False,
+            marker=None, bundled_marker=None, drift="missing",
+        )
+    if not commit_msg_hook_installed(project_root):
+        return WorkflowStatus(
+            name="commit-msg hook", installed=False,
+            marker=None, bundled_marker=current_version, drift="missing",
+        )
+    hook_version = installed_commit_msg_hook_version(project_root)
+    if hook_version is None:
+        return WorkflowStatus(
+            name="commit-msg hook", installed=True,
+            marker="markerless", bundled_marker=current_version,
+            drift="markerless",
+        )
+    if hook_version != current_version:
+        return WorkflowStatus(
+            name="commit-msg hook", installed=True,
+            marker=hook_version, bundled_marker=current_version, drift="stale",
+        )
+    bundled_body = _build_commit_msg_hook_body()
+    try:
+        installed_body = (project_root / ".git" / "hooks" / "commit-msg").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+    except OSError:
+        installed_body = bundled_body
+    if installed_body != bundled_body:
+        return WorkflowStatus(
+            name="commit-msg hook", installed=True,
+            marker=f"{hook_version} (content drift)",
+            bundled_marker=current_version, drift="stale",
+        )
+    return WorkflowStatus(
+        name="commit-msg hook", installed=True,
+        marker=hook_version, bundled_marker=current_version, drift="current",
+    )
+
+
 def _probe_post_rewrite_hook(project_root: Path) -> WorkflowStatus:
     """v0.5.11 / issue #58: .git/hooks/post-rewrite installed by logmind.
     Companion to the post-merge hook. Fires after `git rebase` or
@@ -746,6 +802,106 @@ def _probe_auto_regen_pat(project_root: Path) -> WorkflowStatus:
     )
 
 
+# ---------------------------------------------------------------------------
+# v0.6.16 — PATH-resolution conflict probe
+#
+# The tokenomics-agent's 2026-06-01 failure recurrence had a non-obvious
+# root cause: `logmind doctor` reported `current` for the post-merge hook,
+# but `logmind init` (invoked from the user's shell, via PATH) was writing
+# a v0.3.4 hook body. The discrepancy: doctor was running via `python -m
+# logmind` from the test runner (PYENV_VERSION=3.11.8 → v0.6.13), while
+# `logmind` typed at the shell prompt resolved through the pyenv shim to
+# a different active pyenv → an older logmind version.
+#
+# This probe detects the gap proactively:
+#   - The currently-running binary's __version__ is the source of truth
+#     for doctor's report.
+#   - `shutil.which("logmind")` resolves the first PATH entry the user's
+#     SHELL hits — what their interactive `logmind log` actually invokes.
+#   - Run `<path> --version` and compare. If different, the user's shell
+#     uses a STALE binary that doctor's report doesn't reflect.
+#
+# This is the kind of bug that surfaces months later as "doctor says
+# current but the hook body looks like an older version." Surfacing it
+# at `logmind doctor` time saves a debugging round-trip.
+# ---------------------------------------------------------------------------
+
+
+_LOGMIND_VERSION_LINE_RE = re.compile(r"version\s+(\S+)")
+
+
+def _probe_path_resolution() -> "WorkflowStatus":
+    """v0.6.16: surface mismatch between currently-running logmind and
+    the binary that the user's shell PATH resolves to.
+
+    Returns a WorkflowStatus row:
+    - drift="current" when PATH binary's version matches running version
+      OR when no PATH binary is found (latter is a different signal we
+      surface separately as drift="missing")
+    - drift="stale" when PATH binary's version differs from running
+      version — the tokenomics-recurrence signal. Marker includes both
+      versions + the conflicting path for one-glance remediation.
+    - drift="markerless" when the PATH binary exists but its --version
+      can't be read (timeout, permission, malformed output). Informational.
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    from logmind import __version__ as running_version
+
+    path_logmind = shutil.which("logmind")
+    if path_logmind is None:
+        # No `logmind` on PATH at all. Merge driver shell-out will fail.
+        return WorkflowStatus(
+            name="logmind on PATH", installed=False, marker=None,
+            bundled_marker=running_version, drift="missing",
+        )
+
+    try:
+        result = subprocess.run(
+            [path_logmind, "--version"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return WorkflowStatus(
+            name="logmind on PATH", installed=True,
+            marker=f"{path_logmind} (cannot exec --version)",
+            bundled_marker=running_version, drift="markerless",
+        )
+
+    out = (result.stdout or "").strip() or (result.stderr or "").strip()
+    m = _LOGMIND_VERSION_LINE_RE.search(out)
+    path_version = m.group(1) if m else None
+    if path_version is None:
+        return WorkflowStatus(
+            name="logmind on PATH", installed=True,
+            marker=f"{path_logmind} (no version parsed from {out!r})",
+            bundled_marker=running_version, drift="markerless",
+        )
+
+    # Strip a trailing comma if --version output is `logmind, version X.Y.Z`
+    # (click's default format puts the comma BEFORE 'version', so the
+    # captured group is already clean — defensive only).
+    path_version = path_version.rstrip(",")
+
+    if path_version == running_version:
+        return WorkflowStatus(
+            name="logmind on PATH", installed=True,
+            marker=f"{path_logmind} ({path_version})",
+            bundled_marker=running_version, drift="current",
+        )
+
+    return WorkflowStatus(
+        name="logmind on PATH", installed=True,
+        marker=(
+            f"{path_logmind} ({path_version}) — STALE; running binary is "
+            f"{running_version}. `which -a logmind` shows full PATH order."
+        ),
+        bundled_marker=running_version, drift="stale",
+    )
+
+
 def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     installed = _logmind_installed_version(project_root)
     latest: Optional[str] = None
@@ -769,10 +925,15 @@ def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     workflows.append(_probe_merge_driver_config(project_root))
     workflows.append(_probe_post_merge_hook(project_root))
     workflows.append(_probe_post_rewrite_hook(project_root))
+    workflows.append(_probe_commit_msg_hook(project_root))
     # v0.6.12: surface PAT secret status for repos whose workflows depend on it.
     pat_status = _probe_auto_regen_pat(project_root)
     if pat_status.installed or pat_status.marker is not None:
         workflows.append(pat_status)
+    # v0.6.16: surface PATH-conflict cases (tokenomics-agent 2026-06-01
+    # recurrence root cause). Always added — the probe itself decides
+    # whether to report "current" (no signal) or "stale" (real drift).
+    workflows.append(_probe_path_resolution())
 
     # Drift = any installed workflow with a marker that's stale,
     # OR installed version != latest version (when both known),

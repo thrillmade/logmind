@@ -121,11 +121,13 @@ def test_get_agents_md_template_returns_slim_when_skills_available(monkeypatch):
 
     monkeypatch.setattr(skill_install, "is_skills_available", lambda: True)
     slim = get_agents_md_template()
-    assert "logmind-block-version: v7-pointer" in slim
+    assert "logmind-block-version: v8-pointer" in slim
     # The load-bearing contract — "logmind log replaces git add+commit+push"
     # — must survive every future trim. If this assertion fails, the
     # block was over-trimmed and agents will fall back to direct git.
-    assert "logmind log` is the commit primitive" in slim
+    # v0.6.16: the heading shifted from "is the commit primitive" to
+    # "is REQUIRED for substantive commits" but the contract sentence
+    # — `replaces git add + commit + push` — is preserved verbatim.
     assert "replaces `git add` + `git commit` + `git push`" in slim
     # Skill pointer is the authority delegation — without it, agents
     # have no way to find the full procedure when this block trims it out.
@@ -172,7 +174,7 @@ def test_get_agents_md_template_returns_full_when_skills_absent(monkeypatch):
     # Match exact marker (v4 — not v4-slim, which is a different file). Use
     # the line-exact match so a future v4-extended variant wouldn't also
     # satisfy this assertion accidentally.
-    assert "logmind-block-version: v5 " in full or "logmind-block-version: v5\n" in full
+    assert "logmind-block-version: v6 " in full or "logmind-block-version: v6\n" in full
     # Full template carries the inline procedure
     assert "When you MUST log" in full or "REQUIREMENT" in full or "skill is also embedded" in full
 

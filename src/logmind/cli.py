@@ -14,6 +14,7 @@ from logmind.core.git_handler import commit_and_push, is_git_repo
 from logmind.core.gitattributes import (
     configure_merge_drivers,
     ensure_block as ensure_gitattributes_block,
+    install_commit_msg_hook,
     install_post_merge_hook,
     install_post_rewrite_hook,
 )
@@ -183,7 +184,7 @@ def _install_skdd_via_npx() -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.15", prog_name="logmind")
+@click.version_option(version="0.6.16", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -506,6 +507,7 @@ def init(
         configure_merge_drivers(root_path)
         install_post_merge_hook(root_path)
         install_post_rewrite_hook(root_path)
+        install_commit_msg_hook(root_path)
 
         click.echo()
         click.secho("Done. docs/ and .logmind/ left untouched.", fg="green")
@@ -631,6 +633,7 @@ def init(
         configure_merge_drivers(root_path)
         install_post_merge_hook(root_path)
         install_post_rewrite_hook(root_path)
+        install_commit_msg_hook(root_path)
 
     # Log first decision
     log_first_decision(docs_path)
@@ -2907,6 +2910,7 @@ def self_update_cmd():
         current binary's body (closes the v0.6.10 drift loop)
     """
     from logmind.core.gitattributes import (
+        install_commit_msg_hook,
         install_post_merge_hook,
         install_post_rewrite_hook,
     )
@@ -2923,6 +2927,8 @@ def self_update_cmd():
             click.echo("✓ Refreshed .git/hooks/post-merge")
         if install_post_rewrite_hook(root_path):
             click.echo("✓ Refreshed .git/hooks/post-rewrite")
+        if install_commit_msg_hook(root_path):
+            click.echo("✓ Refreshed .git/hooks/commit-msg")
 
     if not sync_messages:
         click.secho("✓ logmind templates are up to date.", fg="green")

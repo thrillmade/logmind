@@ -207,22 +207,26 @@ def _build_post_merge_hook_body() -> str:
         "      exit 0\n"
         "    fi\n"
         "  fi\n"
-        "  # v0.6.15 / tokenomics-agent feedback: default-branch skip. After\n"
-        "  # `gh pr merge --squash --delete-branch`, the hook fires on main;\n"
-        "  # if it regens locally the output differs from origin/main (squash\n"
-        "  # compressed history), leaving docs/timeline.md + docs/file-structure.md\n"
-        "  # unstaged every merge. regen-timeline.yml handles main server-side;\n"
-        "  # local main converges on next pull. Trade 'immediate local view of\n"
-        "  # new entry' for 'main matches origin/main' — users want the latter.\n"
-        "  # Resolve default branch via --short. The prior pipeline\n"
-        "  # `... | sed ... || echo main` had an unreachable fallback because\n"
-        "  # sed's exit (0) masked git's failure — flagged by clud-bug-review\n"
-        "  # on PR #122. --short gives the bare branch name directly.\n"
+        "  # v0.6.16 (replaces v0.6.15's blanket default-branch skip): on the\n"
+        "  # default branch, only skip when HEAD already matches origin/<default>\n"
+        "  # — i.e., a fast-forward pull-up from server where regen-timeline.yml\n"
+        "  # has already produced the authoritative timeline. For local merges\n"
+        "  # that introduced new commits not yet on origin (the multi-branch\n"
+        "  # self-heal case: `git merge feat-branch` on main), regen MUST fire\n"
+        "  # so the working tree reflects the merged-in decision files. v0.6.15's\n"
+        "  # blanket skip dropped Decision-B-style entries from local main; the\n"
+        "  # multi-branch self-heal regression test in tests/test_merge_driver.py\n"
+        "  # catches this. Surfaces the bug PRE-merge instead of in a downstream\n"
+        "  # check-derived-docs failure weeks later.\n"
         "  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)\n"
         "  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)\n"
         "  [ -z \"$default\" ] && default=main\n"
         "  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ]; then\n"
-        "    exit 0\n"
+        "    head_sha=$(git rev-parse HEAD 2>/dev/null || true)\n"
+        "    origin_sha=$(git rev-parse \"origin/$default\" 2>/dev/null || true)\n"
+        "    if [ -n \"$origin_sha\" ] && [ \"$head_sha\" = \"$origin_sha\" ]; then\n"
+        "      exit 0\n"
+        "    fi\n"
         "  fi\n"
         "  if [ -d docs ]; then\n"
         "    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n"
@@ -321,6 +325,148 @@ def installed_post_rewrite_hook_version(repo_root: Path) -> Optional[str]:
         return None
     content = hook.read_text(encoding="utf-8", errors="ignore")
     if _POST_REWRITE_HOOK_MARKER not in content:
+        return None
+    match = _HOOK_VERSION_RE.search(content)
+    return match.group(1) if match else None
+
+
+# ---------------------------------------------------------------------------
+# v0.6.16 — commit-msg hook (dogfood enforcement)
+#
+# The tokenomics-agent session's "why git add instead of logmind" feedback
+# revealed that even with AGENTS.md guidance + skill docs, agents reflexively
+# fall back to raw `git commit` on substantive code changes. The commit-msg
+# hook adds a client-side check: when a commit's first line doesn't carry
+# the `logmind:` prefix AND the staged diff exceeds a threshold of
+# code-bearing lines, the hook prints a warning (default) or rejects the
+# commit (STRICT mode via `.logmind/config.yml`: commit_msg_hook.strict).
+#
+# Exempt patterns (always allowed without warning):
+#   - `logmind:*` — produced by `logmind log`
+#   - `Revert `, `Merge ` — git-generated
+#   - `Bump version`, `chore(release):` — release-bot patterns
+#   - `fixup!`, `squash!` — interactive rebase intermediates
+#
+# Threshold: 20 staged lines across `.py .go .ts .tsx .js .jsx .sh .yaml
+# .yml .toml`. Below threshold = trivial change (typo, formatting,
+# dep-bump) → exit 0 silently.
+# ---------------------------------------------------------------------------
+
+_COMMIT_MSG_HOOK_MARKER = "# logmind commit-msg hook"
+
+
+def _build_commit_msg_hook_body() -> str:
+    """Build the canonical commit-msg hook body for the current binary
+    version. v0.6.16+: embed binary version marker for doctor drift
+    detection. WARN-vs-STRICT behavior is selected at runtime from
+    `.logmind/config.yml` so users can flip the mode without re-installing
+    the hook.
+    """
+    return (
+        "#!/bin/sh\n"
+        "# logmind commit-msg hook\n"
+        f"{HOOK_VERSION_PREFIX}{_current_logmind_version()}\n"
+        "# Installed by `logmind init` (v0.6.16+). Enforces dogfood discipline:\n"
+        "# substantive code commits should be produced via `logmind log` so the\n"
+        "# decision tree captures the reasoning, alternatives, and implications.\n"
+        "# Raw `git commit` for substantive changes loses that signal.\n"
+        "#\n"
+        "# WARN by default. STRICT mode (reject commit) when .logmind/config.yml\n"
+        "# contains `commit_msg_hook: strict: true` in a top-level key. Users\n"
+        "# can bypass either mode with `git commit --no-verify` when the\n"
+        "# bypass is intentional.\n"
+        "#\n"
+        "# Exempt patterns (no check applied):\n"
+        "#   logmind:*    — written by `logmind log`\n"
+        "#   Revert       — git-generated revert message\n"
+        "#   Merge        — git-generated merge message\n"
+        "#   Bump version — release bot\n"
+        "#   chore(release): — release bot (conventional commits)\n"
+        "#   fixup!, squash! — interactive rebase intermediates\n"
+        "\n"
+        'msg=$(head -n1 "$1" 2>/dev/null || echo "")\n'
+        'case "$msg" in\n'
+        "  logmind:*|\"Revert \"*|\"Merge \"*|\"Bump version\"*|\"chore(release):\"*|fixup!*|squash!*)\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        "\n"
+        "# Count staged additions+deletions across code-bearing extensions.\n"
+        "staged=$(git diff --cached --numstat -- \\\n"
+        "  '*.py' '*.go' '*.ts' '*.tsx' '*.js' '*.jsx' '*.sh' \\\n"
+        "  '*.yaml' '*.yml' '*.toml' '*.rs' '*.rb' 2>/dev/null \\\n"
+        "  | awk '$1 != \"-\" { s+=$1+$2 } END { print s+0 }')\n"
+        "\n"
+        "threshold=20\n"
+        'if [ "${staged:-0}" -lt "$threshold" ] 2>/dev/null; then\n'
+        "  exit 0\n"
+        "fi\n"
+        "\n"
+        "# Best-effort grep for strict mode in .logmind/config.yml.\n"
+        "# Matches a `commit_msg_hook:` block with a nested `strict: true`.\n"
+        'strict=""\n'
+        'if [ -f .logmind/config.yml ]; then\n'
+        '  strict=$(awk \'/^commit_msg_hook:/{in_block=1; next} /^[a-zA-Z_]/ && !/^  /{in_block=0} in_block && /^  +strict:[[:space:]]*true/{print "yes"; exit}\' .logmind/config.yml 2>/dev/null || true)\n'
+        "fi\n"
+        "\n"
+        'echo "⚠ logmind: substantive commit ($staged lines staged in code) not produced via \\`logmind log\\`." >&2\n'
+        'echo "  Use:   logmind log \\"summary\\" -r \\"why\\" -a \\"alt\\" -i \\"impl\\"" >&2\n'
+        'echo "  Skip:  git commit --no-verify  (intentional override)" >&2\n'
+        "\n"
+        'if [ "$strict" = "yes" ]; then\n'
+        '  echo "  STRICT mode (commit_msg_hook.strict in .logmind/config.yml): rejecting commit." >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n"
+    )
+
+
+def install_commit_msg_hook(repo_root: Path) -> bool:
+    """Write `.git/hooks/commit-msg`. Returns True if the hook was created
+    or updated, False if logmind's hook with the CURRENT body was already
+    in place. Refuses to overwrite a non-logmind hook (some users have
+    custom commit-msg hooks for conventional commits / linting; we don't
+    trample them — doctor reports the foreign-hook state instead).
+    """
+    hooks_dir = repo_root / ".git" / "hooks"
+    if not hooks_dir.exists():
+        return False
+    hook = hooks_dir / "commit-msg"
+    body = _build_commit_msg_hook_body()
+    if hook.exists():
+        existing = hook.read_text(encoding="utf-8", errors="ignore")
+        if _COMMIT_MSG_HOOK_MARKER in existing:
+            if existing == body:
+                return False
+            hook.write_text(body, encoding="utf-8")
+            hook.chmod(0o755)
+            return True
+        return False  # foreign hook — preserve
+    hook.write_text(body, encoding="utf-8")
+    hook.chmod(0o755)
+    return True
+
+
+def commit_msg_hook_installed(repo_root: Path) -> bool:
+    hook = repo_root / ".git" / "hooks" / "commit-msg"
+    if not hook.exists():
+        return False
+    try:
+        return _COMMIT_MSG_HOOK_MARKER in hook.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def installed_commit_msg_hook_version(repo_root: Path) -> Optional[str]:
+    """Read the `# logmind-hook-version: …` marker from the installed
+    commit-msg hook. Returns the version string when present + ours;
+    None for missing / foreign / unmarked hooks.
+    """
+    hook = repo_root / ".git" / "hooks" / "commit-msg"
+    if not hook.exists():
+        return None
+    content = hook.read_text(encoding="utf-8", errors="ignore")
+    if _COMMIT_MSG_HOOK_MARKER not in content:
         return None
     match = _HOOK_VERSION_RE.search(content)
     return match.group(1) if match else None

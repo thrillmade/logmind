@@ -13,12 +13,15 @@ from logmind.core import doctor
 from logmind.core.gitattributes import (
     LOGMIND_GITATTRIBUTES_START,
     MERGE_DRIVER_CONFIG,
+    commit_msg_hook_installed,
     configure_merge_drivers,
     driver_configured,
     ensure_block,
     has_block,
+    install_commit_msg_hook,
     install_post_merge_hook,
     install_post_rewrite_hook,
+    installed_commit_msg_hook_version,
     post_merge_hook_installed,
     post_rewrite_hook_installed,
 )
@@ -898,3 +901,562 @@ def test_doctor_reports_post_rewrite_current_when_marker_and_body_match(
         f"Expected freshly-installed post-rewrite hook to be current; "
         f"got drift={status.drift!r} marker={status.marker!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.6.16 — multi-branch self-heal regression tests (the keystone)
+#
+# What we are proving: when two (or three) agents work on independent
+# branches off main, each running `logmind log`, then merging them back
+# sequentially, the merge driver auto-resolves `docs/timeline.md` AND
+# `docs/file-structure.md` without conflict markers, without manual
+# intervention, and final main carries ALL decisions.
+#
+# Why this matters: every concurrent-PR cycle in the dogfood loop and
+# every consumer-repo cycle depends on this contract. If the driver
+# silently breaks (binary off PATH, config not configured per-clone,
+# fresh-clone hook gap), trailing PRs go DIRTY immediately after the
+# leading PR merges, requiring `logmind rebase` per branch. That was
+# the tokenomics-agent pain — preventable by surfacing the contract
+# break in a regression test instead of a check-derived-docs failure
+# weeks later.
+#
+# The tests use real subprocess `git` + real subprocess `logmind`
+# calls — no mocks. The whole point is to exercise the live driver.
+# We skip when `logmind` isn't on PATH (the merge driver shells out
+# to it; without it, every test would spuriously fail).
+# ---------------------------------------------------------------------------
+
+
+_LOGMIND_BIN = None
+
+
+def _logmind_on_path():
+    """Memoized shutil.which check for `logmind`. The merge driver shells
+    out to `logmind timeline --write %A`, so if logmind isn't on PATH
+    these tests can only spuriously fail. Skip cleanly when missing."""
+    global _LOGMIND_BIN
+    if _LOGMIND_BIN is None:
+        import shutil
+        _LOGMIND_BIN = shutil.which("logmind") or ""
+    return bool(_LOGMIND_BIN)
+
+
+def _setup_logmind_repo(tmp_path: Path) -> Path:
+    """Set up a temp dir as a git repo with logmind init applied. Returns
+    the repo root. Disables auto_push (no remote in tests)."""
+    import os
+
+    env = {**os.environ, "LOGMIND_QUIET": "1"}
+
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "test"], cwd=tmp_path, check=True
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"], cwd=tmp_path, check=True
+    )
+
+    (tmp_path / "README.md").write_text("test repo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "initial"], cwd=tmp_path, check=True
+    )
+
+    result = subprocess.run(
+        ["logmind", "init", "--no-skill-install"],
+        cwd=tmp_path, capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, (
+        f"logmind init failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+
+    # No remote in tests → disable auto_push so `logmind log` doesn't fail
+    # at the push step. The merge driver + hooks still install + fire.
+    cfg = tmp_path / ".logmind" / "config.yml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace("auto_push: true", "auto_push: false"),
+        encoding="utf-8",
+    )
+
+    # Stage everything logmind init scaffolded into the initial commit.
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "logmind init scaffolding"],
+        cwd=tmp_path, check=True,
+    )
+
+    return tmp_path
+
+
+def _logmind_log(
+    repo: Path,
+    summary: str,
+    reasoning: str,
+    alternative: str,
+    implication: str,
+) -> subprocess.CompletedProcess:
+    """Run `logmind log` in `repo`. Returns the CompletedProcess for
+    callers that want to assert on output; caller decides whether to
+    `check=True`."""
+    import os
+
+    env = {**os.environ, "LOGMIND_QUIET": "1"}
+    return subprocess.run(
+        [
+            "logmind", "log", summary,
+            "-r", reasoning,
+            "-a", alternative,
+            "-i", implication,
+        ],
+        cwd=repo, capture_output=True, text=True, env=env,
+    )
+
+
+def _assert_no_conflict_markers(text: str, label: str):
+    """The whole point of the merge driver is to leave NO conflict
+    markers in derived docs. If any survive, the driver didn't fire (or
+    fired wrong) and the test must fail loudly."""
+    assert "<<<<<<< " not in text, (
+        f"{label}: merge driver left conflict marker '<<<<<<< ' — driver did NOT auto-resolve."
+    )
+    assert ">>>>>>> " not in text, (
+        f"{label}: merge driver left conflict marker '>>>>>>> ' — driver did NOT auto-resolve."
+    )
+    assert "=======" not in text, (
+        f"{label}: merge driver left conflict marker '=======' — driver did NOT auto-resolve."
+    )
+
+
+# ---------------------------------------------------------------------------
+# v0.6.16 — commit-msg hook (dogfood enforcement: substantive commits must
+# go through `logmind log`, not raw `git commit`)
+# ---------------------------------------------------------------------------
+
+
+def test_install_commit_msg_hook_creates_executable_hook(git_repo: Path):
+    """v0.6.16: hook is written under .git/hooks/commit-msg and (on POSIX)
+    executable. Same pattern as post-merge / post-rewrite installers."""
+    import os
+    changed = install_commit_msg_hook(git_repo)
+    assert changed is True
+    hook = git_repo / ".git" / "hooks" / "commit-msg"
+    assert hook.exists()
+    if os.name != "nt":
+        assert hook.stat().st_mode & 0o111
+    body = hook.read_text(encoding="utf-8")
+    # The hook must implement the exempt-prefix carve-out and the
+    # threshold check. Both are part of the user-facing contract.
+    assert "logmind:*" in body
+    assert "Revert " in body
+    assert "Merge " in body
+    assert "fixup!" in body
+    assert "threshold=20" in body
+
+
+def test_install_commit_msg_hook_is_idempotent(git_repo: Path):
+    install_commit_msg_hook(git_repo)
+    assert install_commit_msg_hook(git_repo) is False
+
+
+def test_install_commit_msg_hook_preserves_foreign_hook(git_repo: Path):
+    """A user-authored commit-msg hook (e.g., conventional commits linter)
+    is preserved untouched — same contract as the other hooks."""
+    hook = git_repo / ".git" / "hooks" / "commit-msg"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\necho 'custom commit-msg'\n", encoding="utf-8")
+    hook.chmod(0o755)
+    changed = install_commit_msg_hook(git_repo)
+    assert changed is False
+    assert "custom commit-msg" in hook.read_text(encoding="utf-8")
+
+
+def test_commit_msg_hook_installed_detects_logmind_hook(git_repo: Path):
+    install_commit_msg_hook(git_repo)
+    assert commit_msg_hook_installed(git_repo) is True
+
+
+def test_installed_commit_msg_hook_version_returns_current(git_repo: Path):
+    from logmind import __version__ as current_version
+    assert installed_commit_msg_hook_version(git_repo) is None  # not installed yet
+    install_commit_msg_hook(git_repo)
+    assert installed_commit_msg_hook_version(git_repo) == current_version
+
+
+def test_commit_msg_hook_warns_on_substantive_raw_commit(git_repo: Path):
+    """End-to-end: a raw `git commit` of >20 staged code lines under a
+    non-exempt message prints the dogfood warning but doesn't reject
+    the commit (WARN mode default)."""
+    install_commit_msg_hook(git_repo)
+    # Substantive change: write a 25-line .py file.
+    target = git_repo / "module.py"
+    target.write_text("\n".join(f"x_{i} = {i}" for i in range(25)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    # Need .logmind/config.yml so the hook's strict-mode probe doesn't error
+    # (the hook tolerates missing config — defaults to WARN — but explicit
+    # presence exercises the realistic install state).
+    cfg_dir = git_repo / ".logmind"
+    cfg_dir.mkdir(exist_ok=True)
+    (cfg_dir / "config.yml").write_text(
+        "# logmind config\ngit:\n  auto_commit: true\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "feat: add module without logmind log"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, (
+        f"WARN mode: hook must exit 0 even when warning fires. stderr={result.stderr}"
+    )
+    assert "substantive commit" in result.stderr, (
+        "WARN mode: warning must be visible to user. "
+        f"stderr was:\n{result.stderr}"
+    )
+    assert "logmind log" in result.stderr
+
+
+def test_commit_msg_hook_silent_on_logmind_prefix(git_repo: Path):
+    """Hook must NOT warn for messages with the `logmind:` prefix even on
+    substantive changes — `logmind log` produces those messages and we
+    don't want to spam its own commits."""
+    install_commit_msg_hook(git_repo)
+    target = git_repo / "module.py"
+    target.write_text("\n".join(f"x_{i} = {i}" for i in range(25)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "logmind: Use new module"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "substantive commit" not in result.stderr, (
+        "Hook fired warning on `logmind:` commit — exempt-prefix check failed."
+    )
+
+
+def test_commit_msg_hook_silent_on_small_diff(git_repo: Path):
+    """Below-threshold changes (typos, dep bumps) should pass without warning."""
+    install_commit_msg_hook(git_repo)
+    target = git_repo / "module.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "fix: tiny change"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "substantive commit" not in result.stderr, (
+        "Hook fired warning on below-threshold change. "
+        f"stderr was:\n{result.stderr}"
+    )
+
+
+def test_commit_msg_hook_strict_mode_rejects_raw_commit(git_repo: Path):
+    """STRICT mode (commit_msg_hook.strict: true in .logmind/config.yml)
+    rejects the commit instead of warning. v0.6.16 ships WARN as default
+    but supports STRICT for high-discipline repos."""
+    install_commit_msg_hook(git_repo)
+    target = git_repo / "module.py"
+    target.write_text("\n".join(f"x_{i} = {i}" for i in range(25)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    cfg_dir = git_repo / ".logmind"
+    cfg_dir.mkdir(exist_ok=True)
+    (cfg_dir / "config.yml").write_text(
+        "commit_msg_hook:\n  strict: true\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "feat: add module"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, (
+        f"STRICT mode: hook must exit non-zero. stderr={result.stderr}"
+    )
+    assert "STRICT mode" in result.stderr or "rejecting" in result.stderr
+
+
+def _amend_pending_regen(repo: Path):
+    """The post-merge hook regens docs/timeline.md + docs/file-structure.md
+    AFTER git completes the merge commit. v0.6.7's no-stage contract leaves
+    those regens as UNSTAGED modifications in the working tree. Subsequent
+    `git merge` operations refuse to proceed while the working tree is
+    dirty. To simulate the realistic multi-merge workflow, fold the regen
+    into the just-created merge commit via `git commit --amend --no-edit`.
+    Real users would either amend here, push as-is and let server-side
+    regen-timeline.yml fix it, or accept the unstaged state until their
+    next commit.
+    """
+    subprocess.run(
+        ["git", "add", "docs/timeline.md", "docs/file-structure.md"],
+        cwd=repo, capture_output=True,
+    )
+    has_staged_diff = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=repo, capture_output=True,
+    ).returncode == 1
+    if has_staged_diff:
+        subprocess.run(
+            ["git", "commit", "--amend", "--no-edit", "-q"],
+            cwd=repo, check=True,
+        )
+
+
+def _assert_decision_branches_present(repo: Path, branches: list, label: str):
+    """Both decision-branches files must exist post-merge AND the timeline
+    must reflect them (either inline or via the `(N decisions)` count when
+    brief-mode elides middle rows).
+    """
+    for branch in branches:
+        path = repo / "docs" / "decisions-branches" / f"feat__{branch}.md"
+        assert path.exists(), (
+            f"{label}: docs/decisions-branches/feat__{branch}.md missing — "
+            f"merge did not bring in branch {branch!r}'s decision file."
+        )
+        # The file itself records the title used in `logmind log`.
+        # Defensive — confirms the file isn't a stub.
+        assert path.read_text(encoding="utf-8").strip(), (
+            f"{label}: decision-branches/feat__{branch}.md is empty"
+        )
+
+
+def _assert_timeline_has_decision_count(repo: Path, expected_count: int, label: str):
+    """Brief mode collapses middle decisions but always renders an accurate
+    count in the month header: `## 2026-06 (N decisions)`. The count is
+    the durable signal that the timeline regen saw ALL decision sources."""
+    timeline = (repo / "docs" / "timeline.md").read_text(encoding="utf-8")
+    # Look for any month header with the expected count
+    import re
+    match = re.search(rf"## \d{{4}}-\d{{2}} \({expected_count} decisions\)", timeline)
+    # In months with < 3 decisions, no count is rendered. Fall back to
+    # checking direct title presence.
+    if match is None and expected_count < 3:
+        return  # short month uses no-count rendering; caller asserts titles separately
+    assert match is not None, (
+        f"{label}: expected timeline to show `(N decisions)` count = "
+        f"{expected_count}, got:\n{timeline}"
+    )
+
+
+@pytest.mark.skipif(
+    not _logmind_on_path(),
+    reason="`logmind` not on PATH; merge driver can't shell out",
+)
+def test_merge_driver_self_heals_two_concurrent_branches(tmp_path: Path):
+    """Two agents on independent branches off main, both run `logmind log`,
+    both merge to main sequentially. The merge driver + post-merge hook
+    MUST cooperatively produce a final main where both decision files are
+    present, no conflict markers leak, and the timeline reflects all
+    three entries (init + A + B).
+
+    THIS IS THE KEYSTONE TEST. The whole dogfood loop assumes this works.
+    Without it, every concurrent-PR cycle hits a check-derived-docs failure
+    and the user has to `logmind rebase` per branch.
+    """
+    repo = _setup_logmind_repo(tmp_path)
+
+    # Agent A's branch
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/agent-a"], cwd=repo, check=True
+    )
+    r = _logmind_log(
+        repo,
+        "Decision A: pick PostgreSQL",
+        reasoning="ACID + complex joins",
+        alternative="MongoDB",
+        implication="connection pooling required",
+    )
+    assert r.returncode == 0, f"logmind log on agent-a failed: {r.stderr}"
+
+    # Agent B's branch (OFF main, not off A)
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/agent-b"], cwd=repo, check=True
+    )
+    r = _logmind_log(
+        repo,
+        "Decision B: pick Redis for cache",
+        reasoning="fast session storage",
+        alternative="Memcached",
+        implication="run Redis server",
+    )
+    assert r.returncode == 0, f"logmind log on agent-b failed: {r.stderr}"
+
+    # Merge A first (no concurrent conflict — only A's branch ever wrote
+    # timeline with content).
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    result_a = subprocess.run(
+        ["git", "merge", "feat/agent-a", "--no-ff", "-m", "merge a"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert result_a.returncode == 0, (
+        f"merge of agent-a failed:\nstdout={result_a.stdout}\nstderr={result_a.stderr}"
+    )
+
+    # THIS IS THE SELF-HEAL MOMENT.
+    # Branch B's timeline.md was regen'd off main BEFORE A landed — its
+    # "Recent decisions" lines contain only B. Main's timeline (post-A)
+    # contains only A. Textual merge would conflict; the merge driver +
+    # post-merge hook must cooperate to produce a clean tree with both.
+    result_b = subprocess.run(
+        ["git", "merge", "feat/agent-b", "--no-ff", "-m", "merge b"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert result_b.returncode == 0, (
+        "merge driver MUST auto-resolve timeline.md on concurrent-branch merge.\n"
+        f"git merge exit code: {result_b.returncode}\n"
+        f"stdout:\n{result_b.stdout}\n"
+        f"stderr:\n{result_b.stderr}\n"
+        "Likely cause: merge driver not configured per-clone (`logmind init` "
+        "didn't run `git config merge.logmind-timeline.driver`), or `logmind` "
+        "binary not on PATH for the driver shell-out. Re-run `logmind init` "
+        "and `logmind doctor` to surface the gap."
+    )
+
+    # Working tree contract — both branches' decision files survive merge.
+    _assert_decision_branches_present(repo, ["agent-a", "agent-b"], "two-branch self-heal")
+
+    # Timeline contract — no conflict markers + decision count = 3 (init+A+B).
+    final_timeline = (repo / "docs" / "timeline.md").read_text(encoding="utf-8")
+    _assert_no_conflict_markers(final_timeline, "docs/timeline.md after B merge")
+    _assert_timeline_has_decision_count(repo, 3, "two-branch self-heal")
+
+
+@pytest.mark.skipif(
+    not _logmind_on_path(),
+    reason="`logmind` not on PATH; merge driver can't shell out",
+)
+def test_merge_driver_self_heals_three_concurrent_branches(tmp_path: Path):
+    """N=3 generalization. Three branches off main, three sequential merges.
+    Validates the driver scales beyond pairwise — each merge regenerates
+    timeline from the cumulative decisions-branches/ tree."""
+    repo = _setup_logmind_repo(tmp_path)
+
+    # Each agent writes on a separate branch off main
+    for name, summary, alt in [
+        ("a", "Decision A: use REST", "GraphQL"),
+        ("b", "Decision B: use Redis", "Memcached"),
+        ("c", "Decision C: use Pytest", "unittest"),
+    ]:
+        subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", f"feat/agent-{name}"],
+            cwd=repo, check=True,
+        )
+        r = _logmind_log(
+            repo,
+            summary,
+            reasoning=f"reasoning for {name}",
+            alternative=alt,
+            implication=f"implication {name}",
+        )
+        assert r.returncode == 0, f"logmind log on agent-{name} failed: {r.stderr}"
+
+    # Merge sequentially: a → b → c. After 'a', timeline has just A. After
+    # 'b', driver must merge B's regen (only B) into main's (only A) → both.
+    # After 'c', driver must do the same dance against the existing A+B.
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    for name in ("a", "b", "c"):
+        result = subprocess.run(
+            ["git", "merge", f"feat/agent-{name}", "--no-ff", "-m", f"merge {name}"],
+            cwd=repo, capture_output=True, text=True,
+        )
+        assert result.returncode == 0, (
+            f"merge of agent-{name} failed — driver didn't auto-resolve:\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        # Fold the post-merge regen into the merge commit so the next
+        # iteration's `git merge` doesn't refuse on dirty working tree.
+        _amend_pending_regen(repo)
+
+    # Working tree + timeline contracts.
+    _assert_decision_branches_present(repo, ["agent-a", "agent-b", "agent-c"], "3-branch self-heal")
+    final_timeline = (repo / "docs" / "timeline.md").read_text(encoding="utf-8")
+    _assert_no_conflict_markers(final_timeline, "docs/timeline.md after 3-branch merge")
+    # init + A + B + C = 4
+    _assert_timeline_has_decision_count(repo, 4, "3-branch self-heal")
+
+
+@pytest.mark.skipif(
+    not _logmind_on_path(),
+    reason="`logmind` not on PATH; merge driver can't shell out",
+)
+def test_merge_driver_self_heals_squash_merge(tmp_path: Path):
+    """Squash-merge variant. Agent A squash-merges (the GitHub default for
+    PR merges); agent B's branch was forked BEFORE the squash. When B
+    merges to the post-squash main, git replays B's timeline regen
+    against a main whose history was compressed — the driver must still
+    fire on the textual conflict and emit a clean final tree.
+
+    Composes with the v0.6.13 + v0.6.15 fixes (orphan-branch skip +
+    default-branch skip). If those skips fire incorrectly, the regen
+    would silently no-op and we'd lose decisions; the test catches that
+    by asserting both decisions land in the final timeline.
+    """
+    repo = _setup_logmind_repo(tmp_path)
+
+    # Agent A's branch
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/agent-a"], cwd=repo, check=True
+    )
+    r = _logmind_log(
+        repo,
+        "Decision A: pick Postgres",
+        reasoning="ACID",
+        alternative="MongoDB",
+        implication="pool connections",
+    )
+    assert r.returncode == 0, f"logmind log on agent-a failed: {r.stderr}"
+
+    # Agent B forks from main BEFORE A is merged (a parallel agent)
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/agent-b"], cwd=repo, check=True
+    )
+    r = _logmind_log(
+        repo,
+        "Decision B: pick pytest",
+        reasoning="fixtures",
+        alternative="unittest",
+        implication="adopt fixtures pattern",
+    )
+    assert r.returncode == 0, f"logmind log on agent-b failed: {r.stderr}"
+
+    # Squash-merge A into main (replicates `gh pr merge --squash`)
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    sq = subprocess.run(
+        ["git", "merge", "--squash", "feat/agent-a"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert sq.returncode == 0, f"squash --merge failed: {sq.stderr}"
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "squash merge a"], cwd=repo, check=True
+    )
+
+    # Now merge B's branch (forked off pre-squash main). Timeline conflict
+    # is unavoidable textually — driver must auto-resolve.
+    result_b = subprocess.run(
+        ["git", "merge", "feat/agent-b", "--no-ff", "-m", "merge b"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert result_b.returncode == 0, (
+        "merge driver MUST auto-resolve timeline.md on the squash-then-merge "
+        "case — this is the common GitHub PR cycle pattern.\n"
+        f"stdout:\n{result_b.stdout}\nstderr:\n{result_b.stderr}"
+    )
+
+    # Working tree + timeline contracts — squash-merge variant.
+    _assert_decision_branches_present(repo, ["agent-a", "agent-b"], "squash + merge")
+    final_timeline = (repo / "docs" / "timeline.md").read_text(encoding="utf-8")
+    _assert_no_conflict_markers(final_timeline, "docs/timeline.md after squash + merge")
+    _assert_timeline_has_decision_count(repo, 3, "squash + merge")
