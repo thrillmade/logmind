@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (44 decisions)
+## 2026-06 (45 decisions)
 
 - **2026-06-02** — B7: curl installer defaults to ~/.local/bin (XDG-compatible, no sudo) over /usr/local/bin *(feat/go-b7-distribution)* — [decisions-branches/feat__go-b7-distribution.md](decisions-branches/feat__go-b7-distribution.md)
-- *... 42 more decisions ...*
+- *... 43 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

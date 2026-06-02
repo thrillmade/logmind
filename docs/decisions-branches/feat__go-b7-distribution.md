@@ -46,3 +46,15 @@
 - Sudo-required installs require explicit --prefix flag — no surprise privilege escalation
 
 ---
+## 2026-06-02 17:38 - B7: convert internal/version.{Version,SpecVersion} from const → var for ldflags injection
+
+**Reasoning:** GoReleaser injects the release tag into the binary via -ldflags "-X 'github.com/thrillmade/logmind/internal/version.Version={{.Version}}'". Go's linker -X flag only overrides package-level variables, not constants — so the existing const Version = "1.0.0-dev" had to become var Version = "1.0.0-dev". Default value unchanged; production behavior unchanged for local make build (which doesn't pass -ldflags). Only tagged release builds via .goreleaser.yaml see the override. All existing callers (cli/root.go versionLine, cli/agents.go pin sweep, hooks/hooks.go hookVersion) work unchanged because Go treats var-of-string identically to const-of-string for value-read purposes.
+
+**Alternatives considered:** Read version from runtime/debug.ReadBuildInfo (requires Go 1.21+ embedded VCS info; works for 'go install ...' but not for direct go build outputs without VCS context), Read version from an embed.FS-loaded VERSION file (extra file to maintain + parse at startup), Hand-roll a build script that templates Version into a generated file pre-build (resurrects the codegen step Go modules eliminated)
+
+**Implications:**
+- ldflags is the canonical Go release-build version-injection pattern (used by cli/cli, helm, kubectl, every notable Go CLI)
+- tests/snapshot goldens still pin 1.0.0-dev for non-release builds; release-built binaries report the tag
+- src/hooks/hooks.go embeds version.Version in hook bodies — released binaries embed the released version; dev binaries embed 1.0.0-dev
+
+---
