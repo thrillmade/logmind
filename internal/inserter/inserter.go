@@ -19,10 +19,14 @@
 //     quotes — matches the Python v0.6.11+ widened pattern.
 //
 //   - Template version markers gate "is the installed block stale".
-//     `<!-- logmind-block-version: v5 -->` for the full template,
-//     `<!-- logmind-block-version: v7-pointer -->` for slim. Drift is
+//     `<!-- logmind-block-version: v6 -->` for the full template,
+//     `<!-- logmind-block-version: v8-pointer -->` for slim (v0.6.16
+//     bumped both from v5 / v7-pointer respectively). Drift is
 //     detected by comparing the marker bodies stripped (the Python
 //     code uses .strip() to be whitespace-tolerant; we mirror that).
+//     The matchingTemplate helper accepts both old and new markers
+//     so existing repos refresh into the new body without manual
+//     intervention.
 //
 // The inserter package is read-mostly: only the apply paths in
 // `agents update --apply`, `agents add <name>`, and `agents migrate`
@@ -372,7 +376,8 @@ func EnsureAgentsMD(repoRoot string) (string, error) {
 }
 
 // agentsMDTemplate returns the canonical AGENTS.md body. Defaults to
-// slim per SPEC §1.1 (the v7-pointer variant — defers to skills.sh).
+// slim per SPEC §1.1 (the v8-pointer variant — defers to skills.sh;
+// v0.6.16 bumped this from v7-pointer).
 // The Python implementation auto-detects skills availability; the Go
 // binary defaults to slim because:
 //
@@ -380,11 +385,11 @@ func EnsureAgentsMD(repoRoot string) (string, error) {
 //  2. Detecting `skills.sh` from inside the binary would require
 //     spawning npx — defer that to a later wave if needed.
 //  3. Repos that already shipped the full template stay on full
-//     (the marker version `v5` won't match `v7-pointer`, so the
-//     stale-block detection will read DIFFERENT but the byte-for-
-//     byte compare in ExtractMarkerBlock will reject the refresh
-//     because we never auto-migrate full → slim). See OutdatedMarkerBlocks
-//     for the explicit guard.
+//     (a v5 / v6 full-template marker won't match v7-pointer /
+//     v8-pointer slim, so the stale-block detection will read
+//     DIFFERENT but the byte-for-byte compare in ExtractMarkerBlock
+//     will reject the refresh because we never auto-migrate
+//     full → slim). See OutdatedMarkerBlocks for the explicit guard.
 //
 // Callers that need the full variant (e.g., during `init --no-slim`)
 // can call templates.AgentsTemplate() directly.
@@ -459,12 +464,20 @@ func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, error) {
 // block-version marker in the installed body. Returns "" if the
 // installed body carries no recognized marker — in which case we
 // take no action (refusing to guess).
+//
+// v0.6.16 bumped the full template v5→v6 and the slim variant
+// v7-pointer→v8-pointer. Both old + new markers map to the same
+// FLAVOUR (full vs slim) so existing repos with the older marker
+// get refreshed to the new body, while the explicit guard against
+// silent full↔slim flips (the substring of "-pointer") is preserved.
 func matchingTemplate(installedBody string) string {
-	if strings.Contains(installedBody, "logmind-block-version: v5") {
-		return templates.AgentsTemplate()
-	}
-	if strings.Contains(installedBody, "logmind-block-version: v7-pointer") {
+	if strings.Contains(installedBody, "logmind-block-version: v7-pointer") ||
+		strings.Contains(installedBody, "logmind-block-version: v8-pointer") {
 		return templates.AgentsSlimTemplate()
+	}
+	if strings.Contains(installedBody, "logmind-block-version: v5") ||
+		strings.Contains(installedBody, "logmind-block-version: v6") {
+		return templates.AgentsTemplate()
 	}
 	return ""
 }
