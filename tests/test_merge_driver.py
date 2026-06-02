@@ -13,12 +13,15 @@ from logmind.core import doctor
 from logmind.core.gitattributes import (
     LOGMIND_GITATTRIBUTES_START,
     MERGE_DRIVER_CONFIG,
+    commit_msg_hook_installed,
     configure_merge_drivers,
     driver_configured,
     ensure_block,
     has_block,
+    install_commit_msg_hook,
     install_post_merge_hook,
     install_post_rewrite_hook,
+    installed_commit_msg_hook_version,
     post_merge_hook_installed,
     post_rewrite_hook_installed,
 )
@@ -873,3 +876,167 @@ def test_doctor_reports_post_rewrite_current_when_marker_and_body_match(
         f"Expected freshly-installed post-rewrite hook to be current; "
         f"got drift={status.drift!r} marker={status.marker!r}"
     )
+
+# ---------------------------------------------------------------------------
+# v0.6.16 — commit-msg hook (dogfood enforcement: substantive commits must
+# go through `logmind log`, not raw `git commit`)
+# ---------------------------------------------------------------------------
+
+
+def test_install_commit_msg_hook_creates_executable_hook(git_repo: Path):
+    """v0.6.16: hook is written under .git/hooks/commit-msg and (on POSIX)
+    executable. Same pattern as post-merge / post-rewrite installers."""
+    import os
+    changed = install_commit_msg_hook(git_repo)
+    assert changed is True
+    hook = git_repo / ".git" / "hooks" / "commit-msg"
+    assert hook.exists()
+    if os.name != "nt":
+        assert hook.stat().st_mode & 0o111
+    body = hook.read_text(encoding="utf-8")
+    # The hook must implement the exempt-prefix carve-out and the
+    # threshold check. Both are part of the user-facing contract.
+    assert "logmind:*" in body
+    assert "Revert " in body
+    assert "Merge " in body
+    assert "fixup!" in body
+    assert "threshold=20" in body
+
+
+def test_install_commit_msg_hook_is_idempotent(git_repo: Path):
+    install_commit_msg_hook(git_repo)
+    assert install_commit_msg_hook(git_repo) is False
+
+
+def test_install_commit_msg_hook_preserves_foreign_hook(git_repo: Path):
+    """A user-authored commit-msg hook (e.g., conventional commits linter)
+    is preserved untouched — same contract as the other hooks."""
+    hook = git_repo / ".git" / "hooks" / "commit-msg"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\necho 'custom commit-msg'\n", encoding="utf-8")
+    hook.chmod(0o755)
+    changed = install_commit_msg_hook(git_repo)
+    assert changed is False
+    assert "custom commit-msg" in hook.read_text(encoding="utf-8")
+
+
+def test_commit_msg_hook_installed_detects_logmind_hook(git_repo: Path):
+    install_commit_msg_hook(git_repo)
+    assert commit_msg_hook_installed(git_repo) is True
+
+
+def test_installed_commit_msg_hook_version_returns_current(git_repo: Path):
+    from logmind import __version__ as current_version
+    assert installed_commit_msg_hook_version(git_repo) is None  # not installed yet
+    install_commit_msg_hook(git_repo)
+    assert installed_commit_msg_hook_version(git_repo) == current_version
+
+
+def test_commit_msg_hook_warns_on_substantive_raw_commit(git_repo: Path):
+    """End-to-end: a raw `git commit` of >20 staged code lines under a
+    non-exempt message prints the dogfood warning but doesn't reject
+    the commit (WARN mode default)."""
+    install_commit_msg_hook(git_repo)
+    # Substantive change: write a 25-line .py file.
+    target = git_repo / "module.py"
+    target.write_text("\n".join(f"x_{i} = {i}" for i in range(25)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    # Need .logmind/config.yml so the hook's strict-mode probe doesn't error
+    # (the hook tolerates missing config — defaults to WARN — but explicit
+    # presence exercises the realistic install state).
+    cfg_dir = git_repo / ".logmind"
+    cfg_dir.mkdir(exist_ok=True)
+    (cfg_dir / "config.yml").write_text(
+        "# logmind config\ngit:\n  auto_commit: true\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "feat: add module without logmind log"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, (
+        f"WARN mode: hook must exit 0 even when warning fires. stderr={result.stderr}"
+    )
+    assert "substantive commit" in result.stderr, (
+        "WARN mode: warning must be visible to user. "
+        f"stderr was:\n{result.stderr}"
+    )
+    assert "logmind log" in result.stderr
+
+
+def test_commit_msg_hook_silent_on_logmind_prefix(git_repo: Path):
+    """Hook must NOT warn for messages with the `logmind:` prefix even on
+    substantive changes — `logmind log` produces those messages and we
+    don't want to spam its own commits."""
+    install_commit_msg_hook(git_repo)
+    target = git_repo / "module.py"
+    target.write_text("\n".join(f"x_{i} = {i}" for i in range(25)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "logmind: Use new module"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "substantive commit" not in result.stderr, (
+        "Hook fired warning on `logmind:` commit — exempt-prefix check failed."
+    )
+
+
+def test_commit_msg_hook_silent_on_small_diff(git_repo: Path):
+    """Below-threshold changes (typos, dep bumps) should pass without warning."""
+    install_commit_msg_hook(git_repo)
+    target = git_repo / "module.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "fix: tiny change"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "substantive commit" not in result.stderr, (
+        "Hook fired warning on below-threshold change. "
+        f"stderr was:\n{result.stderr}"
+    )
+
+
+def test_commit_msg_hook_strict_mode_rejects_raw_commit(git_repo: Path):
+    """STRICT mode (commit_msg_hook.strict: true in .logmind/config.yml)
+    rejects the commit instead of warning. v0.6.16 ships WARN as default
+    but supports STRICT for high-discipline repos."""
+    install_commit_msg_hook(git_repo)
+    target = git_repo / "module.py"
+    target.write_text("\n".join(f"x_{i} = {i}" for i in range(25)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "module.py"], cwd=git_repo, check=True)
+
+    cfg_dir = git_repo / ".logmind"
+    cfg_dir.mkdir(exist_ok=True)
+    (cfg_dir / "config.yml").write_text(
+        "commit_msg_hook:\n  strict: true\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "feat: add module"],
+        cwd=git_repo, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, (
+        f"STRICT mode: hook must exit non-zero. stderr={result.stderr}"
+    )
+    assert "STRICT mode" in result.stderr or "rejecting" in result.stderr
+
+
+def _amend_pending_regen(repo: Path):
+    """The post-merge hook regens docs/timeline.md + docs/file-structure.md
+    AFTER git completes the merge commit. v0.6.7's no-stage contract leaves
+    those regens as UNSTAGED modifications in the working tree. Subsequent
+    `git merge` operations refuse to proceed while the working tree is
+    dirty. To simulate the realistic multi-merge workflow, fold the regen
+    into the just-created merge commit via `git commit --amend --no-edit`.
+    Real users would either amend here, push as-is and let server-side
+    regen-timeline.yml fix it, or accept the unstaged state until their
+    next commit.
+    """
