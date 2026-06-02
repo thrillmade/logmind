@@ -86,6 +86,46 @@ func TestAnthropicSuggester_HappyPath(t *testing.T) {
 	}
 }
 
+// TestAnthropicSuggester_LimitReader: server streams more bytes than
+// the cap; Suggest still returns LLMUnavailableErr cleanly (JSON
+// parse fails on the truncated body) rather than consuming unbounded
+// memory. Pins the PR #124 critical-fix behaviour.
+func TestAnthropicSuggester_LimitReader(t *testing.T) {
+	// Generate a body slightly larger than maxLLMResponseBytes so the
+	// truncated read produces invalid JSON (which is the symptom users
+	// would actually hit — runaway server gets stopped early).
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"content":[{"type":"text","text":"`))
+		// Stream past the cap. Each chunk is small so the writer can
+		// flush before the server hangs up.
+		chunk := make([]byte, 1024)
+		for i := range chunk {
+			chunk[i] = 'A'
+		}
+		for written := 0; written < maxLLMResponseBytes+2048; written += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		w.Write([]byte(`"}]}`))
+	}))
+	defer server.Close()
+
+	suggester := &AnthropicSuggester{
+		APIKey:     "test-key",
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	_, err := suggester.Suggest(context.Background(), LLMRequest{Model: "x", MaxTokens: 10})
+	// We expect ANY error wrapping LLMUnavailableErr — the parse
+	// either fails on the truncated buffer or the outer caller's JSON
+	// unmarshal rejects the missing closing brace.
+	if !errors.Is(err, LLMUnavailableErr) {
+		t.Fatalf("expected LLMUnavailableErr; got %v", err)
+	}
+}
+
 // TestAnthropicSuggester_ErrorStatus: non-200 → LLMUnavailableErr.
 func TestAnthropicSuggester_ErrorStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,19 +159,53 @@ func TestSuggestLLM_NilTransport(t *testing.T) {
 	}
 }
 
-// TestExtractJSONBlob handles preamble + suffix wrapping.
+// TestExtractJSONBlob handles preamble + suffix wrapping. Specific
+// regression cases:
+//   - chat-style preamble + ``` fence
+//   - trailing commentary with a `}` outside the JSON (PR #124 minor)
+//   - `}` inside a quoted string value (PR #124 minor — balanced scan)
+//   - JSON-only input (no preamble)
+//   - no braces at all → input verbatim so the parser surfaces a clear err
 func TestExtractJSONBlob(t *testing.T) {
 	cases := []struct {
+		Name string
 		In   string
 		Want string
 	}{
-		{`{"patterns": []}`, `{"patterns": []}`},
-		{"Here is the result:\n```json\n{\"a\": 1}\n```\nDone.", `{"a": 1}`},
-		{"no braces here", "no braces here"},
+		{
+			Name: "bare",
+			In:   `{"patterns": []}`,
+			Want: `{"patterns": []}`,
+		},
+		{
+			Name: "fenced",
+			In:   "Here is the result:\n```json\n{\"a\": 1}\n```\nDone.",
+			Want: `{"a": 1}`,
+		},
+		{
+			Name: "trailing-brace-in-suffix",
+			In:   `Here you go: {"a": 1} let me know if anything's off!}`,
+			Want: `{"a": 1}`,
+		},
+		{
+			Name: "brace-inside-string",
+			In:   `{"draft": "a } in text", "ok": true}`,
+			Want: `{"draft": "a } in text", "ok": true}`,
+		},
+		{
+			Name: "escaped-quote-inside-string",
+			In:   `{"x": "he said \"hi\" and"}`,
+			Want: `{"x": "he said \"hi\" and"}`,
+		},
+		{
+			Name: "no-braces",
+			In:   "no braces here",
+			Want: "no braces here",
+		},
 	}
 	for _, c := range cases {
 		if got := extractJSONBlob(c.In); got != c.Want {
-			t.Errorf("extractJSONBlob(%q) = %q; want %q", c.In, got, c.Want)
+			t.Errorf("[%s] extractJSONBlob(%q) = %q; want %q", c.Name, c.In, got, c.Want)
 		}
 	}
 }

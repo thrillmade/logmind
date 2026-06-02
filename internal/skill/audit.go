@@ -80,6 +80,23 @@ func AuditSkills(repoRoot string) []AuditRow {
 			lastMod = st.ModTime().Format("2006-01-02")
 		}
 
+		// decisionCount mirrors Python's
+		// `decision_text.count(name)` — a substring count, NOT a
+		// whole-word count. Trade-off documented for posterity:
+		//
+		//   - Pro: byte-identical parity with v0.6.16. Bumping to
+		//     word-boundary matching would diverge the audit table +
+		//     --json output from Python's. The plan's "byte-identical
+		//     parity" requirement covers this.
+		//   - Con: a skill named "go" or "api" inflates the count by
+		//     matching "going" / "RESTful APIs" / etc., which
+		//     undermines the ghost classifier (Classify uses
+		//     DecisionCount==0 as the gate). Common-short-name
+		//     skills are effectively immune from ghost classification.
+		//
+		// When the v1.0 spec accepts a behaviour change here, swap
+		// to a `regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`)`
+		// + .FindAllString count. Per clud-bug PR #124 review.
 		decisionCount := 0
 		if name != "" && decisionText != "" {
 			decisionCount = strings.Count(decisionText, name)

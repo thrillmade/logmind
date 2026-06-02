@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (30 decisions)
+## 2026-06 (31 decisions)
 
-- **2026-06-02** — B5 wave 1/5: skill core package — scaffold, validate, bench, audit, suggest (heuristic) *(feat/go-b5-skills)* — [decisions-branches/feat__go-b5-skills.md](decisions-branches/feat__go-b5-skills.md)
-- *... 28 more decisions ...*
+- **2026-06-02** — B5 review fixes: address clud-bug PR #124 findings (LimitReader, JSON brace-balance, audit comment) *(feat/go-b5-skills)* — [decisions-branches/feat__go-b5-skills.md](decisions-branches/feat__go-b5-skills.md)
+- *... 29 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

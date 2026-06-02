@@ -56,6 +56,13 @@ type HeuristicCandidate struct {
 // signature clean and lets callers chain via errors.Is.
 var LLMUnavailableErr = errors.New("logmind: LLM engine unavailable")
 
+// maxLLMResponseBytes caps the Anthropic HTTP response body. The
+// HTTPClient timeout limits elapsed time but not bytes, so without a
+// LimitReader a misbehaving (or compromised) endpoint can stream
+// indefinitely large bodies and exhaust process memory. 1 MB is
+// roughly 100× the expected JSON size at max_tokens=2000.
+const maxLLMResponseBytes = 1 << 20 // 1 MB
+
 // SuggestLLMConfig captures the .logmind/config.yml `skill_suggest`
 // section. Mirrors the YAML shape spelled out in the v0.6.x plan:
 //
@@ -245,7 +252,13 @@ func (s *AnthropicSuggester) Suggest(ctx context.Context, in LLMRequest) ([]Sugg
 		return nil, fmt.Errorf("%w: %v", LLMUnavailableErr, err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	// 1 MB ceiling on the response body. At max_tokens=2000 the
+	// legitimate JSON is ~10 KB; 1 MB is plenty of headroom while
+	// guarding against a misbehaving (or attacker-controlled) endpoint
+	// streaming forever. The HTTPClient.Timeout caps elapsed time but
+	// not bytes — LimitReader closes the gap. Per clud-bug PR #124
+	// review (critical-issues-only).
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxLLMResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", LLMUnavailableErr, err)
 	}
@@ -333,17 +346,58 @@ func (s *AnthropicSuggester) Suggest(ctx context.Context, in LLMRequest) ([]Sugg
 
 // extractJSONBlob pulls the JSON object out of the LLM's text
 // response. Models often wrap JSON in ```json fences or chat-style
-// preambles; we look for the first `{` and the last `}` and slice.
+// preambles; we locate the first `{` and walk forward looking for the
+// matching closing `}`, honoring string-literal escapes so a `}`
+// inside a quoted draft_description doesn't terminate the scan.
 //
-// On payloads without `{...}` returns the input verbatim so the JSON
-// parser gives a clear error (vs a silent empty result).
+// Per clud-bug PR #124 review (minor): the previous "first `{`, last
+// `}` in the whole string" heuristic broke when the model emitted a
+// suffix like `"Here you go: {...} (let me know if anything's off!)"`
+// — the trailing `}` outside the JSON inflated the slice and the
+// parser silently failed. Brace-balanced scanning fixes that.
+//
+// On payloads without a balanced `{...}` returns the input verbatim
+// so the JSON parser surfaces a clear error vs a silent empty result.
 func extractJSONBlob(text string) string {
 	first := strings.Index(text, "{")
-	last := strings.LastIndex(text, "}")
-	if first == -1 || last == -1 || last <= first {
+	if first == -1 {
 		return text
 	}
-	return text[first : last+1]
+	depth := 0
+	inString := false
+	escaped := false
+	for i := first; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case escaped:
+			// Previous char was a backslash inside a string. Skip
+			// this byte regardless of what it is — that's how JSON
+			// string escapes (\", \\, \n, \uXXXX) all behave for our
+			// brace-tracking purposes.
+			escaped = false
+		case inString:
+			switch c {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+		default:
+			switch c {
+			case '"':
+				inString = true
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					return text[first : i+1]
+				}
+			}
+		}
+	}
+	// No balanced closer — return verbatim so the parser fails loudly.
+	return text
 }
 
 const llmSystemPrompt = `You analyse a logmind decision log and identify ` +
