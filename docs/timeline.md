@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (32 decisions)
+## 2026-06 (33 decisions)
 
-- **2026-06-02** — B3 carry-forward: multi-branch self-heal regression tests at internal/timeline/merge_driver_test.go *(feat/go-v0.6.16-carry-forward)* — [decisions-branches/feat__go-v0.6.16-carry-forward.md](decisions-branches/feat__go-v0.6.16-carry-forward.md)
-- *... 30 more decisions ...*
+- **2026-06-02** — B4 carry-forward: AGENTS.md templates bumped to v6 full and v8-pointer slim *(feat/go-v0.6.16-carry-forward)* — [decisions-branches/feat__go-v0.6.16-carry-forward.md](decisions-branches/feat__go-v0.6.16-carry-forward.md)
+- *... 31 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

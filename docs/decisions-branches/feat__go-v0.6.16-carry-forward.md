@@ -20,3 +20,14 @@
 - CI workflow needs 'go install ./cmd/logmind' before running 'go test -tags=integration ./internal/timeline/...'. Documented in the package-level doc comment of merge_driver_test.go.
 
 ---
+## 2026-06-02 17:53 - B4 carry-forward: AGENTS.md templates bumped to v6 full and v8-pointer slim
+
+**Reasoning:** Python v0.6.16 reframed both AGENTS.md templates with 'REQUIRED for substantive commits' heading and a DO-NOT-git-commit blockquote that pairs with the v0.6.16 commit-msg hook installed by logmind init. The Go embed.FS templates are loaded by inserter at runtime — replacing the file bytes was enough to update the embedded copy. Bumped the version markers in templates.go + templates_test.go assertions + inserter.matchingTemplate to accept both old (v5 / v7-pointer) and new (v6 / v8-pointer) markers so existing repos refresh into the new body.
+
+**Alternatives considered:** Auto-migrate v5 to v8-pointer (slim) — rejected; the version guard against silent full-vs-slim flips is the whole point of matchingTemplate. v5 must map to full-template flavor; v7-pointer must map to slim. The bump is per-flavor only., Drop the v5 / v7-pointer matchers entirely — rejected; downstream repos installed during v0.6.0-v0.6.15 have those markers and the agents update --apply path needs them to map correctly to flavor before drift detection runs.
+
+**Implications:**
+- Added two new tests in inserter_test.go that pin the v5→v6 + v7-pointer→v8-pointer refresh paths. Existing tests bumped to v6 / v8-pointer markers since templates.AgentsTemplate() / AgentsSlimTemplate() now embed the new versions.
+- Python src/logmind/templates/AGENTS.md.template + AGENTS.md.slim.template on this branch also overwritten with v0.6.16 source so the templates byte-identical-to-Python parity test passes (mirrors what was done for gitattributes.py in the B2 carry-forward).
+
+---
