@@ -38,14 +38,19 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 }
 
-func TestCollectStatus_FreshRepoReportsMissing(t *testing.T) {
+func TestCollectStatus_FreshRepoListsAllProbes(t *testing.T) {
 	dir := freshRepo(t)
+	// Make PATH probe deterministic — point at an empty dir so the
+	// PATH-resolution probe yields "missing" regardless of the host
+	// environment. Without this, a stale `logmind` on the developer's
+	// PATH would flip the test to DRIFT vs CI's clean OK.
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", t.TempDir())
+
 	r := CollectStatus(dir, true)
 	if r.NetworkUsed {
 		t.Errorf("offline=true; got NetworkUsed=true")
-	}
-	if r.Overall != "DRIFT" {
-		t.Errorf("Overall = %q; want DRIFT (workflows all missing)", r.Overall)
 	}
 	if len(r.Tools) != 1 {
 		t.Fatalf("Tools = %d; want 1 (logmind only)", len(r.Tools))
@@ -54,7 +59,8 @@ func TestCollectStatus_FreshRepoReportsMissing(t *testing.T) {
 	if tool.Name != "logmind" {
 		t.Errorf("tool.Name = %q; want logmind", tool.Name)
 	}
-	// Each shipped workflow should be in the workflows list.
+	// Each shipped probe should appear in the row list — that's the
+	// contract that drives the renderer.
 	names := workflowNames(tool.Workflows)
 	for _, want := range []string{
 		"regen-timeline.yml", "check-doc-links.yml",
@@ -67,6 +73,29 @@ func TestCollectStatus_FreshRepoReportsMissing(t *testing.T) {
 		if !contains(names, want) {
 			t.Errorf("workflow row %q missing; got %v", want, names)
 		}
+	}
+	// Missing workflows are NOT stale (the renderer prints them as
+	// "—"), so a fresh repo with no installed workflows should land
+	// on OK overall — not DRIFT. DRIFT means a stale marker / version
+	// mismatch, exercised by the *_DriftsToStale tests below.
+	if r.Overall != "OK" {
+		t.Errorf("Overall = %q; want OK on fresh repo with missing-only probes", r.Overall)
+	}
+}
+
+func TestCollectStatus_StaleWorkflowFlipsToDrift(t *testing.T) {
+	dir := freshRepo(t)
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", t.TempDir())
+	// Install a workflow with a known-wrong marker so the comparison
+	// against the bundled marker yields stale.
+	body := "# logmind-template-version: v0-FAKE\n# rest of file\n"
+	mustWrite(t, filepath.Join(dir, ".github", "workflows", "regen-timeline.yml"), body)
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "DRIFT" {
+		t.Errorf("Overall = %q; want DRIFT with stale workflow marker", r.Overall)
 	}
 }
 

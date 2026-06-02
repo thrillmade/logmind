@@ -28,3 +28,13 @@
 - Tests now reliably exercise both happy-path (OK) and stale-drift paths regardless of host state.
 
 ---
+## 2026-06-02 16:41 - B6 fix #2: actually commit the test-determinism edits (previous scoped missed them)
+
+**Reasoning:** Previous fix commit logged the decision but the file edits were unstaged so they didnt land in the commit. CI re-ran the OLD tests and failed the same way. This commit stages the test files explicitly.
+
+**Alternatives considered:** Use --stage all (would also pick up unrelated worktree gitlink update)
+
+**Implications:**
+- Tests now actually reach CI in their fixed form. PATH-deterministic + explicit stale fixtures.
+
+---

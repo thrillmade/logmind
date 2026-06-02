@@ -8,6 +8,8 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,6 +55,15 @@ func TestDoctor_JSONOutput(t *testing.T) {
 
 func TestDoctor_DriftExitsNonZero(t *testing.T) {
 	withTempCwd(t, func(_ string) {
+		// Plant a stale workflow so DRIFT is deterministic across
+		// developer machines and CI runners.
+		if err := os.MkdirAll(filepath.Join(".github", "workflows"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "# logmind-template-version: v0-FAKE\n# rest\n"
+		if err := os.WriteFile(filepath.Join(".github", "workflows", "regen-timeline.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		root := NewRootCmd()
 		root.SetArgs([]string{"doctor", "--offline"})
 		var out, errOut bytes.Buffer

@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (32 decisions)
+## 2026-06 (33 decisions)
 
-- **2026-06-02** — B6 fix: doctor tests assume environment-deterministic PATH + workflow state *(feat/go-b6-config-doctor)* — [decisions-branches/feat__go-b6-config-doctor.md](decisions-branches/feat__go-b6-config-doctor.md)
-- *... 30 more decisions ...*
+- **2026-06-02** — B6 fix #2: actually commit the test-determinism edits (previous scoped missed them) *(feat/go-b6-config-doctor)* — [decisions-branches/feat__go-b6-config-doctor.md](decisions-branches/feat__go-b6-config-doctor.md)
+- *... 31 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
