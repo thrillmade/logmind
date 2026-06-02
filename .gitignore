@@ -68,3 +68,9 @@ homebrew-logmind/
 homebrew-tap/
 verify_logmind.sh
 src/logmind/CHANGELOG.md
+
+# Go rewrite (v1-go-rewrite branch) — build artefacts only; source lives
+# in cmd/ and internal/.
+bin/
+*.test
+*.out

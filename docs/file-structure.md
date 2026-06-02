@@ -25,6 +25,8 @@ logmind
 │   ├── per_session.py
 │   ├── README.md
 │   └── worst_case.py
+├── cmd
+│   └── logmind
 ├── docs
 │   ├── decisions-branches
 │   ├── ai-agent-files.md
@@ -35,6 +37,9 @@ logmind
 │   ├── first-decision-example.md
 │   ├── plan.md
 │   └── timeline.md
+├── internal
+│   ├── cli
+│   └── version
 ├── site
 │   ├── .next
 │   ├── .vercel
@@ -108,7 +113,10 @@ logmind
 ├── CLAUDE.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
+├── go.mod
+├── go.sum
 ├── LICENSE
+├── Makefile
 ├── MANIFEST.in
 ├── pyproject.toml
 ├── README.md
