@@ -17,7 +17,11 @@ name: homebrew tap bump
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      # Wave B7 (distribution) — gated to v0.* tags only. The v1+ Go
+      # binary release pipeline (.github/workflows/release.yml +
+      # .goreleaser.yaml) bumps thrillmade/homebrew-tap directly via
+      # the homebrew_casks block, not via this PyPI-driven legacy bumper.
+      - "v0.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
       tag:
