@@ -10,3 +10,14 @@
 - v6 template's gh pr create PAT fix (shipped in v0.6.13) + v7 template's [skip-logmind] + CDN retry compose at v0.6.15 propagation
 
 ---
+## 2026-06-01 23:56 - test(v0.6.14): add post-rewrite content-drift symmetry tests (clud-bug-review PR #115 thread)
+
+**Reasoning:** clud-bug-review on PR #115 surfaced that v0.6.14 added content-diff to both _probe_post_merge_hook AND _probe_post_rewrite_hook but only the post-merge probe had test coverage. A copy-paste error in the post-rewrite path (wrong builder, wrong hook filename) would have been invisible. Added symmetric tests: test_doctor_reports_post_rewrite_content_drift_when_body_differs and test_doctor_reports_post_rewrite_current_when_marker_and_body_match. Discipline: every clud-bug-review citation must resolve before merge (dogfood rule).
+
+**Alternatives considered:** Resolve the thread without adding tests — would be cheating the dogfood rule on the very first PR we apply it to, Wave the symmetry away as obvious — but the bug is exactly the kind that's invisible without a test
+
+**Implications:**
+- Sets precedent: clud-bug-review feedback resolves with code + tests, not just thread-resolution
+- Test count rises 826 → 828; all green
+
+---

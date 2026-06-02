@@ -817,3 +817,59 @@ def test_doctor_reports_current_when_marker_and_body_both_match(git_repo: Path):
         f"Expected freshly-installed hook to be current; got drift={status.drift!r} "
         f"marker={status.marker!r}"
     )
+
+
+def test_doctor_reports_post_rewrite_content_drift_when_body_differs(
+    git_repo: Path,
+):
+    """v0.6.14 / clud-bug-review PR #115 thread: post-rewrite probe must
+    have symmetric content-diff test to post-merge. A copy-paste error
+    (wrong builder function, wrong hook path) would be invisible without
+    this. Guards the post-rewrite probe path that uses
+    `_build_post_rewrite_hook_body()` + `.git/hooks/post-rewrite`.
+    """
+    from logmind import __version__ as current_version
+    from logmind.core.doctor import _probe_post_rewrite_hook
+    from logmind.core.gitattributes import (
+        HOOK_VERSION_PREFIX,
+        _POST_REWRITE_HOOK_MARKER,
+    )
+
+    hooks_dir = git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    drifted_body = (
+        "#!/bin/sh\n"
+        f"{_POST_REWRITE_HOOK_MARKER}\n"
+        f"{HOOK_VERSION_PREFIX}{current_version}\n"
+        "# Manually edited by user — added a comment that bundled body doesn't have.\n"
+        "echo 'this is not the bundled body' >/dev/null\n"
+    )
+    hook = hooks_dir / "post-rewrite"
+    hook.write_text(drifted_body, encoding="utf-8")
+    hook.chmod(0o755)
+
+    status = _probe_post_rewrite_hook(git_repo)
+    assert status.drift == "stale", (
+        f"Expected post-rewrite content-drift to be reported as stale; "
+        f"got drift={status.drift!r}"
+    )
+    assert "content drift" in (status.marker or ""), (
+        f"Expected post-rewrite marker to indicate content drift; "
+        f"got marker={status.marker!r}"
+    )
+
+
+def test_doctor_reports_post_rewrite_current_when_marker_and_body_match(
+    git_repo: Path,
+):
+    """v0.6.14 sanity for post-rewrite (symmetric to post-merge):
+    freshly-installed hook is byte-identical to bundled body → `current`."""
+    from logmind.core.doctor import _probe_post_rewrite_hook
+    from logmind.core.gitattributes import install_post_rewrite_hook
+
+    install_post_rewrite_hook(git_repo)
+    status = _probe_post_rewrite_hook(git_repo)
+    assert status.drift == "current", (
+        f"Expected freshly-installed post-rewrite hook to be current; "
+        f"got drift={status.drift!r} marker={status.marker!r}"
+    )
