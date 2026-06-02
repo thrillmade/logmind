@@ -294,7 +294,9 @@ func confirmYes(stdin io.Reader) bool {
 // place; `--commit` (later) commits the refresh.
 //
 // The version source for the workflow pin sweep is the binary's
-// `version.Version` constant — matches Python's `__version__` import.
+// `version.Version` variable — matches Python's `__version__` import.
+// (B7 distribution wave converted Version from const → var so
+// GoReleaser can inject the tag value via ldflags at release-build time.)
 func newAgentsUpdateCmd() *cobra.Command {
 	var doApply, doCommit bool
 	cmd := &cobra.Command{

@@ -7,7 +7,6 @@ agent-a580de4cdef9f3901
 ├── .benchmarks
 ├── .claude
 │   ├── skills
-│   ├── worktrees
 │   └── scheduled_tasks.lock
 ├── .github
 │   ├── ISSUE_TEMPLATE
@@ -36,22 +35,30 @@ agent-a580de4cdef9f3901
 │   ├── decisions.md
 │   ├── file-structure.md
 │   ├── first-decision-example.md
+│   ├── install.md
 │   ├── plan.md
 │   └── timeline.md
+├── installer
+│   ├── cask-template.rb
+│   └── install.sh
 ├── internal
 │   ├── agents
 │   ├── cli
 │   ├── config
 │   ├── decisions
+│   ├── doctor
 │   ├── gitattr
 │   ├── gitcli
 │   ├── hooks
 │   ├── inserter
 │   ├── linkcheck
+│   ├── skill
 │   ├── templates
 │   ├── timeline
 │   ├── tree
 │   └── version
+├── scripts
+│   └── sign-macos.sh
 ├── site
 │   ├── app
 │   ├── public
@@ -108,6 +115,7 @@ agent-a580de4cdef9f3901
 │   └── test_workflow_pin_update.py
 ├── .cursorrules
 ├── .gitignore
+├── .goreleaser.yaml
 ├── .pre-commit-config.yaml
 ├── .python-version
 ├── AGENTS.md

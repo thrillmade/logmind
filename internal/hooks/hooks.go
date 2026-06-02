@@ -57,6 +57,12 @@ const PostMergeMarker = "# logmind post-merge hook"
 // post-rewrite hook.
 const PostRewriteMarker = "# logmind post-rewrite hook"
 
+// CommitMsgMarker identifies a logmind-installed commit-msg hook.
+// v0.6.16 introduced this hook to surface `[skip-logmind]` markers in
+// commit subjects so authors notice when an agent accidentally added
+// the directive (silent application has been a footgun).
+const CommitMsgMarker = "# logmind commit-msg hook"
+
 // hookVersion returns the version string embedded in each hook body.
 // Reads from internal/version.Version — kept as a function (not a
 // package-level var) so tests can override it via a build-tagged
@@ -190,6 +196,41 @@ func BuildPostRewriteBody() string {
 		"fi\n"
 }
 
+// BuildCommitMsgBody returns the canonical commit-msg hook body for
+// the v0.6.16+ contract: warn-only on `[skip-logmind]` subjects so
+// authors notice when an agent accidentally added the directive.
+// Read-only — exits 0 unconditionally so the commit still proceeds.
+//
+// Body intentionally kept byte-identical to
+// src/logmind/core/gitattributes._build_commit_msg_hook_body so the
+// existing v0.6.16 Python installs and the Go binary's installs agree
+// on the bytes a re-install should write.
+func BuildCommitMsgBody() string {
+	return "#!/bin/sh\n" +
+		"# logmind commit-msg hook\n" +
+		HookVersionPrefix + hookVersion() + "\n" +
+		"# Installed by `logmind init` (v0.6.16+). When the commit subject\n" +
+		"# contains `[skip-logmind]`, surface that as a single-line confirm\n" +
+		"# in stderr so the author notices when an agent accidentally added\n" +
+		"# the marker (the marker disables auto-title regen + decision-log\n" +
+		"# generation for that commit; silent application is a footgun).\n" +
+		"#\n" +
+		"# Read-only: the hook never modifies the commit message file. It\n" +
+		"# echoes a one-line notice to stderr and exits 0 so the commit\n" +
+		"# proceeds.\n" +
+		"\n" +
+		"MSG_FILE=\"$1\"\n" +
+		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then\n" +
+		"    exit 0\n" +
+		"fi\n" +
+		"\n" +
+		"if grep -q '\\[skip-logmind\\]' \"$MSG_FILE\"; then\n" +
+		"    echo 'logmind: [skip-logmind] detected — decision-log + auto-title regen suppressed for this commit.' >&2\n" +
+		"fi\n" +
+		"\n" +
+		"exit 0\n"
+}
+
 // InstallPostMerge writes `.git/hooks/post-merge` to the current
 // binary's canonical body. Returns (true, nil) if the file was
 // created or rewritten, (false, nil) if a logmind-marked hook was
@@ -213,6 +254,16 @@ func InstallPostRewrite(repoRoot string) (bool, error) {
 		filepath.Join(repoRoot, ".git", "hooks", "post-rewrite"),
 		BuildPostRewriteBody(),
 		PostRewriteMarker,
+	)
+}
+
+// InstallCommitMsg writes `.git/hooks/commit-msg`. See InstallPostMerge
+// for the contract. v0.6.16+.
+func InstallCommitMsg(repoRoot string) (bool, error) {
+	return installHook(
+		filepath.Join(repoRoot, ".git", "hooks", "commit-msg"),
+		BuildCommitMsgBody(),
+		CommitMsgMarker,
 	)
 }
 

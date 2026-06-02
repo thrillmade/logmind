@@ -1,0 +1,3 @@
+→ scaffolding basic SKILL.md (`skdd` not on PATH; install @zakelfassi/skdd for canonical SkDD authoring)
+✓ Created skill 'sample' at <TMP>/.claude/skills/sample/SKILL.md
+ok skill: created sample

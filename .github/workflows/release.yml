@@ -1,0 +1,137 @@
+name: release
+
+# Wave B7 (distribution) — GoReleaser-driven release pipeline.
+#
+# Fires on tag push (`v*`). Builds cross-platform binaries, signs +
+# notarizes the macOS ones, publishes a GitHub Release, and auto-bumps
+# the Homebrew tap formula at thrillmade/homebrew-tap.
+#
+# Runs on macos-latest because the codesign + notarytool steps require
+# native macOS toolchain (codesign / xcrun ship with Xcode CLI tools,
+# which Linux runners don't have). GoReleaser cross-compiles linux +
+# windows binaries from the same Mac runner via Go's native cross-compile
+# (CGO_ENABLED=0 in .goreleaser.yaml keeps cgo out of the path).
+#
+# Apple cert provisioning: the 5 secrets MACOS_CERTIFICATE,
+# MACOS_CERTIFICATE_PWD, MACOS_NOTARY_USER, MACOS_NOTARY_PWD,
+# MACOS_TEAM_ID are already configured on thrillmade/logmind (provisioned
+# via the operations branch in late May 2026). scripts/sign-macos.sh
+# consumes them; this workflow just plumbs them into the runner's env.
+
+on:
+  push:
+    tags:
+      # Gate to v1+ tags only. The Python workflows (publish.yml,
+      # homebrew-bump.yml) on main still own v0.x.x tags and ship to
+      # PyPI + the thrillmade/homebrew-logmind tap. The Go binary
+      # release pipeline owns v1+ and ships to GitHub Releases +
+      # thrillmade/homebrew-tap. The cutover PR moves v1+ tag publication
+      # rights from v1-go-rewrite to main — this workflow comes along
+      # with that move and continues firing.
+      - "v[1-9]+.[0-9]+.[0-9]+"
+      - "v[1-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        # Default 'true' is deliberate: workflow_dispatch is the manual
+        # path used for smoke-testing the release pipeline from the
+        # GitHub UI. Defaulting to a dry-run snapshot means an operator
+        # who triggers manually without changing inputs gets the safe
+        # path (verifies the YAML + cross-compile works, no cert burn,
+        # no GitHub Release published). The real release path is always
+        # via `git push origin v1.2.3` — manual real-release is a
+        # deliberate 'set dry_run=false' choice.
+        description: "Run goreleaser in --skip=publish,sign,notarize mode (no GitHub Release, no codesign)."
+        required: false
+        default: "true"
+
+permissions:
+  contents: write    # for the GitHub Release
+  packages: write    # in case future versions push a container
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout (full history for changelog)
+        uses: actions/checkout@v6
+        with:
+          # GoReleaser walks history to compute the changelog between
+          # previous tag and HEAD; shallow clones break it.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Match go.mod's `go 1.22` floor. Pinning to the floor means
+          # users building from source with the same minimum Go version
+          # get byte-identical-ish binaries (modulo runtime tags), so the
+          # supply-chain trust story is clean.
+          go-version: "1.22"
+          cache: true
+
+      - name: Import Apple codesign cert
+        # Imports the .p12 into a temporary keychain that's added to the
+        # search path; codesign --sign "Developer ID Application" then
+        # finds the identity automatically. The temp keychain is wiped
+        # when the runner shuts down — no cert leaks past this job.
+        #
+        # Skipped on dry_run workflow_dispatch so manual smoke tests
+        # don't need cert access.
+        if: ${{ github.event_name == 'push' || github.event.inputs.dry_run != 'true' }}
+        uses: Apple-Actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+
+      - name: GoReleaser snapshot (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --snapshot --clean --skip=publish,sign,notarize
+        env:
+          # HOMEBREW_TAP_PAT must be present even in snapshot mode
+          # because goreleaser parses the homebrew_casks block; we
+          # provide a placeholder so template evaluation succeeds.
+          HOMEBREW_TAP_PAT: snapshot-mode-no-token-needed
+
+      - name: GoReleaser release
+        # Fires on the real release path (tag push), and also on the
+        # rare manual workflow_dispatch + dry_run=false combo. The
+        # manual-real-release combo is useful for re-publishing a tag
+        # whose first release.yml run died midway (e.g. notarytool
+        # timeout, runner OOM) — re-trigger from the UI with
+        # dry_run=false instead of having to bump + retag.
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true') }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          # GITHUB_TOKEN is used for the GitHub Release on this repo
+          # (creating the release, uploading assets). It CANNOT write
+          # to thrillmade/homebrew-tap (cross-repo write requires a
+          # PAT), so the brew tap auto-bump uses HOMEBREW_TAP_PAT
+          # instead — see .goreleaser.yaml homebrew_casks.repository.token.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+          # Surfaced to scripts/sign-macos.sh (per-build post-hook).
+          # The script no-ops if MACOS_CERTIFICATE is unset — but in
+          # the real release path all 5 are set, so signing runs.
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_NOTARY_USER: ${{ secrets.MACOS_NOTARY_USER }}
+          MACOS_NOTARY_PWD: ${{ secrets.MACOS_NOTARY_PWD }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+
+      - name: Upload snapshot artifacts (dry run only)
+        # In dry_run mode the GitHub Release step is skipped; surface
+        # the dist/ contents as a workflow artifact so the smoke-test
+        # operator can inspect them. No-op on tag pushes.
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: logmind-snapshot-${{ github.sha }}
+          path: dist/
+          retention-days: 7

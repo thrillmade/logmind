@@ -27,10 +27,17 @@
 // the filesystem directly.
 package templates
 
-import "embed"
+import (
+	"embed"
+	"io/fs"
+	"sort"
+	"strings"
+)
 
 //go:embed AGENTS.md.template AGENTS.md.slim.template agent-stub.md logmind-section.md CLAUDE.md.template
-var fs embed.FS
+//go:embed config.yml.template decisions.md.template decisions-archive.md.template file-structure.md.template
+//go:embed github/*.yml.template
+var embedFS embed.FS
 
 // AgentsTemplate returns the full v6 AGENTS.md template (the inline
 // procedure variant) — used when the host doesn't have skills.sh
@@ -95,15 +102,15 @@ func FullClaudeTemplate() string {
 // filename list. NOT for production use — production code should
 // always go through the named accessors above so a typo on a filename
 // trips at compile time, not runtime.
-func FS() embed.FS { return fs }
+func FS() embed.FS { return embedFS }
 
-// readEmbed is a thin wrapper around fs.ReadFile that panics on a
+// readEmbed is a thin wrapper around embedFS.ReadFile that panics on a
 // missing entry. Every name fed into it appears in the //go:embed
 // directive above — a panic here means a developer dropped a name in
 // the directive without adding the corresponding file, which we want
 // to surface at first call, not at silent empty-string time.
 func readEmbed(name string) string {
-	data, err := fs.ReadFile(name)
+	data, err := embedFS.ReadFile(name)
 	if err != nil {
 		// embed.FS errors at runtime are programmer bugs (missing file
 		// in directive). Panic so they're impossible to ignore.
@@ -111,3 +118,62 @@ func readEmbed(name string) string {
 	}
 	return string(data)
 }
+
+// ConfigTemplate returns the bundled .logmind/config.yml seed content
+// emitted by `logmind init`. Byte-identical to
+// src/logmind/templates/config.yml.template.
+func ConfigTemplate() string {
+	return readEmbed("config.yml.template")
+}
+
+// DecisionsTemplate returns the bundled docs/decisions.md seed.
+func DecisionsTemplate() string {
+	return readEmbed("decisions.md.template")
+}
+
+// DecisionsArchiveTemplate returns the bundled docs/decisions-archive.md seed.
+func DecisionsArchiveTemplate() string {
+	return readEmbed("decisions-archive.md.template")
+}
+
+// FileStructureTemplate returns the bundled docs/file-structure.md seed
+// (used as a placeholder before the first real tree walk overwrites it).
+func FileStructureTemplate() string {
+	return readEmbed("file-structure.md.template")
+}
+
+// Workflow returns the embedded body of a single .github/workflows/<name>.yml
+// template by its bare filename (e.g. "regen-timeline.yml.template"). The
+// returned string is the raw template body with __LOGMIND_VERSION__
+// placeholders still in place — callers must render via RenderWorkflow.
+func Workflow(name string) string {
+	return readEmbed("github/" + name)
+}
+
+// ListWorkflowTemplates returns the sorted list of bundled GitHub workflow
+// template filenames (each ending in `.yml.template`). Used by the init
+// path so adding a workflow template is purely additive — drop the file
+// into internal/templates/github/ and re-run `go build`.
+func ListWorkflowTemplates() []string {
+	entries, err := embedFS.ReadDir("github")
+	if err != nil {
+		panic("templates: cannot list embedded github/: " + err.Error())
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".yml.template") {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// WalkEmbedded returns an fs.FS view of the templates dir; tests use it
+// to enumerate embedded files without re-listing them.
+func WalkEmbedded() fs.FS { return embedFS }

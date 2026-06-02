@@ -31,3 +31,13 @@
 - Python src/logmind/templates/AGENTS.md.template + AGENTS.md.slim.template on this branch also overwritten with v0.6.16 source so the templates byte-identical-to-Python parity test passes (mirrors what was done for gitattributes.py in the B2 carry-forward).
 
 ---
+## 2026-06-02 17:59 - merge v1-go-rewrite into feat/go-v0.6.16-carry-forward, resolve docs conflicts
+
+**Reasoning:** B5/B6/B7 PRs merged into v1-go-rewrite while this branch was open. Conflicts were limited to docs/timeline.md + docs/file-structure.md (derived files). Regenerated both via logmind timeline --write and logmind file-structure --write — the merge driver would have done this automatically except it doesn't fire on regular file conflicts when the driver isn't configured per-clone (CI doesn't run logmind init).
+
+**Alternatives considered:** Rebase onto v1-go-rewrite — rejected; would rewrite the three logmind log commits and require force-push which obscures the carry-forward provenance, Manually edit timeline.md / file-structure.md — rejected; the regen is the source of truth and produces brief mode output that the file-structure --check workflow expects
+
+**Implications:**
+- The merge commit subject doesn't carry the logmind: prefix because git merge commits are pre-written by git; this is a known edge in the dogfood discipline — merge commits aren't decisions.
+
+---

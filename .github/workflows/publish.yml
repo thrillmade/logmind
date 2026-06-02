@@ -4,11 +4,17 @@ name: publish
 # to PyPI via OIDC (configure logmind as a "Trusted Publisher" on PyPI;
 # no long-lived API token required). Then creates a GitHub Release with
 # the artifacts and the matching CHANGELOG section.
-
+#
+# Wave B7 (distribution) — gated to v0.* tags only. v1+ tags ship via
+# .github/workflows/release.yml (Go binary release via GoReleaser).
+# Without this gate, a v1.0.0 tag pushed from v1-go-rewrite would trigger
+# this workflow AND release.yml, which would either silently publish a
+# stale Python wheel to PyPI or fail noisily — neither is what we want.
 on:
   push:
     tags:
-      - "v*"
+      - "v0.[0-9]+.[0-9]+"
+      - "v0.[0-9]+.[0-9]+-*"
 
 permissions:
   contents: write    # for the GitHub Release

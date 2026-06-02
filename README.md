@@ -26,15 +26,29 @@ detail. AGENTS.md is the canonical agent-instruction file; per-tool files
 ## Installation
 
 ```bash
-# Using pipx (recommended)
-pipx install logmind
+# Homebrew (recommended on macOS + Linux)
+brew install thrillmade/tap/logmind
 
-# Using Homebrew (macOS/Linux)
-brew tap thrillmade/logmind
-brew install logmind
+# curl one-liner
+curl -fsSL logmind.dev/install.sh | bash
+```
 
-# Using pip
-pip install logmind
+The brew + curl paths deliver signed + notarized binaries from the
+[GitHub Releases page](https://github.com/thrillmade/logmind/releases) —
+no Python toolchain, no pyenv shim version skew, no pip cache surprises.
+See [docs/install.md](docs/install.md) for the full install matrix
+(including `go install` for builds-from-source and the deprecated pip
+path for v0.6.x consumers).
+
+### v0.6.x (Python, deprecated)
+
+The legacy Python distribution still works for users pinned to v0.6.x
+consumer-repo workflows. Migration to the brew/curl binary is a one-line
+swap in your CI YAML — see [docs/install.md](docs/install.md#deprecated-python-install).
+
+```bash
+# Deprecated — pinned to v0.6.x; pre-cutover consumer repos only
+pipx install logmind  # OR: pip install logmind
 ```
 
 ## v1.0 Go rewrite in progress
