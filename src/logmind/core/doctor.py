@@ -687,13 +687,19 @@ def _probe_auto_regen_pat(project_root: Path) -> WorkflowStatus:
     try:
         secrets = json.loads(result.stdout or "[]")
         names = {s.get("name") for s in secrets}
-    except (json.JSONDecodeError, AttributeError):
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        # TypeError covers the case where `gh` returned malformed JSON
+        # that decodes to a non-iterable (e.g. a bare integer), which
+        # would otherwise crash the `for s in secrets` iteration with
+        # an uncaught TypeError and bring down `doctor`.
         names = set()
+
+    scopes_hint = ", ".join(_PAT_REQUIRED_SCOPES)
 
     if _PAT_SECRET_NAME in names:
         return WorkflowStatus(
             name=f"{_PAT_SECRET_NAME} secret", installed=True,
-            marker="present (scopes NOT verified from doctor)",
+            marker=f"present (verify scopes: {scopes_hint})",
             bundled_marker="present",
             drift="current",
         )
@@ -701,7 +707,7 @@ def _probe_auto_regen_pat(project_root: Path) -> WorkflowStatus:
     # Workflow expects the PAT; secret is confirmed missing.
     return WorkflowStatus(
         name=f"{_PAT_SECRET_NAME} secret", installed=False,
-        marker="MISSING",
+        marker=f"MISSING — configure at github.com/{owner_repo}/settings/secrets/actions/new with scopes: {scopes_hint}",
         bundled_marker="present",
         drift="stale",
     )
