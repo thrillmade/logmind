@@ -60,6 +60,8 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newRebaseCmd())
 	// B4: agent file templating subcommand tree.
 	root.AddCommand(newAgentsCmd())
+	// B5: skill authoring/validation/bench/audit/suggest tree.
+	root.AddCommand(newSkillCmd())
 	// B6: config + doctor + init + self-update.
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newDoctorCmd())

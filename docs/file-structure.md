@@ -48,6 +48,7 @@ logmind-b6-bump
 │   ├── hooks
 │   ├── inserter
 │   ├── linkcheck
+│   ├── skill
 │   ├── templates
 │   ├── timeline
 │   ├── tree
