@@ -41,3 +41,13 @@
 - The merge commit subject doesn't carry the logmind: prefix because git merge commits are pre-written by git; this is a known edge in the dogfood discipline — merge commits aren't decisions.
 
 ---
+## 2026-06-02 18:02 - B4 test follow-on: bump tests/test_agents_consolidation.py markers v5/v7-pointer to v6/v8-pointer
+
+**Reasoning:** v0.6.16 release bumped the AGENTS.md template markers but pytest CI is failing because tests/test_agents_consolidation.py was on v0.6.14 shape (carried over via v1-go-rewrite). The earlier B4 carry-forward bumped the .template files but missed the test assertions that pin those markers. Apply origin/main's v0.6.16 test file verbatim to bring tests in sync.
+
+**Alternatives considered:** Update the assertions inline by sed — rejected; the v0.6.16 file also added a comment about heading text shifting that's worth preserving, Skip the test failures via pytest.skip — rejected; the tests are valid contracts and should pass with the v6/v8-pointer templates
+
+**Implications:**
+- pytest on pre-existing v1-go-rewrite branch was passing because the test file matched the v0.6.14 templates. After the B4 carry-forward template bump, the test had to bump too. This dependency was not obvious until CI ran.
+
+---
