@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-06-02
+
+Three propagation-pipeline polish fixes surfaced during the v0.6.13 cycle (2026-06-02). All three address pain points that required manual intervention during v0.6.13 propagation and that the workflow should handle structurally going forward.
+
+### Fixed — Doctor content-diff for installed hooks (issue #112 addendum)
+
+`logmind doctor` now content-diffs installed `.git/hooks/post-merge` (and `post-rewrite`) bytes against the bundled canonical body, in addition to the v0.6.10 version-marker equality check. Closes the failure mode the tokenomics reporter flagged in the #112 addendum: "doctor's check is too cheap a signal" — if the hook drifts after install while preserving the marker line (manual edit, clobber-then-restore by another tool, marker-propagation bug), the v0.6.10 check would still report `current` while the body is genuinely stale.
+
+v0.6.14: marker equality stays as the cheap fast-path; the content-diff is the expensive correctness check that fires when it matters. Drift surfaces as `STALE (content drift)` with the existing "reinstall via `logmind self-update`" remediation pointer.
+
+Files: `src/logmind/core/doctor.py` (`_probe_post_merge_hook` + `_probe_post_rewrite_hook`); `tests/test_merge_driver.py` (new content-drift and byte-identical tests).
+
+### Fixed — `logmind-self-update.yml` v7: `[skip-logmind]` PR title prefix
+
+Bot-generated propagation PRs from `logmind-self-update.yml` are by-definition NOT decision commits — they're pin-bumps + template body refreshes owned by the workflow itself. v0.6.13 propagation surfaced this as a consistent failure: consumer-repo `check-decisions.yml` failed every PR because the diff exceeded the 20-line threshold AND no decision file was present. The fix required manually editing each PR title to include `[skip-logmind]` (the existing maintainer-override path) + closing and reopening the PR to re-fire the title-cached check-decisions workflow.
+
+v0.6.14: the self-update template now sets `[skip-logmind] logmind self-update: X.Y.Z → A.B.C` as both the commit message AND the `gh pr create --title` at workflow creation time. Eliminates the manual editing + close+reopen ritual entirely.
+
+Files: `src/logmind/templates/github/logmind-self-update.yml.template` (bumped to v7); `tests/test_v0_2_1_audit_fixes.py` (new test + marker bump).
+
+### Fixed — `logmind-self-update.yml` v7: PyPI CDN-aware retry
+
+The version-check step polls the PyPI simple/ index OR JSON API to find the latest published `logmind`. Both propagate via a CDN that lags 30-60s behind a publish event. Cron-triggered self-update workflows can fire during the gap, see "Latest: <previous version>", and silently no-op. Hit on v0.6.12 (1/5 propagations) and v0.6.13 (1/5 propagations).
+
+v0.6.14: wraps the version-check in a 3-attempt exponential backoff (0s → 30s → 60s). If all 3 see the same version, accept and proceed as today (legitimate no-op). If any sees a higher version, use it. Adds 0-90s to worst-case workflow runtime; eliminates the silent-skip class of bug.
+
+Files: same template; same test file.
+
+### Validation gate end-to-end
+
+After v0.6.14 propagates through all 5 thrillmade consumer repos, the next release cycle (v0.6.15+) should:
+- 5/5 consumers' self-update workflows pin-bump-only releases succeed first attempt with NO manual title editing, NO close+reopen rituals, NO CDN-race silent-skips
+- doctor on any repo with a hand-edited or drifted hook body reports `STALE (content drift)` with the `logmind self-update` remediation pointer
+
 ## [0.6.13] - 2026-06-01
 
 Four consumer-product UX fixes accumulated from the 2026-06-01 propagation cycle. All four ship together.
