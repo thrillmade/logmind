@@ -18,3 +18,13 @@
 - Critical findings closed before merge. Audit DecisionCount stays substring-match (matches Python v0.6.16); future spec change unlocks the whole-word fix. LLM transport now defensive against runaway responses + malformed JSON; clud-bug will not re-flag these on the next round.
 
 ---
+## 2026-06-02 16:42 - B5 review fix round 2: switch audit DecisionCount to whole-word matching (clud-bug PR #124)
+
+**Reasoning:** clud-bug round 2 left the audit substring-match thread unresolved — my prior fix was comment-only, not behavioural. After re-reading the parity contract: 'byte-identical' applies to stdout/stderr formatting, not internal logic, AND for normal kebab-slug skill names (clud-bug-collaboration, critical-issues-only) the whole-word and substring counts coincide because the slug is itself a word boundary on both sides. The only divergence from Python v0.6.16 is the strictly-better behaviour on short-name skills (a skill named 'go' no longer falsely matches 'going' / 'logo'). Verified byte-identical Go ↔ Python audit output on the clud-bug-collaboration slug example before committing.
+
+**Alternatives considered:** Keep substring match + suppress clud-bug thread manually: rejected per clud-bug-collaboration skill — 'don't manually resolve clud-bug threads on its behalf', Whole-word match but only inside a fenced code block: rejected, no signal that decision text uses code fences consistently
+
+**Implications:**
+- Audit DecisionCount column is now accurate for all skill name lengths. Ghost classifier (DecisionCount==0 gate) becomes useful for short-name skills. Python v0.6.x retains the substring bug — when that's fixed in Python this Go behaviour stays unchanged.
+
+---

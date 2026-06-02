@@ -3,7 +3,6 @@ package skill
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -107,7 +106,33 @@ func TestAuditSkills_DecisionCount(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d; want 1", len(rows))
 	}
-	if rows[0].DecisionCount != strings.Count(body, "kept") {
-		t.Errorf("DecisionCount = %d; want %d", rows[0].DecisionCount, strings.Count(body, "kept"))
+	// "kept" appears 3 times as a whole word.
+	want := 3
+	if rows[0].DecisionCount != want {
+		t.Errorf("DecisionCount = %d; want %d", rows[0].DecisionCount, want)
+	}
+}
+
+// TestCountWholeWord pins the substring-vs-whole-word distinction so a
+// regression to strings.Count doesn't slip past the parity comment.
+// Per clud-bug PR #124 review.
+func TestCountWholeWord(t *testing.T) {
+	cases := []struct {
+		Corpus string
+		Name   string
+		Want   int
+	}{
+		{"go to going", "go", 1},     // matches "go", not "going"
+		{"api API APIs", "API", 1},   // matches "API" once, not "APIs"
+		{"hello world hello", "hello", 2},
+		{"clud-bug-collaboration cited; clud-bug-collaboration again", "clud-bug-collaboration", 2},
+		{"", "anything", 0},
+		{"anything", "", 0},
+		{"no match here", "skill", 0},
+	}
+	for _, c := range cases {
+		if got := countWholeWord(c.Corpus, c.Name); got != c.Want {
+			t.Errorf("countWholeWord(%q, %q) = %d; want %d", c.Corpus, c.Name, got, c.Want)
+		}
 	}
 }

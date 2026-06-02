@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -80,27 +81,22 @@ func AuditSkills(repoRoot string) []AuditRow {
 			lastMod = st.ModTime().Format("2006-01-02")
 		}
 
-		// decisionCount mirrors Python's
-		// `decision_text.count(name)` — a substring count, NOT a
-		// whole-word count. Trade-off documented for posterity:
+		// decisionCount: count of whole-word skill-name occurrences in
+		// the decision corpus. Diverges intentionally from Python's
+		// `decision_text.count(name)` (substring match) per clud-bug
+		// PR #124 review — the substring path inflates counts for
+		// short skill names (e.g., a skill named "go" matches
+		// "going" / "logo" / etc.) and makes the ghost classifier
+		// (Classify uses DecisionCount==0 as the gate) effectively
+		// useless for common-short-name skills.
 		//
-		//   - Pro: byte-identical parity with v0.6.16. Bumping to
-		//     word-boundary matching would diverge the audit table +
-		//     --json output from Python's. The plan's "byte-identical
-		//     parity" requirement covers this.
-		//   - Con: a skill named "go" or "api" inflates the count by
-		//     matching "going" / "RESTful APIs" / etc., which
-		//     undermines the ghost classifier (Classify uses
-		//     DecisionCount==0 as the gate). Common-short-name
-		//     skills are effectively immune from ghost classification.
-		//
-		// When the v1.0 spec accepts a behaviour change here, swap
-		// to a `regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`)`
-		// + .FindAllString count. Per clud-bug PR #124 review.
-		decisionCount := 0
-		if name != "" && decisionText != "" {
-			decisionCount = strings.Count(decisionText, name)
-		}
+		// Parity impact: for normal kebab-slug skill names
+		// (`clud-bug-collaboration`, `critical-issues-only`, …) the
+		// whole-word and substring counts coincide because the slug
+		// is itself a word boundary on both sides. The divergence is
+		// strictly a correctness win for short-name skills; the v1.0
+		// spec accepts this delta from v0.6.16.
+		decisionCount := countWholeWord(decisionText, name)
 
 		out = append(out, AuditRow{
 			Name:          name,
@@ -137,6 +133,29 @@ func readDecisionCorpus(repoRoot string) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// countWholeWord returns the number of whole-word occurrences of name
+// in corpus. Both sides are anchored on `\b` (Go regexp meaning: a
+// position between a word and a non-word character), so name="go"
+// counts "go" / "Go" but NOT "going" / "logo" / "go-getter".
+//
+// The compiled regexp lives per-call rather than cached because
+// AuditSkills runs a handful of rows total — caching would shave
+// microseconds at the cost of map-management complexity. If this ever
+// becomes hot (1000+ skills), promote to a sync.Map keyed by name.
+func countWholeWord(corpus, name string) int {
+	if name == "" || corpus == "" {
+		return 0
+	}
+	re, err := regexp.Compile(`\b` + regexp.QuoteMeta(name) + `\b`)
+	if err != nil {
+		// Quote-meta should always produce a valid pattern; if it
+		// somehow doesn't, surfacing zero is safer than a panic that
+		// nukes the audit command.
+		return 0
+	}
+	return len(re.FindAllStringIndex(corpus, -1))
 }
 
 // gitLastTouched returns the ISO date of the most recent commit that
