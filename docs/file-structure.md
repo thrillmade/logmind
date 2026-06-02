@@ -38,11 +38,18 @@ logmind
 │   ├── plan.md
 │   └── timeline.md
 ├── internal
+│   ├── agents
 │   ├── cli
+│   ├── config
+│   ├── decisions
 │   ├── gitattr
 │   ├── gitcli
 │   ├── hooks
+│   ├── inserter
 │   ├── linkcheck
+│   ├── templates
+│   ├── timeline
+│   ├── tree
 │   └── version
 ├── site
 │   ├── .next
