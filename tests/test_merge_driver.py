@@ -727,3 +727,37 @@ def test_pat_probe_tolerates_malformed_gh_json(tmp_path, monkeypatch):
     status = doctor_mod._probe_auto_regen_pat(tmp_path)
     assert status.drift == "stale"
     assert "MISSING" in (status.marker or "")
+
+
+# ---------------------------------------------------------------------------
+# v0.6.13 / issue #112 — post-merge hook embeds orphan-branch skip logic.
+# Even on stale-binary installs (the tokenomics agent's case), the hook
+# itself must short-circuit when the current branch's upstream remote-
+# tracking ref no longer exists (typical after `gh pr merge --delete-
+# branch` + `git fetch --prune`). Skip > regen-and-leave-unstaged.
+# ---------------------------------------------------------------------------
+
+
+def test_post_merge_hook_body_embeds_orphan_branch_skip_logic():
+    """The hook body produced by the builder MUST include the orphan-
+    branch detection block so issue #112 can't recur even when the user
+    runs `gh pr merge --delete-branch` on a feature branch."""
+    from logmind.core.gitattributes import _build_post_merge_hook_body
+
+    body = _build_post_merge_hook_body()
+    # The literal sentinel for the detection — references the @{u}
+    # upstream tracking ref and the `refs/remotes/$upstream` test that
+    # confirms the upstream-tracking ref still exists.
+    assert "@{u}" in body, (
+        "v0.6.13 issue #112: post-merge hook must check git rev-parse @{u} "
+        "to detect orphaned-branch state."
+    )
+    assert "refs/remotes" in body, (
+        "v0.6.13 issue #112: post-merge hook must check that the upstream's "
+        "remote-tracking ref still exists (not pruned away by `git fetch "
+        "--prune` after the merged-away branch was deleted)."
+    )
+    assert "exit 0" in body, (
+        "v0.6.13 issue #112: post-merge hook must SKIP regen (exit 0) on "
+        "orphan-branch detection, not fall through."
+    )

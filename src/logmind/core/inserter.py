@@ -757,6 +757,88 @@ def migrate_to_agents_md(root_path: Optional[Path] = None) -> List[str]:
     return messages
 
 
+def detect_template_drift(root_path: Optional[Path] = None) -> List[str]:
+    """v0.6.13 / issue #113: read-only twin of
+    :func:`sync_agent_files_from_config`. Returns drift descriptions
+    WITHOUT mutating any files. Used by ``logmind log`` to warn the
+    user about stale templates without producing piggy-back commits on
+    their decision-logging branch.
+
+    Replacements / refreshes are now invoked explicitly via
+    ``logmind self-update``; ``log`` only observes.
+
+    Returns a list of one-line drift descriptions (empty when current).
+    """
+    if root_path is None:
+        root_path = Path.cwd()
+
+    from logmind.core.config import load_config
+
+    config_path = root_path / ".logmind" / "config.yml"
+    if not config_path.exists():
+        return []
+
+    config = load_config(config_path)
+    enabled_agents = config.get_enabled_agents()
+    if not enabled_agents:
+        return []
+
+    drift = []
+
+    # AGENTS.md drift check — same logic as ensure_agents_md() but
+    # read-only. Detects three states: missing file, missing block,
+    # stale block body.
+    agents_path = root_path / "AGENTS.md"
+    template = get_agents_md_template()
+    if not agents_path.exists():
+        drift.append("AGENTS.md missing")
+    else:
+        content = agents_path.read_text(encoding="utf-8")
+        if not has_logmind_section(content):
+            drift.append("AGENTS.md present but missing logmind block")
+        else:
+            template_block = _extract_marker_block(template)
+            installed_block = _extract_marker_block(content)
+            if (
+                template_block is not None
+                and installed_block is not None
+                and installed_block.strip() != template_block.strip()
+            ):
+                drift.append("AGENTS.md logmind block out of date")
+
+    # Per-agent stub-file drift check (matches insert_into_all_ai_files
+    # branches but read-only).
+    for agent_name in enabled_agents:
+        if agent_name not in AGENT_REGISTRY:
+            continue
+        file_path = get_agent_file_path(agent_name, root_path)
+        if file_path is None:
+            continue
+        if not file_path.exists():
+            drift.append(
+                f"{AGENT_REGISTRY[agent_name][0]} missing (enabled agent: "
+                f"{agent_name})"
+            )
+            continue
+        if is_agent_json(agent_name):
+            continue
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if (
+            not has_logmind_section(content)
+            and not is_stub(content)
+            and agent_name != "codex"  # codex IS AGENTS.md, handled above
+        ):
+            drift.append(
+                f"{AGENT_REGISTRY[agent_name][0]} missing logmind section "
+                f"(enabled agent: {agent_name})"
+            )
+
+    return drift
+
+
 def sync_agent_files_from_config(root_path: Optional[Path] = None) -> List[str]:
     """
     Sync agent files based on configuration.

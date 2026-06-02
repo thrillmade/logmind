@@ -183,7 +183,7 @@ def _install_skdd_via_npx() -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.12", prog_name="logmind")
+@click.version_option(version="0.6.13", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -962,18 +962,24 @@ def log(
         )
 
     try:
-        # v0.1.3: run agent-file sync BEFORE the commit so refreshed AGENTS.md
-        # / CLAUDE.md / etc. are included in the scoped staging instead of
-        # left as dirty working-tree changes after the commit.
-        sync_messages = sync_agent_files_from_config()
-        for msg in sync_messages:
-            click.echo(msg)
+        # v0.6.13 / issue #113: `logmind log` no longer triggers self-update
+        # / AGENTS.md refresh. The previous behavior produced piggy-back
+        # commits on the user's feature branch that raced with concurrent
+        # self-update PRs. Drift is observed and reported here; the user
+        # explicitly applies the refresh via `logmind self-update` when
+        # ready.
+        from logmind.core.inserter import detect_template_drift
+        drift = detect_template_drift()
+        if drift:
+            click.secho(
+                "ℹ logmind templates are out of date (see `logmind self-update` to apply):",
+                fg="yellow",
+            )
+            for d in drift:
+                click.secho(f"  • {d}", fg="yellow")
 
-        # Snapshot agent files that the sync left modified so log_decision
-        # can include them in the scoped commit. We list a fixed set of
-        # known agent files (broader than the AGENTS.md auto-refresh, since
-        # other agents may have stubs).
-        extra_scoped_paths = _changed_agent_files()
+        # No piggy-back agent-file changes mean nothing to scope-stage.
+        extra_scoped_paths: list = []
 
         log_decision(
             decision=decision,
@@ -2854,6 +2860,47 @@ def install_hook(force: bool):
         hook_path.write_text("#!/bin/sh\n" + hook_line, encoding="utf-8")
         hook_path.chmod(0o755)
         click.secho("✓ Installed logmind pre-commit hook.", fg="green")
+
+
+@main.command("self-update")
+def self_update_cmd():
+    """v0.6.13 / issue #113: explicitly refresh local logmind templates.
+
+    Replaces the auto-refresh that used to happen inside `logmind log`.
+    `log` now only WARNS about drift; refresh is a separate user-invoked
+    step so it never piggy-backs onto a decision-logging branch and
+    races with concurrent self-update PRs.
+
+    Refreshes:
+      - AGENTS.md logmind block (in-place body replacement; preserves
+        content above + below the markers)
+      - Per-agent stub files (CLAUDE.md, .cursorrules, etc.) when
+        their enabled-agent config requires
+      - Hooks (post-merge + post-rewrite) — re-installed from the
+        current binary's body (closes the v0.6.10 drift loop)
+    """
+    from logmind.core.gitattributes import (
+        install_post_merge_hook,
+        install_post_rewrite_hook,
+    )
+
+    root_path = Path.cwd()
+
+    sync_messages = sync_agent_files_from_config(root_path)
+    for msg in sync_messages:
+        click.echo(msg)
+
+    # Refresh local hooks to match the running binary's body.
+    if (root_path / ".git").exists():
+        if install_post_merge_hook(root_path):
+            click.echo("✓ Refreshed .git/hooks/post-merge")
+        if install_post_rewrite_hook(root_path):
+            click.echo("✓ Refreshed .git/hooks/post-rewrite")
+
+    if not sync_messages:
+        click.secho("✓ logmind templates are up to date.", fg="green")
+
+    _ok("self-update applied")
 
 
 @main.command()
