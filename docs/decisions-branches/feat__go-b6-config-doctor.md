@@ -18,3 +18,13 @@
 - B6 PR diff now focused only on config, doctor, init, self-update. B5 skill work resumes from its own branch.
 
 ---
+## 2026-06-02 16:39 - B6 fix: doctor tests assume environment-deterministic PATH + workflow state
+
+**Reasoning:** CI runners have no host logmind binary, so PATH probe returns missing; missing-only workflow states classify as OK not DRIFT. Tests were running locally where host logmind 0.6.14 vs running 1.0.0-dev triggered stale drift. Fix: override PATH to empty in tests + plant explicit stale workflow markers when DRIFT path is being exercised. This makes tests environment-agnostic — pass on dev machines AND clean CI runners.
+
+**Alternatives considered:** Skip DRIFT tests entirely (loses coverage), Document drift-aggregation as 'requires host binary' (papers over the deterministic-test requirement)
+
+**Implications:**
+- Tests now reliably exercise both happy-path (OK) and stale-drift paths regardless of host state.
+
+---
