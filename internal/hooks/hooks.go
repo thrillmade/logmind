@@ -146,6 +146,9 @@ func BuildPostMergeBody() string {
 		"  # check-derived-docs failure weeks later.\n" +
 		"  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)\n" +
 		"  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)\n" +
+		"  # --short on a remote symbolic-ref leaves the `origin/` prefix\n" +
+		"  # in place; strip it so the bare-name comparison below works.\n" +
+		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ]; then\n" +
 		"    head_sha=$(git rev-parse HEAD 2>/dev/null || true)\n" +
