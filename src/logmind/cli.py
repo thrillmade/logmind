@@ -183,7 +183,7 @@ def _install_skdd_via_npx() -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.14", prog_name="logmind")
+@click.version_option(version="0.6.15", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",

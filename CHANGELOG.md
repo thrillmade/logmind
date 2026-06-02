@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-06-02
+
+Hotfix surfaced by the tokenomics agent's v0.6.14 verification cycle.
+
+### Fixed — post-merge hook skips regen on default branch
+
+After `gh pr merge --squash --delete-branch`, the post-merge hook fires on main. v0.6.14 correctly fixed the orphan-branch-blocks-checkout failure (issue #112), but on main the regen still ran — producing output that DIFFERED from origin/main (the squash compressed history that the local regen reads), leaving `docs/timeline.md` + `docs/file-structure.md` as unstaged modifications on every merge cycle. Every merge needed a manual `git checkout -- docs/timeline.md docs/file-structure.md` to make local main clean.
+
+v0.6.15: the hook now exits 0 when the current branch matches `refs/remotes/origin/HEAD`'s symbolic ref (the default branch). The `regen-timeline.yml` workflow already handles main server-side; local main converges on next pull. Trade "immediate local view of the new entry" for "main matches origin/main after every merge" — the latter is what users expect.
+
+Trade-off accepted (alternatives considered + rejected):
+- Pre-merge regen via a server-side workflow committing to PR branch → invasive (extra commit per PR, requires PAT, adds CI time); deferred to a possible v0.7.x design
+- Auto-amend the merge commit on main locally → surprising; would rewrite history mid-pull
+- Document `git checkout -- docs/` as the recommended cleanup → doesn't actually solve the "main should match origin/main" intent
+
+Files: `src/logmind/core/gitattributes.py` `_build_post_merge_hook_body` extends the orphan-branch guard with a default-branch guard; `tests/test_merge_driver.py` adds `test_post_merge_hook_body_embeds_default_branch_skip_logic`.
+
+### Validation gate
+
+- `pytest -q` green: **829 passed, 1 skipped** (+3 over v0.6.14).
+- After v0.6.15 propagates + tokenomics agent re-upgrades: next `gh pr merge --squash --delete-branch` should leave `git status` clean on main (no unstaged docs files). Verifies the structural fix end-to-end.
+
 ## [0.6.14] - 2026-06-02
 
 Three propagation-pipeline polish fixes surfaced during the v0.6.13 cycle (2026-06-02). All three address pain points that required manual intervention during v0.6.13 propagation and that the workflow should handle structurally going forward.

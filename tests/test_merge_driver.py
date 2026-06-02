@@ -763,6 +763,29 @@ def test_post_merge_hook_body_embeds_orphan_branch_skip_logic():
     )
 
 
+def test_post_merge_hook_body_embeds_default_branch_skip_logic():
+    """v0.6.15 / tokenomics-agent feedback: the hook MUST also skip regen
+    on the default branch entirely. After `gh pr merge --squash
+    --delete-branch`, the hook fires on main; if it regens locally it
+    produces output different from origin/main (squash compressed history),
+    leaving docs/timeline.md + docs/file-structure.md unstaged every merge.
+    The regen-timeline.yml workflow handles main server-side; local main
+    converges on next pull.
+    """
+    from logmind.core.gitattributes import _build_post_merge_hook_body
+
+    body = _build_post_merge_hook_body()
+    # The default-branch detection: read HEAD's abbrev-ref + compare against
+    # the symbolic-ref of refs/remotes/origin/HEAD.
+    assert "symbolic-ref refs/remotes/origin/HEAD" in body, (
+        "v0.6.15: hook must resolve the default branch via symbolic-ref of "
+        "refs/remotes/origin/HEAD"
+    )
+    assert 'current="$default"' in body or '"$current" = "$default"' in body, (
+        "v0.6.15: hook must compare current branch against default branch"
+    )
+
+
 def test_doctor_reports_content_drift_when_marker_matches_but_body_differs(
     git_repo: Path,
 ):
