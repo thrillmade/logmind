@@ -30,7 +30,7 @@ brew upgrade thrillmade/tap/logmind
 ## curl one-liner
 
 ```bash
-curl -fsSL logmind.dev/install.sh | sh
+curl -fsSL logmind.dev/install.sh | bash
 ```
 
 Detects your OS + architecture, downloads the matching tarball from the
@@ -42,10 +42,10 @@ Override defaults:
 
 ```bash
 # Install system-wide
-curl -fsSL logmind.dev/install.sh | sh -s -- --prefix=/usr/local
+curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=/usr/local
 
 # Pin to a specific version
-curl -fsSL logmind.dev/install.sh | sh -s -- --version=v1.0.0
+curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
 ```
 
 If `~/.local/bin` isn't on your `$PATH`, the installer prints the exact

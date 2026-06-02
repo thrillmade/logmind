@@ -33,9 +33,17 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
+        # Default 'true' is deliberate: workflow_dispatch is the manual
+        # path used for smoke-testing the release pipeline from the
+        # GitHub UI. Defaulting to a dry-run snapshot means an operator
+        # who triggers manually without changing inputs gets the safe
+        # path (verifies the YAML + cross-compile works, no cert burn,
+        # no GitHub Release published). The real release path is always
+        # via `git push origin v1.2.3` — manual real-release is a
+        # deliberate 'set dry_run=false' choice.
         description: "Run goreleaser in --skip=publish,sign,notarize mode (no GitHub Release, no codesign)."
         required: false
-        default: "false"
+        default: "true"
 
 permissions:
   contents: write    # for the GitHub Release
@@ -89,7 +97,13 @@ jobs:
           HOMEBREW_TAP_PAT: snapshot-mode-no-token-needed
 
       - name: GoReleaser release
-        if: ${{ github.event_name == 'push' }}
+        # Fires on the real release path (tag push), and also on the
+        # rare manual workflow_dispatch + dry_run=false combo. The
+        # manual-real-release combo is useful for re-publishing a tag
+        # whose first release.yml run died midway (e.g. notarytool
+        # timeout, runner OOM) — re-trigger from the UI with
+        # dry_run=false instead of having to bump + retag.
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true') }}
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest

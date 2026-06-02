@@ -30,7 +30,7 @@ detail. AGENTS.md is the canonical agent-instruction file; per-tool files
 brew install thrillmade/tap/logmind
 
 # curl one-liner
-curl -fsSL logmind.dev/install.sh | sh
+curl -fsSL logmind.dev/install.sh | bash
 ```
 
 The brew + curl paths deliver signed + notarized binaries from the

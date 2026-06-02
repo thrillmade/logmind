@@ -58,3 +58,15 @@
 - src/hooks/hooks.go embeds version.Version in hook bodies — released binaries embed the released version; dev binaries embed 1.0.0-dev
 
 ---
+## 2026-06-02 17:50 - fix(go-b7): clud-bug PR #127 — installer requires bash (not sh) + workflow_dispatch dry_run default flipped
+
+**Reasoning:** clud-bug-review on PR #127 flagged 2 valid bugs. (1) curl logmind.dev/install.sh | sh silently bypasses checksum verification on Debian/Ubuntu where sh→dash because the script uses [[ ]] (no dash builtin) which evaluates as false on dash, so the EXPECTED_LINE empty-check and checksum mismatch both silently skip. Fixed: changed all | sh → | bash in README + docs + script comments; added a BASH_VERSION probe at the very top of install.sh (before set -o pipefail which dash also rejects) that prints a corrective message and exits 1 if running under dash/ash/posh. Verified: /bin/dash installer/install.sh exits with the correct error; bash invocation unchanged. (2) workflow_dispatch with dry_run=false (the default) was a silent no-op — imported the Apple cert but ran no GoReleaser step. Fixed: flipped default to dry_run=true so manual UI triggers default to the safe snapshot path; extended the GoReleaser release step's if-condition to also fire on workflow_dispatch + dry_run!=true (useful for re-running a failed real release without re-tagging).
+
+**Alternatives considered:** Add a server-side header to install.sh that detects piped-sh (set -o pipefail caught dash anyway, but late), Rewrite install.sh in pure POSIX sh (defeats half the script's color/error-handling ergonomics; not worth it for a 274-line installer), Leave workflow_dispatch as-is with default=false (operator surprise factor stays; rejected by clud-bug correctly)
+
+**Implications:**
+- Defense-in-depth on install.sh: piped users get clear error from BASH_VERSION check OR exit 1 before checksum verification
+- workflow_dispatch UI now sane: hit Run workflow → snapshot dry-run by default; explicit dry_run=false → real release
+- Both clud-bug findings resolved before requesting merge — matches the dogfood discipline (every cited finding gets fixed)
+
+---

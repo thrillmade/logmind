@@ -6,9 +6,9 @@
 # script, deployment to the CDN URL is a follow-up).
 #
 # Usage:
-#   curl -fsSL logmind.dev/install.sh | sh
-#   curl -fsSL logmind.dev/install.sh | sh -s -- --prefix=$HOME/.local
-#   curl -fsSL logmind.dev/install.sh | sh -s -- --version=v1.0.0
+#   curl -fsSL logmind.dev/install.sh | bash
+#   curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=$HOME/.local
+#   curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
 #
 # What it does:
 #   1. Detect OS (darwin | linux) + arch (x86_64 | arm64).
@@ -37,6 +37,22 @@
 # This script is intentionally one file with no external deps beyond
 # coreutils + curl/wget + tar + (sha256sum | shasum). Maintainability
 # wins out over modularity at this size; longer is fine.
+
+# Bash-only — the script uses [[ ]], $'...' ANSI-C quoting, and
+# `set -o pipefail`. When piped through `sh` (Debian/Ubuntu point `sh`
+# at `dash`), those constructs are no-ops or hard errors — most
+# importantly the [[ ]] in the checksum verification block below would
+# silently evaluate as false, letting a tampered archive install. So we
+# detect dash/ash/posh up front and refuse with a corrective message
+# BEFORE the first set/pipefail line that would error on those shells.
+#
+# BASH_VERSION is unset under any non-bash shell; the POSIX `[ -z ... ]`
+# probe works across dash, ash, posh, and the POSIX sh in Solaris/BSDs.
+if [ -z "${BASH_VERSION:-}" ]; then
+  printf 'logmind installer needs bash, not sh.\n' >&2
+  printf 'Re-run with: curl -fsSL logmind.dev/install.sh | bash\n' >&2
+  exit 1
+fi
 
 set -euo pipefail
 
@@ -76,9 +92,9 @@ Options:
   --help, -h         Show this help.
 
 Examples:
-  curl -fsSL logmind.dev/install.sh | sh
-  curl -fsSL logmind.dev/install.sh | sh -s -- --prefix=/usr/local
-  curl -fsSL logmind.dev/install.sh | sh -s -- --version=v1.0.0
+  curl -fsSL logmind.dev/install.sh | bash
+  curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=/usr/local
+  curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
 
 Report install bugs to https://github.com/${REPO}/issues
 EOF
