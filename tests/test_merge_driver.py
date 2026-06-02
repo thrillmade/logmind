@@ -545,3 +545,185 @@ def test_install_post_merge_hook_refreshes_stale_marker(
     changed = install_post_merge_hook(git_repo)
     assert changed is True
     assert installed_post_merge_hook_version(git_repo) == current_version
+
+
+# ---------------------------------------------------------------------------
+# v0.6.12 — LOGMIND_AUTO_REGEN_PAT secret probe (tokenomics 2026-06-01 PM
+# follow-up: PAT was already configured but had insufficient scopes; doctor
+# should now surface the dependency proactively.)
+# ---------------------------------------------------------------------------
+
+
+def test_pat_probe_returns_inapplicable_when_no_workflow_needs_it(tmp_path):
+    """If a project has no workflow that references the PAT, the probe
+    returns an `installed=False` + `marker=None` row that the aggregator
+    skips. We don't surface PAT drift on projects that don't need it."""
+    from logmind.core.doctor import _probe_auto_regen_pat
+
+    status = _probe_auto_regen_pat(tmp_path)
+    assert status.installed is False
+    assert status.marker is None
+
+
+def test_pat_probe_flags_markerless_when_workflow_present_but_no_git_remote(
+    tmp_path,
+):
+    """When a logmind workflow references the secret but the project has
+    no git remote (so we can't query secrets), the probe returns
+    `drift="markerless"` — informational, not a hard fail."""
+    from logmind.core.doctor import _probe_auto_regen_pat
+
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "regen-timeline.yml").write_text(
+        "name: x\n# uses ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}\n",
+        encoding="utf-8",
+    )
+    status = _probe_auto_regen_pat(tmp_path)
+    assert status.installed is False
+    assert status.drift == "markerless"
+    assert "cannot-verify" in (status.marker or "")
+
+
+def test_pat_required_scopes_constant_is_complete():
+    """The required-scopes string must enumerate Contents / Workflows /
+    Pull-requests writes — the exact set the regen-timeline.yml v3 and
+    logmind-self-update.yml v5 templates need."""
+    from logmind.core.doctor import _PAT_REQUIRED_SCOPES
+
+    s = " ".join(_PAT_REQUIRED_SCOPES).lower()
+    assert "contents" in s
+    assert "workflows" in s
+    assert "pull-requests" in s
+
+
+def _make_git_repo(tmp_path):
+    """Make tmp_path look like a git repo with a github.com origin so the
+    PAT probe can run its `gh secret list` step."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:thrillmade/example-repo.git"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+
+
+def _write_pat_dependent_workflow(tmp_path):
+    """Drop a workflow that references the PAT, so the probe knows to look
+    up the secret."""
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "regen-timeline.yml").write_text(
+        "name: x\n# uses ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}\n",
+        encoding="utf-8",
+    )
+
+
+def test_pat_probe_reports_stale_when_gh_confirms_secret_missing(
+    tmp_path, monkeypatch,
+):
+    """Primary feature path: workflow needs the PAT AND `gh secret list`
+    confirms it's not configured. doctor must surface drift="stale" with
+    actionable remediation in the marker text."""
+    import subprocess
+    from logmind.core import doctor as doctor_mod
+
+    _make_git_repo(tmp_path)
+    _write_pat_dependent_workflow(tmp_path)
+
+    import subprocess as real_subprocess
+    _original_run = real_subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        # gh secret list — return an empty list (no secrets configured)
+        if isinstance(cmd, list) and len(cmd) >= 2 and cmd[0] == "gh" and cmd[1] == "secret":
+            class R:
+                returncode = 0
+                stdout = "[]"
+                stderr = ""
+            return R()
+        # All other subprocess.run calls (git operations, etc.) pass through.
+        return _original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(real_subprocess, "run", fake_run)
+
+    status = doctor_mod._probe_auto_regen_pat(tmp_path)
+    assert status.drift == "stale"
+    assert "MISSING" in (status.marker or "")
+    # Remediation must embed both the URL pattern AND the required scopes
+    # — otherwise a user hitting this row doesn't know what to configure.
+    marker = status.marker or ""
+    assert "thrillmade/example-repo" in marker, (
+        f"marker must include repo URL for one-click remediation. Got: {marker!r}"
+    )
+    assert "Contents: write" in marker
+    assert "Workflows: write" in marker
+    assert "Pull-requests: write" in marker
+
+
+def test_pat_probe_reports_current_when_gh_confirms_secret_present(
+    tmp_path, monkeypatch,
+):
+    """Mirror test: workflow needs PAT and gh secret list confirms presence."""
+    import subprocess
+    from logmind.core import doctor as doctor_mod
+
+    _make_git_repo(tmp_path)
+    _write_pat_dependent_workflow(tmp_path)
+
+    import subprocess as real_subprocess
+    _original_run = real_subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and len(cmd) >= 2 and cmd[0] == "gh" and cmd[1] == "secret":
+            class R:
+                returncode = 0
+                stdout = '[{"name":"LOGMIND_AUTO_REGEN_PAT"},{"name":"OTHER"}]'
+                stderr = ""
+            return R()
+        return _original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(real_subprocess, "run", fake_run)
+
+    status = doctor_mod._probe_auto_regen_pat(tmp_path)
+    assert status.drift == "current"
+    assert status.installed is True
+    # Even on "current", the marker MUST surface the required scopes so
+    # users know to verify the existing token is properly scoped — today's
+    # tokenomics case had the secret present but under-scoped.
+    marker = status.marker or ""
+    assert "Contents: write" in marker
+    assert "Workflows: write" in marker
+    assert "Pull-requests: write" in marker
+
+
+def test_pat_probe_tolerates_malformed_gh_json(tmp_path, monkeypatch):
+    """Defensive: if `gh secret list --json name` returns a bare integer
+    (or any non-list), the iteration must not crash. Should fall through
+    to "missing"."""
+    import subprocess
+    from logmind.core import doctor as doctor_mod
+
+    _make_git_repo(tmp_path)
+    _write_pat_dependent_workflow(tmp_path)
+
+    import subprocess as real_subprocess
+    _original_run = real_subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and len(cmd) >= 2 and cmd[0] == "gh" and cmd[1] == "secret":
+            class R:
+                returncode = 0
+                stdout = "42"  # Malformed: a bare JSON integer.
+                stderr = ""
+            return R()
+        return _original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(real_subprocess, "run", fake_run)
+
+    # Must not raise TypeError; should fall through to "missing" since the
+    # set of recognized secret names is empty.
+    status = doctor_mod._probe_auto_regen_pat(tmp_path)
+    assert status.drift == "stale"
+    assert "MISSING" in (status.marker or "")

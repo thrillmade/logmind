@@ -559,6 +559,160 @@ def _probe_post_rewrite_hook(project_root: Path) -> WorkflowStatus:
     )
 
 
+# ---------------------------------------------------------------------------
+# v0.6.12 — proactive `LOGMIND_AUTO_REGEN_PAT` check
+#
+# The v0.6.11 propagation cycle exposed two related secret-misconfiguration
+# failure modes that previously surfaced as cryptic 403s during PR push:
+#   1. Secret entirely absent.
+#   2. Secret present but with insufficient scope (missing `workflows: write`
+#      and/or `contents: write` — the old PAT scopes hadn't been refreshed
+#      after GitHub's fine-grained-token rollout).
+#
+# Doctor can't read secret VALUES (would need the PAT itself), but it can:
+#   - detect that an installed workflow (regen-timeline.yml v3 OR
+#     logmind-self-update.yml v5+) DEPENDS on the secret;
+#   - probe presence via `gh secret list` when the gh CLI is available
+#     + authenticated AND the user has secret-read access;
+#   - always print the required scopes so users who hit the warning know
+#     what to configure.
+#
+# Surface as a WorkflowStatus row so it slots into the existing drift
+# aggregator + --exit-zero / overall drift handling.
+# ---------------------------------------------------------------------------
+
+
+_PAT_SECRET_NAME = "LOGMIND_AUTO_REGEN_PAT"
+_PAT_REQUIRED_SCOPES = ("Contents: write", "Workflows: write", "Pull-requests: write")
+
+
+def _workflow_needs_pat(project_root: Path) -> bool:
+    """Return True iff at least one installed workflow needs the PAT.
+
+    Today's PAT-dependent workflows:
+    - `regen-timeline.yml` v3+ (uses PAT for auto-fix push)
+    - `logmind-self-update.yml` v5+ (uses PAT for workflow-file push)
+
+    We check by looking for `LOGMIND_AUTO_REGEN_PAT` literal in each
+    candidate workflow's body — cheap + version-agnostic.
+    """
+    for name in ("regen-timeline.yml", "logmind-self-update.yml"):
+        content = _read_workflow(project_root, name)
+        if content and _PAT_SECRET_NAME in content:
+            return True
+    return False
+
+
+def _detect_owner_repo(project_root: Path) -> Optional[str]:
+    """Return ``<owner>/<repo>`` parsed from the project's git origin URL,
+    or ``None`` when no git remote / no origin / unrecognized URL shape."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "remote", "get-url", "origin"],
+            capture_output=True, text=True, check=False, timeout=2,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    # Match both `git@github.com:owner/repo.git` and `https://github.com/owner/repo(.git)`
+    match = re.search(
+        r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$",
+        url,
+    )
+    if match is None:
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
+def _probe_auto_regen_pat(project_root: Path) -> WorkflowStatus:
+    """v0.6.12: surface PAT-secret status proactively.
+
+    Status semantics:
+    - ``drift="missing"``: no workflow needs the PAT yet — status row is
+      `installed=False` and doctor skips reporting it as drift (the row is
+      effectively "not applicable here").
+    - ``drift="markerless"``: a workflow NEEDS the PAT but we can't tell if
+      it's configured (no gh CLI, no auth, or no remote). Informational.
+    - ``drift="stale"``: a workflow needs the PAT AND `gh secret list`
+      confirms it is NOT present. Treated as drift; doctor surfaces it.
+    - ``drift="current"``: secret is present (scope sufficiency NOT verified
+      from doctor's vantage — surface required-scopes in remediation).
+    """
+    import subprocess
+
+    if not _workflow_needs_pat(project_root):
+        return WorkflowStatus(
+            name=f"{_PAT_SECRET_NAME} secret", installed=False,
+            marker=None, bundled_marker=None, drift="missing",
+        )
+
+    owner_repo = _detect_owner_repo(project_root)
+    if owner_repo is None:
+        return WorkflowStatus(
+            name=f"{_PAT_SECRET_NAME} secret", installed=False,
+            marker="cannot-verify (no github remote)",
+            bundled_marker="present",
+            drift="markerless",
+        )
+
+    # Best-effort `gh secret list` — succeeds only when gh CLI exists
+    # AND the caller has secrets:read on the repo. Failure here is NOT
+    # an error — we report "markerless" so doctor surfaces the required
+    # remediation text without making a hard claim.
+    try:
+        result = subprocess.run(
+            ["gh", "secret", "list", "-R", owner_repo, "--json", "name"],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return WorkflowStatus(
+            name=f"{_PAT_SECRET_NAME} secret", installed=False,
+            marker="cannot-verify (gh CLI unavailable)",
+            bundled_marker="present",
+            drift="markerless",
+        )
+
+    if result.returncode != 0:
+        return WorkflowStatus(
+            name=f"{_PAT_SECRET_NAME} secret", installed=False,
+            marker="cannot-verify (no secrets-read permission)",
+            bundled_marker="present",
+            drift="markerless",
+        )
+
+    try:
+        secrets = json.loads(result.stdout or "[]")
+        names = {s.get("name") for s in secrets}
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        # TypeError covers the case where `gh` returned malformed JSON
+        # that decodes to a non-iterable (e.g. a bare integer), which
+        # would otherwise crash the `for s in secrets` iteration with
+        # an uncaught TypeError and bring down `doctor`.
+        names = set()
+
+    scopes_hint = ", ".join(_PAT_REQUIRED_SCOPES)
+
+    if _PAT_SECRET_NAME in names:
+        return WorkflowStatus(
+            name=f"{_PAT_SECRET_NAME} secret", installed=True,
+            marker=f"present (verify scopes: {scopes_hint})",
+            bundled_marker="present",
+            drift="current",
+        )
+
+    # Workflow expects the PAT; secret is confirmed missing.
+    return WorkflowStatus(
+        name=f"{_PAT_SECRET_NAME} secret", installed=False,
+        marker=f"MISSING — configure at github.com/{owner_repo}/settings/secrets/actions/new with scopes: {scopes_hint}",
+        bundled_marker="present",
+        drift="stale",
+    )
+
+
 def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     installed = _logmind_installed_version(project_root)
     latest: Optional[str] = None
@@ -582,6 +736,10 @@ def collect_logmind_status(project_root: Path, *, offline: bool) -> ToolStatus:
     workflows.append(_probe_merge_driver_config(project_root))
     workflows.append(_probe_post_merge_hook(project_root))
     workflows.append(_probe_post_rewrite_hook(project_root))
+    # v0.6.12: surface PAT secret status for repos whose workflows depend on it.
+    pat_status = _probe_auto_regen_pat(project_root)
+    if pat_status.installed or pat_status.marker is not None:
+        workflows.append(pat_status)
 
     # Drift = any installed workflow with a marker that's stale,
     # OR installed version != latest version (when both known),
