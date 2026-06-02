@@ -34,3 +34,15 @@
 - Old homebrew-bump.yml (v0.x PyPI path) and new release.yml coexist via tag-pattern gating: v0.* fires homebrew-bump, v1.* fires release.yml
 
 ---
+## 2026-06-02 17:38 - B7: curl installer defaults to ~/.local/bin (XDG-compatible, no sudo) over /usr/local/bin
+
+**Reasoning:** Every curl-piped install script that requires sudo trips a security-conscious user's flag and breaks the 'paste-one-line-and-go' experience. Defaulting to ~/.local/bin works with shells that already have it in PATH (zsh, fish, modern bash setups), and the installer warns + prints the export PATH= line if not. Users who want system-wide install pass --prefix=/usr/local explicitly; the installer detects write-failure to /usr/local/bin and prints a 'sudo mv' hint instead of silently dying. No autodetect of write access at script start (over-engineered for the user-typed --prefix flag).
+
+**Alternatives considered:** Default to /usr/local/bin (requires sudo, scary), Try /usr/local then fall back to ~/.local automatically (silent surprises), Install to /opt/logmind/bin/ with a separate add-to-path step (3-step install instead of 1-step)
+
+**Implications:**
+- Users with ~/.local/bin already in PATH get a working binary immediately
+- Users without it get a one-line PATH-fix hint from the installer's exit message
+- Sudo-required installs require explicit --prefix flag — no surprise privilege escalation
+
+---
