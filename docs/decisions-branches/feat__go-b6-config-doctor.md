@@ -38,3 +38,13 @@
 - Tests now actually reach CI in their fixed form. PATH-deterministic + explicit stale fixtures.
 
 ---
+## 2026-06-02 16:45 - B6: address clud-bug review (atomic config write + bounded HTTP read)
+
+**Reasoning:** PR #125 clud-bug review surfaced two correctness/safety issues: (1) SaveMap truncated config.yml before encode/close so any post-truncate failure left an empty file silently losing user settings; (2) httpGetJSON used unbounded io.ReadAll so a fast misbehaving server could buffer many MB before the wall-clock timeout fired.
+
+**Alternatives considered:** Defer fixes to a follow-up (rejects review), Use lockfile pattern (overkill for single-file config write — POSIX rename is sufficient)
+
+**Implications:**
+- config set is now safe against partial-write disasters; PyPI probe is bounded to 1 MiB which is well above any sane JSON response.
+
+---

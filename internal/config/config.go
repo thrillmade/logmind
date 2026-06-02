@@ -225,21 +225,47 @@ func LoadPathAsMap(path string) (*OrderedMap, error) {
 // 2-space indentation to match Python's yaml.dump(default_flow_style=
 // False) output. Caller's responsibility to ensure m is an OrderedMap
 // the YAML encoder can serialise.
+//
+// Atomic write semantics: encode to a sibling temp file then rename
+// over the destination. Without this, an encode/close error after the
+// destination was already truncated would leave the user with an empty
+// config.yml — silently losing every setting they had. The rename is
+// atomic on POSIX so concurrent readers either see the old file or
+// the new file, never a half-written intermediate state.
 func SaveMap(path string, m *OrderedMap) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(path)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	enc := yaml.NewEncoder(f)
+	tmpName := tmp.Name()
+	// Belt + suspenders cleanup: on any error path below, remove the
+	// orphan temp file. The `tmp = nil` after the successful rename
+	// disarms this so we don't accidentally wipe the (now-renamed)
+	// destination.
+	cleanup := func() {
+		if tmp != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}
+	defer cleanup()
+
+	enc := yaml.NewEncoder(tmp)
 	enc.SetIndent(2)
 	if err := enc.Encode(m); err != nil {
 		return err
 	}
-	return enc.Close()
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	tmp = nil // disarm the deferred cleanup
+	return os.Rename(tmpName, path)
 }
 
 // deepUpdate recursively folds src into dst — matches Python

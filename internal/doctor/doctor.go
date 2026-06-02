@@ -117,6 +117,12 @@ func (r *StatusReport) ToJSON() (string, error) {
 	return string(b), nil
 }
 
+// maxProbeBodyBytes caps the body read for any best-effort probe.
+// PyPI / npm JSON responses are well under this; the cap prevents a
+// rogue server from buffering MB through `io.ReadAll` while the 2s
+// context timeout governs only wall-clock latency (not bytes).
+const maxProbeBodyBytes = 1 << 20 // 1 MiB
+
 // httpGetJSON is a best-effort JSON GET — returns nil on any failure
 // (timeout, network, parse, status>=400). Mirrors Python's
 // _http_get_json semantics: never raises.
@@ -136,7 +142,7 @@ func httpGetJSON(url string, timeout time.Duration) map[string]any {
 	if resp.StatusCode >= 400 {
 		return nil
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
 	if err != nil {
 		return nil
 	}
