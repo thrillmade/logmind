@@ -25,8 +25,6 @@ logmind
 │   ├── per_session.py
 │   ├── README.md
 │   └── worst_case.py
-├── bin
-│   └── logmind
 ├── docs
 │   ├── decisions-branches
 │   ├── ai-agent-files.md
@@ -37,12 +35,6 @@ logmind
 │   ├── first-decision-example.md
 │   ├── plan.md
 │   └── timeline.md
-├── internal
-│   ├── cli
-│   ├── doctor
-│   ├── init
-│   ├── skill
-│   └── templates
 ├── site
 │   ├── .next
 │   ├── .vercel
