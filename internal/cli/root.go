@@ -53,6 +53,11 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newInstallHookCmd())
 	root.AddCommand(newCheckDecisionsCmd())
 	root.AddCommand(newCheckLinksCmd())
+	// B3: derived doc generators + rebase wrapper.
+	root.AddCommand(newTimelineCmd())
+	root.AddCommand(newFileStructureCmd())
+	root.AddCommand(newTreeCmd())
+	root.AddCommand(newRebaseCmd())
 	// B4: agent file templating subcommand tree.
 	root.AddCommand(newAgentsCmd())
 

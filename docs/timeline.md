@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (27 decisions)
+## 2026-06 (26 decisions)
 
-- **2026-06-02** — fix(go-b4): ReplaceMarkerBlock inverted-marker guard + InsertLogmindSection no-heading test (clud-bug PR #118) *(feat/go-b4-agents)* — [decisions-branches/feat__go-b4-agents.md](decisions-branches/feat__go-b4-agents.md)
-- *... 25 more decisions ...*
+- **2026-06-02** — feat(go-b3): port timeline, file-structure, tree, rebase + internal config/decisions/timeline/tree packages with byte-identical Python v0.6.14 output *(feat/go-b3-derived-docs)* — [decisions-branches/feat__go-b3-derived-docs.md](decisions-branches/feat__go-b3-derived-docs.md)
+- *... 24 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
