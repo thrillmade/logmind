@@ -572,3 +572,81 @@ func TestFindOutdatedMarkerBlocks_NeverFlipsFlavour(t *testing.T) {
 		t.Errorf("installed v5 vs default-slim must NOT be reported as outdated; got %v", out)
 	}
 }
+
+// TestReplaceMarkerBlock_InvertedMarkers — when end marker appears
+// BEFORE start marker (malformed input), the function MUST return
+// content unchanged. Without this guard, ReplaceMarkerBlock would
+// silently corrupt by duplicating the inter-marker region.
+//
+// Flagged by clud-bug-review on PR #118 — ExtractMarkerBlock already
+// had this guard; ReplaceMarkerBlock did not. Pinned by this test.
+func TestReplaceMarkerBlock_InvertedMarkers(t *testing.T) {
+	// End marker appears BEFORE start marker — corrupt file shape.
+	content := "PREFIX\n<!-- /logmind-block-version -->\nMIDDLE\n<!-- logmind-block-version: v7-pointer -->\nSUFFIX"
+	got := ReplaceMarkerBlock(content, "WOULD-OVERWRITE")
+	if got != content {
+		t.Errorf("ReplaceMarkerBlock on inverted markers must return content unchanged.\nWant: %q\nGot:  %q", content, got)
+	}
+}
+
+// TestInsertLogmindSection_NoHeading — the path that runs when no
+// `# ` heading is found in the file. The block must be prepended at
+// position 0 (before all existing content). Without this test, that
+// branch (where insertIndex stays at 0) was untested.
+//
+// Flagged by clud-bug-review on PR #118.
+func TestInsertLogmindSection_NoHeading(t *testing.T) {
+	dir := t.TempDir()
+	// A `.cursorrules`-shaped file that goes straight into rules without
+	// an H1 heading — common pattern for those agent files.
+	original := "Rule 1: be terse.\nRule 2: cite sources.\n"
+	target := filepath.Join(dir, ".cursorrules")
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	changed, err := InsertLogmindSection(target)
+	if err != nil {
+		t.Fatalf("InsertLogmindSection: %v", err)
+	}
+	if !changed {
+		t.Fatal("InsertLogmindSection returned changed=false on a file without the marker; want true")
+	}
+
+	out, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := string(out)
+	// InsertLogmindSection inserts the section near position 0 for
+	// headingless files (after a possible leading newline). The actual
+	// marker shipped in templates/logmind-section.md is
+	// `<!-- logmind-start -->`. Assert the marker appears BEFORE the
+	// user content — the no-heading branch's contract.
+	markerIdx := strings.Index(got, "<!-- logmind-start -->")
+	rulesIdx := strings.Index(got, "Rule 1: be terse.")
+	if markerIdx == -1 {
+		t.Fatalf("logmind-start marker not found in output; first 200 chars: %q", got[:min(200, len(got))])
+	}
+	if rulesIdx == -1 {
+		t.Errorf("original rules must be preserved after the inserted block; got:\n%s", got)
+	}
+	if markerIdx > rulesIdx {
+		t.Errorf("logmind block must precede user content (markerIdx=%d > rulesIdx=%d)", markerIdx, rulesIdx)
+	}
+	// Idempotency: second call must be a no-op (marker already present).
+	changed2, err := InsertLogmindSection(target)
+	if err != nil {
+		t.Fatalf("InsertLogmindSection (2nd call): %v", err)
+	}
+	if changed2 {
+		t.Error("second InsertLogmindSection call must return changed=false; got true")
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

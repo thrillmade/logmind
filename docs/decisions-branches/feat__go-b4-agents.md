@@ -11,3 +11,14 @@
 - Workflow pin sweep limited to canonical pin workflows — never rewrites user-owned workflows
 
 ---
+## 2026-06-02 01:34 - fix(go-b4): ReplaceMarkerBlock inverted-marker guard + InsertLogmindSection no-heading test (clud-bug PR #118)
+
+**Reasoning:** clud-bug-review on PR #118 flagged 2 issues. (1) ReplaceMarkerBlock missing the 'end < start' guard that ExtractMarkerBlock has — on a file with malformed markers (end before start), the function silently corrupted the output by duplicating the inter-marker region. Added the same guard; added test pinning the safe behavior. (2) InsertLogmindSection's no-heading branch (when file lacks a '# ' line, section gets prepended at position 0) had zero test coverage — a regression on that path would be invisible. Added test using a .cursorrules-shaped fixture (no H1 heading); asserts marker precedes user content + idempotency.
+
+**Alternatives considered:** Document inverse-marker handling but not fix it — would defer corruption risk, Make ReplaceMarkerBlock return an error on inverted markers — breaks its (content, body) → content signature; cascades
+
+**Implications:**
+- Both primitives (Extract + Replace) now share the same well-formedness contract: bail on missing OR inverted markers, return content unchanged
+- Future fixture-based tests on InsertLogmindSection cover the no-heading branch — protects against regression when B6's init flow uses this function
+
+---

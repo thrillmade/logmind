@@ -152,7 +152,10 @@ func ExtractMarkerBlock(content string) (string, bool) {
 
 // ReplaceMarkerBlock swaps the body between the existing markers,
 // preserving everything else byte-for-byte. Returns content unchanged
-// when either marker is absent.
+// when either marker is absent OR when the markers are out of order
+// (end appears before start — malformed input, never a legitimate state).
+// Mirrors ExtractMarkerBlock's `end < start` guard so the two primitives
+// share the same well-formedness contract.
 //
 // This is the SURGICAL REWRITE primitive. Marker-block round-trip
 // invariant (proved in the package test):
@@ -167,7 +170,7 @@ func ExtractMarkerBlock(content string) (string, bool) {
 func ReplaceMarkerBlock(content, newBlockBody string) string {
 	start := strings.Index(content, startMarker)
 	end := strings.Index(content, endMarker)
-	if start == -1 || end == -1 {
+	if start == -1 || end == -1 || end < start {
 		return content
 	}
 	var b strings.Builder
