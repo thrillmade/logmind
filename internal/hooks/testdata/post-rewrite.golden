@@ -1,0 +1,29 @@
+#!/bin/sh
+# logmind post-rewrite hook
+# logmind-hook-version: 1.0.0-dev
+# Installed by `logmind init` (v0.5.11+). Companion to the post-merge
+# hook. Fires after `git rebase` or `git commit --amend` and
+# regenerates derived docs from the FULL post-rewrite working tree.
+#
+# Why: the merge driver in .gitattributes only fires when a merge
+# produces conflicts on the derived files. A clean rebase rewrites
+# multiple commits without ever invoking the driver — leaving
+# docs/timeline.md and docs/file-structure.md stale relative to the
+# replayed `docs/decisions-branches/<branch>.md` entries. This hook
+# sweeps the final state once and stages the regen for inclusion in
+# the user's next commit / amend cycle.
+#
+# Git invokes post-rewrite with $1 = "rebase" or "amend"; the regen
+# behaviour is identical in both, so we don't branch on $1.
+#
+# v0.6.10: hook-version marker embedded above for doctor drift detection.
+
+if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
+  if [ -d docs ]; then
+    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
+    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
+    # Stage the regens if they changed anything; user can `git commit --amend`
+    # or include in their next commit.
+    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true
+  fi
+fi

@@ -1,0 +1,51 @@
+#!/bin/sh
+# logmind post-merge hook
+# logmind-hook-version: 1.0.0-dev
+# Installed by `logmind init` (v0.3.0+). After every merge, regenerate
+# derived docs from the FULL post-merge working tree. Belt + suspenders
+# with the merge driver in .gitattributes — the driver fires per-file
+# during conflict resolution, before sibling non-conflicted files (e.g.
+# the merged-in branch's docs/decisions-branches/<branch>.md) are
+# checked out. This hook runs once at the end and sweeps any incomplete
+# regenerations.
+#
+# v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook
+# auto-staged docs/timeline.md + docs/file-structure.md, but the
+# staged-but-uncommitted files then blocked `git checkout main` on
+# every PR cycle (post-merge fires from `git pull --rebase` after a
+# squash merge — there's no commit being constructed, so staging was
+# wrong). Leaving them as unstaged modifications lets the next
+# `logmind log` pick them up cleanly without blocking branch switches.
+#
+# v0.6.10: the line above embeds the binary version that wrote this hook,
+# so doctor reports stale-hook drift loudly when the user's local CLI
+# binary is stale relative to the workflow's installed version.
+#
+# v0.6.13 / issue #112: skip regen entirely when the current branch is
+# orphaned — i.e., we're on a feature branch that was just squash-merged
+# on origin and the remote branch has been deleted. The regen would
+# produce content that conflicts with main's just-merged state, and the
+# resulting unstaged modifications block `gh pr merge --delete-branch`'s
+# follow-up `git checkout main`. Detection without network calls:
+# `git rev-parse --abbrev-ref @{u}` returns nonzero / empty when the
+# upstream is gone after `git fetch --prune`. Detection failure → fall
+# through to today's behavior (regen + leave unstaged); never block on
+# detection failure.
+
+if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
+  # Orphan-branch check: if our upstream tracking ref no longer exists,
+  # we were just merged-and-deleted; skip regen.
+  upstream=$(git rev-parse --abbrev-ref @{u} 2>/dev/null || true)
+  if [ -n "$upstream" ]; then
+    if ! git rev-parse --verify --quiet "refs/remotes/$upstream" >/dev/null 2>&1; then
+      # Upstream config says <upstream> but no such remote-tracking ref
+      # exists (typical after `git fetch --prune` removes the merged
+      # branch). Skip regen — main will regen correctly after checkout.
+      exit 0
+    fi
+  fi
+  if [ -d docs ]; then
+    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
+    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
+  fi
+fi
