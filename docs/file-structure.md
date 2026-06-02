@@ -35,8 +35,12 @@ logmind-b6-bump
 │   ├── decisions.md
 │   ├── file-structure.md
 │   ├── first-decision-example.md
+│   ├── install.md
 │   ├── plan.md
 │   └── timeline.md
+├── installer
+│   ├── cask-template.rb
+│   └── install.sh
 ├── internal
 │   ├── agents
 │   ├── cli
@@ -53,6 +57,8 @@ logmind-b6-bump
 │   ├── timeline
 │   ├── tree
 │   └── version
+├── scripts
+│   └── sign-macos.sh
 ├── site
 │   ├── app
 │   ├── public
@@ -109,6 +115,7 @@ logmind-b6-bump
 │   └── test_workflow_pin_update.py
 ├── .cursorrules
 ├── .gitignore
+├── .goreleaser.yaml
 ├── .pre-commit-config.yaml
 ├── .python-version
 ├── AGENTS.md
