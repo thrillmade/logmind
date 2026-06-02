@@ -545,3 +545,53 @@ def test_install_post_merge_hook_refreshes_stale_marker(
     changed = install_post_merge_hook(git_repo)
     assert changed is True
     assert installed_post_merge_hook_version(git_repo) == current_version
+
+
+# ---------------------------------------------------------------------------
+# v0.6.12 — LOGMIND_AUTO_REGEN_PAT secret probe (tokenomics 2026-06-01 PM
+# follow-up: PAT was already configured but had insufficient scopes; doctor
+# should now surface the dependency proactively.)
+# ---------------------------------------------------------------------------
+
+
+def test_pat_probe_returns_inapplicable_when_no_workflow_needs_it(tmp_path):
+    """If a project has no workflow that references the PAT, the probe
+    returns an `installed=False` + `marker=None` row that the aggregator
+    skips. We don't surface PAT drift on projects that don't need it."""
+    from logmind.core.doctor import _probe_auto_regen_pat
+
+    status = _probe_auto_regen_pat(tmp_path)
+    assert status.installed is False
+    assert status.marker is None
+
+
+def test_pat_probe_flags_markerless_when_workflow_present_but_no_git_remote(
+    tmp_path,
+):
+    """When a logmind workflow references the secret but the project has
+    no git remote (so we can't query secrets), the probe returns
+    `drift="markerless"` — informational, not a hard fail."""
+    from logmind.core.doctor import _probe_auto_regen_pat
+
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "regen-timeline.yml").write_text(
+        "name: x\n# uses ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}\n",
+        encoding="utf-8",
+    )
+    status = _probe_auto_regen_pat(tmp_path)
+    assert status.installed is False
+    assert status.drift == "markerless"
+    assert "cannot-verify" in (status.marker or "")
+
+
+def test_pat_required_scopes_constant_is_complete():
+    """The required-scopes string must enumerate Contents / Workflows /
+    Pull-requests writes — the exact set the regen-timeline.yml v3 and
+    logmind-self-update.yml v5 templates need."""
+    from logmind.core.doctor import _PAT_REQUIRED_SCOPES
+
+    s = " ".join(_PAT_REQUIRED_SCOPES).lower()
+    assert "contents" in s
+    assert "workflows" in s
+    assert "pull-requests" in s

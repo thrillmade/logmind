@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-06-01
+
+### Added — Proactive `LOGMIND_AUTO_REGEN_PAT` secret check in `logmind doctor`
+
+The v0.6.11 propagation cycle exposed two related PAT-misconfiguration failure modes that previously surfaced only as cryptic 403s during PR push:
+
+1. Secret entirely absent
+2. Secret present but with insufficient scopes (the reporter's case today — `Workflows: write` was missing after GitHub's fine-grained-token rollout)
+
+v0.6.12 adds a `_probe_auto_regen_pat` check to doctor that runs when a logmind workflow body references the secret. Status semantics:
+
+- **Workflow doesn't need PAT** → row is `installed=False` + `marker=None`; aggregator skips it
+- **PAT-required workflow present + secret confirmed missing** → `drift="stale"` (visible drift; doctor exits non-zero)
+- **PAT-required workflow present + secret confirmed present** → `drift="current"` (with caveat that scopes are NOT verified — surfaces required scopes in remediation text)
+- **PAT-required workflow present + can't verify** (no gh CLI, no auth, no remote) → `drift="markerless"` informational row
+
+Required scopes surfaced in `_PAT_REQUIRED_SCOPES`: Contents: write, Workflows: write, Pull-requests: write.
+
+### Plan ahead — three improvement levers for the PAT-as-UX-wart concern
+
+1. **v0.6.12** (this release) — doctor proactive check: catches users BEFORE the cryptic failure
+2. **v0.6.13 candidate** — smart workflow-skip: self-update detects "would this release touch workflow files?" If yes AND no PAT, skip + post a one-line notice. Pin-bump releases still auto-propagate even without the PAT.
+3. **D.10 `thrillmade-orchestrator[bot]` App** (the GitHub App in the Phase D plan) — App-authenticated push has `workflows: write` natively; removes the per-consumer PAT requirement entirely. Multi-week build.
+
+The v0.6.12 doctor surface + v0.6.13 smart-skip together provide the bridge UX until D.10 ships.
+
+### Code
+
+- `src/logmind/core/doctor.py` — new `_probe_auto_regen_pat` + helpers `_workflow_needs_pat`, `_detect_owner_repo`. `collect_logmind_status` appends PAT row when applicable.
+- `tests/test_merge_driver.py` — 3 new tests pinning the PAT probe's three primary states.
+- 3-spot version bump.
+
 ## [0.6.11] - 2026-06-01
 
 ### Fixed — Single-quoted workflow pin regex (reporulez silent-miss)
