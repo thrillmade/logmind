@@ -39,6 +39,10 @@ logmind
 │   └── timeline.md
 ├── internal
 │   ├── cli
+│   ├── gitattr
+│   ├── gitcli
+│   ├── hooks
+│   ├── linkcheck
 │   └── version
 ├── site
 │   ├── .next

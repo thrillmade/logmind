@@ -40,9 +40,19 @@ func NewRootCmd() *cobra.Command {
 		// Disable cobra's auto-generated default --version output so we
 		// can render the protocol-contract format ourselves.
 		SilenceUsage: true,
+		// Don't let cobra re-print errors after the subcommand RunE
+		// returned — we already wrote the user-facing message to
+		// stdout from inside the RunE (Python pattern). Cobra would
+		// otherwise duplicate it to stderr, breaking byte-identical
+		// parity with the Python CLI.
+		SilenceErrors: true,
 	}
 
 	root.AddCommand(newVersionCmd())
+	// B2: git integration + hooks subcommands.
+	root.AddCommand(newInstallHookCmd())
+	root.AddCommand(newCheckDecisionsCmd())
+	root.AddCommand(newCheckLinksCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.

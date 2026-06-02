@@ -53,7 +53,12 @@ test:
 # (Go exits 2 on unrecognised flags). So we explicitly enumerate the
 # packages that ship golden files. When a future wave adds testdata/
 # under a new package, add its import path to SNAPSHOT_PKGS below.
-SNAPSHOT_PKGS := ./internal/cli/...
+#
+# B2 appended hooks and gitattr — both ship goldens for hook bodies
+# and the .gitattributes managed-block respectively. linkcheck DOES
+# NOT need a golden (its testdata is constructed inline from
+# tempdir fixtures), so it stays off this list.
+SNAPSHOT_PKGS := ./internal/cli/... ./internal/hooks/... ./internal/gitattr/...
 .PHONY: snapshot
 snapshot:
 	$(GO) test $(SNAPSHOT_PKGS) -update
