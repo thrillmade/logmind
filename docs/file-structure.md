@@ -48,7 +48,6 @@ logmind
 │   ├── hooks
 │   ├── inserter
 │   ├── linkcheck
-│   ├── skill
 │   ├── templates
 │   ├── timeline
 │   ├── tree

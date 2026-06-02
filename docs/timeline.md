@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (30 decisions)
+## 2026-06 (31 decisions)
 
-- **2026-06-02** — B6: config + doctor + init + self-update (Go rewrite) *(feat/go-b6-config-doctor)* — [decisions-branches/feat__go-b6-config-doctor.md](decisions-branches/feat__go-b6-config-doctor.md)
-- *... 28 more decisions ...*
+- **2026-06-02** — B6 cleanup: remove internal/skill/ that leaked from B5 worktree *(feat/go-b6-config-doctor)* — [decisions-branches/feat__go-b6-config-doctor.md](decisions-branches/feat__go-b6-config-doctor.md)
+- *... 29 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
