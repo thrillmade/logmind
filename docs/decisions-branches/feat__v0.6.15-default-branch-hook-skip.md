@@ -34,3 +34,15 @@
 - config.auto_update_file_structure: false keeps the old behavior; nothing breaks for opted-out users
 
 ---
+## 2026-06-02 12:52 - fix(v0.6.15): unreachable || fallback in default-branch resolution (clud-bug PR #122)
+
+**Reasoning:** clud-bug-review on PR #122 caught: the prior pipeline 'git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed ... || echo main' had an unreachable fallback. When git fails, sed receives empty stdin, exits 0, masks git's exit status — the '|| echo main' branch never fires. Result: default ends up as empty string. The hook's intent ('main' as fallback when origin/HEAD not configured) silently diverges from its behavior. Fix: use 'symbolic-ref --short' (bare branch name, no sed needed) + explicit '[ -z default ] && default=main' fallback that actually fires.
+
+**Alternatives considered:** Use $PIPESTATUS — bashism, not POSIX, breaks on /bin/sh, Pre-check 'git symbolic-ref' separately and stash result — verbose but works, Ignore (benign in practice; skip just doesn't fire in this edge case) — declined; the dogfood discipline says caught-by-review must be fixed
+
+**Implications:**
+- --short is POSIX-portable and avoids the pipeline gotcha entirely
+- Test updated to assert '--short' literal so the regression is pinned
+- Reinforces the dogfood rule: clud-bug-review findings get FIXED, not waved away
+
+---

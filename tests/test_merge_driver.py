@@ -776,10 +776,12 @@ def test_post_merge_hook_body_embeds_default_branch_skip_logic():
 
     body = _build_post_merge_hook_body()
     # The default-branch detection: read HEAD's abbrev-ref + compare against
-    # the symbolic-ref of refs/remotes/origin/HEAD.
-    assert "symbolic-ref refs/remotes/origin/HEAD" in body, (
-        "v0.6.15: hook must resolve the default branch via symbolic-ref of "
-        "refs/remotes/origin/HEAD"
+    # the symbolic-ref of refs/remotes/origin/HEAD. The --short flag is
+    # required (avoids the pipeline-exit-status bug clud-bug-review flagged
+    # on PR #122 where sed's exit masked git's failure).
+    assert "symbolic-ref --short refs/remotes/origin/HEAD" in body, (
+        "v0.6.15: hook must resolve the default branch via "
+        "`git symbolic-ref --short refs/remotes/origin/HEAD`"
     )
     assert 'current="$default"' in body or '"$current" = "$default"' in body, (
         "v0.6.15: hook must compare current branch against default branch"
