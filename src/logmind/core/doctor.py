@@ -846,7 +846,6 @@ def _probe_path_resolution() -> "WorkflowStatus":
     """
     import shutil
     import subprocess
-    import sys
 
     from logmind import __version__ as running_version
 

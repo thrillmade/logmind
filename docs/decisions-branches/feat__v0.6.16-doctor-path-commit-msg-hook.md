@@ -11,3 +11,13 @@
 - PATH probe firing STALE in CI/test environments needed an autouse stub in tests/test_doctor.py — real-environment behavior unaffected
 
 ---
+## 2026-06-02 14:06 - fix: address clud-bug-review threads on PR #123 (unused import + test fallback)
+
+**Reasoning:** clud-bug-review flagged two real issues: (1) sys import in _probe_path_resolution is unused — only shutil/subprocess/__version__ get referenced; (2) fake_run pass-through used real_subprocess.run.__wrapped__ which doesn't exist on a plain function, silently returning None and masking future probes that access .returncode
+
+**Alternatives considered:** leave sys import — rejected: real unused import, linter would flag eventually, use functools.wraps trick on fake_run so __wrapped__ exists — rejected: that's a hack; capturing the real run before patching is the conventional pattern
+
+**Implications:**
+- test now properly exercises real subprocess fall-through for git/gh probes that collect_status calls; new probes won't silently break this test
+
+---

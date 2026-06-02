@@ -520,6 +520,15 @@ def test_doctor_overall_flips_to_drift_when_path_stale(monkeypatch, project: Pat
     monkeypatch.setattr(doctor_mod, "_http_get_json", lambda *_a, **_kw: None)
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/local/bin/logmind")
 
+    # Capture the real subprocess.run BEFORE patching so the fallback
+    # pass-through actually executes real subprocesses (git remote, gh
+    # secret list, etc. — they all degrade gracefully on failure but
+    # need a real run, not None). Prior implementation used
+    # `real_subprocess.run.__wrapped__` which never exists on a plain
+    # function and silently returned None, masking any new probe that
+    # accesses `.returncode` on the result.
+    real_run = real_subprocess.run
+
     def fake_run(cmd, *args, **kwargs):
         if isinstance(cmd, list) and len(cmd) >= 2 and cmd[1] == "--version":
             class R:
@@ -527,12 +536,8 @@ def test_doctor_overall_flips_to_drift_when_path_stale(monkeypatch, project: Pat
                 stdout = "logmind, version 0.3.4\n"
                 stderr = ""
             return R()
-        # Pass-through for all other subprocess.run calls
-        return real_subprocess.run.__wrapped__(cmd, *args, **kwargs) if hasattr(real_subprocess.run, "__wrapped__") else None
+        return real_run(cmd, *args, **kwargs)
 
-    # We don't actually need to call real subprocess for this test — just
-    # for the --version probe. Other subprocess calls in collect_status
-    # may happen (git remote, gh secret list); they all degrade gracefully.
     monkeypatch.setattr(real_subprocess, "run", fake_run)
 
     monkeypatch.chdir(project)
