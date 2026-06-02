@@ -196,7 +196,7 @@ def test_shipped_template_markers_match_expected():
         "regen-timeline.yml.template": "v3",  # v0.3.4: auto-fix-with-PAT + fail-fast fallback
         "check-decisions.yml.template": "v2",
         "check-doc-links.yml.template": "v3",
-        "logmind-self-update.yml.template": "v5",  # v0.6.11: PAT-based push for workflow refreshes
+        "logmind-self-update.yml.template": "v6",  # v0.6.13: smart workflow-skip + PAT for gh pr create
     }
     templates_dir = (
         Path(__file__).parent.parent / "src" / "logmind" / "templates" / "github"

@@ -653,26 +653,71 @@ def test_show_command_syncs_agent_files(temp_dir):
         assert (Path.cwd() / ".cursorrules").exists()
 
 
-def test_log_command_syncs_agent_files(git_repo):
-    """Test that log command syncs agent files from config."""
+def test_log_command_does_not_sync_agent_files_but_warns_on_drift(git_repo):
+    """v0.6.13 / issue #113: `logmind log` no longer applies agent-file
+    refresh. It must DETECT drift and emit a warning, but never mutate
+    files — otherwise it produces piggy-back commits on the user's
+    feature branch that race with concurrent self-update PRs.
+
+    The explicit refresh path is `logmind self-update`.
+    """
     runner = CliRunner()
 
     with runner.isolated_filesystem(temp_dir=git_repo):
         # Initialize first
         runner.invoke(init)
 
-        # Manually enable windsurf in config
+        # Manually enable windsurf in config; create drift (.windsurfrules absent).
         config_path = Path.cwd() / ".logmind" / "config.yml"
         config_content = config_path.read_text(encoding="utf-8")
         config_content = config_content.replace("windsurf: false", "windsurf: true")
         config_path.write_text(config_content, encoding="utf-8")
 
-        # Run log (should sync and create .windsurfrules)
         result = runner.invoke(log, ["Test decision", "--no-commit"])
 
         assert result.exit_code == 0
-        assert (Path.cwd() / ".windsurfrules").exists()
-        assert ".windsurfrules" in result.output
+        # CRITICAL: log must NOT mutate .windsurfrules. The refresh has
+        # to be explicit (`logmind self-update`).
+        assert not (Path.cwd() / ".windsurfrules").exists(), (
+            "v0.6.13 issue #113 regression: `logmind log` must NOT create "
+            "or modify agent stub files. Refresh is now a separate "
+            "explicit `logmind self-update` command."
+        )
+        # Drift must be reported to the user with a clear remediation
+        # pointer to `logmind self-update`.
+        assert "out of date" in result.output or "missing" in result.output, (
+            f"log must surface drift in its output. Got:\n{result.output}"
+        )
+        assert "logmind self-update" in result.output, (
+            f"log must direct the user to `logmind self-update` for the "
+            f"explicit refresh. Got:\n{result.output}"
+        )
+
+
+def test_self_update_command_applies_refresh(git_repo):
+    """v0.6.13: the new `logmind self-update` command IS where the
+    refresh happens — separate from `logmind log` so it doesn't
+    piggy-back on user decision commits."""
+    from logmind.cli import self_update_cmd
+
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=git_repo):
+        runner.invoke(init)
+
+        # Enable windsurf to create drift.
+        config_path = Path.cwd() / ".logmind" / "config.yml"
+        config_content = config_path.read_text(encoding="utf-8")
+        config_content = config_content.replace("windsurf: false", "windsurf: true")
+        config_path.write_text(config_content, encoding="utf-8")
+
+        result = runner.invoke(self_update_cmd)
+
+        assert result.exit_code == 0
+        # `self-update` DOES apply the refresh (unlike `log` which only warns).
+        assert (Path.cwd() / ".windsurfrules").exists(), (
+            "`logmind self-update` must apply the agent-file refresh."
+        )
 
 
 def test_init_creates_default_agents(temp_dir):

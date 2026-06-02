@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (18 decisions)
+## 2026-06 (19 decisions)
 
-- **2026-06-01** — feat(v0.6.12): doctor surfaces LOGMIND_AUTO_REGEN_PAT status proactively *(feat/v0.6.12-doctor-pat-check)* — [decisions-branches/feat__v0.6.12-doctor-pat-check.md](decisions-branches/feat__v0.6.12-doctor-pat-check.md)
-- *... 16 more decisions ...*
+- **2026-06-01** — feat(v0.6.13): 4 consumer-product UX fixes (issues #112 + #113 + propagation friction) *(feat/v0.6.13-orphan-hook-skip-log-no-self-update)* — [decisions-branches/feat__v0.6.13-orphan-hook-skip-log-no-self-update.md](decisions-branches/feat__v0.6.13-orphan-hook-skip-log-no-self-update.md)
+- *... 17 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
