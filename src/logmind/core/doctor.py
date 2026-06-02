@@ -363,6 +363,24 @@ def _probe_post_merge_hook(project_root: Path) -> WorkflowStatus:
             name="post-merge hook", installed=True,
             marker=hook_version, bundled_marker=current_version, drift="stale",
         )
+    # v0.6.14 / issue #112 addendum: marker equality is the cheap fast-path,
+    # but content can drift while the marker line is preserved (manual edits,
+    # clobber-then-restore by another tool, bug in marker propagation).
+    # Diff installed bytes vs bundled body; report stale when they differ.
+    from logmind.core.gitattributes import _build_post_merge_hook_body
+    bundled_body = _build_post_merge_hook_body()
+    try:
+        installed_body = (project_root / ".git" / "hooks" / "post-merge").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+    except OSError:
+        installed_body = bundled_body  # fall through to current
+    if installed_body != bundled_body:
+        return WorkflowStatus(
+            name="post-merge hook", installed=True,
+            marker=f"{hook_version} (content drift)",
+            bundled_marker=current_version, drift="stale",
+        )
     return WorkflowStatus(
         name="post-merge hook", installed=True,
         marker=hook_version, bundled_marker=current_version, drift="current",
@@ -552,6 +570,21 @@ def _probe_post_rewrite_hook(project_root: Path) -> WorkflowStatus:
         return WorkflowStatus(
             name="post-rewrite hook", installed=True,
             marker=hook_version, bundled_marker=current_version, drift="stale",
+        )
+    # v0.6.14: same content-diff fallback as the post-merge probe.
+    from logmind.core.gitattributes import _build_post_rewrite_hook_body
+    bundled_body = _build_post_rewrite_hook_body()
+    try:
+        installed_body = (project_root / ".git" / "hooks" / "post-rewrite").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+    except OSError:
+        installed_body = bundled_body
+    if installed_body != bundled_body:
+        return WorkflowStatus(
+            name="post-rewrite hook", installed=True,
+            marker=f"{hook_version} (content drift)",
+            bundled_marker=current_version, drift="stale",
         )
     return WorkflowStatus(
         name="post-rewrite hook", installed=True,

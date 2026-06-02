@@ -196,7 +196,7 @@ def test_shipped_template_markers_match_expected():
         "regen-timeline.yml.template": "v3",  # v0.3.4: auto-fix-with-PAT + fail-fast fallback
         "check-decisions.yml.template": "v2",
         "check-doc-links.yml.template": "v3",
-        "logmind-self-update.yml.template": "v6",  # v0.6.13: smart workflow-skip + PAT for gh pr create
+        "logmind-self-update.yml.template": "v7",  # v0.6.14: [skip-logmind] title prefix + CDN-aware retry
     }
     templates_dir = (
         Path(__file__).parent.parent / "src" / "logmind" / "templates" / "github"
@@ -243,6 +243,78 @@ def test_self_update_template_no_unescaped_backticks_in_notice():
             assert i > 0 and line[i - 1] == "\\", (
                 f"unescaped backtick at column {i}: {line!r}"
             )
+
+
+def test_self_update_template_prefixes_pr_title_with_skip_logmind():
+    """v0.6.14 fix: bot-generated propagation PRs are NOT decision commits,
+    so consumer-repo `check-decisions.yml` shouldn't gate on them. The
+    self-update template now prefixes BOTH the git commit message AND the
+    `gh pr create --title` with `[skip-logmind] ` so the existing
+    maintainer-override path in check-decisions skips them automatically.
+    Without this, every propagation PR requires a manual title edit + a
+    close+reopen ritual (which was the workflow during v0.6.13 propagation
+    until the title-fix sequence was hand-applied)."""
+    template = (
+        Path(__file__).parent.parent
+        / "src"
+        / "logmind"
+        / "templates"
+        / "github"
+        / "logmind-self-update.yml.template"
+    ).read_text(encoding="utf-8")
+
+    # Both must include the [skip-logmind] prefix.
+    assert '[skip-logmind] logmind self-update' in template, (
+        "v0.6.14: self-update template must prefix titles with `[skip-logmind] ` "
+        "so consumer-repo check-decisions skips on bot-generated propagation PRs"
+    )
+    # Specifically: the gh pr create --title line must use it.
+    pr_create_title_lines = [
+        ln for ln in template.splitlines()
+        if "--title" in ln and "logmind self-update" in ln
+    ]
+    assert pr_create_title_lines, "expected to find a --title line with logmind self-update"
+    for ln in pr_create_title_lines:
+        assert "[skip-logmind]" in ln, (
+            f"every `--title` line referencing logmind self-update must include "
+            f"the [skip-logmind] prefix; missing in: {ln.strip()}"
+        )
+    # And the git commit -m line must use it.
+    commit_lines = [
+        ln for ln in template.splitlines()
+        if "git commit -m" in ln and "logmind self-update" in ln
+    ]
+    assert commit_lines, "expected git commit -m line"
+    for ln in commit_lines:
+        assert "[skip-logmind]" in ln, (
+            f"git commit message must include [skip-logmind] prefix; missing in: {ln.strip()}"
+        )
+
+
+def test_self_update_template_includes_pypi_cdn_retry_loop():
+    """v0.6.14 fix: the PyPI version-check step now retries with backoff
+    (0/30/60s) to ride out the 30-60s CDN sync lag between publish and
+    simple/-index availability. Hit on v0.6.12 (1/5 propagations) and
+    v0.6.13 (1/5) where the workflow saw the prior version and silently
+    no-op'd. Without the retry, every release has a coin-flip chance of
+    one or more consumer repos silently skipping."""
+    template = (
+        Path(__file__).parent.parent
+        / "src"
+        / "logmind"
+        / "templates"
+        / "github"
+        / "logmind-self-update.yml.template"
+    ).read_text(encoding="utf-8")
+    # The retry block defines a fetch helper and loops with sleep.
+    assert "fetch_latest" in template, (
+        "v0.6.14: CDN-aware retry requires a fetch_latest helper that wraps "
+        "pip index + curl fallback"
+    )
+    assert "sleep" in template and 'for delay in 30 60' in template, (
+        "v0.6.14: CDN-aware retry must use 0/30/60s backoff (sleep with "
+        "30 + 60 second intervals on attempts 2 and 3)"
+    )
 
 
 def test_self_update_template_uses_grep_not_pyyaml():

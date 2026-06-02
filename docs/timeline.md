@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (19 decisions)
+## 2026-06 (20 decisions)
 
-- **2026-06-01** — feat(v0.6.13): 4 consumer-product UX fixes (issues #112 + #113 + propagation friction) *(feat/v0.6.13-orphan-hook-skip-log-no-self-update)* — [decisions-branches/feat__v0.6.13-orphan-hook-skip-log-no-self-update.md](decisions-branches/feat__v0.6.13-orphan-hook-skip-log-no-self-update.md)
-- *... 17 more decisions ...*
+- **2026-06-01** — feat(v0.6.14): propagation-pipeline polish — doctor content-diff + [skip-logmind] auto-title + PyPI CDN retry *(feat/v0.6.14-doctor-content-diff-and-skip-logmind-title)* — [decisions-branches/feat__v0.6.14-doctor-content-diff-and-skip-logmind-title.md](decisions-branches/feat__v0.6.14-doctor-content-diff-and-skip-logmind-title.md)
+- *... 18 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

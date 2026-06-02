@@ -761,3 +761,59 @@ def test_post_merge_hook_body_embeds_orphan_branch_skip_logic():
         "v0.6.13 issue #112: post-merge hook must SKIP regen (exit 0) on "
         "orphan-branch detection, not fall through."
     )
+
+
+def test_doctor_reports_content_drift_when_marker_matches_but_body_differs(
+    git_repo: Path,
+):
+    """v0.6.14 / issue #112 addendum: marker-equality is the cheap fast-path,
+    but doctor must ALSO content-diff bytes against the bundled body so it
+    catches drift where marker is preserved but the hook body has been
+    manually edited (or clobbered + partially restored by another tool).
+    Without this, doctor reports `current` while the hook is genuinely
+    stale, masking the real bug.
+    """
+    from logmind import __version__ as current_version
+    from logmind.core.doctor import _probe_post_merge_hook
+    from logmind.core.gitattributes import (
+        HOOK_VERSION_PREFIX,
+        _POST_MERGE_HOOK_MARKER,
+    )
+
+    hooks_dir = git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    # Construct a hook body that has the CURRENT marker (so marker check
+    # passes) but content that differs from the bundled body.
+    drifted_body = (
+        "#!/bin/sh\n"
+        f"{_POST_MERGE_HOOK_MARKER}\n"
+        f"{HOOK_VERSION_PREFIX}{current_version}\n"
+        "# Manually edited by user — added a comment that bundled body doesn't have.\n"
+        "echo 'this is not the bundled body' >/dev/null\n"
+    )
+    hook = hooks_dir / "post-merge"
+    hook.write_text(drifted_body, encoding="utf-8")
+    hook.chmod(0o755)
+
+    status = _probe_post_merge_hook(git_repo)
+    assert status.drift == "stale", (
+        f"Expected content-drift to be reported as stale; got drift={status.drift!r}"
+    )
+    assert "content drift" in (status.marker or ""), (
+        f"Expected marker to indicate content drift; got marker={status.marker!r}"
+    )
+
+
+def test_doctor_reports_current_when_marker_and_body_both_match(git_repo: Path):
+    """v0.6.14 sanity: doctor reports `current` when the installed hook
+    is BYTE-IDENTICAL to the bundled body. Guards against false-positive
+    drift reports."""
+    from logmind.core.doctor import _probe_post_merge_hook
+    from logmind.core.gitattributes import install_post_merge_hook
+
+    install_post_merge_hook(git_repo)  # writes canonical body
+    status = _probe_post_merge_hook(git_repo)
+    assert status.drift == "current", (
+        f"Expected freshly-installed hook to be current; got drift={status.drift!r} "
+        f"marker={status.marker!r}"
+    )
