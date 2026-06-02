@@ -32,14 +32,14 @@ func TestCheckDecisions_NoChanges(t *testing.T) {
 }
 
 // TestCheckDecisions_OverThreshold stages 25 lines of non-docs code.
-// Expected: warning + exit 1 (errSilentExit1).
+// Expected: warning + exit 1 (ErrSilent).
 func TestCheckDecisions_OverThreshold(t *testing.T) {
 	repo := initRepo(t)
 	stageLines(t, repo, "source.txt", 25)
 	var stdout bytes.Buffer
 	err := runCheckDecisions(repo, 20, false, &stdout)
-	if !errors.Is(err, errSilentExit1) {
-		t.Fatalf("runCheckDecisions err = %v; want errSilentExit1", err)
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("runCheckDecisions err = %v; want ErrSilent", err)
 	}
 	checkGolden(t, "check_decisions_over_threshold.golden", stdout.String())
 }

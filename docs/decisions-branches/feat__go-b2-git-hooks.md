@@ -10,3 +10,14 @@
 - internal/gitcli/ wraps EVERY git invocation the Go binary makes. Future waves (B3+) MUST add new git operations as named functions there rather than calling exec.Command("git", ...) inline. This keeps subprocess error handling consistent (GitError wrapper, ErrGitNotFound sentinel, ConfigGet's (string, bool) tri-state).
 
 ---
+## 2026-06-02 00:54 - fix(go-b2): main.go prints real errors; rename errSilent → ErrSilent exported (clud-bug PR #117 thread)
+
+**Reasoning:** clud-bug-review found a silent-error bug: B1's main.go relied on cobra's default error printing, but B2 set SilenceErrors: true (to avoid duplicate stdout/stderr output for already-printed user errors). Net effect: every non-Silent error (real OS failures like mkdir denied, chmod failed) went silent — user got no diagnostic, just exit 1. Fix: main.go checks errors.Is(err, cli.ErrSilent); silent errors exit quietly, anything else prints 'Error: <msg>' to stderr. Renamed the existing unexported errSilentExit1 sentinel to exported cli.ErrSilent so main can reference it via the package boundary. Tests + build green.
+
+**Alternatives considered:** Restore SilenceErrors: false (the B1 design) — would duplicate user-facing messages on stderr for expected failure paths, Define a separate SilentError type wrapping the cause — richer but introduces two sentinels (B2's errSilentExit1 + new type) that mean the same thing, Have every RunE explicitly print errors itself — works but pushes the concern into every command handler
+
+**Implications:**
+- Future waves: real OS errors should be returned raw (not wrapped in ErrSilent); already-printed control-flow errors return ErrSilent. main + cobra do the rest
+- Establishes the package boundary: cli.ErrSilent is now part of the cli package's public surface (within internal/)
+
+---

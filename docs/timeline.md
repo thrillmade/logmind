@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (24 decisions)
+## 2026-06 (25 decisions)
 
-- **2026-06-02** — feat(go-b2): port install-hook, check-decisions, check-links + git/hook helpers *(feat/go-b2-git-hooks)* — [decisions-branches/feat__go-b2-git-hooks.md](decisions-branches/feat__go-b2-git-hooks.md)
-- *... 22 more decisions ...*
+- **2026-06-02** — fix(go-b2): main.go prints real errors; rename errSilent → ErrSilent exported (clud-bug PR #117 thread) *(feat/go-b2-git-hooks)* — [decisions-branches/feat__go-b2-git-hooks.md](decisions-branches/feat__go-b2-git-hooks.md)
+- *... 23 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

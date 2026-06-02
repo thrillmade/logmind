@@ -73,7 +73,7 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// Downstream pipelines that pipe `logmind install-hook | foo`
 		// expect this layout.
 		fmt.Fprintln(stdout, "Error: not a git repository.")
-		return errSilentExit1
+		return ErrSilent
 	}
 
 	top, err := gitcli.RevParseTopLevel(cwd)
@@ -103,7 +103,7 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		}
 		if !force {
 			fmt.Fprintln(stdout, "A pre-commit hook already exists. Use --force to append logmind to it.")
-			return errSilentExit1
+			return ErrSilent
 		}
 		// Append. Python: hook_path.write_text(content.rstrip("\n") + "\n" + hook_line).
 		newContent := strings.TrimRight(content, "\n") + "\n" + hookLine
@@ -142,7 +142,7 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 	}
 }
 
-// errSilentExit1 is a sentinel that signals "exit 1 without cobra
+// ErrSilent is a sentinel that signals "exit 1 without cobra
 // printing the error again". The Python code uses sys.exit(1) after
 // already printing the error; we want the same byte-on-stdout shape
 // here, so the cobra layer must NOT re-print.
@@ -150,4 +150,4 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 // cmd/logmind/main.go calls os.Exit(1) on any non-nil Execute()
 // return — combined with SilenceUsage and SilenceErrors below, the
 // effect matches Python's sys.exit(1) byte-for-byte.
-var errSilentExit1 = errors.New("logmind: exit 1")
+var ErrSilent = errors.New("logmind: exit 1")

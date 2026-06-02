@@ -30,8 +30,8 @@ func TestCheckLinks_BrokenLink(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	err := runCheckLinks(dir, &stdout)
-	if !errors.Is(err, errSilentExit1) {
-		t.Fatalf("runCheckLinks err = %v; want errSilentExit1", err)
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("runCheckLinks err = %v; want ErrSilent", err)
 	}
 	checkGolden(t, "check_links_broken.golden", stdout.String())
 }
@@ -50,8 +50,8 @@ func TestCheckLinks_OrphanFile(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	err := runCheckLinks(dir, &stdout)
-	if !errors.Is(err, errSilentExit1) {
-		t.Fatalf("runCheckLinks err = %v; want errSilentExit1", err)
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("runCheckLinks err = %v; want ErrSilent", err)
 	}
 	checkGolden(t, "check_links_orphan.golden", stdout.String())
 }

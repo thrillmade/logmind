@@ -16,8 +16,8 @@ func TestInstallHook_NotARepo(t *testing.T) {
 	dir := t.TempDir()
 	var stdout bytes.Buffer
 	err := runInstallHook(dir, false, &stdout)
-	if !errors.Is(err, errSilentExit1) {
-		t.Fatalf("runInstallHook err = %v; want errSilentExit1", err)
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("runInstallHook err = %v; want ErrSilent", err)
 	}
 	checkGolden(t, "install_hook_not_a_repo.golden", stdout.String())
 }
@@ -78,8 +78,8 @@ func TestInstallHook_ForeignNoForce(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	err := runInstallHook(repo, false, &stdout)
-	if !errors.Is(err, errSilentExit1) {
-		t.Fatalf("runInstallHook err = %v; want errSilentExit1", err)
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("runInstallHook err = %v; want ErrSilent", err)
 	}
 	checkGolden(t, "install_hook_foreign_no_force.golden", stdout.String())
 	// Original hook must be intact.

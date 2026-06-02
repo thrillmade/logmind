@@ -61,7 +61,7 @@ func runCheckLinks(cwd string, stdout io.Writer) error {
 	}
 	fmt.Fprintln(stdout, linkcheck.FormatReport(broken, orphans))
 	if len(broken) > 0 || len(orphans) > 0 {
-		return errSilentExit1
+		return ErrSilent
 	}
 	return nil
 }

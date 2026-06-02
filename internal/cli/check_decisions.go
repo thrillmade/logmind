@@ -64,7 +64,7 @@ Examples:
 	return cmd
 }
 
-// runCheckDecisions is the testable core. Returns errSilentExit1 to
+// runCheckDecisions is the testable core. Returns ErrSilent to
 // trigger exit 1 without cobra re-printing the message — mirrors
 // the Python sys.exit(1) shape.
 func runCheckDecisions(cwd string, threshold int, noFail bool, stdout io.Writer) error {
@@ -111,7 +111,7 @@ func runCheckDecisions(cwd string, threshold int, noFail bool, stdout io.Writer)
 		fmt.Fprintln(stdout, "   Log this decision: logmind log \"Your decision here\"")
 		fmt.Fprintln(stdout, "   To skip this check: git commit --no-verify")
 		if !noFail {
-			return errSilentExit1
+			return ErrSilent
 		}
 		return nil
 	}
