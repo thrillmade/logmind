@@ -48,3 +48,13 @@
 - config set is now safe against partial-write disasters; PyPI probe is bounded to 1 MiB which is well above any sane JSON response.
 
 ---
+## 2026-06-02 17:19 - chore: rebase __version__ bump from v1-go-rewrite into B6 branch
+
+**Reasoning:** Same as B5: v1-go-rewrite #126 merged the pin bump, B6 PR #125 needs it on HEAD for pytest CI to clear. Pushing directly avoids gh update-branch conflict noise
+
+**Alternatives considered:** rebase + force-push — rejected: more state churn than the 3-line bump
+
+**Implications:**
+- B6 PR #125 CI re-runs; both Go PRs ready for manual merge once CI green
+
+---
