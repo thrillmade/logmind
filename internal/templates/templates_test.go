@@ -46,26 +46,49 @@ func TestTemplates_ByteIdenticalToPython(t *testing.T) {
 	}
 }
 
-// TestAgentsTemplate_HasV5Marker pins the protocol-version marker. The
+// TestAgentsTemplate_HasV6Marker pins the protocol-version marker. The
 // `agents update --apply` workflow keys on this marker to decide
 // whether an installed block is stale.
-func TestAgentsTemplate_HasV5Marker(t *testing.T) {
+//
+// v0.6.16 bumped v5→v6: heading reframed as "REQUIRED for substantive
+// commits" with an explicit DO-NOT-git-commit blockquote that pairs
+// with the commit-msg hook installed by `logmind init`.
+func TestAgentsTemplate_HasV6Marker(t *testing.T) {
 	body := AgentsTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v5 -->") {
-		t.Fatalf("full template missing v5 marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v6 -->") {
+		t.Fatalf("full template missing v6 marker")
 	}
 	if !strings.Contains(body, "<!-- logmind-start -->") || !strings.Contains(body, "<!-- logmind-end -->") {
 		t.Fatalf("full template missing start/end markers")
 	}
+	// v0.6.16: the REQUIRED framing + DO-NOT blockquote are the
+	// user-visible delta over v5. Pin both so a future inadvertent
+	// revert to the v5 prose trips this test.
+	if !strings.Contains(body, "REQUIRED for substantive commits") {
+		t.Fatalf("v6 template missing REQUIRED framing in heading")
+	}
+	if !strings.Contains(body, "DO NOT run `git add` / `git commit` / `git push`") {
+		t.Fatalf("v6 template missing DO-NOT-git-commit blockquote")
+	}
 }
 
-// TestAgentsSlimTemplate_HasV7PointerMarker pins the slim variant
+// TestAgentsSlimTemplate_HasV8PointerMarker pins the slim variant
 // marker so the byte-identical-rewrite path can never confuse the two
 // templates' marker versions.
-func TestAgentsSlimTemplate_HasV7PointerMarker(t *testing.T) {
+//
+// v0.6.16 bumped v7-pointer→v8-pointer: heading reframed as
+// "REQUIRED for substantive commits" + DO-NOT-git-commit blockquote
+// paired with the commit-msg hook.
+func TestAgentsSlimTemplate_HasV8PointerMarker(t *testing.T) {
 	body := AgentsSlimTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v7-pointer -->") {
-		t.Fatalf("slim template missing v7-pointer marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v8-pointer -->") {
+		t.Fatalf("slim template missing v8-pointer marker")
+	}
+	if !strings.Contains(body, "REQUIRED for substantive commits") {
+		t.Fatalf("v8-pointer template missing REQUIRED framing in heading")
+	}
+	if !strings.Contains(body, "DO NOT run raw `git add` / `git commit` / `git push`") {
+		t.Fatalf("v8-pointer template missing DO-NOT-git-commit blockquote")
 	}
 }
 

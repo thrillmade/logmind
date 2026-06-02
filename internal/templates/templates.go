@@ -39,25 +39,33 @@ import (
 //go:embed github/*.yml.template
 var embedFS embed.FS
 
-// AgentsTemplate returns the full v5 AGENTS.md template (the inline
+// AgentsTemplate returns the full v6 AGENTS.md template (the inline
 // procedure variant) — used when the host doesn't have skills.sh
 // available, or when the caller explicitly requests the full body.
 //
 // The block between `<!-- logmind-start -->` and `<!-- logmind-end -->`
-// carries the version marker `<!-- logmind-block-version: v5 -->`. The
+// carries the version marker `<!-- logmind-block-version: v6 -->`. The
 // inserter package uses that marker to decide whether an installed block
 // is stale.
+//
+// v0.6.16 bumped v5→v6: heading reframed as "REQUIRED for substantive
+// commits", added an explicit DO-NOT-git-commit blockquote that pairs
+// with the commit-msg hook installed by `logmind init`.
 func AgentsTemplate() string {
 	return readEmbed("AGENTS.md.template")
 }
 
-// AgentsSlimTemplate returns the slim v7-pointer AGENTS.md template
+// AgentsSlimTemplate returns the slim v8-pointer AGENTS.md template
 // (defaults to slim for new repos since logmind v0.6.8+). Body marker
-// is `<!-- logmind-block-version: v7-pointer -->`.
+// is `<!-- logmind-block-version: v8-pointer -->`.
 //
 // Slim defers the WHAT/WHEN/HOW procedure to the `logmind` skill on
 // skills.sh — short body, less to maintain, less for the agent to wade
 // through if the skill is already installed.
+//
+// v0.6.16 bumped v7-pointer→v8-pointer: heading now "REQUIRED for
+// substantive commits", added an explicit DO-NOT-git-commit blockquote
+// pairing with the commit-msg hook installed by `logmind init`.
 func AgentsSlimTemplate() string {
 	return readEmbed("AGENTS.md.slim.template")
 }

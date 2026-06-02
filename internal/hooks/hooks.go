@@ -73,13 +73,19 @@ func hookVersion() string {
 
 // BuildPostMergeBody returns the canonical post-merge hook body for
 // the currently-running logmind binary. Byte-identical to the Python
-// v0.6.14 _build_post_merge_hook_body output when run against a
+// v0.6.16 _build_post_merge_hook_body output when run against a
 // matching version constant.
 //
 // The body is a verbatim string concatenation — we deliberately do
 // NOT template it with a Go text/template, because Python uses raw
 // string literals and any templating layer risks introducing
 // whitespace drift.
+//
+// v0.6.16 carry-forward: the v0.6.15 blanket default-branch skip is
+// replaced with a HEAD-vs-origin check (skip only on a fast-forward
+// pull-up). Local merges that introduce new commits not yet on origin
+// (the multi-branch self-heal case) MUST still trigger regen. See
+// the v0.6.16 inline comment block below for the contract.
 func BuildPostMergeBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind post-merge hook\n" +
@@ -124,6 +130,27 @@ func BuildPostMergeBody() string {
 		"      # Upstream config says <upstream> but no such remote-tracking ref\n" +
 		"      # exists (typical after `git fetch --prune` removes the merged\n" +
 		"      # branch). Skip regen — main will regen correctly after checkout.\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"  fi\n" +
+		"  # v0.6.16 (replaces v0.6.15's blanket default-branch skip): on the\n" +
+		"  # default branch, only skip when HEAD already matches origin/<default>\n" +
+		"  # — i.e., a fast-forward pull-up from server where regen-timeline.yml\n" +
+		"  # has already produced the authoritative timeline. For local merges\n" +
+		"  # that introduced new commits not yet on origin (the multi-branch\n" +
+		"  # self-heal case: `git merge feat-branch` on main), regen MUST fire\n" +
+		"  # so the working tree reflects the merged-in decision files. v0.6.15's\n" +
+		"  # blanket skip dropped Decision-B-style entries from local main; the\n" +
+		"  # multi-branch self-heal regression test in tests/test_merge_driver.py\n" +
+		"  # catches this. Surfaces the bug PRE-merge instead of in a downstream\n" +
+		"  # check-derived-docs failure weeks later.\n" +
+		"  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)\n" +
+		"  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)\n" +
+		"  [ -z \"$default\" ] && default=main\n" +
+		"  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ]; then\n" +
+		"    head_sha=$(git rev-parse HEAD 2>/dev/null || true)\n" +
+		"    origin_sha=$(git rev-parse \"origin/$default\" 2>/dev/null || true)\n" +
+		"    if [ -n \"$origin_sha\" ] && [ \"$head_sha\" = \"$origin_sha\" ]; then\n" +
 		"      exit 0\n" +
 		"    fi\n" +
 		"  fi\n" +
