@@ -62,6 +62,11 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newAgentsCmd())
 	// B5: skill authoring/validation/bench/audit/suggest tree.
 	root.AddCommand(newSkillCmd())
+	// B6: config + doctor + init + self-update.
+	root.AddCommand(newConfigCmd())
+	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newInitCmd())
+	root.AddCommand(newSelfUpdateCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.
