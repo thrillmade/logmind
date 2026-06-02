@@ -58,7 +58,7 @@ test:
 # and the .gitattributes managed-block respectively. linkcheck DOES
 # NOT need a golden (its testdata is constructed inline from
 # tempdir fixtures), so it stays off this list.
-SNAPSHOT_PKGS := ./internal/cli/... ./internal/hooks/... ./internal/gitattr/...
+SNAPSHOT_PKGS := ./internal/cli/... ./internal/hooks/... ./internal/gitattr/... ./internal/timeline/... ./internal/tree/...
 .PHONY: snapshot
 snapshot:
 	$(GO) test $(SNAPSHOT_PKGS) -update

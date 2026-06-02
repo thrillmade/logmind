@@ -253,6 +253,76 @@ func StatusPorcelain(repoRoot, path string) string {
 	return strings.TrimSpace(stdout.String())
 }
 
+// DefaultBranch resolves the repo's default branch following the same
+// 5-step search Python's git_handler.default_branch uses:
+//
+//   1. refs/remotes/origin/HEAD                  (set by `git clone` or
+//                                                 `git remote set-head`)
+//   2. local `main` if it exists, else `master`
+//   3. single-branch repo: that branch IS the default
+//   4. `git config init.defaultBranch`
+//   5. hard fallback: "main"
+//
+// Used by `logmind rebase` (B3) when --base isn't supplied. Same
+// resolution order as Python so a consuming repo configured to point
+// at `master` via `git config init.defaultBranch master` keeps
+// working after the v1 cutover.
+func DefaultBranch(repoRoot string) string {
+	// 1. origin/HEAD
+	if name := RemoteHEAD(repoRoot); name != "" {
+		return name
+	}
+
+	// 2. local main / master
+	for _, candidate := range []string{"main", "master"} {
+		cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+candidate)
+		cmd.Dir = repoRoot
+		cmd.Stdout = &bytes.Buffer{}
+		cmd.Stderr = &bytes.Buffer{}
+		if cmd.Run() == nil {
+			return candidate
+		}
+	}
+
+	// 3. Single-branch repo
+	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+	cmd.Dir = repoRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &bytes.Buffer{}
+	if cmd.Run() == nil {
+		branches := strings.Fields(out.String())
+		if len(branches) == 1 {
+			return branches[0]
+		}
+	}
+
+	// 4. init.defaultBranch
+	if value, ok := ConfigGet(repoRoot, "init.defaultBranch"); ok && value != "" {
+		return value
+	}
+
+	// 5. Hard fallback
+	return "main"
+}
+
+// RunCaptured runs `git <args>` against repoRoot and returns stdout,
+// stderr, and the run error. Used by the B3 `rebase` wrapper which
+// needs to surface git's stderr to the user verbatim on failure.
+//
+// Unlike the higher-level wrappers above (which swallow stderr), this
+// is the explicit "expose everything" variant. Callers print the
+// stderr themselves to match Python's `e.stderr` formatting.
+func RunCaptured(repoRoot string, args ...string) (stdout, stderr string, err error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoRoot
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	err = cmd.Run()
+	return so.String(), se.String(), err
+}
+
 // AddPaths runs `git add <path>...` against repoRoot. Returns a
 // non-nil error only when git itself fails — callers wrap it in
 // best-effort logic where appropriate (e.g., installer hooks).
