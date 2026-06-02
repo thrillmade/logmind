@@ -60,6 +60,11 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newRebaseCmd())
 	// B4: agent file templating subcommand tree.
 	root.AddCommand(newAgentsCmd())
+	// B6: config + doctor + init + self-update.
+	root.AddCommand(newConfigCmd())
+	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newInitCmd())
+	root.AddCommand(newSelfUpdateCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.

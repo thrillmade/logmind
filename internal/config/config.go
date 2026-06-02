@@ -133,3 +133,195 @@ func LoadPath(path string) (Config, error) {
 	}
 	return cfg, nil
 }
+
+// DefaultMap returns the same default values as DefaultConfig but
+// encoded as the loose `map[string]any` shape `logmind config list/get/set`
+// uses for dot-notation lookups. Mirrors Python's DEFAULT_CONFIG dict
+// shape so the serialised output round-trips byte-for-byte against
+// a Python-generated config file (modulo agent-section additions Go
+// has to know about). Key insertion order is preserved by using
+// yaml.MapSlice-like ordering via a small helper struct.
+//
+// Note: the Python defaults list 11 base agents. We keep parity by
+// listing them in the same insertion order — yaml.v3's marshal on a
+// plain map sorts alphabetically, which would change file content
+// between Python and Go installs. The OrderedMap shape we expose
+// avoids that.
+func DefaultMap() *OrderedMap {
+	root := NewOrderedMap()
+
+	git := NewOrderedMap()
+	git.Set("auto_commit", true)
+	git.Set("auto_push", true)
+	git.Set("commit_message_template", "logmind: {decision}")
+	git.Set("auto_rebase", false)
+	root.Set("git", git)
+
+	decisions := NewOrderedMap()
+	decisions.Set("max_recent", 20)
+	decisions.Set("branch_aware", true)
+	root.Set("decisions", decisions)
+
+	fileStructure := NewOrderedMap()
+	fileStructure.Set("auto_update", true)
+	patterns := []any{
+		"__pycache__",
+		".git",
+		"node_modules",
+		"venv",
+		".venv",
+		"env",
+		".env",
+		"*.pyc",
+		".pytest_cache",
+		".mypy_cache",
+		"dist",
+		"build",
+		"*.egg-info",
+	}
+	fileStructure.Set("ignore_patterns", patterns)
+	root.Set("file_structure", fileStructure)
+
+	agents := NewOrderedMap()
+	for _, name := range []string{
+		"claude", "cursor", "copilot", "windsurf", "aider",
+		"continue", "cody", "zed", "amazonq", "cline", "codex",
+	} {
+		enabled := name == "claude" || name == "cursor"
+		agents.Set(name, enabled)
+	}
+	root.Set("agents", agents)
+
+	return root
+}
+
+// LoadAsMap loads .logmind/config.yml under repoRoot into an
+// OrderedMap shape with defaults merged in (user values override
+// defaults leafwise). Falls back to defaults on missing file or
+// parse error — matching the Python behaviour.
+func LoadAsMap(repoRoot string) (*OrderedMap, error) {
+	return LoadPathAsMap(filepath.Join(repoRoot, ".logmind", "config.yml"))
+}
+
+// LoadPathAsMap is the path-explicit equivalent of LoadAsMap.
+func LoadPathAsMap(path string) (*OrderedMap, error) {
+	merged := DefaultMap()
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return merged, nil
+		}
+		return merged, readErr
+	}
+	user := NewOrderedMap()
+	if err := yaml.Unmarshal(data, user); err != nil {
+		return DefaultMap(), err
+	}
+	deepUpdate(merged, user)
+	return merged, nil
+}
+
+// SaveMap writes m as YAML to path (creating parent dirs), using
+// 2-space indentation to match Python's yaml.dump(default_flow_style=
+// False) output. Caller's responsibility to ensure m is an OrderedMap
+// the YAML encoder can serialise.
+func SaveMap(path string, m *OrderedMap) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	enc := yaml.NewEncoder(f)
+	enc.SetIndent(2)
+	if err := enc.Encode(m); err != nil {
+		return err
+	}
+	return enc.Close()
+}
+
+// deepUpdate recursively folds src into dst — matches Python
+// Config._deep_update (core/config.py:115-127). If both src and dst
+// have a sub-map at the same key, descend; otherwise overwrite.
+func deepUpdate(dst, src *OrderedMap) {
+	for _, key := range src.Keys() {
+		srcVal, _ := src.Get(key)
+		if srcMap, ok := srcVal.(*OrderedMap); ok {
+			if existing, ok := dst.Get(key); ok {
+				if dstMap, ok := existing.(*OrderedMap); ok {
+					deepUpdate(dstMap, srcMap)
+					continue
+				}
+			}
+		}
+		dst.Set(key, srcVal)
+	}
+}
+
+// GetPath walks the dot-separated path through m and returns the leaf
+// value. Returns (nil, false) when any segment is missing or hits a
+// non-map. Mirrors Python Config.get.
+func GetPath(m *OrderedMap, dotted string) (any, bool) {
+	keys := splitDotted(dotted)
+	var current any = m
+	for _, key := range keys {
+		om, ok := current.(*OrderedMap)
+		if !ok {
+			return nil, false
+		}
+		v, ok := om.Get(key)
+		if !ok {
+			return nil, false
+		}
+		current = v
+	}
+	return current, true
+}
+
+// SetPath sets the leaf at dotted path to value, creating intermediate
+// OrderedMaps as needed. Mirrors Python Config.set.
+func SetPath(m *OrderedMap, dotted string, value any) {
+	keys := splitDotted(dotted)
+	if len(keys) == 0 {
+		return
+	}
+	current := m
+	for i, key := range keys {
+		if i == len(keys)-1 {
+			current.Set(key, value)
+			return
+		}
+		existing, ok := current.Get(key)
+		if !ok {
+			next := NewOrderedMap()
+			current.Set(key, next)
+			current = next
+			continue
+		}
+		next, ok := existing.(*OrderedMap)
+		if !ok {
+			// Existing leaf can't be descended; replace with map.
+			next = NewOrderedMap()
+			current.Set(key, next)
+		}
+		current = next
+	}
+}
+
+func splitDotted(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var parts []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, s[start:])
+	return parts
+}
