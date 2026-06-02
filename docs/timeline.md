@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (21 decisions)
+## 2026-06 (23 decisions)
 
-- **2026-06-01** — test(v0.6.14): add post-rewrite content-drift symmetry tests (clud-bug-review PR #115 thread) *(feat/v0.6.14-doctor-content-diff-and-skip-logmind-title)* — [decisions-branches/feat__v0.6.14-doctor-content-diff-and-skip-logmind-title.md](decisions-branches/feat__v0.6.14-doctor-content-diff-and-skip-logmind-title.md)
-- *... 19 more decisions ...*
+- **2026-06-02** — fix(go-b1): resolve clud-bug-review threads (duplicate error output, fragile snapshot flag) *(feat/go-b1-scaffold)* — [decisions-branches/feat__go-b1-scaffold.md](decisions-branches/feat__go-b1-scaffold.md)
+- *... 21 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
