@@ -183,7 +183,7 @@ def _install_skdd_via_npx() -> None:
 
 
 @click.group()
-@click.version_option(version="0.6.14", prog_name="logmind")
+@click.version_option(version="0.6.15", prog_name="logmind")
 @click.option(
     "--quiet",
     "-q",
@@ -980,6 +980,33 @@ def log(
 
         # No piggy-back agent-file changes mean nothing to scope-stage.
         extra_scoped_paths: list = []
+
+        # v0.6.15 / tokenomics-agent feedback: regen derived docs BEFORE
+        # log_decision commits. Without this, every `logmind log` produces
+        # a commit with a fresh decision file but stale docs/timeline.md
+        # + docs/file-structure.md. The check-derived-docs CI workflow
+        # then fails on the PR because the committed timeline.md doesn't
+        # match what `logmind timeline --check` would generate. Users had
+        # to manually run timeline + file-structure --write after every
+        # `logmind log` — undermining the "one command per decision"
+        # promise.
+        #
+        # We only regen when config.file_structure.auto_update is true
+        # (default), so users who explicitly opted out keep the manual
+        # workflow. log_decision's stage logic includes the regen output
+        # via --stage all (default) or extra_scoped_paths (--stage scoped).
+        if config.auto_update_file_structure:
+            try:
+                update_file_structure(docs_path)
+                extra_scoped_paths.append(docs_path / "file-structure.md")
+            except Exception:
+                pass  # Best-effort; same shape as the post-merge hook
+            try:
+                from logmind.core.timeline import write_timeline
+                write_timeline(docs_path / "timeline.md", docs_path)
+                extra_scoped_paths.append(docs_path / "timeline.md")
+            except Exception:
+                pass
 
         log_decision(
             decision=decision,
