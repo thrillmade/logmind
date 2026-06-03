@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (62 decisions)
+## 2026-06 (63 decisions)
 
-- **2026-06-02** — bisect(B7-3): codesign step with if: false (forced skip) *(fix/release-workflow-startup-failure)* — [decisions-branches/fix__release-workflow-startup-failure.md](decisions-branches/fix__release-workflow-startup-failure.md)
-- *... 60 more decisions ...*
+- **2026-06-02** — fix(B7): root-cause + full restore release.yml — replace Apple-Actions/import-codesign-certs with inline security commands; --skip=homebrew until HOMEBREW_TAP_PAT is provisioned *(fix/release-workflow-startup-failure)* — [decisions-branches/fix__release-workflow-startup-failure.md](decisions-branches/fix__release-workflow-startup-failure.md)
+- *... 61 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
