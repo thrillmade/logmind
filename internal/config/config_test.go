@@ -44,6 +44,35 @@ func TestDefaultConfig(t *testing.T) {
 	if c.Agents["copilot"] || c.Agents["windsurf"] {
 		t.Errorf("Agents copilot/windsurf should be false: %v", c.Agents)
 	}
+	// CatalogTarget default — per plan §"Skill suggestion cycle §4" the
+	// default catalog destination is thrillmade/agent-skills. Tests pin
+	// this so accidental edits to DefaultConfig() can't redirect every
+	// user's `logmind skill push` somewhere else.
+	if c.CatalogTarget != "thrillmade/agent-skills" {
+		t.Errorf("CatalogTarget default = %q; want thrillmade/agent-skills", c.CatalogTarget)
+	}
+}
+
+// TestLoadUserOverride_CatalogTarget verifies a user-set catalog_target
+// flows through Load() so `logmind skill push` picks it up without
+// the --catalog flag.
+func TestLoadUserOverride_CatalogTarget(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".logmind")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "catalog_target: acme/private-skills\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CatalogTarget != "acme/private-skills" {
+		t.Errorf("CatalogTarget = %q; want acme/private-skills", cfg.CatalogTarget)
+	}
 }
 
 func TestLoadMissingFile(t *testing.T) {

@@ -38,6 +38,12 @@ type Config struct {
 	Decisions     DecisionsConfig     `yaml:"decisions"`
 	FileStructure FileStructureConfig `yaml:"file_structure"`
 	Agents        map[string]bool     `yaml:"agents"`
+	// CatalogTarget is the default `<owner>/<repo>` slug `logmind skill
+	// push` opens PRs against. Overrideable on the CLI via --catalog.
+	// Per plan §"Skill suggestion cycle §4" + §"Skill catalog
+	// architecture": skills live IN the consumer repo first; this is the
+	// downstream catalog destination, never an inbound source.
+	CatalogTarget string `yaml:"catalog_target"`
 }
 
 // GitConfig mirrors the `git:` section.
@@ -105,6 +111,9 @@ func DefaultConfig() Config {
 			"cline":    false,
 			"codex":    false,
 		},
+		// Default catalog target. The catalog is downstream of every
+		// consumer repo — never the other way around (End State #5).
+		CatalogTarget: "thrillmade/agent-skills",
 	}
 }
 
@@ -191,6 +200,11 @@ func DefaultMap() *OrderedMap {
 		agents.Set(name, enabled)
 	}
 	root.Set("agents", agents)
+
+	// catalog_target: where `logmind skill push` opens PRs. Listed last
+	// because it's a single scalar — keeping the multi-line sections
+	// grouped at the top reads better in `logmind config list`.
+	root.Set("catalog_target", "thrillmade/agent-skills")
 
 	return root
 }
