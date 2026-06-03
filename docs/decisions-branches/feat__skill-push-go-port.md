@@ -20,3 +20,15 @@
 - Branch shape: skill/<name>-from-<source-repo>-<short-sha> — encodes provenance into the branch name itself
 
 ---
+## 2026-06-03 14:04 - fix(skill push): preserve file mode; reject path-traversal skill names (review #136)
+
+**Reasoning:** Two clud-bug-review threads on PR #136 flagged correctness gaps in 'logmind skill push'. Bug 3: copyTree always wrote dest files with 0o644, silently dropping the executable bit from source scripts (e.g., .claude/skills/<name>/scripts/helper.sh). The catalog clone would ship an unrunnable helper.sh and consumers would have to re-chmod +x after install. Fixed by reading source mode via os.Lstat and passing info.Mode().Perm() to os.WriteFile + a follow-up os.Chmod so the mode lands consistently whether dp is freshly created or pre-existing. Bug 4: opts.SkillName flowed in from args[0] without sanitization, so a caller passing '../foo' would have filepath.Join escape both the local skills tree (on read) and the catalog clone's skills tree (on write). Fixed by validating SkillName against the SPEC §1.10.1 kebab-slug regex before any filepath.Join call, returning ErrInvalidSkillName (wraps the existing error conventions) on rejection.
+
+**Alternatives considered:** Bug 3 alt: replicate full Unix mode bits including setuid/sticky — rejected as overreach for a markdown-skill catalog; preserving just Perm() keeps the surface minimal-surprise, Bug 3 alt: io.Copy with os.OpenFile(perm) instead of ReadFile/WriteFile — rejected because skills are small markdown/script files where the buffered ReadFile is fine and the existing shape is preserved minus one line, Bug 4 alt: strings.ContainsAny(name, '/\\.') rejection — rejected because the spec already pins the slug shape (^[a-z0-9][a-z0-9._-]*$); we lift that exact constraint here so push agrees with frontmatter validation everywhere else, Bug 4 alt: validate inside SkillDir() so every caller benefits — rejected because SkillDir is a pure path helper called from many sites; tightening at the push entry point keeps the blast radius small and matches where the user input actually enters
+
+**Implications:**
+- internal/skill/push.go gains a package-level skillNameRE and a new ErrInvalidSkillName sentinel; pushWith now returns the sentinel for empty / path-traversal / non-slug skill names before touching the filesystem
+- copyTree now requires the source file to exist at os.Lstat time — concurrent unlink would surface a clean error instead of silently writing a 0o644 dest
+- New tests TestCopyTree_PreservesExecutableBit, TestPush_RejectsPathTraversalSkillName (9 sub-cases), and TestPush_AcceptsValidSlugs (7 sub-cases) pin the new invariants
+
+---

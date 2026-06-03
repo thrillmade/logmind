@@ -385,6 +385,177 @@ func TestRenderPRBody_LinksSourceRepoAndCommit(t *testing.T) {
 	}
 }
 
+// TestCopyTree_PreservesExecutableBit covers Bug 3 from PR #136 review:
+// when copying skill files into the catalog clone, executable scripts
+// (e.g., `scripts/helper.sh`) MUST keep their `+x` bit. Without this,
+// downstream consumers cloning the catalog repo would silently get a
+// non-runnable script and have to re-chmod after install.
+//
+// We exercise copyTree directly (rather than through pushWith) so the
+// test stays focused on the perm-bit invariant and doesn't need to
+// stub out git/gh.
+func TestCopyTree_PreservesExecutableBit(t *testing.T) {
+	if os.Getuid() == 0 {
+		// Some CI runners run as root with permissive umasks that
+		// confuse the perm-bit assertion. Skip rather than chase
+		// platform-specific gymnastics.
+		t.Skip("running as root; perm bits behave unpredictably")
+	}
+
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	// Two files: one executable script and one plain markdown body.
+	// listCompanionFiles emits slash-separated relative paths, so we
+	// pass the same shape to copyTree.
+	scriptRel := "scripts/helper.sh"
+	mdRel := "REFERENCES.md"
+
+	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, scriptRel),
+		[]byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+		t.Fatalf("write helper.sh: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, mdRel),
+		[]byte("# refs\n"), 0o644); err != nil {
+		t.Fatalf("write REFERENCES.md: %v", err)
+	}
+
+	if err := copyTree(src, dst, []string{scriptRel, mdRel}); err != nil {
+		t.Fatalf("copyTree: %v", err)
+	}
+
+	// Load-bearing assertion: the script's executable bit survived.
+	scriptInfo, err := os.Stat(filepath.Join(dst, scriptRel))
+	if err != nil {
+		t.Fatalf("stat dst script: %v", err)
+	}
+	// Mask to the user-execute bit since group/other vary by umask.
+	if scriptInfo.Mode().Perm()&0o100 == 0 {
+		t.Errorf("dest script lost executable bit; mode = %v", scriptInfo.Mode().Perm())
+	}
+
+	// Cross-check: the plain markdown file did NOT magically acquire
+	// the executable bit — the fix preserves source mode, not blanket-grants.
+	mdInfo, err := os.Stat(filepath.Join(dst, mdRel))
+	if err != nil {
+		t.Fatalf("stat dst md: %v", err)
+	}
+	if mdInfo.Mode().Perm()&0o100 != 0 {
+		t.Errorf("dest md file unexpectedly executable; mode = %v", mdInfo.Mode().Perm())
+	}
+}
+
+// TestPush_RejectsPathTraversalSkillName covers Bug 4 from PR #136
+// review: a skill name carrying `..`, `/`, or `\` would have
+// filepath.Join escape both the local skills tree (on read) and the
+// catalog clone's skills tree (on write). pushWith MUST reject such
+// names with ErrInvalidSkillName BEFORE any filesystem activity.
+//
+// We assert both: (a) the right sentinel comes back and (b) the
+// pushWith call did NOT touch the supplied tempdir (no errant
+// SKILL.md creation, no stat racing, no clone, etc.).
+func TestPush_RejectsPathTraversalSkillName(t *testing.T) {
+	cases := []struct {
+		Name      string
+		SkillName string
+	}{
+		{"dotdot", "../foo"},
+		{"dotdot-deeper", "../../foo"},
+		{"embedded-dotdot", "foo/../bar"},
+		{"forward-slash", "foo/bar"},
+		{"backslash", `foo\bar`},
+		{"leading-dot", ".hidden"},
+		{"empty", ""},
+		{"uppercase", "Foo"},
+		{"whitespace", "foo bar"},
+	}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			root := t.TempDir()
+
+			// Pre-snapshot the tempdir so we can prove nothing was
+			// created during the rejected call. We expect an empty
+			// directory after pushWith returns ErrInvalidSkillName.
+			entriesBefore, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatalf("readdir before: %v", err)
+			}
+
+			var stdout bytes.Buffer
+			_, err = pushWith(PushOptions{
+				SkillName:      c.SkillName,
+				CatalogTarget:  "thrillmade/agent-skills",
+				DryRun:         true, // shouldn't matter — validation runs first
+				SourceRepoRoot: root,
+				Stdout:         &stdout,
+			}, newFakeRunner(), newFakeRunner())
+
+			if !errors.Is(err, ErrInvalidSkillName) {
+				t.Fatalf("want ErrInvalidSkillName for %q; got %v",
+					c.SkillName, err)
+			}
+
+			// The user-facing message should name the offending input
+			// so the error is actionable.
+			if !strings.Contains(stdout.String(), "is not a valid slug") {
+				t.Errorf("expected actionable error line; got %q",
+					stdout.String())
+			}
+
+			// No filesystem side-effects: the tempdir entry count is
+			// unchanged.
+			entriesAfter, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatalf("readdir after: %v", err)
+			}
+			if len(entriesAfter) != len(entriesBefore) {
+				t.Errorf("pushWith touched filesystem despite rejection; before=%d entries, after=%d",
+					len(entriesBefore), len(entriesAfter))
+			}
+		})
+	}
+}
+
+// TestPush_AcceptsValidSlugs is the positive complement to
+// TestPush_RejectsPathTraversalSkillName: kebab + dot + underscore
+// names that match SPEC §1.10.1 must continue to work. We exercise
+// just the dry-run preflight so the test stays self-contained.
+func TestPush_AcceptsValidSlugs(t *testing.T) {
+	cases := []string{
+		"critical-issues-only",
+		"foo",
+		"a",
+		"foo.bar",
+		"foo_bar",
+		"foo-bar-1",
+		"123abc",
+	}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeSampleSkill(t, root, name, "desc")
+
+			git := newFakeRunner()
+			git.When([]string{"rev-parse", "HEAD"},
+				runReply{Stdout: "abcdef1234567\n"})
+
+			_, err := pushWith(PushOptions{
+				SkillName:      name,
+				CatalogTarget:  "thrillmade/agent-skills",
+				DryRun:         true,
+				SourceRepoRoot: root,
+				Stdout:         io.Discard,
+			}, git, newFakeRunner())
+			if err != nil {
+				t.Errorf("valid slug %q rejected: %v", name, err)
+			}
+		})
+	}
+}
+
 // Compile-time check that fakeRunner satisfies both runner interfaces.
 var _ gitRunner = (*fakeRunner)(nil)
 var _ ghRunner = (*fakeRunner)(nil)

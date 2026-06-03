@@ -34,7 +34,26 @@ var (
 
 	// ErrGhNotAuthed is returned when `gh auth status` exits non-zero.
 	ErrGhNotAuthed = errors.New("gh CLI not authenticated (run `gh auth login`)")
+
+	// ErrInvalidSkillName is returned when the caller passes a skill
+	// name that contains path-traversal characters (`/`, `\`, or `..`).
+	// Without this guard, a malicious or accidental `../foo` would
+	// escape both the local `.claude/skills/<name>/` tree and the
+	// catalog clone's `skills/<name>/` tree via filepath.Join. See
+	// review #136 / Bug 4. Skill names also drive branch names,
+	// PR titles, and provenance YAML fields, so we tighten the rule
+	// here at the entry point rather than scattering downstream
+	// validation across the helpers.
+	ErrInvalidSkillName = errors.New("invalid skill name")
 )
+
+// skillNameRE constrains skill slugs to a kebab-safe shape: lowercase
+// alnum start, then alnum + `.`, `_`, `-`. Matches SPEC §1.10.1
+// frontmatter rules. Crucially, it disallows `/`, `\`, `..`, and any
+// whitespace — the three vectors that could rewrite `filepath.Join`
+// into an escape. We anchor on the full string (Go's regexp.MatchString
+// is implicitly unanchored, so we add `^…$`).
+var skillNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 // catalogTargetRE constrains catalog slugs to the GitHub shape
 // `<owner>/<repo>`. Owner + repo must each match GitHub's allowed
@@ -173,6 +192,22 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 	}
 	if opts.Now.IsZero() {
 		opts.Now = time.Now()
+	}
+
+	// 0. Validate skill name FIRST — before any filepath.Join uses it.
+	// Per review #136 / Bug 4: `args[0]` flows in unsanitised, so a
+	// caller passing `../../foo` would have SkillDir() escape the
+	// `.claude/skills/` tree on read AND escape the catalog clone's
+	// `skills/` tree on write. We reject the name at the door so the
+	// downstream helpers can keep their join calls simple. Pattern is
+	// the SPEC §1.10.1 frontmatter slug, plus an explicit empty-string
+	// rejection (skillNameRE matches a leading [a-z0-9] so the empty
+	// string already fails, but the explicit check makes intent obvious).
+	if opts.SkillName == "" || !skillNameRE.MatchString(opts.SkillName) {
+		fmt.Fprintf(opts.Stdout,
+			"Error: skill name '%s' is not a valid slug (allowed: lowercase alnum, '.', '_', '-')\n",
+			opts.SkillName)
+		return res, fmt.Errorf("%w: %q", ErrInvalidSkillName, opts.SkillName)
 	}
 
 	// 1. Validate skill exists + has valid frontmatter.
@@ -373,6 +408,12 @@ func listCompanionFiles(skillDir string) ([]string, error) {
 // copyTree replicates the listed paths from src to dst.
 // paths is the same list returned by listCompanionFiles + the implicit
 // "SKILL.md" — every entry is a slash-separated path relative to src.
+//
+// Preserves the source file's permission bits (in particular, the
+// executable bit) so scripts shipped under `scripts/*.sh` stay runnable
+// in the catalog repo. Without this, a `chmod +x` source file would
+// land in the catalog as 0o644 and consumers cloning the catalog would
+// have to re-`chmod +x` after install. (Review #136 / Bug 3.)
 func copyTree(src, dst string, paths []string) error {
 	for _, p := range paths {
 		sp := filepath.Join(src, filepath.FromSlash(p))
@@ -380,11 +421,34 @@ func copyTree(src, dst string, paths []string) error {
 		if err := os.MkdirAll(filepath.Dir(dp), 0o755); err != nil {
 			return err
 		}
+		// Read the source mode BEFORE the body so we don't truncate the
+		// dest if Lstat fails (e.g., race vs concurrent unlink).
+		// Lstat (not Stat) so symlinks in the skill dir report their own
+		// mode rather than the target's — matches `cp -p` semantics.
+		info, err := os.Lstat(sp)
+		if err != nil {
+			return err
+		}
 		data, err := os.ReadFile(sp)
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(dp, data, 0o644); err != nil {
+		// info.Mode().Perm() is the low 9 perm bits; the executable bit
+		// for any of user/group/other survives the copy. Other mode
+		// bits (setuid, sticky, etc.) are intentionally NOT propagated
+		// — they don't have a portable meaning in a markdown-skill
+		// catalog and dropping them keeps the copy minimal-surprise.
+		perm := info.Mode().Perm()
+		if err := os.WriteFile(dp, data, perm); err != nil {
+			return err
+		}
+		// os.WriteFile only honours `perm` when it creates a new file
+		// via OpenFile(O_CREATE). If `dp` already existed (e.g., the
+		// dest tree was pre-staged), the create flag is a no-op for
+		// mode. An explicit Chmod after the write makes the mode
+		// outcome consistent regardless of whether dp was new or
+		// pre-existing — the executable bit lands either way.
+		if err := os.Chmod(dp, perm); err != nil {
 			return err
 		}
 	}
