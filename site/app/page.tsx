@@ -1,8 +1,12 @@
 import { CopyButton } from "./copy-button";
 
-const PIP = "pip install logmind";
-const BREW = "brew tap thrillmade/logmind && brew install logmind";
+const BREW = "brew install thrillmade/tap/logmind";
+const CURL = "curl -fsSL https://logmind.dev/install.sh | sh";
 const SKILL = "npx skills add -g thrillmade/logmind-skill";
+const VERIFY = "logmind --version";
+// Frozen at v0.6.16 — the last published Python release. Pinned only so
+// consumer repos that still hardcode `logmind==0.6.x` keep resolving.
+const PIP_LEGACY = "pip install 'logmind==0.6.16'";
 
 const QUICKSTART = `$ logmind init
 $ git checkout -b feat/auth
@@ -63,7 +67,7 @@ export default function Home() {
           </a>
           <nav className="flex items-center gap-6 sm:gap-8">
             <NavLink href="https://github.com/thrillmade/logmind">github</NavLink>
-            <NavLink href="https://pypi.org/project/logmind/">pypi</NavLink>
+            <NavLink href="https://github.com/thrillmade/logmind/releases/latest">releases</NavLink>
             <NavLink href="https://skills.sh/thrillmade/logmind-skill">skill</NavLink>
           </nav>
         </div>
@@ -73,7 +77,7 @@ export default function Home() {
       <section className="px-6 sm:px-10 lg:px-16 pt-12 sm:pt-24 pb-20">
         <div className="max-w-6xl mx-auto w-full">
           <div className="rise marginalia mb-6">
-            v0.5.12 ⁄ released 2026-05-30 ⁄ MIT ⁄ <a href="https://zakelfassi.com/skdd-skills-driven-development" className="hover:text-accent transition-colors">a substrate for SkDD</a>
+            v1.0.0 ⁄ released 2026-06-03 ⁄ MIT ⁄ <a href="https://zakelfassi.com/skdd-skills-driven-development" className="hover:text-accent transition-colors">a substrate for SkDD</a>
           </div>
           <h1 className="rise display text-[12vw] sm:text-[8.5vw] leading-[0.92] font-light max-w-[16ch]" style={{ animationDelay: "0.05s" }}>
             Infinite context
@@ -300,20 +304,55 @@ ok: 4-angle Q7-logmind compliance`}
               install<span className="text-accent">.</span>
             </h2>
             <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
-              Three channels. The same package. Pick whichever lives closest to
-              your other dev tools.
+              v1.0 ships as a single signed + notarized Go binary. Brew or curl,
+              pick whichever lives closest to your other dev tools.
             </p>
           </div>
           <div className="sm:col-span-8">
-            <CommandBlock cmd={PIP} hint="pip" index="01" />
-            <CommandBlock cmd={BREW} hint="homebrew" index="02" />
+            <CommandBlock cmd={BREW} hint="homebrew" index="01" />
+            <CommandBlock cmd={CURL} hint="curl" index="02" />
             <CommandBlock cmd={SKILL} hint="agent skill" index="03" />
+            <CommandBlock cmd={VERIFY} hint="verify" index="04" />
             <div className="border-t border-rule" />
             <p className="marginalia normal-case tracking-normal text-foreground/55 mt-6 text-xs leading-relaxed">
-              The agent skill is optional but recommended — it teaches Claude
-              Code, Cursor, Codex et al. when and how to call <code className="font-mono">logmind log</code> in
-              any project that has logmind installed.
+              <code className="font-mono">logmind --version</code> should print{" "}
+              <code className="font-mono">logmind 1.0.0 (spec 0.1.0)</code>.
+              The agent skill (03) is optional but recommended — it teaches
+              Claude Code, Cursor, Codex et al. when and how to call{" "}
+              <code className="font-mono">logmind log</code> in any project
+              that has logmind installed.
             </p>
+
+            {/* Deprecated Python path — kept for v0.6.x consumers migrating off pip */}
+            <div className="mt-12 border border-rule/60 bg-code-bg/40 px-5 py-5">
+              <div className="marginalia normal-case tracking-normal text-foreground/55 text-xs mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="uppercase tracking-[0.18em] text-accent">deprecated</span>
+                <span>Python wheel · frozen at v0.6.16</span>
+              </div>
+              <div className="font-mono text-sm sm:text-[15px] flex items-center justify-between gap-4 group">
+                <code className="text-foreground/70 break-all">
+                  <span className="text-foreground/40 select-none">$ </span>
+                  {PIP_LEGACY}
+                </code>
+                <CopyButton text={PIP_LEGACY} label="Copy legacy pip command" />
+              </div>
+              <p className="marginalia normal-case tracking-normal text-foreground/55 mt-4 text-xs leading-relaxed">
+                <code className="font-mono">pip install logmind</code> is{" "}
+                <strong>frozen at v0.6.16</strong> — the last published
+                Python release. New installs should use the Go binary
+                above. The PyPI package is kept on PyPI only to honour
+                old pinning; it receives no further updates, no security
+                backports, and no feature parity with v1.0+. Migrating?
+                See the{" "}
+                <a
+                  href="https://github.com/thrillmade/logmind/blob/main/docs/install.md#deprecated-python-install"
+                  className="text-accent hover:underline"
+                >
+                  migration guide
+                </a>{" "}
+                for the one-line CI swap.
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -378,8 +417,8 @@ ok: 4-angle Q7-logmind compliance`}
               logmind<span className="text-accent">.</span>
             </a>
             <div className="marginalia normal-case tracking-normal mt-2 text-xs text-foreground/55 flex flex-wrap items-center gap-x-2 gap-y-1">
-              {/* keep version in sync with pyproject.toml */}
-              <span>v0.5.12</span>
+              {/* keep version in sync with cmd/logmind/version */}
+              <span>v1.0.0</span>
               <span>·</span>
               <span>MIT licensed</span>
               <span>·</span>
