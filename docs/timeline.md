@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (81 decisions)
+## 2026-06 (82 decisions)
 
-- **2026-06-03** — fix(skill push): preserve file mode; reject path-traversal skill names (review #136) *(feat/skill-push-go-port)* — [decisions-branches/feat__skill-push-go-port.md](decisions-branches/feat__skill-push-go-port.md)
-- *... 79 more decisions ...*
+- **2026-06-03** — Remove Python source tree post-cutover (G3.a consumers migrated) *(chore/post-cutover-python-cleanup)* — [decisions-branches/chore__post-cutover-python-cleanup.md](decisions-branches/chore__post-cutover-python-cleanup.md)
+- *... 80 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

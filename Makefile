@@ -1,9 +1,9 @@
-# Makefile for the logmind Go rewrite (v1.0).
+# Makefile for the logmind Go binary (v1.0+).
 #
-# The Python v0.6.x package still lives in src/logmind/ and is shipped to
-# PyPI from main. This Makefile only targets the Go binary; Python's
-# `pytest` + `pip` commands stay invoked directly from CI / pre-commit
-# until the v1.0 cutover.
+# Post-cutover (#132): the Python v0.6.x package has been removed from
+# main. PyPI `logmind` stays frozen at v0.6.16 (never republished from
+# this repo). Active codebase is Go-only; this Makefile drives the Go
+# build + test loop.
 
 GO          ?= go
 BIN_DIR     ?= bin
@@ -20,16 +20,13 @@ GO_TEST_FLAGS ?=
 
 .PHONY: help
 help:
-	@echo "logmind Go targets (v1-go-rewrite branch):"
+	@echo "logmind Go targets:"
 	@echo ""
 	@echo "  make build           Build $(BIN) from $(CMD_PKG)"
 	@echo "  make test            Run all Go tests"
 	@echo "  make snapshot        Regenerate testdata/*.golden from current Go output"
-	@echo "  make verify-parity   Compare Go binary output to Python v0.6.14 (placeholder)"
 	@echo "  make tidy            Run go mod tidy"
 	@echo "  make clean           Remove $(BIN_DIR)/"
-	@echo ""
-	@echo "Python tooling (pytest, pip install -e) is unchanged — see pyproject.toml."
 
 .PHONY: build
 build: | $(BIN_DIR)
@@ -62,16 +59,6 @@ SNAPSHOT_PKGS := ./internal/cli/... ./internal/hooks/... ./internal/gitattr/... 
 .PHONY: snapshot
 snapshot:
 	$(GO) test $(SNAPSHOT_PKGS) -update
-
-# Placeholder for the byte-identical parity gate vs Python v0.6.14.
-# Wired up in a later wave once the Go binary covers enough subcommands
-# to make a meaningful diff. Today it prints what it WILL check so the
-# Makefile entry point is stable for CI to invoke without breaking.
-.PHONY: verify-parity
-verify-parity:
-	@echo "verify-parity: placeholder — wave B1 only ships --version."
-	@echo "Later waves will diff Go binary output vs src/logmind v0.6.14"
-	@echo "for each command pair (init, log, show, search, ...)."
 
 .PHONY: tidy
 tidy:

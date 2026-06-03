@@ -201,7 +201,10 @@ curl -fsSL https://logmind.dev/install.sh | sh
 
 See [docs/install.md#deprecated-python-install](docs/install.md#deprecated-python-install)
 for the full migration matrix (CI YAML one-liners, dependency-import
-hand-off, and what features have moved or been retired).
+hand-off, and what features have moved or been retired). The Python
+v0.6.x release notes are preserved at
+[docs/changelog-python.md](docs/changelog-python.md) for historical
+reference.
 
 ---
 
