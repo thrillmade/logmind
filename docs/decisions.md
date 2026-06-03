@@ -36,3 +36,14 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Re-measure post-consumer-rollout. If the per_session data shows decisions.md reads are still a high share AND specific content patterns emerge that COULD be compressed (e.g. repeated boilerplate in merge entries — a legacy artifact from the removed logmind-aggregate workflow), revisit 0.B.5 with a more targeted trim. Until then, 0.B.5 stays Phase 3+ deferred with explicit measurement in this -i field.
 
 ---
+## 2026-06-02 19:59 - test(B6 follow-up): port commit-msg hook tests from main to v1-go-rewrite
+
+**Reasoning:** clud-bug-review on #128 flagged 163 LOC of new commit-msg hook code with zero test coverage. Foreign-hook preservation is the critical untested path — a logic error would silently overwrite a user's custom commit-msg hook. Idempotency on re-install and version-regex on installed_commit_msg_hook_version are also uncovered
+
+**Alternatives considered:** skip the tests — rejected: the foreign-hook overwrite path is a real correctness risk, write tests from scratch — rejected: tests already exist on main from the v0.6.16 PR #123; just port them
+
+**Implications:**
+- 9 commit-msg tests added covering install creation + idempotency + foreign-hook preservation + version detection + runtime warn/strict modes
+- tests/test_merge_driver.py grew from 52 → 52+ tests; full suite passes
+
+---
