@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (55 decisions)
+## 2026-06 (56 decisions)
 
-- **2026-06-02** — fix(B7): tag-trigger glob pattern (v[1-9]+ → v[1-9]*) *(main)* — [decisions.md](decisions.md)
-- *... 53 more decisions ...*
+- **2026-06-02** — fix(B7): replace missing HOMEBREW_TAP_PAT secret with GITHUB_TOKEN *(main)* — [decisions.md](decisions.md)
+- *... 54 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

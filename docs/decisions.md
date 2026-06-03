@@ -58,3 +58,14 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - v1.0.0-rc1 tag retag required after this fix lands
 
 ---
+## 2026-06-02 21:05 - fix(B7): replace missing HOMEBREW_TAP_PAT secret with GITHUB_TOKEN
+
+**Reasoning:** release.yml repeatedly hits startup_failure with no jobs created. HOMEBREW_TAP_PAT secret was never provisioned on the repo. GitHub may be failing the secret-resolution phase at startup. Falling back to GITHUB_TOKEN (always present) gets us past the startup gate. Cross-repo write to homebrew-tap will fail at runtime if needed, but that's a known follow-up — we'll provision HOMEBREW_TAP_PAT before the real release
+
+**Alternatives considered:** leave the broken reference and hope startup_failure is caused by something else — rejected: ruling out the obvious first, provision HOMEBREW_TAP_PAT now — rejected: needs a fine-grained PAT with write access to thrillmade/homebrew-tap; takes time and user authorization
+
+**Implications:**
+- release.yml workflow should at least START on next tag retrigger
+- homebrew cask auto-bump won't work until HOMEBREW_TAP_PAT is provisioned (TODO before v1.0.0 final)
+
+---
