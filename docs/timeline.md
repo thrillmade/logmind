@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (78 decisions)
+## 2026-06 (81 decisions)
 
-- **2026-06-03** — fix(sync): only count SHA on successful write; mark dry-run on ok line (review #135) *(feat/sync-go-port)* — [decisions-branches/feat__sync-go-port.md](decisions-branches/feat__sync-go-port.md)
-- *... 76 more decisions ...*
+- **2026-06-03** — fix(skill push): preserve file mode; reject path-traversal skill names (review #136) *(feat/skill-push-go-port)* — [decisions-branches/feat__skill-push-go-port.md](decisions-branches/feat__skill-push-go-port.md)
+- *... 79 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
