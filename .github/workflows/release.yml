@@ -141,16 +141,10 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
-          # --skip=homebrew is the TODO: HOMEBREW_TAP_PAT secret is not
-          # provisioned yet on thrillmade/logmind. Once provisioned
-          # (fine-grained PAT, Contents+Pull-requests write on
-          # thrillmade/homebrew-tap), drop `--skip=homebrew` and the
-          # auto-PR-the-cask-bump path lights up. Until then, the cask
-          # bump is a manual follow-up: maintainer edits
-          # thrillmade/homebrew-tap/Casks/logmind.rb with the new tag
-          # URL + SHA256 from the published Release. TODO is tracked
-          # in docs/decisions-branches/feat__go-b7-distribution.md.
-          args: release --clean --skip=homebrew
+          # HOMEBREW_TAP_PAT is now provisioned (org-level secret on
+          # thrillmade, SELECTED visibility includes logmind). GoReleaser
+          # auto-PRs the cask bump on thrillmade/homebrew-tap.
+          args: release --clean
         env:
           # GITHUB_TOKEN is used by goreleaser to create the GitHub
           # Release on THIS repo (creating the release, uploading
@@ -158,10 +152,10 @@ jobs:
           # (cross-repo writes require a PAT) — but with --skip=homebrew
           # we don't try.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Placeholder for the .goreleaser.yaml template field — see
-          # snapshot step's note. --skip=homebrew means we don't push
-          # cross-repo, but the template is parsed regardless.
-          HOMEBREW_TAP_PAT: ${{ secrets.GITHUB_TOKEN }}
+          # Real PAT for cross-repo push to thrillmade/homebrew-tap.
+          # Provisioned as org-level secret on thrillmade with
+          # SELECTED visibility including logmind.
+          HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
           # Surfaced to scripts/sign-macos.sh (per-build post-hook). The
           # script no-ops if MACOS_CERTIFICATE is unset — in the real
           # release path all 5 are set so signing + notarization run.

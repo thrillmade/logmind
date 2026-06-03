@@ -93,3 +93,13 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Iterating on bisection
 
 ---
+## 2026-06-02 23:55 - fix(B7): wire HOMEBREW_TAP_PAT now that it's provisioned
+
+**Reasoning:** Org-level secret HOMEBREW_TAP_PAT was just provisioned on thrillmade with SELECTED visibility including logmind (verified via gh api orgs/thrillmade/actions/secrets/HOMEBREW_TAP_PAT/repositories). Real release path no longer needs --skip=homebrew. Dropping the skip arg + reading the actual secret means the cask auto-PR opens on every v1+ tag
+
+**Alternatives considered:** wait until v1.0.0 to add this — rejected: rc2 should exercise the cask path so we catch any issues before final
+
+**Implications:**
+- next tag (rc2 or v1.0.0) auto-opens a cask-bump PR on thrillmade/homebrew-tap
+
+---

@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (66 decisions)
+## 2026-06 (67 decisions)
 
-- **2026-06-02** — Pin brew/curl suggestion stanza in doctor test *(chore/v1-pre-final-polish)* — [decisions-branches/chore__v1-pre-final-polish.md](decisions-branches/chore__v1-pre-final-polish.md)
-- *... 64 more decisions ...*
+- **2026-06-02** — fix(B7): wire HOMEBREW_TAP_PAT now that it's provisioned *(main)* — [decisions.md](decisions.md)
+- *... 65 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
