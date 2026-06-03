@@ -22,3 +22,13 @@
 - Tests cover empty repo / single citation / multi-skill / multi-PR / idempotent / dry-run / malformed-file-skipped / unknown-skill-warned / SHA case-insensitivity / non-PR markdown ignored — 14 unit tests in internal/skill, 7 in internal/cli.
 
 ---
+## 2026-06-03 13:34 - Restore file-structure.md after logmind log regen mis-rooted from worktree
+
+**Reasoning:** Previous logmind log commit ran from /tmp/sync-port-wt and regen'd docs/file-structure.md using that path as root — so the rendered tree said 'sync-port-wt' and omitted untracked-but-existing files (.benchmarks, site/.next, qa screenshots) that are visible from the main worktree. This commit restores the canonical view.
+
+**Alternatives considered:** Skip the fix and let CI's check-derived-docs flag it — rejected: same author should fix what they just broke, Amend HEAD — rejected: AGENTS.md prefers new commits for traceability
+
+**Implications:**
+- Underlying issue: logmind file-structure walks the current working tree from CWD; running it from a worktree path with a different basename produces a diff. Worth tracking as a follow-up bug (perhaps anchor on git rev-parse --show-toplevel).
+
+---

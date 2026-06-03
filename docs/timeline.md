@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (73 decisions)
+## 2026-06 (74 decisions)
 
-- **2026-06-03** — Implement logmind sync (B5b / G4.a): port to Go *(feat/sync-go-port)* — [decisions-branches/feat__sync-go-port.md](decisions-branches/feat__sync-go-port.md)
-- *... 71 more decisions ...*
+- **2026-06-03** — Restore file-structure.md after logmind log regen mis-rooted from worktree *(feat/sync-go-port)* — [decisions-branches/feat__sync-go-port.md](decisions-branches/feat__sync-go-port.md)
+- *... 72 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
