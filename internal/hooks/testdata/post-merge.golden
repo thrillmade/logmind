@@ -57,6 +57,9 @@ if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
   # check-derived-docs failure weeks later.
   current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
   default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  # --short on a remote symbolic-ref leaves the `origin/` prefix
+  # in place; strip it so the bare-name comparison below works.
+  default=${default#origin/}
   [ -z "$default" ] && default=main
   if [ -n "$current" ] && [ "$current" = "$default" ]; then
     head_sha=$(git rev-parse HEAD 2>/dev/null || true)

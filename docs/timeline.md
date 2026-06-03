@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (52 decisions)
+## 2026-06 (54 decisions)
 
-- **2026-06-02** — test(B6 follow-up): port commit-msg hook tests from main to v1-go-rewrite *(main)* — [decisions.md](decisions.md)
-- *... 50 more decisions ...*
+- **2026-06-02** — fix(B2): update post-merge golden for symbolic-ref strip *(fix/symbolic-ref-default-branch-strip)* — [decisions-branches/fix__symbolic-ref-default-branch-strip.md](decisions-branches/fix__symbolic-ref-default-branch-strip.md)
+- *... 52 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
