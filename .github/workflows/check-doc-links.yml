@@ -1,9 +1,9 @@
 name: doc link integrity
 
-# Dogfood version of the workflow that `logmind init` ships into downstream
-# projects (see src/logmind/templates/github/check-doc-links.yml.template).
-# Installs logmind from the current source tree (pip install -e .) so it
-# works against logmind's own docs without depending on PyPI.
+# Dogfood version of the workflow that `logmind init` ships into
+# downstream projects (the template lives in internal/templates/github/).
+# Builds the Go binary from this PR's source so it works against
+# logmind's own docs without depending on the released binary.
 
 on:
   pull_request:
@@ -23,12 +23,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
+          go-version: "1.22"
+          cache: true
 
-      - name: Install logmind from source
-        run: pip install -e .
+      - name: Build logmind from source
+        run: make build
 
       - name: Check markdown link integrity
-        run: logmind check-links
+        run: ./bin/logmind check-links

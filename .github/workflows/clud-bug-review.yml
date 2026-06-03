@@ -230,7 +230,7 @@ jobs:
           # Stable prefix → CLI auto-cached system layer (10% cost on hits).
           # See workflow.yml.tmpl for design notes.
           APPEND_SYSTEM_PROMPT: |
-            This project is "logmind". Decision logging for AI-assisted development - automatic tracking, git integration, and context for AI agents. It's primarily python using click, pytest.
+            This project is "logmind". Decision logging for AI-assisted development - automatic tracking, git integration, and context for AI agents. It's a Go CLI (cmd/logmind, internal/*) using cobra for command wiring. Tests are standard go test with table-driven cases and testdata/*.golden snapshots.
 
             Review this pull request for critical issues only. Focus on:
             - Bugs, logic errors, or incorrect behaviour

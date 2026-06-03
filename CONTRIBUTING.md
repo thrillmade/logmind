@@ -4,32 +4,39 @@ Thanks for considering a contribution! logmind is small and the bar to land
 useful improvements is low. This file covers the dev loop, the conventions
 we keep, and how to ship a release.
 
+logmind is a Go binary. The Python v0.6.x source tree was removed
+post-cutover ([#132](https://github.com/thrillmade/logmind/pull/132)); see
+[`docs/changelog-python.md`](docs/changelog-python.md) for the v0.6.x
+history.
+
 ## Quick start
 
 ```bash
 git clone https://github.com/thrillmade/logmind
 cd logmind
-python3 -m venv venv
-source venv/bin/activate
-pip install -e ".[dev]"
-pytest -q                  # full test suite (~430 tests)
-logmind check-links        # docs link integrity (also runs in CI)
+make build                 # → ./bin/logmind
+make test                  # full Go test suite
+./bin/logmind check-links  # docs link integrity (also runs in CI)
 ```
+
+Requires Go 1.22+ (matches `go.mod`'s floor).
 
 ## Repo layout
 
-- `src/logmind/` — installable package (`pip install logmind`)
-- `src/logmind/core/` — core modules (`logger`, `git_handler`, `inserter`,
-  `tree_gen`, `gitignore`, `skill_install`, `analytics`, `aggregator`, ...)
-- `src/logmind/actions/` — entry points designed to run inside CI
-  (`python -m logmind.actions.aggregate`, `python -m logmind.actions.link_check`)
-- `src/logmind/templates/` — files written into target projects by `logmind init`
-- `src/logmind/templates/github/` — workflow templates installed into
-  `<target>/.github/workflows/`
-- `tests/` — pytest tests with fixtures in `tests/conftest.py`
-  (`temp_dir`, `git_repo`, `docs_dir`)
+- `cmd/logmind/` — binary entry point (thin shim into `internal/cli`)
+- `internal/cli/` — cobra command wiring; one file per top-level command
+- `internal/` — core modules (`hooks/`, `gitattr/`, `timeline/`, `tree/`,
+  `linkcheck/`, `skill/`, `config/`, `version/`, …)
+- `internal/*/testdata/*.golden` — snapshot fixtures; regenerate via
+  `make snapshot` after intentional output changes
+- `installer/` — `install.sh` curl|sh installer + Homebrew cask template
+- `scripts/sign-macos.sh` — release-time codesign + notarize helper
+- `.goreleaser.yaml` — release pipeline (cross-compile, sign, brew bump)
+- `docs/` — project documentation (regenerated artifacts under
+  `docs/timeline.md`, `docs/file-structure.md`, …)
 - `skill/` — content for the standalone `logmind-skill` repo published
-  via skills.sh; not shipped in the wheel
+  via skills.sh; not shipped in the binary
+- `site/` — marketing site (Next.js, deploys via Vercel)
 
 ## Conventions
 
@@ -49,21 +56,28 @@ summary linking your PR.
 
 ### Tests
 
-- Use the existing fixtures (`temp_dir`, `git_repo`, `docs_dir`).
+- Prefer table-driven tests over many one-shot functions.
 - For anything that touches branches, init with `git init -b main` so
   the test is independent of `init.defaultBranch` config.
-- Don't depend on the caller's cwd — pass paths explicitly. (See
-  `_resolve_decisions_path` in `src/logmind/core/logger.py` for the
-  pattern that fixed a real bug.)
+- Snapshot tests live alongside the package; goldens under
+  `<pkg>/testdata/*.golden`. Regenerate with `make snapshot` after a
+  deliberate output change, and commit the new goldens.
 
 ### Style
 
-- `black` and `ruff` enforce formatting; `mypy` runs in lax mode for
-  now (we'll tighten over time). All three are wired into
-  `.pre-commit-config.yaml`:
-  ```bash
-  pip install pre-commit && pre-commit install
-  ```
+`gofmt`/`goimports` are canonical. `go vet` and `go test ./...` are the
+floor; CI runs both via `make test`.
+
+The `.pre-commit-config.yaml` wires up universal hooks (trailing
+whitespace, YAML lint, merge-conflict markers) plus the local
+`logmind check-links` hook. Install with:
+
+```bash
+pip install pre-commit && pre-commit install
+```
+
+(pre-commit itself is a Python tool; that's the only Python dep left in
+the dev loop.)
 
 ### Markdown links
 
@@ -74,30 +88,26 @@ relative links relative; allowlist intentional orphans via
 
 ## Pull request checklist
 
-- [ ] Tests added or updated (`pytest -q` is green locally)
-- [ ] `logmind check-links` is green
+- [ ] Tests added or updated (`make test` is green locally)
+- [ ] `./bin/logmind check-links` is green
 - [ ] A decision logged (`logmind log "..."`) for any architectural change
-- [ ] CHANGELOG updated under `[Unreleased]`
-- [ ] No committed `dist/`, `__pycache__/`, or other generated artefacts
+- [ ] No committed `bin/`, `*.test`, `*.out`, or other generated artefacts
 
 ## Release process
 
 logmind releases are tag-driven. To cut `vX.Y.Z`:
 
-1. Bump `version` in `pyproject.toml` to `X.Y.Z`.
-2. Move `[Unreleased]` content in `CHANGELOG.md` to a new `[X.Y.Z] - <date>`
-   section. Re-create an empty `[Unreleased]` block at the top.
-3. Commit and merge to `main`.
-4. Tag and push:
+1. Bump `internal/version/version.go` `Version` constant (or rely on the
+   ldflags injection from `.goreleaser.yaml`).
+2. Commit and merge to `main`.
+3. Tag and push:
    ```bash
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin vX.Y.Z
    ```
-5. The `publish.yml` workflow builds the sdist + wheel and pushes to PyPI
-   via OIDC (no API token in CI), then creates a GitHub Release with the
-   artifacts and the matching `CHANGELOG.md` excerpt.
-6. Update the Homebrew tap in the separate `homebrew-logmind` repo with
-   the real PyPI tarball SHA256.
+4. The `release.yml` workflow runs GoReleaser to cross-compile binaries,
+   sign + notarize the macOS build, create the GitHub Release with the
+   artefacts, and bump the Homebrew tap (`thrillmade/homebrew-tap`).
 
 ## Reporting issues / proposing features
 
@@ -106,9 +116,8 @@ vulnerabilities please follow `SECURITY.md` (private disclosure first).
 
 ## Branch protection
 
-After the first green CI run on `main`, enable branch protection requiring:
-- The `test` workflow to pass
+`main` requires:
+- The `test` workflow to pass (Go matrix aggregator — see
+  `.github/workflows/test.yml`)
 - The `doc link integrity` workflow to pass
 - At least one approving review
-
-(GitHub UI → Settings → Branches; not automated yet.)
