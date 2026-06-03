@@ -1,5 +1,14 @@
 name: test
 
+# Go test matrix + required-check aggregator. Replaces the pytest matrix
+# (Python codebase) at the v0.6.x → v1.0.0 Go-rewrite cutover.
+#
+# The `test` aggregator job below is pinned by the org-default-protection
+# ruleset's required_status_checks (context: "test"), so the aggregator
+# MUST keep that exact name. Matrix-expanded cells produce per-cell
+# contexts like `go (ubuntu-latest / go1.22)` which don't satisfy the gate
+# on their own — the aggregator is the single status that the gate reads.
+
 on:
   pull_request:
   push:
@@ -9,66 +18,51 @@ permissions:
   contents: read
 
 jobs:
-  pytest:
-    # Per-matrix-cell test runner. Each matrix cell reports as its own
-    # status context (e.g. "pytest (ubuntu-latest / py3.10)") because
-    # matrix-expanded jobs replace the job-id-based context name with
-    # the `name:` template below. So none of these are named exactly
-    # `test` — that's what the aggregator job below covers.
-    name: pytest (${{ matrix.os }} / py${{ matrix.python-version }})
+  go:
+    # Per-matrix-cell test runner. Each cell reports its own status
+    # context (e.g. "go (ubuntu-latest / go1.22)") because matrix-expanded
+    # jobs replace the job-id-based context with the `name:` template.
+    name: go (${{ matrix.os }} / go${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # Match go.mod's `go 1.22` floor. We test the floor (1.22) plus
+        # the current stable (1.24) so a toolchain bump doesn't silently
+        # regress on supported floors. macOS cell exercises the same
+        # platform the release pipeline signs + notarizes on.
         os: [ubuntu-latest]
-        python-version: ["3.8", "3.10", "3.12", "3.13"]
+        go-version: ["1.22", "1.24"]
         include:
           - os: macos-latest
-            python-version: "3.12"
-          - os: windows-latest
-            python-version: "3.12"
+            go-version: "1.22"
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-go@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-
-      - name: Configure git for tests
-        run: |
-          git config --global user.name "logmind-ci"
-          git config --global user.email "ci@logmind.dev"
-          git config --global init.defaultBranch main
-
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Tests
-        run: pytest -q
-
-      - name: Markdown link integrity (own docs)
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: logmind check-links
+          go-version: ${{ matrix.go-version }}
+          cache: true
+      - name: Build
+        run: make build
+      - name: Test
+        run: make test
 
   test:
-    # Aggregator that reports under the literal `test` context — the
-    # org ruleset's `required_status_checks` rule pins this exact name,
-    # so without an aggregator every matrix-expanded cell's context
-    # (`pytest (…)`) gets ignored by the gate. `needs:` makes this
-    # block until every cell completes; `if: always()` + the inner
-    # `result` check propagates failure correctly when any cell fails.
-    needs: pytest
+    # Aggregator under the literal `test` context — the org ruleset's
+    # required_status_checks rule pins this exact name. Without this
+    # aggregator the gate would never see a producing job because every
+    # matrix-expanded cell reports under its own `go (…)` context.
+    # `needs:` blocks until every cell completes; `if: always()` plus the
+    # inner `result` check propagates failure correctly when any cell
+    # fails.
+    needs: go
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Aggregate matrix results
         run: |
-          if [ "${{ needs.pytest.result }}" != "success" ]; then
-            echo "::error::One or more pytest matrix cells failed (needs.pytest.result=${{ needs.pytest.result }})"
+          if [ "${{ needs.go.result }}" != "success" ]; then
+            echo "::error::One or more go test matrix cells failed (needs.go.result=${{ needs.go.result }})"
             exit 1
           fi
-          echo "All pytest matrix cells passed."
+          echo "All go test matrix cells passed."

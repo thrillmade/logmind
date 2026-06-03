@@ -19,6 +19,14 @@ logmind log "summary" -r "why" -a "alternative" -i "implication"
 This project uses [logmind](https://logmind.dev). What counts as a decision, branch routing, `--stage scoped` for unrelated WIP, `logmind doctor`, and the required-reading list ([`docs/timeline.md`](docs/timeline.md), [`docs/decisions.md`](docs/decisions.md), [`docs/file-structure.md`](docs/file-structure.md), `docs/decisions-branches/<branch>.md`) all live in the **`logmind` agent skill** at https://github.com/thrillmade/agent-skills/tree/main/skills/logmind.
 <!-- logmind-end -->
 
+## Release infrastructure
+
+Cross-repo writes from this project's workflows (Homebrew cask bumps today;
+future skill-catalog PRs and self-update fan-out) are signed by the
+`thrillmade-orchestrator[bot]` GitHub App, NOT a personal PAT. See
+[`docs/orchestrator-app.md`](docs/orchestrator-app.md) for the App spec,
+permissions, ruleset bypass details, and rotation procedure.
+
 ## Project Overview
 
 <!-- Replace with a short description of what this project does. -->

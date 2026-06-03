@@ -1,0 +1,4 @@
+→ scaffolding basic SKILL.md (`skdd` not on PATH; install @zakelfassi/skdd for canonical SkDD authoring)
+✓ Created skill 'with-docs' at <TMP>/.claude/skills/with-docs/SKILL.md
+✓ Decision-logged the skill creation (uncommitted).
+ok skill: created with-docs

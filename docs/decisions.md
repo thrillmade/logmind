@@ -36,3 +36,70 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - Re-measure post-consumer-rollout. If the per_session data shows decisions.md reads are still a high share AND specific content patterns emerge that COULD be compressed (e.g. repeated boilerplate in merge entries — a legacy artifact from the removed logmind-aggregate workflow), revisit 0.B.5 with a more targeted trim. Until then, 0.B.5 stays Phase 3+ deferred with explicit measurement in this -i field.
 
 ---
+## 2026-06-02 19:59 - test(B6 follow-up): port commit-msg hook tests from main to v1-go-rewrite
+
+**Reasoning:** clud-bug-review on #128 flagged 163 LOC of new commit-msg hook code with zero test coverage. Foreign-hook preservation is the critical untested path — a logic error would silently overwrite a user's custom commit-msg hook. Idempotency on re-install and version-regex on installed_commit_msg_hook_version are also uncovered
+
+**Alternatives considered:** skip the tests — rejected: the foreign-hook overwrite path is a real correctness risk, write tests from scratch — rejected: tests already exist on main from the v0.6.16 PR #123; just port them
+
+**Implications:**
+- 9 commit-msg tests added covering install creation + idempotency + foreign-hook preservation + version detection + runtime warn/strict modes
+- tests/test_merge_driver.py grew from 52 → 52+ tests; full suite passes
+
+---
+## 2026-06-02 21:01 - fix(B7): tag-trigger glob pattern (v[1-9]+ → v[1-9]*)
+
+**Reasoning:** v1.0.0-rc1 push produced startup_failure because GitHub Actions tag globs treat + as a LITERAL character, not a regex quantifier. The first-draft pattern v[1-9]+.[0-9]+.[0-9]+ never matched a real tag name; the workflow was effectively unreachable
+
+**Alternatives considered:** use regex syntax with paths-ignore — rejected: GH tag triggers only support globs, not regex, use plain v* — rejected: would also fire for v0.x.x tags that still belong to the Python publish.yml pipeline
+
+**Implications:**
+- v[1-9]* matches v1.0.0, v1.0.0-rc1, v2.0.0, etc. while excluding v0.x
+- v1.0.0-rc1 tag retag required after this fix lands
+
+---
+## 2026-06-02 21:05 - fix(B7): replace missing HOMEBREW_TAP_PAT secret with GITHUB_TOKEN
+
+**Reasoning:** release.yml repeatedly hits startup_failure with no jobs created. HOMEBREW_TAP_PAT secret was never provisioned on the repo. GitHub may be failing the secret-resolution phase at startup. Falling back to GITHUB_TOKEN (always present) gets us past the startup gate. Cross-repo write to homebrew-tap will fail at runtime if needed, but that's a known follow-up — we'll provision HOMEBREW_TAP_PAT before the real release
+
+**Alternatives considered:** leave the broken reference and hope startup_failure is caused by something else — rejected: ruling out the obvious first, provision HOMEBREW_TAP_PAT now — rejected: needs a fine-grained PAT with write access to thrillmade/homebrew-tap; takes time and user authorization
+
+**Implications:**
+- release.yml workflow should at least START on next tag retrigger
+- homebrew cask auto-bump won't work until HOMEBREW_TAP_PAT is provisioned (TODO before v1.0.0 final)
+
+---
+## 2026-06-02 21:08 - fix(B7): remove empty env: block from GoReleaser snapshot step
+
+**Reasoning:** Empty env: blocks (containing only comments after a prior cleanup) are invalid GitHub Actions YAML schema. GH startup_failure with no jobs created → the YAML parser rejects the workflow before any job runs
+
+**Implications:**
+- release.yml workflow should now START on next tag retrigger
+
+---
+## 2026-06-02 21:08 - fix(B7): bisect release.yml — minimal version to identify startup_failure cause
+
+**Reasoning:** Despite actionlint passing, GH keeps reporting startup_failure with no jobs. Replacing release.yml with a minimal version to see if the workflow can run AT ALL on this repo's runner setup. If this works, the bug is somewhere in the original complex version. If this fails, the bug is environmental (runner/permissions/org config)
+
+**Implications:**
+- release.yml will only echo a hello message and tag name. No GoReleaser, no signing, no release artifacts. Pure smoke test of workflow infrastructure
+
+---
+## 2026-06-02 21:39 - bisect(B7): add workflow_dispatch inputs + packages:write back
+
+**Reasoning:** Minimal release.yml passed. Now adding 2 small additions to bisect: (1) workflow_dispatch.inputs.dry_run definition, (2) permissions.packages:write. If this still fires, the bug is in the GoReleaser/codesign/release steps that come next
+
+**Implications:**
+- Iterating on bisection
+
+---
+## 2026-06-02 23:55 - fix(B7): wire HOMEBREW_TAP_PAT now that it's provisioned
+
+**Reasoning:** Org-level secret HOMEBREW_TAP_PAT was just provisioned on thrillmade with SELECTED visibility including logmind (verified via gh api orgs/thrillmade/actions/secrets/HOMEBREW_TAP_PAT/repositories). Real release path no longer needs --skip=homebrew. Dropping the skip arg + reading the actual secret means the cask auto-PR opens on every v1+ tag
+
+**Alternatives considered:** wait until v1.0.0 to add this — rejected: rc2 should exercise the cask path so we catch any issues before final
+
+**Implications:**
+- next tag (rc2 or v1.0.0) auto-opens a cask-bump PR on thrillmade/homebrew-tap
+
+---

@@ -1,0 +1,216 @@
+name: release
+
+# Wave B7 (distribution) — GoReleaser-driven release pipeline.
+#
+# Fires on tag push (`v[1-9]*`). Builds cross-platform binaries, signs +
+# notarizes the macOS ones, publishes a GitHub Release, and (post
+# HOMEBREW_TAP_PAT provisioning) auto-bumps the Homebrew tap formula.
+#
+# Runs on macos-latest because the codesign + notarytool steps require
+# native macOS toolchain (codesign / xcrun ship with Xcode CLI tools,
+# which Linux runners don't have). GoReleaser cross-compiles linux +
+# windows binaries from the same Mac runner via Go's native cross-compile
+# (CGO_ENABLED=0 in .goreleaser.yaml keeps cgo out of the path).
+#
+# Apple cert provisioning: the 5 secrets MACOS_CERTIFICATE,
+# MACOS_CERTIFICATE_PWD, MACOS_NOTARY_USER, MACOS_NOTARY_PWD,
+# MACOS_TEAM_ID are already configured on thrillmade/logmind. The
+# codesign import is done inline (via `security` shell commands) instead
+# of via Apple-Actions/import-codesign-certs@v3 because the repo's
+# Actions allowlist (`allowed_actions: selected`) only permits
+# `actions/*`, `github/*`, verified-Marketplace creators, and a small
+# explicit allowlist. `Apple-Actions/*` is NOT verified and NOT
+# explicitly allowed, so referencing the action causes startup_failure
+# (workflow YAML rejected at parse time, jobs:[]). Inline `security`
+# commands sidestep the allowlist entirely.
+
+on:
+  push:
+    tags:
+      # Gate to v1+ tags only. The Python workflows on main still own
+      # v0.x.x tags. GitHub Actions tag globs treat `+` as literal (not
+      # regex), so `v[1-9]*` is the correct multi-digit-major glob that
+      # also catches pre-release suffixes like v1.0.0-rc1.
+      - "v[1-9]*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        # Default 'true' so manual UI triggers default to safe snapshot.
+        # Set 'false' for a real release re-trigger.
+        description: "Run goreleaser in --snapshot mode (no Release, no codesign, no notarize)."
+        required: false
+        default: "true"
+
+permissions:
+  contents: write    # for the GitHub Release
+  packages: write    # in case future versions push a container
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout (full history for changelog)
+        uses: actions/checkout@v6
+        with:
+          # GoReleaser walks history to compute the changelog between
+          # previous tag and HEAD; shallow clones break it.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Match go.mod's `go 1.22` floor.
+          go-version: "1.22"
+          cache: true
+
+      # Mint a 1-hour installation token for the `thrillmade-orchestrator[bot]`
+      # App, scoped to thrillmade/homebrew-tap only. The token replaces the
+      # personal HOMEBREW_TAP_PAT — see docs/orchestrator-app.md for the App
+      # spec and rotation procedure.
+      #
+      # Allowlist constraint: this repo's `allowed_actions: selected` rule
+      # only admits `actions/*`, `github/*`, verified-Marketplace creators,
+      # and a small explicit allowlist (see docs/decisions-branches/
+      # fix__release-workflow-startup-failure.md). The official
+      # `actions/create-github-app-token` qualifies (under `actions/*`);
+      # `tibdex/github-app-token` would be rejected.
+      #
+      # Unconditional: runs for both snapshot dry-runs and real releases so
+      # workflow_dispatch dry_run=true acts as a wiring smoke-test.
+      - name: Mint orchestrator App installation token
+        id: app_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
+          private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}
+          owner: thrillmade
+          repositories: homebrew-tap
+
+      - name: Import Apple codesign cert (inline)
+        # Inline equivalent of Apple-Actions/import-codesign-certs@v3.
+        # That action is NOT on this repo's allowed_actions allowlist
+        # (`verified_allowed: true` doesn't cover Apple-Actions because
+        # they're not a Marketplace-verified creator), so referencing it
+        # makes GitHub reject the YAML at parse time. The shell sequence
+        # below is what the action does internally: create a temp
+        # keychain, import the .p12, set partition list for codesign +
+        # security access, add the temp keychain to the user search
+        # list. The keychain is torn down with the runner VM, so no
+        # cert material leaks past this job.
+        #
+        # Skipped on dry_run workflow_dispatch so smoke tests don't
+        # need MACOS_CERTIFICATE to be valid (we don't sign in snapshot
+        # mode anyway).
+        if: ${{ github.event_name == 'push' || github.event.inputs.dry_run != 'true' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PWD="$(openssl rand -base64 32)"
+          CERT_PATH="$RUNNER_TEMP/codesign-cert.p12"
+          # Decode base64 secret to .p12 file.
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          # Create temp keychain.
+          security create-keychain -p "$KEYCHAIN_PWD" signing_temp.keychain
+          security set-keychain-settings -lut 21600 signing_temp.keychain
+          security unlock-keychain -p "$KEYCHAIN_PWD" signing_temp.keychain
+          # Import the .p12 — grant access to codesign + security CLI
+          # without prompting (matches what the action does).
+          security import "$CERT_PATH" \
+            -k signing_temp.keychain \
+            -f pkcs12 \
+            -A \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -P "$MACOS_CERTIFICATE_PWD"
+          # Set partition list so codesign can use the key without
+          # popping a UI prompt (which would hang in CI).
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PWD" \
+            signing_temp.keychain
+          # Add to user keychain search list (preserve login.keychain).
+          security list-keychains -d user -s signing_temp.keychain login.keychain
+          # Wipe the .p12 file — keychain has it now.
+          rm -f "$CERT_PATH"
+          echo "[import-codesign] keychain ready"
+
+      - name: GoReleaser snapshot (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          # --skip=publish,sign,notarize,homebrew: snapshot mode never
+          # publishes a Release, never signs (no cert in snapshot), and
+          # skips the cross-repo brew tap PR (which would need
+          # HOMEBREW_TAP_PAT — not yet provisioned, see TODO below).
+          args: release --snapshot --clean --skip=publish,sign,notarize,homebrew
+        env:
+          # The .goreleaser.yaml `homebrew_casks.repository.token` field is
+          # templated as `{{ .Env.HOMEBREW_TAP_PAT }}` and is parsed even
+          # when `--skip=homebrew` is active. We pass the orchestrator
+          # App's installation token here too — `--skip=homebrew` means we
+          # don't actually push, but minting the token during dry-run is
+          # the wiring smoke-test that catches missing secrets or App
+          # install issues before a real tag release.
+          HOMEBREW_TAP_PAT: ${{ steps.app_token.outputs.token }}
+
+      - name: GoReleaser release
+        # Real release path: fires on tag push, and also on the rare
+        # manual workflow_dispatch + dry_run=false combo (useful for
+        # re-publishing a tag whose first run died midway, e.g.
+        # notarytool timeout — retrigger from UI instead of re-tagging).
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true') }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          # GoReleaser pushes the cask-bump commit directly to
+          # thrillmade/homebrew-tap/main using the orchestrator App's
+          # installation token (HOMEBREW_TAP_PAT below). The App is added
+          # to the tap's ruleset 17128312 as a bypass actor, so the
+          # otherwise-PR-required main branch admits direct pushes from
+          # the App identity. See docs/orchestrator-app.md.
+          args: release --clean
+        env:
+          # Pin the release version to the workflow's ref. GoReleaser
+          # otherwise calls `git describe --tags` to determine the tag,
+          # which is ambiguous when two tags point at the same commit
+          # (e.g. tagging v1.0.0 on the same SHA as v1.0.0-rc3 — observed
+          # 2026-06-03 G1.g: the v1.0.0 run rebuilt the rc3 artifacts and
+          # tried to re-upload them to the rc3 GitHub Release, hitting 422
+          # already_exists). Setting GORELEASER_CURRENT_TAG forces the
+          # value from github.ref_name, the actual tag that triggered the
+          # workflow. Conditional on event_name to avoid clobbering
+          # snapshot mode (where ref_name is a branch, not a tag).
+          GORELEASER_CURRENT_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          # GITHUB_TOKEN scope: creating + uploading to the GitHub Release
+          # on THIS repo. Cannot write to thrillmade/homebrew-tap
+          # (cross-repo); that's why we mint the App token separately.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # App installation token from steps.app_token. Scoped to
+          # thrillmade/homebrew-tap only, valid for 1 hour, automatically
+          # revoked when the job ends. Replaces the personal
+          # HOMEBREW_TAP_PAT secret (retired post-G1.f). Env-var name
+          # stays HOMEBREW_TAP_PAT so .goreleaser.yaml doesn't need a
+          # template change.
+          HOMEBREW_TAP_PAT: ${{ steps.app_token.outputs.token }}
+          # Surfaced to scripts/sign-macos.sh (per-build post-hook). The
+          # script no-ops if MACOS_CERTIFICATE is unset — in the real
+          # release path all 5 are set so signing + notarization run.
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_NOTARY_USER: ${{ secrets.MACOS_NOTARY_USER }}
+          MACOS_NOTARY_PWD: ${{ secrets.MACOS_NOTARY_PWD }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+
+      - name: Upload snapshot artifacts (dry run only)
+        # In dry_run mode the GitHub Release step is skipped; surface
+        # the dist/ contents as a workflow artifact so the smoke-test
+        # operator can inspect them. No-op on tag pushes.
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: logmind-snapshot-${{ github.sha }}
+          path: dist/
+          retention-days: 7

@@ -1,0 +1,72 @@
+## 2026-06-02 17:34 - B7: choose GoReleaser for cross-platform Go binary distribution
+
+**Reasoning:** GoReleaser handles the full release pipeline declaratively in one .goreleaser.yaml: cross-compile (darwin amd64+arm64, linux amd64+arm64, windows amd64), archive .tar.gz/.zip, SHA256SUMS, GitHub Release publication, and Homebrew tap auto-bump. Hand-rolled cross-compile scripts would re-implement all of this poorly. GoReleaser also gracefully handles the snapshot-vs-release modes we need for PR-validation CI.
+
+**Alternatives considered:** Hand-rolled GitHub Actions matrix build + manual archive + manual SHA256SUMS + manual brew formula write, cargo-make / Taskfile-style cross-compile orchestration, Build per-platform from per-platform runners (matrix of ubuntu + macos + windows)
+
+**Implications:**
+- Single .goreleaser.yaml is the source of truth for the release shape
+- Pinned to GoReleaser v2.x; major-version bumps may require config migration
+- Brews block deprecated in v2.16 → migrated to homebrew_casks (works for CLI binaries despite the name)
+
+---
+## 2026-06-02 17:37 - B7: macOS codesign + notarize via per-build hook script (notarytool, no gon)
+
+**Reasoning:** scripts/sign-macos.sh is invoked by goreleaser builds.hooks.post per darwin binary. It codesigns with --options runtime --timestamp --force (all 3 required for notarization), then zips the signed binary with ditto and submits to xcrun notarytool with --wait. The 5 provisioned secrets (MACOS_CERTIFICATE, MACOS_CERTIFICATE_PWD, MACOS_NOTARY_USER, MACOS_NOTARY_PWD, MACOS_TEAM_ID) flow through release.yml env block straight to the script — no certificate import in the script (Apple-Actions/import-codesign-certs@v3 handles that in CI before goreleaser runs). Script no-ops when MACOS_CERTIFICATE is unset so local snapshot builds work offline. We do NOT staple — plain Mach-O binaries don't support stapling; Gatekeeper checks notarization status by hash online which is the supported model for binary tarballs.
+
+**Alternatives considered:** gon (archived Sep 2022, no maintenance, predates notarytool migration), GoReleaser native notarize: block (Pro-only OR OSS quill, but OSS quill needs App Store Connect API key flow + .p8 file — incompatible with the legacy Apple-ID + app-specific-password secrets already provisioned), Sign via codesign hook + notarize via separate after-archive hook (more script files, no real benefit; per-build is simpler)
+
+**Implications:**
+- Per-darwin-binary notarization: each tag release submits 2 notarytool jobs (amd64 + arm64), each waits up to 20m
+- Local snapshot builds skip signing automatically (escape hatch via MACOS_CERTIFICATE unset)
+- Signed binary inside .tar.gz means Gatekeeper queries Apple's notary service by hash on first run — no staple needed
+
+---
+## 2026-06-02 17:37 - B7: Homebrew tap auto-bump via homebrew_casks block (not brews; not separate publish job)
+
+**Reasoning:** GoReleaser's homebrew_casks block opens a PR on thrillmade/homebrew-tap with the new tag URL + per-arch SHA256 baked in. brews block is deprecated in v2.10 and fully removed in v2.16 (we installed 2.16 locally; CI uses 'latest'). homebrew_casks works fine for CLI binaries via the binaries: [] field — the cask form gives us a cleaner Gatekeeper quarantine attr strip via postflight hook than a Formula would. Cross-repo write requires HOMEBREW_TAP_PAT (fine-grained PAT on thrillmade/homebrew-tap with Contents+PullRequests write) — already provisioned and surfaced from release.yml env.
+
+**Alternatives considered:** Hand-rolled brew-bump workflow (mirrors existing v0.x homebrew-bump.yml but for the Go binary tap; adds maintenance burden, no payoff), Use the deprecated brews: block (would have worked on v2.15 but breaks on v2.16+; unstable choice), Open a manual PR per release (defeats the automation purpose of the wave)
+
+**Implications:**
+- Cask file path: thrillmade/homebrew-tap/Casks/logmind.rb (was Formula/logmind.rb on the old v0.x tap)
+- User-facing install command: brew install thrillmade/tap/logmind (was brew install thrillmade/logmind/logmind on the old tap)
+- Old homebrew-bump.yml (v0.x PyPI path) and new release.yml coexist via tag-pattern gating: v0.* fires homebrew-bump, v1.* fires release.yml
+
+---
+## 2026-06-02 17:38 - B7: curl installer defaults to ~/.local/bin (XDG-compatible, no sudo) over /usr/local/bin
+
+**Reasoning:** Every curl-piped install script that requires sudo trips a security-conscious user's flag and breaks the 'paste-one-line-and-go' experience. Defaulting to ~/.local/bin works with shells that already have it in PATH (zsh, fish, modern bash setups), and the installer warns + prints the export PATH= line if not. Users who want system-wide install pass --prefix=/usr/local explicitly; the installer detects write-failure to /usr/local/bin and prints a 'sudo mv' hint instead of silently dying. No autodetect of write access at script start (over-engineered for the user-typed --prefix flag).
+
+**Alternatives considered:** Default to /usr/local/bin (requires sudo, scary), Try /usr/local then fall back to ~/.local automatically (silent surprises), Install to /opt/logmind/bin/ with a separate add-to-path step (3-step install instead of 1-step)
+
+**Implications:**
+- Users with ~/.local/bin already in PATH get a working binary immediately
+- Users without it get a one-line PATH-fix hint from the installer's exit message
+- Sudo-required installs require explicit --prefix flag — no surprise privilege escalation
+
+---
+## 2026-06-02 17:38 - B7: convert internal/version.{Version,SpecVersion} from const → var for ldflags injection
+
+**Reasoning:** GoReleaser injects the release tag into the binary via -ldflags "-X 'github.com/thrillmade/logmind/internal/version.Version={{.Version}}'". Go's linker -X flag only overrides package-level variables, not constants — so the existing const Version = "1.0.0-dev" had to become var Version = "1.0.0-dev". Default value unchanged; production behavior unchanged for local make build (which doesn't pass -ldflags). Only tagged release builds via .goreleaser.yaml see the override. All existing callers (cli/root.go versionLine, cli/agents.go pin sweep, hooks/hooks.go hookVersion) work unchanged because Go treats var-of-string identically to const-of-string for value-read purposes.
+
+**Alternatives considered:** Read version from runtime/debug.ReadBuildInfo (requires Go 1.21+ embedded VCS info; works for 'go install ...' but not for direct go build outputs without VCS context), Read version from an embed.FS-loaded VERSION file (extra file to maintain + parse at startup), Hand-roll a build script that templates Version into a generated file pre-build (resurrects the codegen step Go modules eliminated)
+
+**Implications:**
+- ldflags is the canonical Go release-build version-injection pattern (used by cli/cli, helm, kubectl, every notable Go CLI)
+- tests/snapshot goldens still pin 1.0.0-dev for non-release builds; release-built binaries report the tag
+- src/hooks/hooks.go embeds version.Version in hook bodies — released binaries embed the released version; dev binaries embed 1.0.0-dev
+
+---
+## 2026-06-02 17:50 - fix(go-b7): clud-bug PR #127 — installer requires bash (not sh) + workflow_dispatch dry_run default flipped
+
+**Reasoning:** clud-bug-review on PR #127 flagged 2 valid bugs. (1) curl logmind.dev/install.sh | sh silently bypasses checksum verification on Debian/Ubuntu where sh→dash because the script uses [[ ]] (no dash builtin) which evaluates as false on dash, so the EXPECTED_LINE empty-check and checksum mismatch both silently skip. Fixed: changed all | sh → | bash in README + docs + script comments; added a BASH_VERSION probe at the very top of install.sh (before set -o pipefail which dash also rejects) that prints a corrective message and exits 1 if running under dash/ash/posh. Verified: /bin/dash installer/install.sh exits with the correct error; bash invocation unchanged. (2) workflow_dispatch with dry_run=false (the default) was a silent no-op — imported the Apple cert but ran no GoReleaser step. Fixed: flipped default to dry_run=true so manual UI triggers default to the safe snapshot path; extended the GoReleaser release step's if-condition to also fire on workflow_dispatch + dry_run!=true (useful for re-running a failed real release without re-tagging).
+
+**Alternatives considered:** Add a server-side header to install.sh that detects piped-sh (set -o pipefail caught dash anyway, but late), Rewrite install.sh in pure POSIX sh (defeats half the script's color/error-handling ergonomics; not worth it for a 274-line installer), Leave workflow_dispatch as-is with default=false (operator surprise factor stays; rejected by clud-bug correctly)
+
+**Implications:**
+- Defense-in-depth on install.sh: piped users get clear error from BASH_VERSION check OR exit 1 before checksum verification
+- workflow_dispatch UI now sane: hit Run workflow → snapshot dry-run by default; explicit dry_run=false → real release
+- Both clud-bug findings resolved before requesting merge — matches the dogfood discipline (every cited finding gets fixed)
+
+---

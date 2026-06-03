@@ -1,0 +1,214 @@
+# .goreleaser.yaml — wave B7 (distribution) for the logmind Go rewrite.
+#
+# Triggered by .github/workflows/release.yml on tag push (`v*`). Produces:
+#   - Cross-compiled binaries: darwin (amd64+arm64), linux (amd64+arm64),
+#     windows (amd64).
+#   - Archives: .tar.gz for darwin+linux, .zip for windows.
+#   - SHA256SUMS file alongside binaries (verified by installer/install.sh
+#     and downstream Homebrew formula).
+#   - GitHub Release with all of the above attached.
+#   - Auto-bumped Homebrew formula at thrillmade/homebrew-tap (Formula/
+#     logmind.rb) — GoReleaser opens the bump PR itself when GITHUB_TOKEN
+#     has write access to the tap repo (we pass HOMEBREW_TAP_PAT via env).
+#
+# Notarization is handled in two steps that happen INSIDE the build hook
+# chain (see hooks.post + the after-archive script under
+# scripts/notarize-darwin.sh) because the OSS GoReleaser `notarize:` block
+# requires the App Store Connect API key flow (key_id + issuer_id + .p8),
+# and the 5 provisioned secrets on thrillmade/logmind use the legacy
+# Apple-ID + app-specific-password flow that notarytool also supports.
+# That's the load-bearing constraint: the secrets are already there,
+# scripts/sign-macos.sh + scripts/notarize-darwin.sh consume them
+# unchanged.
+#
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: logmind
+
+# `before` hooks run once at the start of the release. We use them to
+# verify the Go module is tidy and (in CI) that the codesign identity
+# is importable BEFORE we burn a build slot on a misconfigured run.
+# `go mod download` materialises deps so the build matrix below doesn't
+# race on the module cache when multiple `goos` builds spawn in parallel.
+before:
+  hooks:
+    - go mod download
+    - go mod tidy
+
+builds:
+  - id: logmind
+    main: ./cmd/logmind
+    binary: logmind
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # No Windows ARM64 binary yet — the user base is rounding error and
+    # GoReleaser would have to special-case the archive format twice.
+    # Add when there's demand.
+    ignore:
+      - goos: windows
+        goarch: arm64
+    # Inject the released tag into the version package via ldflags.
+    # `internal/version.Version` was converted from `const` → `var` in
+    # this same PR specifically so this -X substitution works. The `-s -w`
+    # pair strips DWARF/symbol tables to shrink the binary (~25% smaller)
+    # — irrelevant for debugging in prod since users run a tagged release.
+    ldflags:
+      - -s -w
+      - -X 'github.com/thrillmade/logmind/internal/version.Version={{.Version}}'
+    # Codesign each darwin binary IMMEDIATELY after build, before archive
+    # construction. We don't notarize here — that happens once per archive
+    # (notarytool wants a zip-of-the-binary, not the loose binary), via
+    # the `archives.hooks.after` block below.
+    #
+    # The sign-macos.sh script is a no-op when MACOS_CERTIFICATE is unset
+    # (which is the case for local `goreleaser release --snapshot` runs
+    # and for any PR-validation CI). That means snapshot builds work
+    # offline without the cert secrets — only real tag releases sign.
+    hooks:
+      post:
+        - cmd: ./scripts/sign-macos.sh "{{ .Path }}"
+          output: true
+          env:
+            - GOOS={{ .Os }}
+
+archives:
+  - id: logmind
+    ids:
+      - logmind
+    # tar.gz everywhere except Windows; Windows users expect .zip.
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    # Final archive name: `logmind_<version>_<os>_<arch>.<ext>`.
+    # Matches what installer/install.sh constructs — keep these in sync.
+    name_template: >-
+      logmind_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    # Bundle these into every archive (small files, helps when users
+    # untar into a directory and want the licence + readme co-located).
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  # SHA256SUMS is the conventional name. installer/install.sh greps
+  # this exact filename to fetch + verify downloads.
+  name_template: "SHA256SUMS"
+  algorithm: sha256
+
+snapshot:
+  # `goreleaser release --snapshot` (no tag) builds with this name in
+  # place of the tag. Used by CI smoke tests + local `goreleaser check`.
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  # Generate release notes from the commits between the previous tag
+  # and this tag. We strip the noise — docs-only / test-only commits
+  # don't belong in distribution notes (they belong in CHANGELOG.md
+  # for the wave they shipped in, which the agent author already wrote).
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: thrillmade
+    name: logmind
+  # Pin to draft=false so the release surfaces immediately. We don't
+  # use prerelease because the version-tag convention (`v1.0.0-rc1`)
+  # encodes that signal; GoReleaser auto-detects prerelease from semver.
+  draft: false
+  prerelease: auto
+  # Footer points downstream consumers at the install matrix so users
+  # who land on the GitHub Releases page see brew/curl in addition to
+  # the raw archives.
+  footer: >-
+
+    ---
+
+    ## Install
+
+    - **Homebrew (macOS / Linux):** `brew install thrillmade/tap/logmind`
+    - **Curl:** `curl -fsSL logmind.dev/install.sh | sh`
+    - **Manual:** download the matching `logmind_VERSION_OS_ARCH.tar.gz`
+      from the assets below, extract `logmind`, drop into `$PATH`.
+
+    Verify checksums against `SHA256SUMS` before running unknown binaries.
+
+# Homebrew cask auto-bump. GoReleaser opens a PR on thrillmade/homebrew-tap
+# bumping Casks/logmind.rb with the new tag's URL + SHA256. The repo
+# secret HOMEBREW_TAP_PAT (fine-grained PAT with Contents+Pull-requests
+# write on thrillmade/homebrew-tap) is read from env in release.yml and
+# surfaced here via the `repository.token` field.
+#
+# Why `homebrew_casks:` and not the older `brews:` block:
+# `brews:` was deprecated in GoReleaser v2.10 and fully removed in v2.16
+# (https://goreleaser.com/deprecations#brews). The cask format also gives
+# us a cleaner path for the macOS quarantine attribute strip — the binary
+# is signed + notarized but `xattr -dr com.apple.quarantine` belt-and-
+# braces avoids any Gatekeeper edge case when the user untars-then-runs
+# rather than running through brew (which we don't pay for here, but
+# cask hooks let downstream tooling consume it).
+homebrew_casks:
+  - name: logmind
+    ids:
+      - logmind
+    binaries:
+      - logmind
+    # HOMEBREW_TAP_PAT is now an installation token for the
+    # `thrillmade-orchestrator[bot]` App (app_id 3951953), minted at
+    # workflow time by actions/create-github-app-token@v2 in release.yml.
+    # The App is added as a bypass actor on the tap's ruleset 17128312,
+    # so direct push to thrillmade/homebrew-tap/main goes through cleanly
+    # with full audit trail under the App identity. No pull_request flow
+    # needed. See docs/orchestrator-app.md for App spec + rotation.
+    repository:
+      owner: thrillmade
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_PAT }}"
+    directory: Casks
+    homepage: "https://logmind.dev"
+    description: "Decision logging for AI-assisted development — branch-aware by default."
+    license: "MIT"
+    # commit_author identity matches the bypass actor on the tap ruleset.
+    # The numeric prefix `3951953+` is GitHub's canonical noreply-email
+    # format for App bots (the App ID followed by the slug); using this
+    # exact format ties each cask-bump commit to the App identity in
+    # GitHub's UI rather than showing it as an anonymous bot.
+    commit_author:
+      name: thrillmade-orchestrator[bot]
+      email: 3951953+thrillmade-orchestrator[bot]@users.noreply.github.com
+    commit_msg_template: "logmind {{ .Tag }}"
+    # Post-install: strip macOS quarantine attr. logmind binaries are
+    # codesigned + notarized in the release pipeline (so Gatekeeper will
+    # pass), but tarballs downloaded via brew sometimes pick up the
+    # quarantine xattr regardless. Stripping it here is the
+    # belt-and-braces equivalent of what most signed CLI casks do.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/logmind"]
+          end

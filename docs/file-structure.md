@@ -25,6 +25,8 @@ logmind
 │   ├── per_session.py
 │   ├── README.md
 │   └── worst_case.py
+├── cmd
+│   └── logmind
 ├── docs
 │   ├── decisions-branches
 │   ├── ai-agent-files.md
@@ -33,8 +35,31 @@ logmind
 │   ├── decisions.md
 │   ├── file-structure.md
 │   ├── first-decision-example.md
+│   ├── install.md
+│   ├── orchestrator-app.md
 │   ├── plan.md
 │   └── timeline.md
+├── installer
+│   ├── cask-template.rb
+│   └── install.sh
+├── internal
+│   ├── agents
+│   ├── cli
+│   ├── config
+│   ├── decisions
+│   ├── doctor
+│   ├── gitattr
+│   ├── gitcli
+│   ├── hooks
+│   ├── inserter
+│   ├── linkcheck
+│   ├── skill
+│   ├── templates
+│   ├── timeline
+│   ├── tree
+│   └── version
+├── scripts
+│   └── sign-macos.sh
 ├── site
 │   ├── .next
 │   ├── .vercel
@@ -101,6 +126,7 @@ logmind
 │   └── test_workflow_pin_update.py
 ├── .cursorrules
 ├── .gitignore
+├── .goreleaser.yaml
 ├── .pre-commit-config.yaml
 ├── .python-version
 ├── AGENTS.md
@@ -108,7 +134,10 @@ logmind
 ├── CLAUDE.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
+├── go.mod
+├── go.sum
 ├── LICENSE
+├── Makefile
 ├── MANIFEST.in
 ├── pyproject.toml
 ├── README.md

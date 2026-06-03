@@ -1,0 +1,97 @@
+name: goreleaser-check
+
+# Wave B7 (distribution) — validates .goreleaser.yaml syntax + runs a
+# snapshot build on PRs that touch the release pipeline. Catches a
+# misconfigured GoReleaser block BEFORE the first real tag push, where
+# a config bug would burn an irreversible version number.
+#
+# Runs on PRs targeting v1-go-rewrite (and later main, post-cutover)
+# whose diff touches the release-pipeline surface area. Doesn't run on
+# every PR — the snapshot build takes ~30s of runner time, no need to
+# pay it on doc-only / unrelated PRs.
+#
+# This is NOT the workflow that PUBLISHES releases. release.yml is.
+# This is the pre-flight check.
+
+on:
+  push:
+    branches:
+      - v1-go-rewrite
+    paths:
+      - '.goreleaser.yaml'
+      - '.github/workflows/goreleaser-check.yml'
+      - '.github/workflows/release.yml'
+      - 'scripts/sign-macos.sh'
+      - 'installer/install.sh'
+      - 'cmd/**'
+      - 'internal/version/**'
+  pull_request:
+    branches:
+      - v1-go-rewrite
+    paths:
+      - '.goreleaser.yaml'
+      - '.github/workflows/goreleaser-check.yml'
+      - '.github/workflows/release.yml'
+      - 'scripts/sign-macos.sh'
+      - 'installer/install.sh'
+      - 'cmd/**'
+      - 'internal/version/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: goreleaser config + snapshot
+    # macos-latest matches the real release.yml runner so we catch
+    # platform-specific bugs (e.g. sign-macos.sh shell-isms that work
+    # on bash but not on Mac's older bash) in the same environment.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: check
+
+      - name: goreleaser release --snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          # --skip=publish (don't push to GitHub Release)
+          # --skip=sign,notarize (no cert/notary creds available outside
+          # the real release path)
+          args: release --snapshot --clean --skip=publish,sign,notarize
+        env:
+          # Snapshot mode never resolves this for real, but goreleaser
+          # parses the homebrew_casks block which references the env
+          # var template — provide a placeholder so parsing succeeds.
+          HOMEBREW_TAP_PAT: snapshot-mode-no-token-needed
+
+      - name: Verify snapshot binary --version
+        # If the snapshot mode produces a working binary, ldflags
+        # injection works and the build pipeline is sound. We invoke
+        # the just-built darwin/arm64 binary (matches the macos-latest
+        # runner's arch on M1+ runners).
+        run: |
+          BIN="$(ls dist/logmind_darwin_arm64*/logmind 2>/dev/null | head -n1)"
+          if [ -z "$BIN" ]; then
+            BIN="$(ls dist/logmind_darwin_amd64*/logmind 2>/dev/null | head -n1)"
+          fi
+          if [ -z "$BIN" ]; then
+            echo "::error::no darwin binary in dist/"
+            exit 1
+          fi
+          echo "Testing: $BIN"
+          "$BIN" --version

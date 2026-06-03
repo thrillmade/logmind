@@ -1,0 +1,15 @@
+AI Agent Status:
+
+  ✓ claude       CLAUDE.md                                (configured)
+  ✗ cursor       .cursorrules                             (not configured)
+  ✗ copilot      .github/copilot-instructions.md          (not configured)
+  ✗ windsurf     .windsurfrules                           (not configured)
+  ✗ aider        CONVENTIONS.md                           (not configured)
+  ✗ continue     .continuerules                           (not configured)
+  ✗ cody         .sourcegraph/cody.json                   (not configured)
+  ✗ zed          .zed/settings.json                       (not configured)
+  ✗ amazonq      .amazonq/rules.md                        (not configured)
+  ✗ cline        .clinerules                              (not configured)
+  ✗ codex        AGENTS.md                                (not configured)
+
+Supported agents: claude, cursor, copilot, windsurf, aider, continue, cody, zed, amazonq, cline, codex
