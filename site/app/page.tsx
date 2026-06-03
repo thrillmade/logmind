@@ -345,7 +345,7 @@ ok: 4-angle Q7-logmind compliance`}
                 backports, and no feature parity with v1.0+. Migrating?
                 See the{" "}
                 <a
-                  href="https://github.com/thrillmade/logmind/blob/main/docs/install.md#legacy-python-install"
+                  href="https://github.com/thrillmade/logmind/blob/main/docs/install.md#deprecated-python-install"
                   className="text-accent hover:underline"
                 >
                   migration guide
