@@ -199,7 +199,7 @@ brew install thrillmade/tap/logmind
 curl -fsSL https://logmind.dev/install.sh | sh
 ```
 
-See [docs/install.md#legacy-python-install](docs/install.md#legacy-python-install)
+See [docs/install.md#deprecated-python-install](docs/install.md#deprecated-python-install)
 for the full migration matrix (CI YAML one-liners, dependency-import
 hand-off, and what features have moved or been retired).
 
