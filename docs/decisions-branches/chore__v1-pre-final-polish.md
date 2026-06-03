@@ -18,3 +18,13 @@
 - Renderer iterates Suggestions one-line-each; split the remediation into 3 entries (brew | # or: curl ... | # then re-run: logmind init) so the formatted output reads as a 3-line stanza under 'Suggested:'. Doctor tests still green; no golden pinned the literal suggestion string.
 
 ---
+## 2026-06-02 23:01 - Pin brew/curl suggestion stanza in doctor test
+
+**Reasoning:** clud-bug review thread on PR #131 (3345655561) correctly noted that TestCollectStatus_StaleWorkflowFlipsToDrift reaches the suggestion-emitting code path but never asserts on r.Suggestions content — a regression that reverted to the old pip string would still pass. Evidence-based-review: the reviewer quoted classifyLogmindDrift line 263 to prove the test path is live.
+
+**Alternatives considered:** Add a dedicated TestSuggestions_BrewStanza test, Leave the assertion to the manual doctor run
+
+**Implications:**
+- Same test now asserts both Overall=DRIFT and the 3-line brew/curl stanza in r.Suggestions (exact byte match per entry). Future revert to pip-install string trips this test.
+
+---

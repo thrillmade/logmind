@@ -97,6 +97,26 @@ func TestCollectStatus_StaleWorkflowFlipsToDrift(t *testing.T) {
 	if r.Overall != "DRIFT" {
 		t.Errorf("Overall = %q; want DRIFT with stale workflow marker", r.Overall)
 	}
+
+	// Pin the v1 brew/curl remediation stanza so a regression that
+	// reverts to the legacy `pip install --upgrade logmind` suggestion
+	// (or otherwise drops one of the three lines) is caught here. The
+	// renderer emits each Suggestions entry on its own indented line,
+	// so we assert each one's exact text.
+	wantSuggestions := []string{
+		"brew install thrillmade/tap/logmind",
+		"# or: curl -fsSL https://logmind.dev/install.sh | bash",
+		"# then re-run: logmind init",
+	}
+	if len(r.Suggestions) != len(wantSuggestions) {
+		t.Fatalf("Suggestions = %v; want %d entries (brew/curl stanza)",
+			r.Suggestions, len(wantSuggestions))
+	}
+	for i, want := range wantSuggestions {
+		if r.Suggestions[i] != want {
+			t.Errorf("Suggestions[%d] = %q; want %q", i, r.Suggestions[i], want)
+		}
+	}
 }
 
 func TestCollectStatus_InstalledWorkflowMarkerMatchesBundled(t *testing.T) {
