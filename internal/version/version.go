@@ -2,8 +2,9 @@
 //
 // During the v1.0 Go rewrite the version string is "1.0.0-dev"; it will
 // be cut to "1.0.0" at the v1-go-rewrite → main cutover PR. The spec
-// version tracks the thrillmade/protocol SPEC.md document and is
-// currently "0.1.0-draft" — it will be locked once SPEC.md ships.
+// version tracks the thrillmade/protocol SPEC.md document and is locked
+// at "0.1.0" — matching the v0.1.0 FINAL tag on thrillmade/protocol
+// (commit 86c2212: "spec(v0.1.0): resolve final 2 judgment calls").
 //
 // Wave B7 (distribution): both values are `var` (not `const`) so the
 // GoReleaser build step can inject the released tag via `-ldflags
@@ -21,4 +22,4 @@ var Version = "1.0.0-dev"
 // this binary implements. Reported via `logmind --version` so downstream
 // tools can detect protocol skew without parsing the binary version.
 // Overridable via -ldflags at build time; see package docstring.
-var SpecVersion = "0.1.0-draft"
+var SpecVersion = "0.1.0"
