@@ -62,6 +62,9 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newAgentsCmd())
 	// B5: skill authoring/validation/bench/audit/suggest tree.
 	root.AddCommand(newSkillCmd())
+	// B5b / G4.a: loop-closer that folds clud-bug review citations
+	// into each cited skill's PROVENANCE.md. See SPEC §3.9 + §6.
+	root.AddCommand(newSyncCmd())
 	// B6: config + doctor + init + self-update.
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newDoctorCmd())

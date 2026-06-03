@@ -10,3 +10,15 @@
 - Skill names cited in reviews must match an installed .claude/skills/<name>/ directory; unknown citations are skipped with a warning
 
 ---
+## 2026-06-03 13:33 - Implement logmind sync (B5b / G4.a): port to Go
+
+**Reasoning:** Parses docs/reviews/PR-*.md per SPEC §1.8.1 NORMATIVE template (review-sha + Skills cited block) and increments cited-by-clud-bug + sets last-refined on each cited skill's PROVENANCE.md. Idempotency via applied-review-shas list stored inside the existing YAML block. Implementation split: internal/skill/sync.go holds the parser + writer (importable by future tooling); internal/cli/sync.go is the cobra wiring. No Python sync.py existed — Python v0.6.x closed the loop via .clud-bug.json usage counters; the Go port routes the same signal through the durable in-repo PR review files (survives JSON schema migrations, works for GitHub-App variant, stays grep-friendly).
+
+**Alternatives considered:** Walk repository via GitHub API — rejected: SPEC §6.5 explicitly requires local file read, Track applied SHAs in a sibling .logmind/sync-state.json — rejected: harder to grep, second source of truth competing with PROVENANCE.md, Strict YAML parsing of PROVENANCE.md — rejected: the file is hybrid markdown+YAML and prose below the block is user-edited; full YAML parse would force a lossy round-trip
+
+**Implications:**
+- Counter increments only when a new review-sha appears (idempotent re-runs are no-ops). Unknown-skill citations route to stderr warn and the run continues. Re-running after a clean PR (zero citations) is also a no-op (no SHA added to applied set).
+- Future SPEC §3.9 surfaces --since and --write-drafts; this PR ships --dry-run only and leaves the others for a follow-on commit so this PR stays focused on the loop-closer write path.
+- Tests cover empty repo / single citation / multi-skill / multi-PR / idempotent / dry-run / malformed-file-skipped / unknown-skill-warned / SHA case-insensitivity / non-PR markdown ignored — 14 unit tests in internal/skill, 7 in internal/cli.
+
+---
