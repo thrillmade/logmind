@@ -32,3 +32,15 @@
 - Underlying issue: logmind file-structure walks the current working tree from CWD; running it from a worktree path with a different basename produces a diff. Worth tracking as a follow-up bug (perhaps anchor on git rev-parse --show-toplevel).
 
 ---
+## 2026-06-03 14:03 - fix(sync): only count SHA on successful write; mark dry-run on ok line (review #135)
+
+**Reasoning:** Two clud-bug-review threads on PR #135 flagged invariant breaches. Bug 1: appliedReviewSet was mutated before atomicWriteFile, so a write failure inflated summary.ReviewsApplied beyond the count of skills that actually landed on disk. Moving the mutation to after the successful write block fixes the invariant 'ReviewsApplied == count of SHAs whose contributions actually persisted'. Bug 2: the machine-parseable 'ok sync:' line lacked the '(dry-run)' marker while FormatSummary above it did include the marker, so a downstream consumer grepping for 'ok sync: \\d+' would treat a dry-run preview as a real run. Prefixed the line with '(dry-run) ' so the two surfaces agree.
+
+**Alternatives considered:** Bug 1 alt: track a separate 'written-this-run' set and reconcile at the end — rejected as over-engineering for a single contiguous loop body, Bug 1 alt: keep the set mutation early and decrement on failure — rejected because the additive-only set model is simpler and the iteration boundary is the natural rollback point, Bug 2 alt: drop the redundant 'ok sync:' line and rely solely on FormatSummary's prefix — rejected because the line is a documented machine surface (post-merge hooks consume it); we extend the contract rather than break it
+
+**Implications:**
+- internal/skill/sync.go gains a package-level 'var atomicWriteFile' test seam so tests can simulate write failures deterministically
+- internal/cli/sync.go's 'ok sync:' grammar gains a '(dry-run) ' optional prefix — downstream parsers should accept it or filter on it
+- New test TestSync_WriteFailure_DoesNotCountSHA pins the Bug 1 invariant; TestRunSync_DryRun's positive assertion is updated and a negative assertion is added so the bug can't silently regress
+
+---

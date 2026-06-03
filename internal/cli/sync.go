@@ -81,8 +81,17 @@ func runSync(cwd string, dryRun bool, now time.Time, stdout, stderr io.Writer) e
 	}
 
 	skill.FormatSummary(stdout, summary, dryRun)
-	fmt.Fprintf(stdout, "ok sync: %d skill(s) updated · %d citation(s) added · %d/%d review(s) applied\n",
-		summary.SkillsUpdated, summary.CitationsAdded,
+	// Prefix the machine-parseable `ok sync:` line with `(dry-run) ` so
+	// consumers (e.g., post-merge hooks scraping stdout, CI summaries)
+	// can distinguish a real run's counters from a dry-run preview's.
+	// FormatSummary already carries the marker; this line gates it on
+	// the same dryRun flag so the two surfaces agree. (Review #135 / Bug 2.)
+	prefix := ""
+	if dryRun {
+		prefix = "(dry-run) "
+	}
+	fmt.Fprintf(stdout, "ok sync: %s%d skill(s) updated · %d citation(s) added · %d/%d review(s) applied\n",
+		prefix, summary.SkillsUpdated, summary.CitationsAdded,
 		summary.ReviewsApplied, summary.ReviewsScanned)
 	return nil
 }

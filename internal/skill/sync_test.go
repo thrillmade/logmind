@@ -564,6 +564,108 @@ func TestFilterNewSHAs(t *testing.T) {
 	}
 }
 
+// TestSync_WriteFailure_DoesNotCountSHA covers Bug 1 from PR #135 review:
+// if atomicWriteFile fails for a given skill, the run MUST NOT count the
+// SHA in ReviewsApplied (and MUST NOT bump SkillsUpdated / CitationsAdded)
+// for that skill. Otherwise the summary inflates relative to what
+// actually landed on disk and a downstream consumer reading the counter
+// would believe a write happened when it didn't.
+//
+// Two skills are scaffolded; the writer is rigged to fail for the first
+// skill's PROVENANCE.md and succeed for the second. We assert:
+//   - the failed-write skill's old body is untouched
+//   - the successful-write skill's body is bumped
+//   - the summary counts only the second skill + only its SHA
+func TestSync_WriteFailure_DoesNotCountSHA(t *testing.T) {
+	dir := t.TempDir()
+	failPath := scaffoldSkillWithProvenance(t, dir, "fail-skill")
+	okPath := scaffoldSkillWithProvenance(t, dir, "ok-skill")
+
+	// Snapshot the failing skill's pre-Sync body so we can prove the
+	// disk wasn't touched even after the write was rejected.
+	failBefore, err := os.ReadFile(failPath)
+	if err != nil {
+		t.Fatalf("read failPath: %v", err)
+	}
+
+	// Both skills are cited by the same PR — same SHA flows through
+	// the loop twice. If Bug 1 regresses, the SHA gets added to
+	// appliedReviewSet on the failed iteration too, inflating
+	// ReviewsApplied. With the fix, the SHA only counts on the
+	// ok-skill iteration (where the write actually persists).
+	sha := strings.Repeat("a", 40)
+	writeReview(t, dir, "PR-1.md", reviewWith(sha, []string{
+		"fail-skill (2 findings)",
+		"ok-skill (3 findings)",
+	}))
+
+	// Swap atomicWriteFile for one that selectively fails for the
+	// fail-skill path and delegates to the real writer otherwise.
+	// t.Cleanup restores the original so other tests aren't affected.
+	original := atomicWriteFile
+	t.Cleanup(func() { atomicWriteFile = original })
+	atomicWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		if strings.Contains(path, "fail-skill") {
+			return errors.New("simulated write failure")
+		}
+		return original(path, data, perm)
+	}
+
+	var warnings []string
+	got, err := Sync(dir, SyncOptions{
+		Now:  fixedNow,
+		Warn: func(s string) { warnings = append(warnings, s) },
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// Only ok-skill should be counted as updated.
+	if got.SkillsUpdated != 1 {
+		t.Errorf("SkillsUpdated = %d; want 1 (only ok-skill persisted)", got.SkillsUpdated)
+	}
+	// Only ok-skill's 3 citations should be counted; fail-skill's 2 must NOT.
+	if got.CitationsAdded != 3 {
+		t.Errorf("CitationsAdded = %d; want 3 (fail-skill's 2 must not count)", got.CitationsAdded)
+	}
+	// THE LOAD-BEARING ASSERTION for Bug 1: the SHA must be counted
+	// exactly once (from ok-skill's successful persist), not twice
+	// (from both iterations regardless of write outcome).
+	if got.ReviewsApplied != 1 {
+		t.Errorf("ReviewsApplied = %d; want 1 (SHA must not count on failed write)", got.ReviewsApplied)
+	}
+	if len(got.Updates) != 1 || got.Updates[0].Name != "ok-skill" {
+		t.Errorf("Updates should contain only ok-skill; got %+v", got.Updates)
+	}
+
+	// Disk-level cross-check: fail-skill's body is byte-identical to
+	// the pre-Sync snapshot. (If the writer fix regresses by writing
+	// before erroring out, this assertion catches it.)
+	failAfter, err := os.ReadFile(failPath)
+	if err != nil {
+		t.Fatalf("read failPath after: %v", err)
+	}
+	if string(failBefore) != string(failAfter) {
+		t.Errorf("fail-skill body changed despite write failure;\nbefore:\n%s\nafter:\n%s",
+			failBefore, failAfter)
+	}
+
+	// ok-skill should have its counter bumped.
+	okBody, _ := os.ReadFile(okPath)
+	if !strings.Contains(string(okBody), "cited-by-clud-bug: 3") {
+		t.Errorf("ok-skill counter not bumped; body:\n%s", okBody)
+	}
+
+	// A warning should have been emitted for the failed write so the
+	// CLI surface still tells the user something went wrong.
+	if len(warnings) == 0 {
+		t.Errorf("expected warn for failed write; got none")
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "fail-skill") {
+		t.Errorf("warning should name fail-skill; got:\n%s", strings.Join(warnings, "\n"))
+	}
+}
+
 // TestSync_SHAcase_Canonicalised: hex casing in the review file
 // doesn't leak into the on-disk SHA set — both `AAAA...` and `aaaa...`
 // dedup against each other.

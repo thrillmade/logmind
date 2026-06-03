@@ -378,12 +378,6 @@ func Sync(repoRoot string, opts SyncOptions) (SyncSummary, error) {
 			continue
 		}
 
-		// Track set of applied SHAs across the whole run for the
-		// reviews-applied counter.
-		for _, s := range applied {
-			appliedReviewSet[s] = struct{}{}
-		}
-
 		newCount := prev.CitedByCludBug + addedCount
 		updated := rewriteProvenance(string(body), provenanceUpdate{
 			NewCount:    newCount,
@@ -394,8 +388,19 @@ func Sync(repoRoot string, opts SyncOptions) (SyncSummary, error) {
 		if !opts.DryRun {
 			if err := atomicWriteFile(provPath, []byte(updated), 0o644); err != nil {
 				warn(fmt.Sprintf("skill %q: write %s: %v", skillName, provPath, err))
+				// Persist failed — leave appliedReviewSet, SkillsUpdated,
+				// CitationsAdded, and Updates unchanged for this skill so
+				// the summary reflects what actually landed on disk.
 				continue
 			}
+		}
+
+		// Track set of applied SHAs across the whole run for the
+		// reviews-applied counter. Only counted after a successful
+		// persist (or in --dry-run where the write is intentionally
+		// skipped, not failed).
+		for _, s := range applied {
+			appliedReviewSet[s] = struct{}{}
 		}
 
 		summary.SkillsUpdated++
@@ -639,7 +644,13 @@ func recountForSHAs(reviewsDir, skillName string, shas []string, warn func(strin
 // atomicWriteFile writes to a temp sibling + renames. Avoids leaving a
 // half-written PROVENANCE.md if the process dies mid-write — same
 // discipline as Python v0.6.16's atomic_io.write_text.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+//
+// Held as a package-level var so tests can swap in a failing writer
+// that exercises the "persist failed, don't count the SHA" path in
+// Sync (review #135 / Bug 1).
+var atomicWriteFile func(path string, data []byte, perm os.FileMode) error = realAtomicWriteFile
+
+func realAtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {

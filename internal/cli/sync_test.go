@@ -122,8 +122,17 @@ func TestRunSync_DryRun(t *testing.T) {
 	if !strings.Contains(got, "(dry-run)") {
 		t.Errorf("dry-run marker missing; stdout:\n%s", got)
 	}
-	if !strings.Contains(got, "ok sync: 1 skill(s) updated") {
-		t.Errorf("ok line missing; stdout:\n%s", got)
+	// Bug 2 (review #135): the machine-parseable `ok sync:` line MUST
+	// carry the `(dry-run)` marker so downstream consumers can
+	// distinguish dry-run preview output from real-run output.
+	if !strings.Contains(got, "ok sync: (dry-run) 1 skill(s) updated") {
+		t.Errorf("ok line missing (dry-run) marker; stdout:\n%s", got)
+	}
+	// Cross-check: in dry-run mode, the bare (non-dry-run) `ok sync:`
+	// line shape MUST NOT appear — otherwise a grep for `^ok sync: \d+`
+	// would still match the dry-run preview and contaminate the counter.
+	if strings.Contains(got, "ok sync: 1 skill(s) updated") {
+		t.Errorf("ok line should carry (dry-run) prefix in dry-run mode; stdout:\n%s", got)
 	}
 
 	after, _ := os.ReadFile(provPath)
