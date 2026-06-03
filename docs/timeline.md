@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (72 decisions)
+## 2026-06 (73 decisions)
 
-- **2026-06-03** — Site: lead install with brew/curl Go binary; mark pip wheel deprecated (frozen v0.6.16) *(feat/skill-push-go-port)* — [decisions-branches/feat__skill-push-go-port.md](decisions-branches/feat__skill-push-go-port.md)
-- *... 70 more decisions ...*
+- **2026-06-03** — Fix PR #134: regenerate timeline + add /install.sh Vercel route *(chore/v1-install-rewrite)* — [decisions-branches/chore__v1-install-rewrite.md](decisions-branches/chore__v1-install-rewrite.md)
+- *... 71 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
