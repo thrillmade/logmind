@@ -25,7 +25,8 @@
 //   - PyPI probe is best-effort (2s timeout, swallows all errors).
 //
 // Read-only by design: doctor never writes. The suggested action
-// (`pip install --upgrade logmind && logmind init`) is printed, not run.
+// (`brew install thrillmade/tap/logmind` or curl-pipe-bash from
+// logmind.dev, then `logmind init`) is printed, not run.
 //
 // Deferred (out-of-scope for B6, tracked for B7 follow-up):
 //
@@ -187,7 +188,15 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 		}
 		switch t.Name {
 		case "logmind":
-			suggestions = append(suggestions, "pip install --upgrade logmind && logmind init")
+			// v1 Go binary distribution — no pip path. The renderer
+			// emits each entry on its own indented line under
+			// "Suggested:", so split the multi-line remediation into
+			// three suggestions to preserve formatting.
+			suggestions = append(suggestions,
+				"brew install thrillmade/tap/logmind",
+				"# or: curl -fsSL https://logmind.dev/install.sh | bash",
+				"# then re-run: logmind init",
+			)
 		case "clud-bug":
 			suggestions = append(suggestions, "npx clud-bug update")
 		}
