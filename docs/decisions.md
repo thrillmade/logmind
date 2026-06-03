@@ -47,3 +47,14 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - tests/test_merge_driver.py grew from 52 → 52+ tests; full suite passes
 
 ---
+## 2026-06-02 21:01 - fix(B7): tag-trigger glob pattern (v[1-9]+ → v[1-9]*)
+
+**Reasoning:** v1.0.0-rc1 push produced startup_failure because GitHub Actions tag globs treat + as a LITERAL character, not a regex quantifier. The first-draft pattern v[1-9]+.[0-9]+.[0-9]+ never matched a real tag name; the workflow was effectively unreachable
+
+**Alternatives considered:** use regex syntax with paths-ignore — rejected: GH tag triggers only support globs, not regex, use plain v* — rejected: would also fire for v0.x.x tags that still belong to the Python publish.yml pipeline
+
+**Implications:**
+- v[1-9]* matches v1.0.0, v1.0.0-rc1, v2.0.0, etc. while excluding v0.x
+- v1.0.0-rc1 tag retag required after this fix lands
+
+---
