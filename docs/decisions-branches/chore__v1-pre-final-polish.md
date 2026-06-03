@@ -8,3 +8,13 @@
 - Golden file (internal/cli/testdata/version.golden) must match: bumped from 'logmind 1.0.0-dev (spec 0.1.0-draft)' to 'logmind 1.0.0-dev (spec 0.1.0)'. No other consumers of SpecVersion in the tree.
 
 ---
+## 2026-06-02 22:55 - Doctor remediation: brew/curl install, not pip
+
+**Reasoning:** v1 ships as a Go binary distributed via Homebrew tap + install.sh; the legacy 'pip install --upgrade logmind && logmind init' suggestion would dead-end users who never had Python logmind installed. G1.d smoke test on v1.0.0-rc1 binary surfaced this.
+
+**Alternatives considered:** Keep pip suggestion as a fallback line, Emit only brew (drop curl alternative)
+
+**Implications:**
+- Renderer iterates Suggestions one-line-each; split the remediation into 3 entries (brew | # or: curl ... | # then re-run: logmind init) so the formatted output reads as a 3-line stanza under 'Suggested:'. Doctor tests still green; no golden pinned the literal suggestion string.
+
+---
