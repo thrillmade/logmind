@@ -85,3 +85,11 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - release.yml will only echo a hello message and tag name. No GoReleaser, no signing, no release artifacts. Pure smoke test of workflow infrastructure
 
 ---
+## 2026-06-02 21:39 - bisect(B7): add workflow_dispatch inputs + packages:write back
+
+**Reasoning:** Minimal release.yml passed. Now adding 2 small additions to bisect: (1) workflow_dispatch.inputs.dry_run definition, (2) permissions.packages:write. If this still fires, the bug is in the GoReleaser/codesign/release steps that come next
+
+**Implications:**
+- Iterating on bisection
+
+---

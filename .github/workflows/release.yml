@@ -5,9 +5,15 @@ on:
     tags:
       - "v[1-9]*"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "snapshot mode"
+        required: false
+        default: "true"
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -21,4 +27,4 @@ jobs:
           go-version: "1.22"
           cache: true
       - name: hello
-        run: echo "release triggered for tag=${{ github.ref_name }}"
+        run: echo "release triggered for tag=${{ github.ref_name }} event=${{ github.event_name }}"
