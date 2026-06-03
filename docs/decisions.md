@@ -77,3 +77,11 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - release.yml workflow should now START on next tag retrigger
 
 ---
+## 2026-06-02 21:08 - fix(B7): bisect release.yml — minimal version to identify startup_failure cause
+
+**Reasoning:** Despite actionlint passing, GH keeps reporting startup_failure with no jobs. Replacing release.yml with a minimal version to see if the workflow can run AT ALL on this repo's runner setup. If this works, the bug is somewhere in the original complex version. If this fails, the bug is environmental (runner/permissions/org config)
+
+**Implications:**
+- release.yml will only echo a hello message and tag name. No GoReleaser, no signing, no release artifacts. Pure smoke test of workflow infrastructure
+
+---
