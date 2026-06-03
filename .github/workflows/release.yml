@@ -63,6 +63,29 @@ jobs:
           go-version: "1.22"
           cache: true
 
+      # Mint a 1-hour installation token for the `thrillmade-orchestrator[bot]`
+      # App, scoped to thrillmade/homebrew-tap only. The token replaces the
+      # personal HOMEBREW_TAP_PAT — see docs/orchestrator-app.md for the App
+      # spec and rotation procedure.
+      #
+      # Allowlist constraint: this repo's `allowed_actions: selected` rule
+      # only admits `actions/*`, `github/*`, verified-Marketplace creators,
+      # and a small explicit allowlist (see docs/decisions-branches/
+      # fix__release-workflow-startup-failure.md). The official
+      # `actions/create-github-app-token` qualifies (under `actions/*`);
+      # `tibdex/github-app-token` would be rejected.
+      #
+      # Unconditional: runs for both snapshot dry-runs and real releases so
+      # workflow_dispatch dry_run=true acts as a wiring smoke-test.
+      - name: Mint orchestrator App installation token
+        id: app_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
+          private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}
+          owner: thrillmade
+          repositories: homebrew-tap
+
       - name: Import Apple codesign cert (inline)
         # Inline equivalent of Apple-Actions/import-codesign-certs@v3.
         # That action is NOT on this repo's allowed_actions allowlist
@@ -124,13 +147,14 @@ jobs:
           # HOMEBREW_TAP_PAT — not yet provisioned, see TODO below).
           args: release --snapshot --clean --skip=publish,sign,notarize,homebrew
         env:
-          # The .goreleaser.yaml `homebrew_casks.repository.token`
-          # field is templated as `{{ .Env.HOMEBREW_TAP_PAT }}` and is
-          # parsed even when `--skip=homebrew` is active, so the env
-          # var must be set to *something*. GITHUB_TOKEN is a safe
-          # placeholder — `--skip=homebrew` means we don't actually
-          # attempt the cross-repo push.
-          HOMEBREW_TAP_PAT: ${{ secrets.GITHUB_TOKEN }}
+          # The .goreleaser.yaml `homebrew_casks.repository.token` field is
+          # templated as `{{ .Env.HOMEBREW_TAP_PAT }}` and is parsed even
+          # when `--skip=homebrew` is active. We pass the orchestrator
+          # App's installation token here too — `--skip=homebrew` means we
+          # don't actually push, but minting the token during dry-run is
+          # the wiring smoke-test that catches missing secrets or App
+          # install issues before a real tag release.
+          HOMEBREW_TAP_PAT: ${{ steps.app_token.outputs.token }}
 
       - name: GoReleaser release
         # Real release path: fires on tag push, and also on the rare
@@ -141,21 +165,25 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
-          # HOMEBREW_TAP_PAT is now provisioned (org-level secret on
-          # thrillmade, SELECTED visibility includes logmind). GoReleaser
-          # auto-PRs the cask bump on thrillmade/homebrew-tap.
+          # GoReleaser pushes the cask-bump commit directly to
+          # thrillmade/homebrew-tap/main using the orchestrator App's
+          # installation token (HOMEBREW_TAP_PAT below). The App is added
+          # to the tap's ruleset 17128312 as a bypass actor, so the
+          # otherwise-PR-required main branch admits direct pushes from
+          # the App identity. See docs/orchestrator-app.md.
           args: release --clean
         env:
-          # GITHUB_TOKEN is used by goreleaser to create the GitHub
-          # Release on THIS repo (creating the release, uploading
-          # assets). It cannot write to thrillmade/homebrew-tap
-          # (cross-repo writes require a PAT) — but with --skip=homebrew
-          # we don't try.
+          # GITHUB_TOKEN scope: creating + uploading to the GitHub Release
+          # on THIS repo. Cannot write to thrillmade/homebrew-tap
+          # (cross-repo); that's why we mint the App token separately.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Real PAT for cross-repo push to thrillmade/homebrew-tap.
-          # Provisioned as org-level secret on thrillmade with
-          # SELECTED visibility including logmind.
-          HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+          # App installation token from steps.app_token. Scoped to
+          # thrillmade/homebrew-tap only, valid for 1 hour, automatically
+          # revoked when the job ends. Replaces the personal
+          # HOMEBREW_TAP_PAT secret (retired post-G1.f). Env-var name
+          # stays HOMEBREW_TAP_PAT so .goreleaser.yaml doesn't need a
+          # template change.
+          HOMEBREW_TAP_PAT: ${{ steps.app_token.outputs.token }}
           # Surfaced to scripts/sign-macos.sh (per-build post-hook). The
           # script no-ops if MACOS_CERTIFICATE is unset — in the real
           # release path all 5 are set so signing + notarization run.

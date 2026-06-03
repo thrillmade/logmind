@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (67 decisions)
+## 2026-06 (68 decisions)
 
-- **2026-06-02** — fix(B7): wire HOMEBREW_TAP_PAT now that it's provisioned *(main)* — [decisions.md](decisions.md)
-- *... 65 more decisions ...*
+- **2026-06-03** — Wire thrillmade-orchestrator[bot] App for cask-bump (G1.e.2) *(v1-go-rewrite)* — [decisions-branches/v1-go-rewrite.md](decisions-branches/v1-go-rewrite.md)
+- *... 66 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

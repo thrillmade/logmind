@@ -62,6 +62,10 @@ Thumbs.db
 skills-lock.json
 .agents/
 
+# Agent worktrees — per-session scratch trees created by Claude Code's
+# Agent(isolation: "worktree"). Local-only; never commit.
+.claude/worktrees/
+
 # Intentionally untracked: live in separate repos (homebrew-logmind tap)
 # or are superseded by pytest + CONTRIBUTING.md verification block.
 homebrew-logmind/
