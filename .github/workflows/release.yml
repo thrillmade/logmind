@@ -27,10 +27,9 @@ jobs:
           go-version: "1.22"
           cache: true
       - name: Import Apple codesign cert
-        if: ${{ github.event_name == 'push' || github.event.inputs.dry_run != 'true' }}
         uses: Apple-Actions/import-codesign-certs@v3
         with:
-          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
-          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          p12-file-base64: placeholder-base64
+          p12-password: placeholder-password
       - name: hello
         run: echo "release triggered for tag=${{ github.ref_name }} event=${{ github.event_name }}"
