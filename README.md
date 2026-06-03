@@ -23,44 +23,35 @@ a one-line summary to `docs/decisions.md` linking the PR + the branch
 detail. AGENTS.md is the canonical agent-instruction file; per-tool files
 (CLAUDE.md, .cursorrules, ...) are 2-line stubs pointing to it.
 
-## Installation
+## Install
 
 ```bash
 # Homebrew (recommended on macOS + Linux)
 brew install thrillmade/tap/logmind
 
-# curl one-liner
-curl -fsSL logmind.dev/install.sh | bash
+# Or — curl one-liner
+curl -fsSL https://logmind.dev/install.sh | sh
 ```
 
-The brew + curl paths deliver signed + notarized binaries from the
+Verify the install:
+
+```bash
+logmind --version  # logmind 1.0.0 (spec 0.1.0)
+```
+
+Both paths deliver signed + notarized binaries from the
 [GitHub Releases page](https://github.com/thrillmade/logmind/releases) —
 no Python toolchain, no pyenv shim version skew, no pip cache surprises.
 See [docs/install.md](docs/install.md) for the full install matrix
-(including `go install` for builds-from-source and the deprecated pip
-path for v0.6.x consumers).
+(`go install` for builds-from-source, manual binary download, checksum
+verification, and the legacy Python path).
 
-### v0.6.x (Python, deprecated)
-
-The legacy Python distribution still works for users pinned to v0.6.x
-consumer-repo workflows. Migration to the brew/curl binary is a one-line
-swap in your CI YAML — see [docs/install.md](docs/install.md#deprecated-python-install).
-
-```bash
-# Deprecated — pinned to v0.6.x; pre-cutover consumer repos only
-pipx install logmind  # OR: pip install logmind
-```
-
-## v1.0 Go rewrite in progress
-
-`main` ships the Python package (v0.6.x — current stable, on PyPI). The
-v1.0 Go rewrite lives on the long-lived
-[`v1-go-rewrite`](https://github.com/thrillmade/logmind/tree/v1-go-rewrite)
-branch and lands as wave PRs targeting that branch; the final
-`v1-go-rewrite → main` cutover PR becomes `v1.0.0`. Python source under
-`src/logmind/` stays put through the rewrite — both implementations
-coexist until cutover, gated by a byte-identical parity snapshot suite.
-See [`docs/plan.md`](docs/plan.md) for the wave breakdown.
+> **Heads up on `pip install logmind`** — the Python wheel is **frozen at
+> v0.6.16** as the last published Python release. New installs should use
+> the Go binary above. The PyPI package is kept on PyPI only to honour
+> old pinning; it receives no further updates. The [legacy install
+> section](#legacy-install-python-frozen-at-v0616) at the bottom has the
+> details for users migrating off it.
 
 ## Required repo settings
 
@@ -95,7 +86,7 @@ curl -fsSL https://raw.githubusercontent.com/thrillmade/reporulez/main/bin/apply
 ## Quick Start
 
 ```bash
-# If installed via pipx/brew, it's already available globally
+# After brew/curl install, `logmind` is globally available
 
 # Initialize in your project
 cd your-project
@@ -104,12 +95,7 @@ logmind init
 # OR — install the full SkDD toolchain (logmind + clud-bug) in one go:
 logmind init --with-skdd      # subprocesses to `npx clud-bug init` (requires Node 20+)
 
-# Log decisions - Python API
-from logmind import log
-log("Chose FastAPI over Flask",
-    reasoning="Need async/await for WebSocket handling")
-
-# Or use CLI
+# Log decisions via CLI
 logmind log "Use PostgreSQL for database" \
   -r "Need ACID compliance" \
   -a "MongoDB" -a "SQLite"
@@ -144,86 +130,41 @@ logmind config get git.auto_push
 logmind config set git.auto_push false
 
 # Upgrade logmind
-logmind update
-
-# Auto-log with decorators
-from logmind import log_decision, log_choice
-
-@log_decision(
-    decision="Authenticate user with {method}",
-    reasoning="Security checkpoint"
-)
-def authenticate(method="oauth"):
-    # Your auth code
-    return True
-
-@log_choice(
-    choices={
-        "redis": "Use Redis for caching",
-        "memory": "Use in-memory caching",
-    }
-)
-def select_cache():
-    return "redis" if is_production() else "memory"
+brew upgrade thrillmade/tap/logmind   # or re-run the curl installer
 ```
 
 ## Contributing / Development Setup
 
-Working on logmind itself? Set it up like any CLI tool:
+Working on logmind itself? It's a Go module — clone, build, run.
 
 ```bash
 # Clone the repo
 git clone https://github.com/thrillmade/logmind.git
 cd logmind
 
-# Install globally in editable mode (like npm, git, docker)
-pipx install -e .
-
-# Now just use it!
-logmind log "Add new feature" -r "Reasoning here"
-logmind show
-logmind search "keyword"
+# Build + install the dev binary
+go build -o ./bin/logmind ./cmd/logmind
+./bin/logmind --version
 
 # Run tests
-python3 -m venv venv
-source venv/bin/activate
-pip install -e ".[dev]"
-pytest
+go test ./...
 ```
 
-**Why pipx?** logmind is a CLI tool, not a library. It should be globally available like `git` or `npm`.
-
-## Framework Integrations
-
-```python
-# LangChain — auto-log agent decisions (pip install logmind[langchain])
-from logmind.integrations import LangChainLogger
-
-chain = LLMChain(llm=llm, callbacks=[LangChainLogger()])
-
-# Custom framework — subclass BaseIntegration
-from logmind.integrations.base import BaseIntegration
-
-class MyLogger(BaseIntegration):
-    def on_decision(self, output):
-        self.log(f"Chose: {output}", reasoning="My framework decided")
-```
-
-See [docs/custom-integrations.md](docs/custom-integrations.md) for patterns, examples, and publishing guide.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev loop (lint, snapshot
+tests, release workflow).
 
 ## Documentation
 
+- **[Install](docs/install.md)** - Full install matrix (brew, curl, go install, manual, legacy Python)
 - **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
 - **[AI Agent Files](docs/ai-agent-files.md)** - How logmind integrates with AI instruction files
-- **[Custom Integrations](docs/custom-integrations.md)** - Build integrations for any AI framework
 - **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
-- **Development Status** - All phases complete ✅
 
 ## How It Works
 
-1. **Install** logmind as a package
-2. **Init** creates `docs/` folder and inserts instructions into `CLAUDE.md` (preserving existing content)
-3. **Log** a decision - appends, archives old ones (keeps 20 recent), regenerates tree, commits, and pushes
+1. **Install** the `logmind` binary (brew / curl)
+2. **Init** creates `docs/` folder and inserts instructions into `AGENTS.md` (preserving existing content)
+3. **Log** a decision — appends, archives old ones (keeps 20 recent), regenerates tree, commits, and pushes
 4. **Context** AI agents read the 20 most recent decisions and current file structure
 
 ## Why logmind?
@@ -235,6 +176,32 @@ See [docs/custom-integrations.md](docs/custom-integrations.md) for patterns, exa
 - **Automatic:** Commits and pushes on every log
 
 See [docs/plan.md](docs/plan.md) for complete architecture and roadmap.
+
+## Legacy install (Python, frozen at v0.6.16)
+
+**Deprecated.** The Python wheel `logmind` is frozen at v0.6.16 — the last
+published Python release before the v1.0 Go rewrite. New installs should
+use the Go binary at the top of this README. The PyPI package stays
+listed only so consumer repos that pinned `logmind==0.6.x` keep
+resolving; it receives no further updates, no security backports, and no
+feature parity with v1.0+.
+
+If you're already on the Python wheel and want to migrate, swap one line
+in your install step:
+
+```bash
+# Before — pinned to v0.6.x Python wheel
+pipx install 'logmind==0.6.16'   # OR: pip install 'logmind==0.6.16'
+
+# After — Go binary, signed + notarized
+brew install thrillmade/tap/logmind
+# OR
+curl -fsSL https://logmind.dev/install.sh | sh
+```
+
+See [docs/install.md#legacy-python-install](docs/install.md#legacy-python-install)
+for the full migration matrix (CI YAML one-liners, dependency-import
+hand-off, and what features have moved or been retired).
 
 ---
 
