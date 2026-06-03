@@ -69,3 +69,11 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - homebrew cask auto-bump won't work until HOMEBREW_TAP_PAT is provisioned (TODO before v1.0.0 final)
 
 ---
+## 2026-06-02 21:08 - fix(B7): remove empty env: block from GoReleaser snapshot step
+
+**Reasoning:** Empty env: blocks (containing only comments after a prior cleanup) are invalid GitHub Actions YAML schema. GH startup_failure with no jobs created → the YAML parser rejects the workflow before any job runs
+
+**Implications:**
+- release.yml workflow should now START on next tag retrigger
+
+---

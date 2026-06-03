@@ -94,11 +94,6 @@ jobs:
         with:
           version: latest
           args: release --snapshot --clean --skip=publish,sign,notarize
-        env:
-          # HOMEBREW_TAP_PAT must be present even in snapshot mode
-          # because goreleaser parses the homebrew_casks block; we
-          # provide a placeholder so template evaluation succeeds.
-          # (removed; not needed)
 
       - name: GoReleaser release
         # Fires on the real release path (tag push), and also on the
