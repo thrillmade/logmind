@@ -10,3 +10,13 @@
 - patches both Python source (src/logmind/core/gitattributes.py) and Go port (internal/hooks/hooks.go) byte-identically
 
 ---
+## 2026-06-02 20:37 - fix(B2): update post-merge golden for symbolic-ref strip
+
+**Reasoning:** Go test TestPostMergeBody_MatchesGolden compares Go-rendered body against testdata/post-merge.golden. Adding the prefix-strip line in hooks.go required regenerating the golden file. Used go test -update to capture the new bytes
+
+**Alternatives considered:** skip the golden assertion — rejected: that's the parity gate
+
+**Implications:**
+- PR #129 CI should now go green
+
+---
