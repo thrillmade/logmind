@@ -25,3 +25,11 @@
 - rc3 release at f6c38ba stays canonical; v1.0.0 needs a fresh commit (this commit) plus the re-tag — that is exactly what comes next
 
 ---
+## 2026-06-03 12:04 - Link docs/orchestrator-app.md from AGENTS.md to satisfy check-links
+
+**Reasoning:** check-links workflow flagged docs/orchestrator-app.md as orphan markdown on PR #132 (the v1.0 cutover). The doc IS the canonical reference for the thrillmade-orchestrator[bot] App spec; adding a short Release-infrastructure section in AGENTS.md provides the inbound link and surfaces the App spec to agents working in this repo (which is exactly where the link belongs — release infra is project-level guidance).
+
+**Implications:**
+- Reduces blocking checks on the cutover PR to just paths-check (which is structural — PR diff exceeds GitHub 20k-line API limit and cannot be made to pass without splitting the cutover)
+
+---

@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (69 decisions)
+## 2026-06 (70 decisions)
 
-- **2026-06-03** — fix(B7): GORELEASER_CURRENT_TAG to disambiguate double-tagged commits *(v1-go-rewrite)* — [decisions-branches/v1-go-rewrite.md](decisions-branches/v1-go-rewrite.md)
-- *... 67 more decisions ...*
+- **2026-06-03** — Link docs/orchestrator-app.md from AGENTS.md to satisfy check-links *(v1-go-rewrite)* — [decisions-branches/v1-go-rewrite.md](decisions-branches/v1-go-rewrite.md)
+- *... 68 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
