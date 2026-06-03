@@ -18,3 +18,13 @@
 - If startup_failure persists, the bug is in the action ref or its with: schema. If success, the cause is the if: expression OR secret refs — test those next.
 
 ---
+## 2026-06-02 21:47 - bisect(B7-3): codesign step with if: false (forced skip)
+
+**Reasoning:** bisect-2 (codesign with NO if: + NO secrets) → startup_failure. Adding if: false to verify parser fails on STEP DEFINITION (uses:/with: schema), not on runtime resolution.
+
+**Alternatives considered:** Try different action ref tag (e.g. v3.0.0 vs v3)
+
+**Implications:**
+- If startup_failure persists, GitHub rejects the step definition outright. If success, step DEFINITION is fine but runtime resolution fails — narrow to specific input.
+
+---
