@@ -26,6 +26,18 @@ func SkillsDir(repoRoot string) string {
 	return filepath.Join(repoRoot, ".claude", "skills")
 }
 
+// SkillsPrivateDir returns the privacy-by-convention sibling of
+// SkillsDir: `.claude/skills-private/`. Skills placed here are treated
+// as private by `logmind skill push` — §8.2 first slice, layer 2.
+// We expose this as a helper (rather than inlining the join) so that
+// future logmind tooling (e.g., `logmind skill list --private`,
+// editor extensions, the eventual content-scanner in wave-2) can
+// pivot on the same canonical path. Sibling-folder convention
+// matches the Vault-style layout the master plan calls out at §8.2.
+func SkillsPrivateDir(repoRoot string) string {
+	return filepath.Join(repoRoot, ".claude", "skills-private")
+}
+
 // SkillDir returns the canonical directory for a skill of the given name.
 func SkillDir(repoRoot, name string) string {
 	return filepath.Join(SkillsDir(repoRoot), name)

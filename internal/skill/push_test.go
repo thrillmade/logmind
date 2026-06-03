@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/clierr"
 )
 
 // fakeRunner is a tiny gitRunner/ghRunner stub. Tests pre-load a
@@ -551,6 +553,341 @@ func TestPush_AcceptsValidSlugs(t *testing.T) {
 			}, git, newFakeRunner())
 			if err != nil {
 				t.Errorf("valid slug %q rejected: %v", name, err)
+			}
+		})
+	}
+}
+
+// --- §8.2 privacy gate, layers 1+2 ----------------------------------
+//
+// First slice of the master plan's belt-and-braces privacy gate. Layer
+// 3 (content scanner) + layer 4 (repo-visibility check) are queued for
+// wave-2 and intentionally NOT exercised here. These tests pin the
+// rejection paths (frontmatter markers + directory convention) and
+// assert no filesystem side-effects fire when the gate trips.
+//
+// Shared assertion helper: privacy-gate rejections must satisfy BOTH
+// errors.Is(err, ErrPrivateSkill) and errors.Is(err, clierr.ErrSilent)
+// so the cli layer can translate to exit-1-silent without re-printing,
+// and downstream code can recognise the rejection category by name.
+func assertPrivateSkillError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrPrivateSkill) {
+		t.Fatalf("want errors.Is(err, ErrPrivateSkill); got %v", err)
+	}
+	if !errors.Is(err, clierr.ErrSilent) {
+		t.Fatalf("want errors.Is(err, clierr.ErrSilent); got %v", err)
+	}
+}
+
+// writePrivateSkillUnderSkillsPrivate drops a SKILL.md at
+// `.claude/skills-private/<name>/SKILL.md` so the layer-2 directory
+// convention check can fire. extraFrontmatter is appended verbatim
+// inside the YAML block — used by the override test to insert a
+// `private: false` line and prove placement still wins.
+func writePrivateSkillUnderSkillsPrivate(t *testing.T, root, name, description, extraFrontmatter string) {
+	t.Helper()
+	dir := filepath.Join(root, ".claude", "skills-private", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir skills-private dir: %v", err)
+	}
+	body := "---\nname: " + name + "\ndescription: " + description + "\n"
+	if extraFrontmatter != "" {
+		body += extraFrontmatter
+		if !strings.HasSuffix(extraFrontmatter, "\n") {
+			body += "\n"
+		}
+	}
+	body += "---\n\n# Title\n\nBody text.\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
+// noFilesystemSideEffects pre-snapshots tempdir entries and asserts
+// the count is unchanged after pushWith returns. We deliberately
+// check entry count rather than diff trees — the directory the test
+// pre-created (e.g., `.claude/skills/demo/`) must of course still be
+// there; what we're proving is that pushWith did NOT create the
+// catalog cache dir, mutate the skill body, or otherwise touch the
+// filesystem AFTER the gate tripped.
+func noFilesystemSideEffects(t *testing.T, root string, before []os.DirEntry) {
+	t.Helper()
+	after, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("readdir after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("pushWith touched filesystem despite privacy-gate rejection: before=%d, after=%d",
+			len(before), len(after))
+	}
+}
+
+func TestPush_PrivateFrontmatter_RejectedBeforeClone(t *testing.T) {
+	// Layer 1 marker: `private: true`. Drop into the SKILL.md
+	// frontmatter so the existing CheckFrontmatter still passes (name +
+	// description present); the gate then catches the private flag and
+	// rejects before any clone work runs.
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "skills", "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: demo\ndescription: A trigger.\nprivate: true\n---\n\n# body\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-snapshot the .claude/ subtree state so we can prove pushWith
+	// didn't, e.g., create a catalog cache dir AT ALL. We snapshot the
+	// .claude/skills/demo/ dir specifically because that's where the
+	// test setup already wrote files; the root tempdir has the same
+	// shape before and after as long as the gate fires correctly.
+	skillDirEntries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout bytes.Buffer
+	_, err = pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         false, // not a dry-run: prove the gate beats real-clone path
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+
+	assertPrivateSkillError(t, err)
+
+	// Error message must point at the offending field by name + the
+	// catalog target so the user knows what to edit.
+	wantInOutput := []string{
+		"skill demo is marked private",
+		"private: true",
+		"not pushing to thrillmade/agent-skills",
+		"Remove the marker OR move the skill to a different catalog target",
+	}
+	for _, w := range wantInOutput {
+		if !strings.Contains(stdout.String(), w) {
+			t.Errorf("stdout missing %q:\n%s", w, stdout.String())
+		}
+	}
+
+	// Layer 1 fires AFTER reading SKILL.md but BEFORE clone — assert no
+	// `git clone` (or any other git call past the provenance preview)
+	// fired. The gate is supposed to reject before the gh-auth check
+	// too, so no `gh auth status` should have happened.
+	for _, c := range git.calls {
+		if len(c.Args) > 0 && c.Args[0] == "clone" {
+			t.Errorf("layer-1 gate let git clone fire: %+v", c)
+		}
+	}
+	if len(gh.calls) != 0 {
+		t.Errorf("layer-1 gate touched gh; calls: %+v", gh.calls)
+	}
+
+	// Skill dir entries unchanged (no in-place edits to SKILL.md or
+	// creation of sibling provenance files).
+	afterEntries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterEntries) != len(skillDirEntries) {
+		t.Errorf("layer-1 gate mutated skill dir: before=%d, after=%d",
+			len(skillDirEntries), len(afterEntries))
+	}
+}
+
+func TestPush_DoNotPromoteFrontmatter_Rejected(t *testing.T) {
+	// Alternate spelling: `do-not-promote: true`. Same rejection path
+	// as `private: true` — the gate honours both names because the
+	// catalog ecosystem hasn't settled on a single canonical field.
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "skills", "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: demo\ndescription: A trigger.\ndo-not-promote: true\n---\n\n# body\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, newFakeRunner(), newFakeRunner())
+
+	assertPrivateSkillError(t, err)
+
+	// The error message points at the do-not-promote field specifically,
+	// not at the generic "private" alias — the field that triggered the
+	// gate is what the user needs to find in their SKILL.md to fix.
+	if !strings.Contains(stdout.String(), "do-not-promote: true") {
+		t.Errorf("expected do-not-promote field named in error; got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "skill demo is marked private") {
+		t.Errorf("expected canonical rejection phrasing; got %q", stdout.String())
+	}
+}
+
+func TestPush_SkillsPrivateDir_RejectedByConvention(t *testing.T) {
+	// Layer 2: skill lives under .claude/skills-private/<name>/. No
+	// frontmatter private-flag needed — the directory placement alone
+	// is the signal. Reject without ever reading the body's frontmatter
+	// (we can't even know it's well-formed; the gate fires earlier).
+	root := t.TempDir()
+	writePrivateSkillUnderSkillsPrivate(t, root, "secret-skill", "A trigger.", "")
+
+	// Snapshot tempdir BEFORE — prove the layer-2 gate doesn't create a
+	// catalog cache dir or anything else after rejection. The
+	// .claude/skills-private/secret-skill/ subtree already exists from
+	// the writer above and is the baseline we compare against.
+	entriesBefore, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout bytes.Buffer
+	_, err = pushWith(PushOptions{
+		SkillName:      "secret-skill",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         false, // not a dry-run; prove the gate beats real-clone path
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+
+	assertPrivateSkillError(t, err)
+
+	wantInOutput := []string{
+		"skill secret-skill lives under .claude/skills-private/",
+		"treated as private by convention",
+		"Move to .claude/skills/secret-skill/",
+		"add private: false explicit override",
+	}
+	for _, w := range wantInOutput {
+		if !strings.Contains(stdout.String(), w) {
+			t.Errorf("stdout missing %q:\n%s", w, stdout.String())
+		}
+	}
+
+	// Layer 2 fires BEFORE the SKILL.md read — so no git or gh calls at
+	// all. Assert both runners stayed idle.
+	if len(git.calls) != 0 {
+		t.Errorf("layer-2 gate touched git; calls: %+v", git.calls)
+	}
+	if len(gh.calls) != 0 {
+		t.Errorf("layer-2 gate touched gh; calls: %+v", gh.calls)
+	}
+
+	// No filesystem mutation after the gate trips.
+	noFilesystemSideEffects(t, root, entriesBefore)
+}
+
+func TestPush_SkillsPrivateDir_BeatsExplicitFalseOverride(t *testing.T) {
+	// Override precedence: skill is under skills-private/, AND its
+	// frontmatter explicitly says `private: false`. Directory convention
+	// MUST still win — the master plan §8.2 model is that placement is
+	// the primary signal; the frontmatter override is for flipping a
+	// PUBLIC skill TO private, not for un-marking a private path.
+	//
+	// This test specifically pins the precedence so a future contributor
+	// can't accidentally "fix" the gate to defer to the frontmatter.
+	root := t.TempDir()
+	writePrivateSkillUnderSkillsPrivate(t, root, "secret-skill", "A trigger.",
+		"private: false")
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "secret-skill",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, newFakeRunner(), newFakeRunner())
+
+	assertPrivateSkillError(t, err)
+
+	// The rejection wording is the layer-2 message — NOT the layer-1
+	// frontmatter message — proving the dir gate fired first.
+	if !strings.Contains(stdout.String(), "lives under .claude/skills-private/") {
+		t.Errorf("expected layer-2 (dir-convention) rejection wording; got %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "frontmatter") {
+		t.Errorf("layer-1 message leaked even though layer-2 fired first; got %q", stdout.String())
+	}
+}
+
+func TestPush_HappyPath_NoPrivacyMarkers_Unaffected(t *testing.T) {
+	// Belt-and-braces sanity: a plain skill with no `private:` /
+	// `do-not-promote:` field, living under `.claude/skills/`, MUST
+	// still flow through the dry-run preflight unchanged. The privacy
+	// gate is purely additive — no regression on the existing path.
+	root := t.TempDir()
+	writeSampleSkill(t, root, "demo", "A precise trigger.")
+
+	git := newFakeRunner()
+	git.When([]string{"rev-parse", "HEAD"}, runReply{Stdout: "abcdef1234567\n"})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, newFakeRunner())
+	if err != nil {
+		t.Fatalf("happy path regressed under privacy gate: %v", err)
+	}
+	// Dry-run summary line should still fire — the gate doesn't
+	// short-circuit valid skills.
+	if !strings.Contains(stdout.String(), "ok skill: push demo dry-run") {
+		t.Errorf("dry-run summary missing — gate may have over-fired: %q", stdout.String())
+	}
+}
+
+func TestScanPrivateFrontmatterField_DetectsAllAcceptedSpellings(t *testing.T) {
+	// Unit-level coverage on the parser so we don't have to spin up a
+	// full pushWith for every boolean spelling. Both field names + all
+	// three YAML boolean-true spellings should match; common
+	// near-misses must NOT.
+	cases := []struct {
+		Name     string
+		Body     string
+		WantHit  bool
+		WantName string
+	}{
+		// True-positives — each field × each accepted boolean spelling.
+		{"private-true", "---\nname: a\ndescription: b\nprivate: true\n---\nbody", true, "private"},
+		{"private-yes", "---\nname: a\ndescription: b\nprivate: yes\n---\nbody", true, "private"},
+		{"private-on", "---\nname: a\ndescription: b\nprivate: on\n---\nbody", true, "private"},
+		{"private-TRUE-caps", "---\nname: a\ndescription: b\nprivate: TRUE\n---\nbody", true, "private"},
+		{"dnp-true", "---\nname: a\ndescription: b\ndo-not-promote: true\n---\nbody", true, "do-not-promote"},
+		{"indented-private", "---\nname: a\ndescription: b\n  private: true\n---\nbody", true, "private"},
+		// True-negatives — these must NOT trip the gate.
+		{"private-false", "---\nname: a\ndescription: b\nprivate: false\n---\nbody", false, ""},
+		{"private-no", "---\nname: a\ndescription: b\nprivate: no\n---\nbody", false, ""},
+		{"private-numeric-one", "---\nname: a\ndescription: b\nprivate: 1\n---\nbody", false, ""},
+		{"private-quoted-string", "---\nname: a\ndescription: b\nprivate: \"true\"\n---\nbody", false, ""},
+		{"no-frontmatter", "no frontmatter at all", false, ""},
+		{"unterminated-frontmatter", "---\nname: a\nprivate: true\n", false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			got, hit := scanPrivateFrontmatterField(c.Body)
+			if hit != c.WantHit {
+				t.Errorf("hit = %v; want %v (body=%q)", hit, c.WantHit, c.Body)
+			}
+			if got != c.WantName {
+				t.Errorf("field = %q; want %q", got, c.WantName)
 			}
 		})
 	}

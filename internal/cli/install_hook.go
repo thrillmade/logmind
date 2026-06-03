@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/clierr"
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
@@ -142,12 +143,11 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 	}
 }
 
-// ErrSilent is a sentinel that signals "exit 1 without cobra
-// printing the error again". The Python code uses sys.exit(1) after
-// already printing the error; we want the same byte-on-stdout shape
-// here, so the cobra layer must NOT re-print.
-//
-// cmd/logmind/main.go calls os.Exit(1) on any non-nil Execute()
-// return — combined with SilenceUsage and SilenceErrors below, the
-// effect matches Python's sys.exit(1) byte-for-byte.
-var ErrSilent = errors.New("logmind: exit 1")
+// ErrSilent is the cli-layer alias of clierr.ErrSilent. Backward-compat
+// shim so existing cli/* references (cobra hooks, tests) keep working
+// against `cli.ErrSilent` without each grabbing the clierr import. The
+// underlying variable is shared — `errors.Is(err, cli.ErrSilent)` and
+// `errors.Is(err, clierr.ErrSilent)` resolve to the same sentinel, so
+// cross-package wraps from `internal/skill/` continue to trigger the
+// same silent-exit path through cmd/logmind/main.go.
+var ErrSilent = clierr.ErrSilent

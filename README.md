@@ -124,6 +124,11 @@ logmind check-decisions       # run manually or in CI
 logmind agents list
 logmind agents add windsurf
 
+# Publish a local skill to the public catalog (local → catalog PR)
+logmind skill push critical-issues-only          # opens PR on thrillmade/agent-skills
+logmind skill push my-skill --dry-run            # preview without clone/push
+logmind skill push my-skill --catalog acme/private-skills
+
 # View and modify configuration
 logmind config list
 logmind config get git.auto_push
@@ -132,6 +137,25 @@ logmind config set git.auto_push false
 # Upgrade logmind
 brew upgrade thrillmade/tap/logmind   # or re-run the curl installer
 ```
+
+### `logmind skill push` privacy gate
+
+Skills are AUTHORED in the consumer repo first (`.claude/skills/<name>/SKILL.md`),
+then optionally promoted to a catalog repo via `logmind skill push`. Two
+layered guards keep proprietary skills from leaking into a public catalog:
+
+- **Frontmatter markers** — `private: true` or `do-not-promote: true` in
+  the SKILL.md frontmatter blocks the push before any clone happens. The
+  error message names the offending field so you know what to edit.
+- **Directory convention** — skills placed under
+  `.claude/skills-private/<name>/` are private by default (Vault-style).
+  Placement wins over an explicit `private: false` override; move the
+  skill to `.claude/skills/<name>/` if the push is intentional.
+
+There is no `--force` flag — these are guard rails, not toggles. See
+`logmind skill push --help` for the full surface. (Content-scanner and
+repo-visibility layers are queued for a follow-up release; see the
+master plan §8.2 for the four-layer model.)
 
 ## Contributing / Development Setup
 
