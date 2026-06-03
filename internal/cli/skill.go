@@ -20,12 +20,17 @@ import (
 
 // newSkillCmd wires the `logmind skill` subcommand group. Mirrors the
 // click group in cli.py:1904-1921. Children: new, test, bench, audit,
-// suggest.
+// suggest, push.
 //
 // Why one constructor that builds the whole tree: cobra parent
 // commands aren't usable without children. Bundling here keeps the
 // wiring + flag binding in one file so future readers don't chase
-// cross-file references for the five subcommands.
+// cross-file references for the six subcommands.
+//
+// `push` is the local→catalog promotion command — per plan §"Skill
+// suggestion cycle §4". Skills are authored locally first; push opens
+// a PR on a catalog repo (default thrillmade/agent-skills) to share
+// them. The catalog is downstream; there is no inverse pull command.
 func newSkillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
@@ -40,7 +45,8 @@ Sub-commands:
   test     Validate SKILL.md against spec + logmind checks
   bench    Measure per-call token cost
   audit    List every SKILL.md with staleness signals
-  suggest  Surface repeated decision patterns that may justify a skill`,
+  suggest  Surface repeated decision patterns that may justify a skill
+  push     Publish a local SKILL.md to a catalog repo via PR (local → catalog)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -51,6 +57,7 @@ Sub-commands:
 	cmd.AddCommand(newSkillBenchCmd())
 	cmd.AddCommand(newSkillAuditCmd())
 	cmd.AddCommand(newSkillSuggestCmd())
+	cmd.AddCommand(newSkillPushCmd())
 	return cmd
 }
 
