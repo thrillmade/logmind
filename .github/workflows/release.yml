@@ -173,6 +173,17 @@ jobs:
           # the App identity. See docs/orchestrator-app.md.
           args: release --clean
         env:
+          # Pin the release version to the workflow's ref. GoReleaser
+          # otherwise calls `git describe --tags` to determine the tag,
+          # which is ambiguous when two tags point at the same commit
+          # (e.g. tagging v1.0.0 on the same SHA as v1.0.0-rc3 — observed
+          # 2026-06-03 G1.g: the v1.0.0 run rebuilt the rc3 artifacts and
+          # tried to re-upload them to the rc3 GitHub Release, hitting 422
+          # already_exists). Setting GORELEASER_CURRENT_TAG forces the
+          # value from github.ref_name, the actual tag that triggered the
+          # workflow. Conditional on event_name to avoid clobbering
+          # snapshot mode (where ref_name is a branch, not a tag).
+          GORELEASER_CURRENT_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
           # GITHUB_TOKEN scope: creating + uploading to the GitHub Release
           # on THIS repo. Cannot write to thrillmade/homebrew-tap
           # (cross-repo); that's why we mint the App token separately.
