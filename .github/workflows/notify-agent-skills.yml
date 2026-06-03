@@ -39,23 +39,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install logmind + anthropic SDK
+      - name: Install anthropic SDK
         run: |
           set -euo pipefail
-          # Install the just-released logmind from PyPI. The notify
-          # workflow runs AFTER publish.yml in the release chain, so
-          # the version is available. Pin to the tagged version so
-          # this step's behavior matches what consumers will see.
-          VERSION="${TAG#v}"
-          # Wait briefly for PyPI propagation — publish.yml also
-          # waits, but the GitHub-Actions runner's view of PyPI is
-          # sometimes behind. Best-effort.
-          for i in $(seq 1 18); do
-            if pip install "logmind==${VERSION}" 2>/dev/null; then break; fi
-            echo "  pip install logmind==${VERSION} attempt ${i}/18 — retrying in 10s"
-            sleep 10
-          done
-          pip install logmind=="${VERSION}"  # final attempt; fail loud if still unavailable
+          # v1.0 cutover note: PR #137 deleted the Python source tree
+          # including `logmind.core.changelog`, so we no longer
+          # `pip install logmind==<TAG>` here — the changelog slice is
+          # now produced by the vendored `parse_changelog.py` script
+          # below, which has zero non-stdlib deps. Only the anthropic
+          # SDK remains (still used by `.github/scripts/propose_skill_update.py`
+          # to call Claude for the SKILL.md diff proposal).
+          #
+          # The PyPI propagation/retry dance we used to need also goes
+          # away as a side effect: there's no `pip install logmind` to
+          # race against publish.yml anymore.
           pip install anthropic
 
       - name: Determine previous tag (for CHANGELOG slice)
@@ -80,23 +77,20 @@ jobs:
           PREV_TAG: ${{ steps.prev.outputs.tag }}
         run: |
           set -euo pipefail
-          # Strip leading v from version tags before passing to
-          # extract_sections_between, which expects bare X.Y.Z.
-          AFTER="${PREV_TAG#v}"
-          UP_TO="${TAG#v}"
+          # Calls the vendored standalone script (zero non-stdlib deps)
+          # that replaced `from logmind.core.changelog import
+          # extract_sections_between` after PR #137 deleted the Python
+          # source tree. Script resolves the CHANGELOG file from
+          # `docs/changelog-python.md` (new home) with a fallback to
+          # top-level `CHANGELOG.md` for older checkouts.
+          #
+          # Long-term: replace with `logmind changelog --since <prev>`
+          # once that Go subcommand exists (tracked as a follow-up).
           mkdir -p /tmp/notify
-          python3 - <<PY
-          from pathlib import Path
-          from logmind.core.changelog import extract_sections_between
-          text = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          section = extract_sections_between(
-              text,
-              after="${AFTER}" or None,
-              up_to="${UP_TO}",
-          )
-          Path("/tmp/notify/changelog-section.md").write_text(section, encoding="utf-8")
-          print(f"  Extracted {len(section)} chars of CHANGELOG section")
-          PY
+          python3 .github/scripts/parse_changelog.py \
+            --since "${PREV_TAG}" \
+            --up-to "${TAG}" \
+            --out /tmp/notify/changelog-section.md
 
       - name: Fetch current SKILL.md from agent-skills
         env:
@@ -181,11 +175,14 @@ jobs:
           git checkout -b "$BRANCH"
 
           # Always write the stub TODO file with full context.
+          # CHANGELOG file moved to docs/changelog-python.md in PR #137
+          # (Python source removal). The path here is rendered into
+          # markdown reviewers click — point at the new location.
           mkdir -p .skill-update-todo
           {
             echo "# logmind ${TAG} — skill update context"
             echo
-            echo "**CHANGELOG diff**: https://github.com/thrillmade/logmind/blob/${TAG}/CHANGELOG.md"
+            echo "**CHANGELOG diff**: https://github.com/thrillmade/logmind/blob/${TAG}/docs/changelog-python.md"
             echo "**Release URL**: https://github.com/thrillmade/logmind/releases/tag/${TAG}"
             echo
             echo "## Claude's reasoning"
@@ -212,7 +209,7 @@ jobs:
           PR_BODY=$(cat <<EOF
           Automated notification from \`thrillmade/logmind\` — ${TAG} shipped.
 
-          **CHANGELOG**: [\`${TAG}\` on logmind](https://github.com/thrillmade/logmind/blob/${TAG}/CHANGELOG.md)
+          **CHANGELOG**: [\`${TAG}\` on logmind](https://github.com/thrillmade/logmind/blob/${TAG}/docs/changelog-python.md)
           **Release**: https://github.com/thrillmade/logmind/releases/tag/${TAG}
 
           ## Shape of this PR
@@ -245,6 +242,27 @@ jobs:
   # Fallback job: if the propose-skill-update job above failed (Anthropic
   # API down, PAT missing, etc.), open the v0.3.x-style issue so the
   # release still gets acknowledged.
+  #
+  # Idempotency rules (added 2026-06-03 after the v1.0.0 release wave
+  # — rc1 → rc2 → rc3 → v1.0.0 — produced 11 stale fallback issues on
+  # thrillmade/agent-skills):
+  #
+  #   1. Same-skill check (any age): if ANY open issue tagged
+  #      `from-logmind` already mentions this SKILL ("skills/logmind/SKILL.md"),
+  #      append a comment instead of opening a new one. This collapses
+  #      cascaded failures across a release wave onto a single tracker
+  #      until a maintainer triages it.
+  #
+  #   2. Daily-cap (rolling 24h): if any open `from-logmind` issue with
+  #      the canonical fallback title was opened in the last 24h,
+  #      comment instead of opening. Catches the case where rule #1
+  #      somehow misses (e.g. label not yet applied because a prior
+  #      run failed mid-create) but the workflow is still firing on
+  #      consecutive release attempts within a day.
+  #
+  # Both checks degrade gracefully — if `gh` rate-limits or the API
+  # returns nothing, we fall through to opening a fresh issue rather
+  # than silently swallowing the signal.
   fallback-issue:
     runs-on: ubuntu-latest
     needs: propose-skill-update
@@ -252,9 +270,11 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
     steps:
-      - name: Open fallback issue on agent-skills
+      - name: Open or update fallback issue on agent-skills
         env:
           GH_TOKEN: ${{ secrets.AGENT_SKILLS_NOTIFY_PAT }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
@@ -262,15 +282,17 @@ jobs:
             exit 0
           fi
 
+          TITLE="logmind ${TAG} shipped — review skills/logmind/SKILL.md (PR-shape notify failed, fallback)"
+
           BODY=$(cat <<EOF
           logmind \`${TAG}\` shipped but the v0.4.0 PR-shape notify workflow failed.
 
           Falling back to the v0.3.x issue notification. Review \`skills/logmind/SKILL.md\` manually for any user-facing changes:
 
-          - CHANGELOG: https://github.com/thrillmade/logmind/blob/${TAG}/CHANGELOG.md
+          - CHANGELOG: https://github.com/thrillmade/logmind/blob/${TAG}/docs/changelog-python.md
           - SKILL.md:  https://github.com/thrillmade/agent-skills/blob/main/skills/logmind/SKILL.md
 
-          The workflow run (for debugging): https://github.com/thrillmade/logmind/actions/runs/\${{ github.run_id }}
+          The workflow run (for debugging): https://github.com/thrillmade/logmind/actions/runs/${RUN_ID}
 
           Close as a no-op if this release is internal-only with no skill-relevant changes.
           EOF
@@ -282,12 +304,59 @@ jobs:
             --description "Auto-opened by logmind release notifier" \
             --force || true
 
+          # Idempotency rule #1: same-skill check (any age).
+          # The fallback is currently a single-skill notifier (skills/logmind/SKILL.md),
+          # so any open from-logmind issue is by-definition for the same skill.
+          # Pick the most recently updated one to comment on.
+          EXISTING_SAME_SKILL=$(gh issue list \
+            --repo thrillmade/agent-skills \
+            --state open \
+            --label from-logmind \
+            --search "skills/logmind/SKILL.md in:body" \
+            --json number,updatedAt \
+            --jq 'sort_by(.updatedAt) | reverse | .[0].number // ""' \
+            2>/dev/null || echo "")
+
+          # Idempotency rule #2: daily-cap (rolling 24h).
+          # Cutoff is "now minus 24h" in ISO-8601 UTC; gh's --search uses
+          # GitHub's date-comparison syntax (`created:>YYYY-MM-DDTHH:MM:SSZ`).
+          # Brace-quoted title substring matches GitHub issue search phrase syntax.
+          CUTOFF=$(date -u -d "24 hours ago" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+                   date -u -v-24H "+%Y-%m-%dT%H:%M:%SZ")
+          EXISTING_RECENT=$(gh issue list \
+            --repo thrillmade/agent-skills \
+            --state open \
+            --search "\"PR-shape notify failed, fallback\" in:title created:>${CUTOFF}" \
+            --json number,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[0].number // ""' \
+            2>/dev/null || echo "")
+
+          # Prefer same-skill match; fall through to daily-cap match.
+          TARGET="${EXISTING_SAME_SKILL:-${EXISTING_RECENT}}"
+
+          if [ -n "${TARGET}" ]; then
+            echo "::notice::Fallback already tracked in issue #${TARGET} — appending comment instead of opening a new one."
+            COMMENT=$(cat <<EOF
+          Fallback fired again at HEAD \`${HEAD_SHA}\` for tag \`${TAG}\`.
+
+          Workflow run: https://github.com/thrillmade/logmind/actions/runs/${RUN_ID}
+
+          (Idempotency rule active — see \`notify-agent-skills.yml\` \`fallback-issue\` job. Close this thread once the underlying issue is resolved; subsequent fallbacks will open a fresh tracker.)
+          EOF
+          )
+            gh issue comment "${TARGET}" \
+              --repo thrillmade/agent-skills \
+              --body "${COMMENT}"
+            exit 0
+          fi
+
+          # No existing tracker — open a fresh issue.
           gh issue create \
             --repo thrillmade/agent-skills \
-            --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md (PR-shape notify failed, fallback)" \
+            --title "${TITLE}" \
             --label "from-logmind" \
             --body "$BODY" \
             || gh issue create \
               --repo thrillmade/agent-skills \
-              --title "logmind ${TAG} shipped — review skills/logmind/SKILL.md (PR-shape notify failed, fallback)" \
+              --title "${TITLE}" \
               --body "$BODY"
