@@ -769,8 +769,8 @@ func TestPush_SkillsPrivateDir_RejectedByConvention(t *testing.T) {
 	wantInOutput := []string{
 		"skill secret-skill lives under .claude/skills-private/",
 		"treated as private by convention",
+		"directory placement wins (no override available at this layer)",
 		"Move to .claude/skills/secret-skill/",
-		"add private: false explicit override",
 	}
 	for _, w := range wantInOutput {
 		if !strings.Contains(stdout.String(), w) {

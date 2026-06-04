@@ -260,8 +260,9 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 	privateMD := filepath.Join(privateDir, "SKILL.md")
 	if _, statErr := os.Stat(privateMD); statErr == nil {
 		msg := fmt.Sprintf(
-			"skill %s lives under .claude/skills-private/ — treated as private by convention. "+
-				"Move to .claude/skills/%s/ OR add private: false explicit override.",
+			"skill %s lives under .claude/skills-private/ — treated as private by convention; "+
+				"directory placement wins (no override available at this layer). "+
+				"Move to .claude/skills/%s/ if you intend to push it.",
 			opts.SkillName, opts.SkillName)
 		fmt.Fprintf(opts.Stdout, "Error: %s\n", msg)
 		return res, newPrivateSkillError("%s", msg)
