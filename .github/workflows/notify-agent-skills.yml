@@ -344,10 +344,18 @@ jobs:
           (Idempotency rule active — see \`notify-agent-skills.yml\` \`fallback-issue\` job. Close this thread once the underlying issue is resolved; subsequent fallbacks will open a fresh tracker.)
           EOF
           )
-            gh issue comment "${TARGET}" \
-              --repo thrillmade/agent-skills \
-              --body "${COMMENT}"
-            exit 0
+            # Per clud-bug-review on PR #140: `gh issue comment` failure
+            # (network blip, API outage, transient 5xx) must not silently
+            # drop the signal. Fall through to opening a fresh issue if
+            # the comment attempt fails — losing the signal entirely would
+            # let a stuck workflow go unnoticed for days. Idempotency rule
+            # 2 (daily-cap) still bounds duplicate-open noise.
+            if gh issue comment "${TARGET}" \
+                 --repo thrillmade/agent-skills \
+                 --body "${COMMENT}"; then
+              exit 0
+            fi
+            echo "::warning::Comment on #${TARGET} failed; falling through to fresh issue (signal preservation per PR #140 review)."
           fi
 
           # No existing tracker — open a fresh issue.
