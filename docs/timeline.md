@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (82 decisions)
+## 2026-06 (83 decisions)
 
-- **2026-06-03** — Remove Python source tree post-cutover (G3.a consumers migrated) *(chore/post-cutover-python-cleanup)* — [decisions-branches/chore__post-cutover-python-cleanup.md](decisions-branches/chore__post-cutover-python-cleanup.md)
-- *... 80 more decisions ...*
+- **2026-06-03** — feat(skill push): privacy gate layers 1+2 (frontmatter + dir convention) (§8.2 first slice) *(feat/skill-push-privacy-gate-layers-1-2)* — [decisions-branches/feat__skill-push-privacy-gate-layers-1-2.md](decisions-branches/feat__skill-push-privacy-gate-layers-1-2.md)
+- *... 81 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
