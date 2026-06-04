@@ -36,6 +36,7 @@ logmind
 ├── internal
 │   ├── agents
 │   ├── cli
+│   ├── clierr
 │   ├── config
 │   ├── decisions
 │   ├── doctor

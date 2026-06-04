@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/clierr"
 )
 
 // Push errors. Wrapped via fmt.Errorf("... : %w", ...) downstream so
@@ -45,7 +47,40 @@ var (
 	// here at the entry point rather than scattering downstream
 	// validation across the helpers.
 	ErrInvalidSkillName = errors.New("invalid skill name")
+
+	// ErrPrivateSkill is returned when the local skill is marked private
+	// — either by frontmatter (`private: true` / `do-not-promote: true`)
+	// or by directory convention (`.claude/skills-private/<name>/`).
+	//
+	// First slice of the §8.2 privacy gate (master plan: belt-and-braces
+	// layer 1 + layer 2). Wraps clierr.ErrSilent via `fmt.Errorf("%w: %w",
+	// ErrPrivateSkill, clierr.ErrSilent)` at the call site so the CLI
+	// surface exits non-zero without re-printing on stderr — the
+	// human-facing rejection message is written to stdout before the
+	// error propagates. No `--force` flag intentionally: these are guard
+	// rails, not toggles. Users who genuinely need to push a
+	// skills-private skill must move it to `.claude/skills/<name>/` and
+	// clear the frontmatter markers (and accept the explicit promotion).
+	ErrPrivateSkill = errors.New("skill marked private (§8.2 privacy gate)")
 )
+
+// silentPrivate wraps a privacy-gate rejection so that
+// `errors.Is(err, ErrPrivateSkill)` and `errors.Is(err, clierr.ErrSilent)`
+// both succeed without needing custom error types. Returned only via
+// the helper below so the wrap chain is consistent across both layers.
+//
+// We use a dedicated helper (rather than `fmt.Errorf("%w: %w", ...)`
+// with two %w verbs) because Go's errors.Is walks ONE Unwrap chain at
+// a time — chained %w doesn't broadcast `Is` to both wrapped errors
+// in all stdlib versions. The errors.Join return value, however, is a
+// multi-error that errors.Is unwraps correctly across each element.
+func newPrivateSkillError(format string, args ...any) error {
+	return errors.Join(
+		fmt.Errorf(format, args...),
+		ErrPrivateSkill,
+		clierr.ErrSilent,
+	)
+}
 
 // skillNameRE constrains skill slugs to a kebab-safe shape: lowercase
 // alnum start, then alnum + `.`, `_`, `-`. Matches SPEC §1.10.1
@@ -210,6 +245,29 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 		return res, fmt.Errorf("%w: %q", ErrInvalidSkillName, opts.SkillName)
 	}
 
+	// 0.5. Privacy gate — LAYER 2 (directory convention). §8.2 first
+	// slice, belt-and-braces layer 2. Runs BEFORE any SKILL.md read so
+	// that a skills-private/<name>/ skill is rejected without touching
+	// its bytes — the directory placement itself is the signal. This
+	// also means the override case (`private: false` frontmatter inside
+	// skills-private/) is rejected at this gate WITHOUT us ever opening
+	// the file: directory convention wins over explicit-false. Layer 2
+	// fires regardless of whether `.claude/skills/<name>/` also exists;
+	// if both trees contain the same skill, the user's signal is "I
+	// have a private copy somewhere I don't want pushed" — we surface
+	// the conflict rather than silently preferring the public copy.
+	privateDir := filepath.Join(SkillsPrivateDir(opts.SourceRepoRoot), opts.SkillName)
+	privateMD := filepath.Join(privateDir, "SKILL.md")
+	if _, statErr := os.Stat(privateMD); statErr == nil {
+		msg := fmt.Sprintf(
+			"skill %s lives under .claude/skills-private/ — treated as private by convention; "+
+				"directory placement wins (no override available at this layer). "+
+				"Move to .claude/skills/%s/ if you intend to push it.",
+			opts.SkillName, opts.SkillName)
+		fmt.Fprintf(opts.Stdout, "Error: %s\n", msg)
+		return res, newPrivateSkillError("%s", msg)
+	}
+
 	// 1. Validate skill exists + has valid frontmatter.
 	skillDir := SkillDir(opts.SourceRepoRoot, opts.SkillName)
 	mdPath := MDPath(opts.SourceRepoRoot, opts.SkillName)
@@ -226,6 +284,30 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 	if check := CheckFrontmatter(string(body)); !check.OK {
 		fmt.Fprintf(opts.Stdout, "Error: %s\n", check.Message)
 		return res, fmt.Errorf("invalid frontmatter: %s", check.Message)
+	}
+
+	// 1.5. Privacy gate — LAYER 1 (frontmatter markers). §8.2 first
+	// slice, belt-and-braces layer 1. Runs AFTER CheckFrontmatter so
+	// the structural validation is well-formed before we look for the
+	// privacy fields. Two equivalent markers — `private: true` and
+	// `do-not-promote: true` — are both honoured because skill authors
+	// adopt different conventions across the catalog ecosystem and
+	// we'd rather catch both than litigate naming. No `--force` flag:
+	// these markers are guard rails; users who genuinely want to push
+	// remove the marker (and accept the explicit promotion). Layers 3
+	// (content scanner) + 4 (repo-visibility check) are queued for
+	// wave-2 (see master plan §8.2).
+	if field, hit := scanPrivateFrontmatterField(string(body)); hit {
+		catalog := opts.CatalogTarget
+		if catalog == "" {
+			catalog = "(catalog)"
+		}
+		msg := fmt.Sprintf(
+			"skill %s is marked private (frontmatter %s: true); not pushing to %s. "+
+				"Remove the marker OR move the skill to a different catalog target via --catalog or .logmind/config.yml.",
+			opts.SkillName, field, catalog)
+		fmt.Fprintf(opts.Stdout, "Error: %s\n", msg)
+		return res, newPrivateSkillError("%s", msg)
 	}
 
 	// Companion files: anything under .claude/skills/<name>/ EXCEPT
@@ -587,6 +669,69 @@ func summarizeDescription(body string) string {
 		}
 	}
 	return ""
+}
+
+// privateFrontmatterFields holds the field NAMES (not values) we treat
+// as the §8.2 layer-1 privacy markers. Both spellings are honoured —
+// the catalog ecosystem hasn't settled on a single name and we'd
+// rather catch both than wait for consensus. Add new aliases here as
+// the convention evolves; the scanner is generic on the field list.
+var privateFrontmatterFields = []string{"private", "do-not-promote"}
+
+// privateFieldRE is constructed at init time from privateFrontmatterFields.
+// Anchored multi-line so an "indented" private: true (one level of
+// indent, as some authors prefer under a `metadata:` block) still
+// triggers — same shape as frontmatterNameRE in validate.go.
+//
+// Why we accept only `true`/`yes`/`on` (and case-insensitive) for the
+// value: YAML allows several boolean spellings, and the SPEC §1.10.1
+// frontmatter uses plain `true`. We accept the YAML 1.1 trio so
+// authors who pasted `private: yes` (common in older configs) still
+// get the gate. We deliberately DON'T accept `1` — a stray
+// `private: 1.5.0` (version string typed into the wrong field) would
+// false-positive. Strings need to be unambiguous booleans.
+var privateFieldRE = func() *regexp.Regexp {
+	// Build pattern: `(?im)^\s*(private|do-not-promote)\s*:\s*(true|yes|on)\s*$`
+	// (?i) case-insensitive on the keyword + value;
+	// (?m) `^`/`$` anchor per-line.
+	keys := strings.Join(privateFrontmatterFields, "|")
+	return regexp.MustCompile(`(?im)^\s*(` + keys + `)\s*:\s*(true|yes|on)\s*$`)
+}()
+
+// scanPrivateFrontmatterField inspects SKILL.md frontmatter for any
+// §8.2 layer-1 privacy marker. Returns (matched-field-name, true) on a
+// hit and ("", false) otherwise. The matched-field-name is what we
+// surface in the user-facing error so the rejection points at the
+// exact line they need to edit.
+//
+// Parser shape mirrors summarizeDescription: pull the frontmatter
+// slice, then run a per-line scan. We don't reach for a full YAML
+// parser here — the SKILL.md frontmatter is well-behaved and CheckFrontmatter
+// already validated structure; a regex match keeps the dependency
+// footprint zero. If the spec ever grows nested privacy fields (e.g.
+// `policy:\n  visibility: private`) we'll swap this for go-yaml.
+//
+// Returns ("", false) when:
+//   - body has no frontmatter,
+//   - the frontmatter is unterminated,
+//   - no privacy marker line is present, or
+//   - the value isn't an unambiguous boolean-true.
+func scanPrivateFrontmatterField(body string) (string, bool) {
+	if !strings.HasPrefix(body, "---") {
+		return "", false
+	}
+	end := strings.Index(body[4:], "\n---")
+	if end == -1 {
+		return "", false
+	}
+	fm := body[4 : 4+end]
+	m := privateFieldRE.FindStringSubmatch(fm)
+	if m == nil {
+		return "", false
+	}
+	// m[1] is the captured field name. Normalise to lowercase so the
+	// error message uses canonical spelling regardless of source casing.
+	return strings.ToLower(m[1]), true
 }
 
 // renderProvenance writes the YAML doc the catalog ships next to

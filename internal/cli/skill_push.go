@@ -49,6 +49,16 @@ You must have ` + "`" + `gh auth login` + "`" + ` configured with write access t
 catalog repo (or be in an org where ` + "`" + `gh` + "`" + ` can open PRs on the
 catalog).
 
+Privacy gate (§8.2, layers 1+2):
+  - Frontmatter markers ` + "`" + `private: true` + "`" + ` or ` + "`" + `do-not-promote: true` + "`" + `
+    in SKILL.md block the push before any clone happens.
+  - Skills placed under ` + "`" + `.claude/skills-private/<name>/` + "`" + ` are treated as
+    private by directory convention; placement wins over an explicit
+    ` + "`" + `private: false` + "`" + ` override.
+  - Both layers exit non-zero with an actionable message; there is no
+    ` + "`" + `--force` + "`" + ` flag. Move the skill out of the private path or
+    remove the marker if the push is intentional.
+
 Examples:
   logmind skill push critical-issues-only
   logmind skill push my-skill --catalog acme/private-skills
@@ -91,11 +101,19 @@ func runSkillPush(cwd, name, catalogFlag string, dryRun bool, stdout io.Writer) 
 		// Translate the known-shape errors into ErrSilent so the user
 		// sees the message we already printed (no double-print on
 		// stderr). Anything else is a real failure.
+		//
+		// ErrPrivateSkill already wraps clierr.ErrSilent at construction
+		// time (via errors.Join in newPrivateSkillError), so a generic
+		// `errors.Is(err, ErrSilent)` would also catch it — but we keep
+		// the explicit case here for grep-ability + so future readers
+		// see the privacy gate in the same translation table as the
+		// other user-input rejections.
 		switch {
 		case errors.Is(err, skill.ErrSkillNotFound),
 			errors.Is(err, skill.ErrInvalidCatalogTarget),
 			errors.Is(err, skill.ErrGhNotFound),
-			errors.Is(err, skill.ErrGhNotAuthed):
+			errors.Is(err, skill.ErrGhNotAuthed),
+			errors.Is(err, skill.ErrPrivateSkill):
 			return ErrSilent
 		}
 		return err

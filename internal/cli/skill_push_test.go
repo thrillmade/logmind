@@ -196,6 +196,72 @@ func TestSkillPush_InvalidCatalogReturnsErrSilent(t *testing.T) {
 	})
 }
 
+// TestSkillPush_PrivateFrontmatterReturnsErrSilent — §8.2 first slice,
+// layer 1 (frontmatter marker). The cli layer must translate
+// skill.ErrPrivateSkill to ErrSilent so cobra exits non-zero without
+// re-printing the rejection message. The user already saw it on
+// stdout from skill.pushWith.
+func TestSkillPush_PrivateFrontmatterReturnsErrSilent(t *testing.T) {
+	withTempCwd(t, func(dir string) {
+		// Skill with `private: true` in frontmatter — frontmatter
+		// validation should pass (name + description present), then the
+		// layer-1 gate trips on the privacy field.
+		skillDir := filepath.Join(dir, ".claude", "skills", "demo")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: demo\ndescription: A trigger.\nprivate: true\n---\n\n# body\n"
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out bytes.Buffer
+		err := runSkillPush(dir, "demo", "", true, &out)
+		if !errors.Is(err, ErrSilent) {
+			t.Fatalf("expected ErrSilent; got %v", err)
+		}
+		// Note: the cli layer returns ErrSilent directly (not the wrapped
+		// skill.ErrPrivateSkill) to match the existing translation pattern
+		// established for ErrSkillNotFound and friends. The
+		// ErrPrivateSkill identity is asserted at the skill-package layer
+		// (internal/skill/push_test.go); here we just verify the message
+		// reached stdout and the silent-exit path triggered.
+		if !strings.Contains(out.String(), "marked private (frontmatter private: true)") {
+			t.Errorf("private rejection: stdout = %q", out.String())
+		}
+	})
+}
+
+// TestSkillPush_SkillsPrivateDirReturnsErrSilent — §8.2 first slice,
+// layer 2 (directory convention). Same cli-translation contract as
+// layer 1; the rejection wording differs but the exit-1-silent path
+// is identical.
+func TestSkillPush_SkillsPrivateDirReturnsErrSilent(t *testing.T) {
+	withTempCwd(t, func(dir string) {
+		// Skill placed under .claude/skills-private/<name>/ — layer 2
+		// rejects without ever reading the body's frontmatter.
+		skillDir := filepath.Join(dir, ".claude", "skills-private", "secret")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: secret\ndescription: A trigger.\n---\n\n# body\n"
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out bytes.Buffer
+		err := runSkillPush(dir, "secret", "", true, &out)
+		if !errors.Is(err, ErrSilent) {
+			t.Fatalf("expected ErrSilent; got %v", err)
+		}
+		// See sibling note above re: cli layer dropping the underlying
+		// ErrPrivateSkill identity at translation time.
+		if !strings.Contains(out.String(), "lives under .claude/skills-private/") {
+			t.Errorf("skills-private rejection: stdout = %q", out.String())
+		}
+	})
+}
+
 func TestResolveCatalogTarget_PrecedenceFlagWinsConfig(t *testing.T) {
 	withTempCwd(t, func(dir string) {
 		writeConfig(t, dir, "catalog_target: from-config/repo\n")
