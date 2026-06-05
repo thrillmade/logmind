@@ -141,21 +141,30 @@ brew upgrade thrillmade/tap/logmind   # or re-run the curl installer
 ### `logmind skill push` privacy gate
 
 Skills are AUTHORED in the consumer repo first (`.claude/skills/<name>/SKILL.md`),
-then optionally promoted to a catalog repo via `logmind skill push`. Two
+then optionally promoted to a catalog repo via `logmind skill push`. Four
 layered guards keep proprietary skills from leaking into a public catalog:
 
-- **Frontmatter markers** — `private: true` or `do-not-promote: true` in
-  the SKILL.md frontmatter blocks the push before any clone happens. The
-  error message names the offending field so you know what to edit.
-- **Directory convention** — skills placed under
+- **Layer 1 — frontmatter markers** — `private: true` or `do-not-promote: true`
+  in the SKILL.md frontmatter blocks the push before any clone happens.
+- **Layer 2 — directory convention** — skills placed under
   `.claude/skills-private/<name>/` are private by default (Vault-style).
-  Placement wins over an explicit `private: false` override; move the
-  skill to `.claude/skills/<name>/` if the push is intentional.
+  Placement wins over an explicit `private: false` override.
+- **Layer 3 — content scanner** — every SKILL.md body is scanned for
+  credential-shaped tokens (Stripe, Slack, GitHub, npm, AWS, GCP),
+  internal-process keywords (`confidential`, `proprietary`, `nda`, …),
+  org-internal domain references (configurable via `.logmind/config.yml
+  privacy_scanner.org_domains`), and local-machine paths (`/Users/<name>/`,
+  `/home/<name>/`). Hits are block-severity (rejects the push) or
+  warn-severity (prints to stderr, continues). Config can WIDEN the
+  deny set but never weaken the hardcoded baseline.
+- **Layer 4 — repo-visibility check** — if the source repo is private
+  (or GHEC "internal") and the catalog target is public, the push is
+  rejected. Set `allow_promote_from_private: true` in
+  `.logmind/config.yml` to acknowledge cross-visibility promotion.
+  Layers 1-3 still run.
 
 There is no `--force` flag — these are guard rails, not toggles. See
-`logmind skill push --help` for the full surface. (Content-scanner and
-repo-visibility layers are queued for a follow-up release; see the
-master plan §8.2 for the four-layer model.)
+`logmind skill push --help` for the full surface.
 
 ## Contributing / Development Setup
 

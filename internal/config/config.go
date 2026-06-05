@@ -44,6 +44,47 @@ type Config struct {
 	// architecture": skills live IN the consumer repo first; this is the
 	// downstream catalog destination, never an inbound source.
 	CatalogTarget string `yaml:"catalog_target"`
+
+	// PrivacyScanner is the §8.2 wave-2 layer-3 (content-scanner)
+	// config. Empty by default — the scanner's hardcoded baseline
+	// (credential prefixes + canonical internal-process keywords)
+	// fires regardless; config purely WIDENS the deny set. See
+	// `internal/skill/scanner.go` for the baseline definitions.
+	PrivacyScanner PrivacyScannerConfig `yaml:"privacy_scanner"`
+
+	// AllowPromoteFromPrivate is the §8.2 wave-2 layer-4 opt-out flag.
+	// When false (default), pushing a skill from a private source repo
+	// to a public catalog is rejected. When true, the cross-visibility
+	// check records the visibility shape but doesn't block; layers
+	// 1-3 still run unchanged.
+	AllowPromoteFromPrivate bool `yaml:"allow_promote_from_private"`
+}
+
+// PrivacyScannerConfig is the typed shape of the `privacy_scanner:`
+// section. Mirrors `skill.ScannerConfig` — kept as a separate type
+// here so the YAML tags + the zero-value defaults stay in the config
+// package while the scanner code keeps a clean interface free of
+// YAML tag noise.
+type PrivacyScannerConfig struct {
+	// Keywords is an additive list of substrings. Each one is matched
+	// case-insensitively against SKILL.md body text. Default severity
+	// is "block" (same as the baseline keyword category). Merge with
+	// the hardcoded baseline — config can WIDEN, never weaken.
+	Keywords []string `yaml:"keywords"`
+
+	// OrgDomains lists internal-domain TLD-bearing strings (e.g.
+	// "thrillmade.internal", "thrillmade.local"). Each entry is
+	// wrapped in a regex matching `<host>.<domain>` references in
+	// the body. Default severity is "warn" — promote via
+	// SeverityOverrides to widen.
+	OrgDomains []string `yaml:"org_domains"`
+
+	// SeverityOverrides maps category Kind ("credential", "keyword",
+	// "org-domain", "local-path") to severity ("block" or "warn").
+	// Used to WIDEN baseline-warn categories. Attempting to weaken
+	// baseline-block categories (credential, keyword) is silently
+	// ignored — the baseline stays in force.
+	SeverityOverrides map[string]string `yaml:"severity_overrides"`
 }
 
 // GitConfig mirrors the `git:` section.
@@ -114,6 +155,14 @@ func DefaultConfig() Config {
 		// Default catalog target. The catalog is downstream of every
 		// consumer repo — never the other way around (End State #5).
 		CatalogTarget: "thrillmade/agent-skills",
+		// PrivacyScanner: zero value — empty lists, no severity
+		// overrides. The scanner's hardcoded baseline still fires;
+		// users opt INTO additional patterns via .logmind/config.yml.
+		PrivacyScanner: PrivacyScannerConfig{},
+		// AllowPromoteFromPrivate: false. Safe-default: a private
+		// source → public catalog push gets blocked unless the user
+		// explicitly opts in.
+		AllowPromoteFromPrivate: false,
 	}
 }
 
@@ -205,6 +254,21 @@ func DefaultMap() *OrderedMap {
 	// because it's a single scalar — keeping the multi-line sections
 	// grouped at the top reads better in `logmind config list`.
 	root.Set("catalog_target", "thrillmade/agent-skills")
+
+	// privacy_scanner: §8.2 wave-2 layer-3 (content-scanner) config.
+	// Empty defaults — the scanner's hardcoded baseline still fires
+	// regardless. Users WIDEN the deny set via these keys; weakening
+	// the baseline is impossible by design (see scanner.go contract).
+	privacyScanner := NewOrderedMap()
+	privacyScanner.Set("keywords", []any{})
+	privacyScanner.Set("org_domains", []any{})
+	privacyScanner.Set("severity_overrides", NewOrderedMap())
+	root.Set("privacy_scanner", privacyScanner)
+
+	// allow_promote_from_private: §8.2 wave-2 layer-4 opt-out. Safe
+	// default is false — cross-visibility pushes (private source →
+	// public catalog) get blocked unless the user explicitly opts in.
+	root.Set("allow_promote_from_private", false)
 
 	return root
 }

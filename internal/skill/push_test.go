@@ -130,9 +130,25 @@ func TestPush_DryRun_HappyPath(t *testing.T) {
 		t.Errorf("CatalogTarget = %q; want %q", got, want)
 	}
 
-	// Dry-run must NOT touch gh.
-	if len(gh.calls) != 0 {
-		t.Errorf("dry-run touched gh; calls: %+v", gh.calls)
+	// Dry-run must NOT touch `gh auth status` or `gh pr create` —
+	// those are auth-and-mutation calls reserved for the real push
+	// path. The §8.2 wave-2 visibility lookup (`gh api …`) DOES fire
+	// on dry-run because layers 1-4 are the point of the command and
+	// skipping the gate on `--dry-run` would silently allow the leak
+	// the gate exists to catch. Assert the allowed/disallowed split
+	// explicitly so a future refactor can't accidentally regress
+	// either way.
+	for _, c := range gh.calls {
+		if len(c.Args) == 0 {
+			continue
+		}
+		switch c.Args[0] {
+		case "api":
+			// Layer-4 visibility lookup. Allowed.
+			continue
+		default:
+			t.Errorf("dry-run unexpectedly touched gh %v", c.Args)
+		}
 	}
 }
 
@@ -916,4 +932,566 @@ func TestPush_NilStdoutDefaultsToDiscard(t *testing.T) {
 	}
 	// (Test relies on the absence of a panic. No further assertion.)
 	_ = io.Discard
+}
+
+// --- §8.2 wave-2 privacy gate, layers 3+4 ---------------------------
+//
+// Integration tests: prove the layer-3 (content scanner) and layer-4
+// (repo-visibility) gates wire into pushWith correctly. Unit-level
+// scanner + visibility behaviour is covered in scanner_test.go and
+// visibility_test.go; here we pin the gate sequencing, the error
+// wrap shape, the "no filesystem side-effects on rejection" contract,
+// and the dry-run-still-fires-the-gate guarantee.
+//
+// Shared helper: assertPrivacyHitError walks the error wrap chain so
+// callers can distinguish layer-3 from layer-4 rejections by sentinel.
+func assertPrivacyHitError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrPrivacyScannerHit) {
+		t.Fatalf("want errors.Is(err, ErrPrivacyScannerHit); got %v", err)
+	}
+	if !errors.Is(err, clierr.ErrSilent) {
+		t.Fatalf("want errors.Is(err, clierr.ErrSilent); got %v", err)
+	}
+}
+
+func assertCrossVisibilityError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrCrossVisibilityPush) {
+		t.Fatalf("want errors.Is(err, ErrCrossVisibilityPush); got %v", err)
+	}
+	if !errors.Is(err, clierr.ErrSilent) {
+		t.Fatalf("want errors.Is(err, clierr.ErrSilent); got %v", err)
+	}
+}
+
+// writeSkillWithBody is a richer counterpart to writeSampleSkill that
+// lets the caller control the SKILL.md body — needed for the
+// content-scanner cases where the leak shape lives in the body, not
+// the frontmatter.
+func writeSkillWithBody(t *testing.T, root, name, description, extraBody string) {
+	t.Helper()
+	dir := filepath.Join(root, ".claude", "skills", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	body := "---\nname: " + name + "\ndescription: " + description + "\n---\n\n" + extraBody + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
+func TestPush_Layer3_CredentialInBody_RejectedBeforeClone(t *testing.T) {
+	// A skill that pastes a Stripe live key into its body must be
+	// rejected with ErrPrivacyScannerHit before any clone runs.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Setup\n\nExport STRIPE_KEY=sk_live_DUMMYFIXTUREaBcD1234 before running.\n")
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout, stderr bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         false,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		Stderr:         &stderr,
+	}, git, gh)
+
+	assertPrivacyHitError(t, err)
+
+	// Error message names the credential category + redacts the token.
+	out := stdout.String()
+	for _, want := range []string{
+		"blocked by privacy-scanner",
+		"content-scanner/credential",
+		"stripe:",
+		"There is no --force flag",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q:\n%s", want, out)
+		}
+	}
+	// Token tail must NOT be in stdout (redaction enforces).
+	if strings.Contains(out, "EfGh5678IjKlMnOp") {
+		t.Errorf("stdout leaked the credential tail:\n%s", out)
+	}
+	// No clone fired.
+	for _, c := range git.calls {
+		if len(c.Args) > 0 && c.Args[0] == "clone" {
+			t.Errorf("layer-3 gate let git clone fire: %+v", c)
+		}
+	}
+}
+
+func TestPush_Layer3_KeywordInBody_Rejected(t *testing.T) {
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Confidential\n\nDo not share this skill outside the NDA.\n")
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout, stderr bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		Stderr:         &stderr,
+	}, git, gh)
+
+	assertPrivacyHitError(t, err)
+	if !strings.Contains(stdout.String(), "content-scanner/keyword") {
+		t.Errorf("expected keyword-category hit; got %q", stdout.String())
+	}
+}
+
+func TestPush_Layer3_LocalPath_WarnOnly_DoesNotBlock(t *testing.T) {
+	// A bare /Users/<name>/ path in the body should WARN (stderr) but
+	// not block the push.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Setup\n\nClone to /Users/alice/projects/demo and run.\n")
+
+	git := newFakeRunner()
+	git.When([]string{"rev-parse", "HEAD"}, runReply{Stdout: "abcdef1234567\n"})
+	gh := newFakeRunner()
+	var stdout, stderr bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		Stderr:         &stderr,
+	}, git, gh)
+	if err != nil {
+		t.Fatalf("warn-only hit shouldn't fail: %v", err)
+	}
+
+	// Warning hit lands on stderr.
+	if !strings.Contains(stderr.String(), "content-scanner/local-path") {
+		t.Errorf("expected local-path warning on stderr; got %q", stderr.String())
+	}
+	// Push still succeeds (dry-run summary printed).
+	if !strings.Contains(stdout.String(), "ok skill: push demo dry-run") {
+		t.Errorf("dry-run summary missing; warn hit shouldn't block: %q", stdout.String())
+	}
+}
+
+func TestPush_Layer3_SeverityOverridePromotesWarnToBlock(t *testing.T) {
+	// User config promotes "local-path" from "warn" to "block".
+	// Same body that previously warned should now hard-reject.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Setup\n\nClone to /Users/alice/projects/demo and run.\n")
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout, stderr bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		Stderr:         &stderr,
+		ScannerConfig: ScannerConfig{
+			SeverityOverrides: map[string]string{
+				KindLocalPath: SeverityBlock,
+			},
+		},
+	}, git, gh)
+	assertPrivacyHitError(t, err)
+	if !strings.Contains(stdout.String(), "content-scanner/local-path") {
+		t.Errorf("expected local-path block hit; got %q", stdout.String())
+	}
+}
+
+func TestPush_Layer3_BaselineUnaffectedByConfigWeakening(t *testing.T) {
+	// Even if the user tries to weaken the baseline (credential →
+	// warn), the gate still blocks. The ScannerConfig override is
+	// rejected because credential is in baselineBlockKinds.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Setup\n\nUse ghp_DUMMYFIXTUREabcdefghijklmnopqrstuv1234 for auth.\n")
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		ScannerConfig: ScannerConfig{
+			SeverityOverrides: map[string]string{
+				KindCredential: SeverityWarn, // attempt to weaken
+			},
+		},
+	}, git, gh)
+	assertPrivacyHitError(t, err)
+}
+
+func TestPush_Layer3_ConfigKeywordsAdditive(t *testing.T) {
+	// User adds an org-specific keyword. The scanner picks it up
+	// alongside the baseline.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Setup\n\nProject-thunder uses this skill.\n")
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		ScannerConfig: ScannerConfig{
+			Keywords: []string{"project-thunder"},
+		},
+	}, git, gh)
+	assertPrivacyHitError(t, err)
+	if !strings.Contains(stdout.String(), "content-scanner/keyword") {
+		t.Errorf("expected keyword hit for user-added 'project-thunder'; got %q",
+			stdout.String())
+	}
+}
+
+func TestPush_Layer3_OrgDomainsConfigured_Warns(t *testing.T) {
+	// Org-domain hit is warn-by-default. The user can promote, but
+	// the default flow should land on stderr without blocking.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# References\n\nSee api.thrillmade.internal for setup.\n")
+
+	git := newFakeRunner()
+	git.When([]string{"rev-parse", "HEAD"}, runReply{Stdout: "abcdef1234567\n"})
+	gh := newFakeRunner()
+	var stdout, stderr bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		Stderr:         &stderr,
+		ScannerConfig: ScannerConfig{
+			OrgDomains: []string{"thrillmade.internal"},
+		},
+	}, git, gh)
+	if err != nil {
+		t.Fatalf("org-domain warn shouldn't fail: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "content-scanner/org-domain") {
+		t.Errorf("expected org-domain warning on stderr; got %q", stderr.String())
+	}
+}
+
+func TestPush_Layer3_FiresOnDryRun(t *testing.T) {
+	// Critical contract: dry-run MUST run the content scanner.
+	// Skipping the gate on dry-run would silently allow the leak.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Confidential — do not share.\n")
+
+	git := newFakeRunner()
+	gh := newFakeRunner()
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+	assertPrivacyHitError(t, err)
+}
+
+func TestPush_Layer3_GateRunsAfterLayer1And2(t *testing.T) {
+	// Layer 1 (frontmatter marker) should fire BEFORE layer 3 — the
+	// marker is the user's explicit "don't push" signal and we
+	// shouldn't waste cycles scanning the body. We exercise this by
+	// crafting a skill that would trigger BOTH layers; the rejection
+	// must use layer-1 wording.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Setup\n\nConfidential.\n")
+	// Re-write the SKILL.md to include the private marker plus the
+	// keyword hit. writeSkillWithBody doesn't expose extra frontmatter,
+	// so we patch it directly.
+	mdPath := filepath.Join(root, ".claude", "skills", "demo", "SKILL.md")
+	body := "---\nname: demo\ndescription: A trigger.\nprivate: true\n---\n\n# Confidential.\n"
+	if err := os.WriteFile(mdPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, newFakeRunner(), newFakeRunner())
+
+	// Should be layer-1 sentinel, NOT layer-3.
+	if !errors.Is(err, ErrPrivateSkill) {
+		t.Fatalf("expected ErrPrivateSkill from layer-1; got %v", err)
+	}
+	if errors.Is(err, ErrPrivacyScannerHit) {
+		t.Errorf("layer-3 fired despite layer-1 marker — wrong sequence")
+	}
+	if !strings.Contains(stdout.String(), "is marked private") {
+		t.Errorf("expected layer-1 wording; got %q", stdout.String())
+	}
+}
+
+func TestPush_Layer4_PrivateToPublic_Blocked(t *testing.T) {
+	// Source repo is private (acme/private-app), target is the public
+	// default catalog. No allow_promote_from_private flag → layer 4
+	// rejects with ErrCrossVisibilityPush.
+	root := t.TempDir()
+	writeSampleSkill(t, root, "demo", "A trigger.")
+
+	git := newFakeRunner()
+	git.When([]string{"config", "--get", "remote.origin.url"},
+		runReply{Stdout: "https://github.com/acme/private-app.git"})
+	git.When([]string{"rev-parse", "HEAD"},
+		runReply{Stdout: "abcdef1234567\n"})
+
+	gh := newFakeRunner()
+	gh.When([]string{"api", "/repos/acme/private-app", "--jq", ".visibility"},
+		runReply{Stdout: "private"})
+	gh.When([]string{"api", "/repos/thrillmade/agent-skills", "--jq", ".visibility"},
+		runReply{Stdout: "public"})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+		// AllowPromoteFromPrivate defaults to false — the safe default.
+	}, git, gh)
+
+	assertCrossVisibilityError(t, err)
+	for _, want := range []string{
+		"acme/private-app",
+		"thrillmade/agent-skills",
+		"allow_promote_from_private",
+		"private",
+		"public",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestPush_Layer4_AllowPromoteFromPrivate_OptOut_Unblocks(t *testing.T) {
+	// Same cross-visibility shape, but the user has set the opt-out
+	// flag. Layer 4 records visibility but doesn't reject.
+	root := t.TempDir()
+	writeSampleSkill(t, root, "demo", "A trigger.")
+
+	git := newFakeRunner()
+	git.When([]string{"config", "--get", "remote.origin.url"},
+		runReply{Stdout: "https://github.com/acme/private-app.git"})
+	git.When([]string{"rev-parse", "HEAD"},
+		runReply{Stdout: "abcdef1234567\n"})
+
+	gh := newFakeRunner()
+	gh.When([]string{"api", "/repos/acme/private-app", "--jq", ".visibility"},
+		runReply{Stdout: "private"})
+	gh.When([]string{"api", "/repos/thrillmade/agent-skills", "--jq", ".visibility"},
+		runReply{Stdout: "public"})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:               "demo",
+		CatalogTarget:           "thrillmade/agent-skills",
+		DryRun:                  true,
+		SourceRepoRoot:          root,
+		Stdout:                  &stdout,
+		AllowPromoteFromPrivate: true,
+	}, git, gh)
+	if err != nil {
+		t.Fatalf("opt-out flag should unblock: %v", err)
+	}
+	// Visibility line should still print so the user sees the audit trail.
+	if !strings.Contains(stdout.String(), "visibility: source=private, target=public") {
+		t.Errorf("expected visibility audit line; got %q", stdout.String())
+	}
+}
+
+func TestPush_Layer4_PrivateToPrivate_NoBlock(t *testing.T) {
+	// Private source → private catalog is fine. Most common shape for
+	// company-internal skill catalogs.
+	root := t.TempDir()
+	writeSampleSkill(t, root, "demo", "A trigger.")
+
+	git := newFakeRunner()
+	git.When([]string{"config", "--get", "remote.origin.url"},
+		runReply{Stdout: "https://github.com/acme/private-app.git"})
+	git.When([]string{"rev-parse", "HEAD"},
+		runReply{Stdout: "abcdef1234567\n"})
+
+	gh := newFakeRunner()
+	gh.When([]string{"api", "/repos/acme/private-app", "--jq", ".visibility"},
+		runReply{Stdout: "private"})
+	gh.When([]string{"api", "/repos/acme/private-skills", "--jq", ".visibility"},
+		runReply{Stdout: "private"})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "acme/private-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+	if err != nil {
+		t.Fatalf("private→private shouldn't block: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "visibility: source=private, target=private") {
+		t.Errorf("expected visibility audit line; got %q", stdout.String())
+	}
+}
+
+func TestPush_Layer4_GhUnavailable_FailsOpen(t *testing.T) {
+	// gh subprocess fails entirely → visibility lookup empty → no
+	// block. Other layers still run.
+	root := t.TempDir()
+	writeSampleSkill(t, root, "demo", "A trigger.")
+
+	git := newFakeRunner()
+	git.When([]string{"config", "--get", "remote.origin.url"},
+		runReply{Stdout: "https://github.com/acme/private-app.git"})
+	git.When([]string{"rev-parse", "HEAD"},
+		runReply{Stdout: "abcdef1234567\n"})
+
+	gh := newFakeRunner()
+	gh.When([]string{"api", "/repos/acme/private-app", "--jq", ".visibility"},
+		runReply{Err: errors.New("gh unreachable")})
+	gh.When([]string{"api", "/repos/thrillmade/agent-skills", "--jq", ".visibility"},
+		runReply{Err: errors.New("gh unreachable")})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+	if err != nil {
+		t.Fatalf("gh failure should fail-open: %v", err)
+	}
+	// No visibility line when both lookups failed.
+	if strings.Contains(stdout.String(), "visibility:") {
+		t.Errorf("visibility line shouldn't print on empty lookups; got %q", stdout.String())
+	}
+}
+
+func TestPush_Layer4_InternalSourceTreatedAsPrivate(t *testing.T) {
+	// GitHub Enterprise's "internal" visibility blocks the same as
+	// "private" when target is public.
+	root := t.TempDir()
+	writeSampleSkill(t, root, "demo", "A trigger.")
+
+	git := newFakeRunner()
+	git.When([]string{"config", "--get", "remote.origin.url"},
+		runReply{Stdout: "https://github.com/ghec-org/internal-app.git"})
+	git.When([]string{"rev-parse", "HEAD"},
+		runReply{Stdout: "abcdef1234567\n"})
+
+	gh := newFakeRunner()
+	gh.When([]string{"api", "/repos/ghec-org/internal-app", "--jq", ".visibility"},
+		runReply{Stdout: "internal"})
+	gh.When([]string{"api", "/repos/thrillmade/agent-skills", "--jq", ".visibility"},
+		runReply{Stdout: "public"})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+	assertCrossVisibilityError(t, err)
+}
+
+func TestPush_Layer4_RunsAfterLayer3(t *testing.T) {
+	// Order check: a skill with BOTH a layer-3 hit (credential) and
+	// a layer-4 cross-visibility shape should fail with the layer-3
+	// sentinel because layer 3 runs first. This keeps the leak
+	// signal — "you literally have a credential pasted in the body" —
+	// from being shadowed by the visibility audit message.
+	root := t.TempDir()
+	writeSkillWithBody(t, root, "demo", "A trigger.",
+		"# Setup\n\nExport STRIPE_KEY=sk_live_DUMMYFIXTUREaBcD1234.\n")
+
+	git := newFakeRunner()
+	git.When([]string{"config", "--get", "remote.origin.url"},
+		runReply{Stdout: "https://github.com/acme/private-app.git"})
+	git.When([]string{"rev-parse", "HEAD"},
+		runReply{Stdout: "abcdef1234567\n"})
+
+	gh := newFakeRunner()
+	gh.When([]string{"api", "/repos/acme/private-app", "--jq", ".visibility"},
+		runReply{Stdout: "private"})
+	gh.When([]string{"api", "/repos/thrillmade/agent-skills", "--jq", ".visibility"},
+		runReply{Stdout: "public"})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+
+	// Layer 3 wins.
+	assertPrivacyHitError(t, err)
+	if errors.Is(err, ErrCrossVisibilityPush) {
+		t.Errorf("layer-4 fired despite layer-3 hit — wrong sequence")
+	}
+}
+
+func TestPush_Layer4_RunsOnDryRun(t *testing.T) {
+	// Same fire-on-dry-run contract as layer 3.
+	root := t.TempDir()
+	writeSampleSkill(t, root, "demo", "A trigger.")
+
+	git := newFakeRunner()
+	git.When([]string{"config", "--get", "remote.origin.url"},
+		runReply{Stdout: "https://github.com/acme/private-app.git"})
+	git.When([]string{"rev-parse", "HEAD"},
+		runReply{Stdout: "abcdef1234567\n"})
+
+	gh := newFakeRunner()
+	gh.When([]string{"api", "/repos/acme/private-app", "--jq", ".visibility"},
+		runReply{Stdout: "private"})
+	gh.When([]string{"api", "/repos/thrillmade/agent-skills", "--jq", ".visibility"},
+		runReply{Stdout: "public"})
+
+	var stdout bytes.Buffer
+	_, err := pushWith(PushOptions{
+		SkillName:      "demo",
+		CatalogTarget:  "thrillmade/agent-skills",
+		DryRun:         true,
+		SourceRepoRoot: root,
+		Stdout:         &stdout,
+	}, git, gh)
+	assertCrossVisibilityError(t, err)
 }

@@ -49,15 +49,27 @@ You must have ` + "`" + `gh auth login` + "`" + ` configured with write access t
 catalog repo (or be in an org where ` + "`" + `gh` + "`" + ` can open PRs on the
 catalog).
 
-Privacy gate (§8.2, layers 1+2):
-  - Frontmatter markers ` + "`" + `private: true` + "`" + ` or ` + "`" + `do-not-promote: true` + "`" + `
+Privacy gate (§8.2, four layers):
+  - Layer 1 — frontmatter markers ` + "`" + `private: true` + "`" + ` or ` + "`" + `do-not-promote: true` + "`" + `
     in SKILL.md block the push before any clone happens.
-  - Skills placed under ` + "`" + `.claude/skills-private/<name>/` + "`" + ` are treated as
-    private by directory convention; placement wins over an explicit
-    ` + "`" + `private: false` + "`" + ` override.
-  - Both layers exit non-zero with an actionable message; there is no
-    ` + "`" + `--force` + "`" + ` flag. Move the skill out of the private path or
-    remove the marker if the push is intentional.
+  - Layer 2 — skills placed under ` + "`" + `.claude/skills-private/<name>/` + "`" + ` are
+    treated as private by directory convention; placement wins over an
+    explicit ` + "`" + `private: false` + "`" + ` override.
+  - Layer 3 — content scanner. SKILL.md body is scanned for
+    credential-shaped tokens (Stripe/Slack/GitHub/npm/AWS/GCP),
+    internal-process keywords (` + "`" + `confidential` + "`" + `, ` + "`" + `proprietary` + "`" + `, ...),
+    org-internal domain references (configurable via
+    ` + "`" + `.logmind/config.yml privacy_scanner.org_domains` + "`" + `), and
+    local-machine paths. Hits are block-severity (rejects) or
+    warn-severity (continues with stderr warning).
+  - Layer 4 — repo-visibility check. If the source repo is private
+    (or GHEC ` + "`" + `internal` + "`" + `) and the catalog target is public, the push
+    is rejected unless ` + "`" + `allow_promote_from_private: true` + "`" + ` is set in
+    ` + "`" + `.logmind/config.yml` + "`" + `.
+  - All layers exit non-zero with an actionable message; there is no
+    ` + "`" + `--force` + "`" + ` flag. Move the skill out of the private path,
+    remove the marker, edit the offending content, or flip the opt-out
+    config key — depending on which layer fired.
 
 Examples:
   logmind skill push critical-issues-only
@@ -90,22 +102,38 @@ Examples:
 func runSkillPush(cwd, name, catalogFlag string, dryRun bool, stdout io.Writer) error {
 	target := resolveCatalogTarget(cwd, catalogFlag)
 
+	// Load config so layers 3 + 4 can pick up user overrides. The loader
+	// silently degrades to defaults on missing/malformed file (matches the
+	// Python behaviour); we deliberately swallow the error here so a
+	// broken .logmind/config.yml never blocks the push pipeline. The
+	// scanner's hardcoded baseline still fires regardless of what we
+	// load — see scanner.go's bypass-proof contract.
+	cfg, _ := config.Load(cwd)
+
 	_, err := skill.Push(skill.PushOptions{
 		SkillName:      name,
 		CatalogTarget:  target,
 		DryRun:         dryRun,
 		SourceRepoRoot: cwd,
 		Stdout:         stdout,
+		Stderr:         os.Stderr,
+		ScannerConfig: skill.ScannerConfig{
+			Keywords:          cfg.PrivacyScanner.Keywords,
+			OrgDomains:        cfg.PrivacyScanner.OrgDomains,
+			SeverityOverrides: cfg.PrivacyScanner.SeverityOverrides,
+		},
+		AllowPromoteFromPrivate: cfg.AllowPromoteFromPrivate,
 	})
 	if err != nil {
 		// Translate the known-shape errors into ErrSilent so the user
 		// sees the message we already printed (no double-print on
 		// stderr). Anything else is a real failure.
 		//
-		// ErrPrivateSkill already wraps clierr.ErrSilent at construction
-		// time (via errors.Join in newPrivateSkillError), so a generic
-		// `errors.Is(err, ErrSilent)` would also catch it — but we keep
-		// the explicit case here for grep-ability + so future readers
+		// ErrPrivateSkill, ErrPrivacyScannerHit, and ErrCrossVisibilityPush
+		// already wrap clierr.ErrSilent at construction time (via
+		// errors.Join in their respective error helpers), so a generic
+		// `errors.Is(err, ErrSilent)` would also catch them — but we keep
+		// the explicit cases here for grep-ability + so future readers
 		// see the privacy gate in the same translation table as the
 		// other user-input rejections.
 		switch {
@@ -113,7 +141,9 @@ func runSkillPush(cwd, name, catalogFlag string, dryRun bool, stdout io.Writer) 
 			errors.Is(err, skill.ErrInvalidCatalogTarget),
 			errors.Is(err, skill.ErrGhNotFound),
 			errors.Is(err, skill.ErrGhNotAuthed),
-			errors.Is(err, skill.ErrPrivateSkill):
+			errors.Is(err, skill.ErrPrivateSkill),
+			errors.Is(err, skill.ErrPrivacyScannerHit),
+			errors.Is(err, skill.ErrCrossVisibilityPush):
 			return ErrSilent
 		}
 		return err
