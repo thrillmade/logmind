@@ -63,7 +63,7 @@ jobs:
       # consumer repos. Dependabot keeps the action ref current via the
       # `github-actions` ecosystem block in `.github/dependabot.yml` (also
       # installed by `logmind init`).
-      - uses: thrillmade/setup-logmind@v1.0.0
+      - uses: thrillmade/setup-logmind@v1.0.1
 
       - name: Regenerate derived docs
         run: |
