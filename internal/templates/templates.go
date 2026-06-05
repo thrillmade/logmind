@@ -36,6 +36,7 @@ import (
 
 //go:embed AGENTS.md.template AGENTS.md.slim.template agent-stub.md logmind-section.md CLAUDE.md.template
 //go:embed config.yml.template decisions.md.template decisions-archive.md.template file-structure.md.template
+//go:embed dependabot.yml.template
 //go:embed github/*.yml.template
 var embedFS embed.FS
 
@@ -140,6 +141,17 @@ func DecisionsArchiveTemplate() string {
 // (used as a placeholder before the first real tree walk overwrites it).
 func FileStructureTemplate() string {
 	return readEmbed("file-structure.md.template")
+}
+
+// DependabotTemplate returns the bundled .github/dependabot.yml seed
+// shipped since logmind v1.1.0. Carries a single `github-actions`
+// ecosystem entry with a `thrillmade` group that bundles
+// `thrillmade/*` action bumps (notably `thrillmade/setup-logmind@vX.Y.Z`)
+// into one PR per release. Used by the init/refresh path via
+// inserter.EnsureDependabot — see that function for the merge
+// semantics when the consumer repo already has a dependabot.yml.
+func DependabotTemplate() string {
+	return readEmbed("dependabot.yml.template")
 }
 
 // Workflow returns the embedded body of a single .github/workflows/<name>.yml

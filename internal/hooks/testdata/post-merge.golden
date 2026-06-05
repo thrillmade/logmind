@@ -1,6 +1,6 @@
 #!/bin/sh
 # logmind post-merge hook
-# logmind-hook-version: 1.0.0-dev
+# logmind-hook-version: 1.1.0-dev
 # Installed by `logmind init` (v0.3.0+). After every merge, regenerate
 # derived docs from the FULL post-merge working tree. Belt + suspenders
 # with the merge driver in .gitattributes — the driver fires per-file

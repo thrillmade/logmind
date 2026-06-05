@@ -1,4 +1,4 @@
-# logmind-template-version: v3
+# logmind-template-version: v4
 name: check derived docs
 
 # Derived-file architecture (v0.2+): docs/timeline.md + docs/file-structure.md
@@ -57,15 +57,13 @@ jobs:
           # Falls through to GITHUB_TOKEN when absent (still allows checkout).
           token: ${{ secrets.LOGMIND_AUTO_REGEN_PAT || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install logmind
-        # Version pinned to the logmind that originally ran `logmind init`
-        # in this repo, so CI behavior matches what the maintainer tested
-        # locally. Bump after running `logmind init` against a new release.
-        run: pip install "logmind==__LOGMIND_VERSION__"
+      # logmind v1.1.0 (2026-06-05) switched from `pip install logmind==X.Y.Z`
+      # to the dedicated `thrillmade/setup-logmind` action. The action handles
+      # platform detection, version pinning, and step caching uniformly across
+      # consumer repos. Dependabot keeps the action ref current via the
+      # `github-actions` ecosystem block in `.github/dependabot.yml` (also
+      # installed by `logmind init`).
+      - uses: thrillmade/setup-logmind@v1.0.0
 
       - name: Regenerate derived docs
         run: |

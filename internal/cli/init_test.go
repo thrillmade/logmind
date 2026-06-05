@@ -142,6 +142,140 @@ func TestInit_RefreshMode_LeavesDocsAlone(t *testing.T) {
 	}
 }
 
+// TestInit_CreatesDependabotConfig — v1.1.0 ships a
+// .github/dependabot.yml from `logmind init` so consumer repos get
+// automatic Dependabot bumps for the thrillmade/setup-logmind action
+// ref. Asserts both that the file lands and that it contains the
+// thrillmade group with the correct pattern.
+func TestInit_CreatesDependabotConfig(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		root := NewRootCmd()
+		root.SetArgs([]string{"init", "--no-git"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("init: %v\n%s", err, errOut.String())
+		}
+		mustContain(t, out.String(), "✓ Created .github/dependabot.yml")
+	})
+	body, err := os.ReadFile(filepath.Join(dir, ".github", "dependabot.yml"))
+	if err != nil {
+		t.Fatalf("read dependabot.yml: %v", err)
+	}
+	mustContain(t, string(body), "package-ecosystem: \"github-actions\"")
+	mustContain(t, string(body), "thrillmade:")
+	mustContain(t, string(body), "- \"thrillmade/*\"")
+}
+
+// TestInit_DependabotMergeWithExistingGomodEntry — when the consumer
+// repo already has a .github/dependabot.yml that pins a different
+// ecosystem (gomod, npm, ...), `logmind init` MERGES the github-actions
+// block in rather than clobbering the file. Existing entries survive
+// byte-for-byte.
+func TestInit_DependabotMergeWithExistingGomodEntry(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		// Pre-create a hand-rolled dependabot.yml under .github/.
+		if err := os.MkdirAll(".github", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		preExisting := "version: 2\nupdates:\n  - package-ecosystem: \"gomod\"\n    directory: \"/\"\n    schedule:\n      interval: \"weekly\"\n"
+		if err := os.WriteFile(".github/dependabot.yml", []byte(preExisting), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		root := NewRootCmd()
+		root.SetArgs([]string{"init", "--no-git"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("init: %v\n%s", err, errOut.String())
+		}
+		mustContain(t, out.String(), "✓ Merged thrillmade group into .github/dependabot.yml")
+	})
+	body, err := os.ReadFile(filepath.Join(dir, ".github", "dependabot.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing entry preserved.
+	mustContain(t, string(body), "gomod")
+	// Our block appended.
+	mustContain(t, string(body), "thrillmade:")
+}
+
+// TestInit_DependabotHandsOffUserOwnedGithubActionsBlock — if the
+// consumer already has a `package-ecosystem: "github-actions"` entry
+// in dependabot.yml, `logmind init` must NOT modify it (Dependabot
+// rejects duplicate ecosystem+directory pairs). Surface a nudge instead.
+func TestInit_DependabotHandsOffUserOwnedGithubActionsBlock(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		if err := os.MkdirAll(".github", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		preExisting := "version: 2\nupdates:\n  - package-ecosystem: \"github-actions\"\n    directory: \"/\"\n    schedule:\n      interval: \"weekly\"\n"
+		if err := os.WriteFile(".github/dependabot.yml", []byte(preExisting), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		root := NewRootCmd()
+		root.SetArgs([]string{"init", "--no-git"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("init: %v\n%s", err, errOut.String())
+		}
+		// Should NOT print Created or Merged. SHOULD print the
+		// opt-in hint mentioning the existing github-actions
+		// coverage.
+		got := out.String()
+		if strings.Contains(got, "✓ Created .github/dependabot.yml") {
+			t.Errorf("init wrongly clobbered user-owned dependabot.yml")
+		}
+		if !strings.Contains(got, "already covers github-actions") {
+			t.Errorf("missing opt-in nudge for user-owned dependabot.yml; got:\n%s", got)
+		}
+	})
+	// File body still pristine.
+	body, err := os.ReadFile(filepath.Join(dir, ".github", "dependabot.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "thrillmade:") {
+		t.Errorf("init mutated a user-owned ecosystem block")
+	}
+}
+
+// TestInit_WorkflowsUseSetupLogmindActionAfterInit — the rendered
+// workflow files on disk (post `logmind init`) should ship the
+// setup-logmind action ref and NOT carry the legacy curl/pip pattern.
+// This is the consumer-facing parity check: in addition to the embed
+// template asserting in templates_test.go, also assert that the
+// renderer didn't smuggle the old pattern back in via placeholder
+// substitution.
+func TestInit_WorkflowsUseSetupLogmindActionAfterInit(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		root := NewRootCmd()
+		root.SetArgs([]string{"init", "--no-git"})
+		var sink bytes.Buffer
+		root.SetOut(&sink)
+		root.SetErr(&sink)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("init: %v\n%s", err, sink.String())
+		}
+	})
+	for _, name := range []string{"check-doc-links.yml", "regen-timeline.yml"} {
+		body, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		text := string(body)
+		mustContain(t, text, "thrillmade/setup-logmind@v")
+		if strings.Contains(text, "pip install \"logmind==") {
+			t.Errorf("%s should not contain legacy pip install line after init", name)
+		}
+	}
+}
+
 func TestInit_AgentsFlagOverridesDefault(t *testing.T) {
 	dir := withTempCwd(t, func(_ string) {
 		root := NewRootCmd()
