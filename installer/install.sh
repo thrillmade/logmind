@@ -2,23 +2,31 @@
 # installer/install.sh — one-shot logmind binary installer.
 #
 # Distributed at https://logmind.dev/install.sh (hosted by the
-# logmind-site Vercel project — separate repo; this PR ships the
-# script, deployment to the CDN URL is a follow-up).
+# logmind-site Vercel project — separate repo).
 #
 # Usage:
 #   curl -fsSL logmind.dev/install.sh | bash
 #   curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=$HOME/.local
 #   curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
 #
+#   # Pin via env var (preserved for back-compat — see v1.1.0 notes):
+#   LOGMIND_VERSION=v1.0.0 curl -fsSL logmind.dev/install.sh | bash
+#
 # What it does:
 #   1. Detect OS (darwin | linux) + arch (x86_64 | arm64).
-#   2. Resolve target version: default is the latest GitHub Release,
-#      override via --version=vX.Y.Z.
-#   3. Download the matching archive + SHA256SUMS file from the GitHub
+#   2. Resolve target version: default = latest GitHub Release (auto
+#      fetch — no hardcoded version anywhere in this script).
+#      Override priority:  --version=  >  $LOGMIND_VERSION  >  latest
+#   3. Skip when an existing logmind at the same version already lives
+#      at $PREFIX/bin/logmind (idempotent — print "already installed",
+#      exit 0).
+#   4. Download the matching archive + SHA256SUMS file from the GitHub
 #      Release assets.
-#   4. Verify the archive against the SHA256SUMS line.
-#   5. Extract, chmod +x, move to $PREFIX/bin/logmind.
-#   6. Run `logmind --version` as a self-check.
+#   5. SHA256-verify the archive against the published SHA256SUMS line.
+#   6. Extract, chmod +x, move to $PREFIX/bin/logmind.
+#   7. Run `logmind --version` as a self-check.
+#   8. When $GITHUB_ACTIONS=true, print a one-liner pointing CI users at
+#      the `thrillmade/setup-logmind` action.
 #
 # Default install prefix:
 #   - $HOME/.local — no sudo required. Users with `~/.local/bin` already
@@ -33,6 +41,13 @@
 # Windows: not supported by this installer. Use scoop / winget / direct
 # download from the GitHub Release page. (Bash on Git Bash WOULD work,
 # but the archive extraction logic targets POSIX tar.)
+#
+# v1.1.0 (2026-06-05) — `LOGMIND_VERSION` env var support + idempotency
+# check + GitHub Actions advisory. Per the 2026-06-05 distribution
+# lock, this installer is the LAPTOP path; GitHub Actions consumers
+# should use `uses: thrillmade/setup-logmind@v1.0.0` and let
+# Dependabot bump the action pin. The advisory at the end of a CI run
+# nudges them off curl-install when this script slips into a workflow.
 #
 # This script is intentionally one file with no external deps beyond
 # coreutils + curl/wget + tar + (sha256sum | shasum). Maintainability
@@ -62,7 +77,15 @@ set -euo pipefail
 REPO="thrillmade/logmind"
 DEFAULT_PREFIX="${HOME}/.local"
 PREFIX=""
-TARGET_VERSION=""
+# TARGET_VERSION is seeded from $LOGMIND_VERSION (back-compat with the
+# pre-1.1.0 env override pattern). The CLI flag --version=… overrides
+# the env var per the precedence documented in the header block above.
+# An explicit "latest" is normalised to empty so the resolve step
+# below fetches the GitHub /latest tag.
+TARGET_VERSION="${LOGMIND_VERSION:-}"
+if [ "${TARGET_VERSION}" = "latest" ]; then
+  TARGET_VERSION=""
+fi
 
 # Color helpers — disabled when stdout isn't a TTY (e.g. piped to less).
 if [[ -t 1 ]] && [[ -t 2 ]]; then
@@ -89,12 +112,18 @@ Usage: install.sh [--prefix=PATH] [--version=vX.Y.Z]
 Options:
   --prefix=PATH      Install binary under PATH/bin/. Default: ${DEFAULT_PREFIX}
   --version=vX.Y.Z   Specific release version. Default: latest stable.
+                     Overrides \$LOGMIND_VERSION when both are set.
   --help, -h         Show this help.
+
+Env:
+  LOGMIND_VERSION    Same effect as --version (lower precedence).
+                     Set to "latest" or unset to track the newest release.
 
 Examples:
   curl -fsSL logmind.dev/install.sh | bash
   curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=/usr/local
   curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
+  LOGMIND_VERSION=v1.0.0 curl -fsSL logmind.dev/install.sh | bash
 
 Report install bugs to https://github.com/${REPO}/issues
 EOF
@@ -103,6 +132,7 @@ EOF
 for arg in "$@"; do
   case "${arg}" in
     --prefix=*)  PREFIX="${arg#*=}";;
+    # --version overrides the env var per the precedence in the header.
     --version=*) TARGET_VERSION="${arg#*=}";;
     -h|--help)   usage; exit 0;;
     *)
@@ -150,10 +180,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 if have curl; then
   fetch() { curl -fsSL "$1" -o "$2"; }
-  fetch_stdout() { curl -fsSL "$1"; }
 elif have wget; then
   fetch() { wget -q -O "$2" "$1"; }
-  fetch_stdout() { wget -q -O - "$1"; }
 else
   fatal "need curl or wget to download. Install one and retry."
 fi
@@ -161,20 +189,37 @@ fi
 # ----------------------------------------------------------------------
 # Resolve target tag
 # ----------------------------------------------------------------------
+# Two resolution paths:
+#
+#   1. GitHub API (/repos/.../releases/latest) — gives us the JSON
+#      tag_name directly. Used when curl is available. Cheapest +
+#      most stable: doesn't depend on the unauthenticated /releases/latest
+#      redirect quirks. POSIX-compatible sed extraction; no jq needed.
+#
+#   2. Redirect-follow (wget fallback) — wget doesn't expose the final
+#      URL cleanly, so we tail the Location header from `wget -S`. Still
+#      jq-free and works when only wget is on the box.
 if [[ -z "${TARGET_VERSION}" ]]; then
   info "resolving latest logmind release..."
-  # GitHub's /latest endpoint redirects to /tag/<latest>. We follow the
-  # Location header and pull the tag out of the final URL — avoids JSON
-  # parsing (no jq dep) and works even if the JSON shape changes.
   if have curl; then
-    LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
+    # /releases/latest JSON is unauthenticated, no rate-limit concerns
+    # for one-shot installers (GH API is 60 req/hour/IP — well above
+    # any reasonable curl-install burst). sed picks out tag_name without
+    # pulling in jq as a hard dep.
+    TARGET_VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+      | sed -n 's/.*"tag_name": "\(.*\)".*/\1/p' \
+      | head -n1)"
+    # If the API call failed or sed returned nothing (e.g. GitHub
+    # returned an error JSON without tag_name), fall back to the
+    # redirect-follow path that the v1.0.x installer used.
+    if [[ -z "${TARGET_VERSION}" ]]; then
+      LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
+      TARGET_VERSION="${LATEST_URL##*/}"
+    fi
   else
-    # wget doesn't expose the final URL cleanly; fall back to parsing
-    # the API. We accept the minor jq-free risk here because curl is
-    # available on virtually every modern Mac + Linux distro.
     LATEST_URL="$(wget -q --max-redirect 0 -S "https://github.com/${REPO}/releases/latest" 2>&1 | sed -n 's/^[[:space:]]*[Ll]ocation: //p' | head -n1)"
+    TARGET_VERSION="${LATEST_URL##*/}"
   fi
-  TARGET_VERSION="${LATEST_URL##*/}"
   if [[ -z "${TARGET_VERSION}" || "${TARGET_VERSION}" == "latest" ]]; then
     fatal "could not resolve latest release. Pass --version=vX.Y.Z to override."
   fi
@@ -185,6 +230,38 @@ fi
 VERSION_BARE="${TARGET_VERSION#v}"
 
 info "logmind ${C_BOLD}${TARGET_VERSION}${C_RESET} for ${OS}/${ARCH}"
+
+# ----------------------------------------------------------------------
+# Idempotency — bail out early when the same version is already installed
+# ----------------------------------------------------------------------
+# Two checks make this robust against the "user runs curl-install in
+# a CI step that already provisioned the same version" pattern that's
+# common when shell scripts run unconditionally:
+#
+#   - existing binary at $BIN_DIR/logmind
+#   - its `--version` output mentions $VERSION_BARE (the bare semver
+#     without the leading "v", since `logmind --version` prints
+#     "logmind X.Y.Z (...)" not "logmind vX.Y.Z (...)" — see
+#     internal/version/version.go ldflags substitution).
+#
+# Match either "vX.Y.Z" or bare "X.Y.Z" in the version string to cover
+# both injection styles. When matched, print and exit 0.
+DEST_PREVIEW="${BIN_DIR}/logmind"
+if [ -x "${DEST_PREVIEW}" ]; then
+  EXISTING_VER_OUTPUT="$("${DEST_PREVIEW}" --version 2>/dev/null || true)"
+  if [[ "${EXISTING_VER_OUTPUT}" == *"${VERSION_BARE}"* ]] \
+     || [[ "${EXISTING_VER_OUTPUT}" == *"${TARGET_VERSION}"* ]]; then
+    info "logmind ${TARGET_VERSION} already installed at ${DEST_PREVIEW}"
+    # GitHub Actions advisory — print even on the idempotent path so
+    # CI users discover setup-logmind without re-running the install.
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+      echo ""
+      info "Tip: GitHub Actions users — use \`uses: thrillmade/setup-logmind@v1.0.0\` instead."
+      dim "     See https://github.com/thrillmade/setup-logmind for details."
+    fi
+    exit 0
+  fi
+fi
 
 # ----------------------------------------------------------------------
 # Compose download URLs + paths
@@ -267,7 +344,7 @@ fi
 chmod +x "${DEST}"
 
 # ----------------------------------------------------------------------
-# Self-check + PATH advisory
+# Self-check + success line
 # ----------------------------------------------------------------------
 if ! "${DEST}" --version >/dev/null 2>&1; then
   fatal "${DEST} --version failed. Binary may be corrupted; please re-run installer."
@@ -276,6 +353,15 @@ fi
 VERSION_OUTPUT="$(${DEST} --version)"
 info "${VERSION_OUTPUT}"
 
+# v1.1.0 success line — explicit "$TAG installed to $PREFIX/bin"
+# format so consumer dashboards (and the user) get a deterministic
+# string to grep on. Distinct from the `info` "installed:" line above
+# (that one names the full file path; this one names the directory).
+printf "%slogmind %s installed to %s%s\n" "${C_GREEN}${C_BOLD}" "${TARGET_VERSION}" "${BIN_DIR}" "${C_RESET}"
+
+# ----------------------------------------------------------------------
+# PATH advisory
+# ----------------------------------------------------------------------
 # Check if BIN_DIR is in PATH; nag the user once if not. We don't
 # auto-edit shell rcs (too many shells, too much surface area for the
 # user's expectations). Just point at the line they need to add.
@@ -284,6 +370,22 @@ if ! echo ":${PATH}:" | grep -q ":${BIN_DIR}:"; then
   warn "${BIN_DIR} is not in your \$PATH"
   dim "  add this to your shell rc file (~/.zshrc, ~/.bashrc, ~/.config/fish/config.fish):"
   dim "    export PATH=\"${BIN_DIR}:\$PATH\""
+fi
+
+# ----------------------------------------------------------------------
+# GitHub Actions advisory
+# ----------------------------------------------------------------------
+# When this installer runs inside a GitHub Actions job (the runner
+# always sets GITHUB_ACTIONS=true), point CI users at the
+# `thrillmade/setup-logmind` action — it's the v1.1.0 lock-step
+# partner for the "install once, stays current forever" UX. The
+# action handles platform detection, version pinning, Dependabot
+# updates, and step caching that a one-shot curl-install can't.
+# Static one-liner; doesn't fail the install if anything's off.
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  echo ""
+  info "Tip: GitHub Actions users — use \`uses: thrillmade/setup-logmind@v1.0.0\` instead."
+  dim "     See https://github.com/thrillmade/setup-logmind for details."
 fi
 
 echo ""

@@ -101,6 +101,57 @@ func TestStub_HasStubMarker(t *testing.T) {
 	}
 }
 
+// TestDependabotTemplate_HasMarkerAndShape pins the v1.1.0 dependabot
+// template content — the marker line, the `github-actions` ecosystem,
+// and the thrillmade group with the `thrillmade/*` pattern. Any of
+// those drifting would break the merge-detection regex in
+// inserter/dependabot.go, so the test pins them together.
+func TestDependabotTemplate_HasMarkerAndShape(t *testing.T) {
+	body := DependabotTemplate()
+	if !strings.Contains(body, "logmind-dependabot-marker: v1") {
+		t.Fatalf("dependabot template missing v1 marker")
+	}
+	if !strings.Contains(body, `package-ecosystem: "github-actions"`) {
+		t.Fatalf("dependabot template missing github-actions ecosystem")
+	}
+	if !strings.Contains(body, "thrillmade:") {
+		t.Fatalf("dependabot template missing thrillmade group key")
+	}
+	if !strings.Contains(body, `- "thrillmade/*"`) {
+		t.Fatalf("dependabot template missing thrillmade/* pattern")
+	}
+	if !strings.Contains(body, `interval: "daily"`) {
+		t.Fatalf("dependabot template should default to daily — v1.1.0 design point so action pin tracks fresh logmind releases without manual ceremony")
+	}
+}
+
+// TestWorkflowTemplates_UseSetupLogmindAction pins the v1.1.0
+// distribution-lock change: workflow templates must use the new
+// `thrillmade/setup-logmind@vX.Y.Z` action and NOT the legacy
+// `pip install logmind==X.Y.Z` line. Both check-doc-links and
+// regen-timeline are user-facing CI workflows under
+// `# logmind-template-version:` markers; the self-update workflow
+// uses the action too but is allowed to grep for the legacy pin (so
+// pre-v1.1.0 installs can upgrade once). We only assert the consumer-
+// CI workflows here.
+func TestWorkflowTemplates_UseSetupLogmindAction(t *testing.T) {
+	for _, name := range []string{
+		"check-doc-links.yml.template",
+		"regen-timeline.yml.template",
+	} {
+		body := Workflow(name)
+		if !strings.Contains(body, "thrillmade/setup-logmind@v") {
+			t.Errorf("%s missing setup-logmind action ref", name)
+		}
+		// Legacy curl-install / pip-install patterns must not appear
+		// in the consumer-CI templates. They were replaced by the
+		// action in v1.1.0 per the 2026-06-05 distribution lock.
+		if strings.Contains(body, "pip install \"logmind==") || strings.Contains(body, "actions/setup-python") {
+			t.Errorf("%s still contains the pre-v1.1.0 pip install / setup-python pattern", name)
+		}
+	}
+}
+
 // pythonTemplatesDir walks up from the running test file's location
 // to find the repo root, then returns src/logmind/templates/. Returns
 // "" when the Python tree is absent.

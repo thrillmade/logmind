@@ -14,7 +14,15 @@ package version
 
 // Version is the logmind binary's semantic version. Bumped at release.
 // Overridable via -ldflags at build time; see package docstring.
-var Version = "1.0.0-dev"
+//
+// v1.1.0 (2026-06-05) — install.sh fetch-latest mode + setup-logmind
+// scaffold pattern. Per the 2026-06-05 distribution lock, consumer
+// repos no longer ship `pip install logmind==X.Y.Z` in workflow
+// templates: they use `uses: thrillmade/setup-logmind@v1.0.0` and let
+// Dependabot bump the action pin. install.sh defaults to the latest
+// release (no hardcoded sweeps) and detects GITHUB_ACTIONS=true to
+// nudge CI users at setup-logmind.
+var Version = "1.1.0-dev"
 
 // SpecVersion is the version of the thrillmade/protocol logmind contract
 // this binary implements. Reported via `logmind --version` so downstream
