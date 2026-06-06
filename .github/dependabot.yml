@@ -19,3 +19,7 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    groups:
+      thrillmade:
+        patterns:
+          - "thrillmade/*"
