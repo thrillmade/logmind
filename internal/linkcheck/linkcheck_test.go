@@ -108,6 +108,48 @@ func TestCheck_DirectoryPrefixAllowlist(t *testing.T) {
 	}
 }
 
+// TestCheck_ExcludesReviewWritebacks: `docs/reviews/PR-<n>.md` files
+// are SPEC §6.2 review-writebacks emitted by clud-bug-app. They are
+// append-only review telemetry, never cross-linked from anywhere — so
+// the default allow-orphan list MUST exempt them. Without this exempt,
+// every PR that picks up a clud-bug review would fail `check-links`
+// with an orphan finding (the recurring regression that motivated this
+// test).
+func TestCheck_ExcludesReviewWritebacks(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md":             "# Project\n",
+		"docs/reviews/PR-42.md": "# Review for PR #42\n",
+	})
+	_, orphans, err := Check(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(orphans) != 0 {
+		t.Fatalf("orphans = %v; want [] (docs/reviews/ is the SPEC §6.2 review-writeback path)", orphans)
+	}
+}
+
+// TestCheck_ExcludesReviewWritebacks_MultipleFiles: confirm the
+// directory-prefix exemption applies to every file under docs/reviews/,
+// including a hypothetical README.md a maintainer might drop in for
+// human orientation. The directory is owned by the App + sync pipeline,
+// so any markdown under it is in-convention.
+func TestCheck_ExcludesReviewWritebacks_MultipleFiles(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md":              "# Project\n",
+		"docs/reviews/PR-1.md":   "# Review for PR #1\n",
+		"docs/reviews/PR-147.md": "# Review for PR #147\n",
+		"docs/reviews/README.md": "# Reviews directory\n",
+	})
+	_, orphans, err := Check(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(orphans) != 0 {
+		t.Fatalf("orphans = %v; want [] (entire docs/reviews/ directory is exempt)", orphans)
+	}
+}
+
 func TestCheck_SkipsExternalLinks(t *testing.T) {
 	dir := setupFixture(t, map[string]string{
 		"README.md": "# Project\n[ext](https://example.com)\n[mail](mailto:x@y.z)\n[anchor](#section)\n",

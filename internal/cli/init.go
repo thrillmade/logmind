@@ -195,6 +195,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 
 	// GitHub workflows.
 	var installedWorkflows []string
+	var dependabotChanged bool
 	if f.githubActions {
 		created, _, err := installWorkflowTemplates(cwd, false)
 		if err != nil {
@@ -204,6 +205,12 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 			fmt.Fprintln(out, "✓ Created", wf)
 		}
 		installedWorkflows = created
+
+		// .github/dependabot.yml — fresh install or merge. Keeps the
+		// thrillmade/setup-logmind action ref current via Dependabot's
+		// github-actions ecosystem. v1.1.0+ paired with the
+		// setup-logmind action pattern in the workflow templates.
+		dependabotChanged = applyDependabotInit(cmd, cwd)
 	}
 
 	// .gitignore block.
@@ -268,6 +275,9 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 		if gitattrChanged {
 			filesToCommit = append(filesToCommit, ".gitattributes")
+		}
+		if dependabotChanged {
+			filesToCommit = append(filesToCommit, ".github/dependabot.yml")
 		}
 		for _, agent := range enabled {
 			if rel, ok := agents.FilePath(agent, cwd); ok && pathExists(rel) {
@@ -334,6 +344,10 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string) erro
 		if len(created) == 0 && len(refreshed) == 0 {
 			fmt.Fprintln(out, "  All workflow templates already current.")
 		}
+		// Dependabot config — same merge semantics as a fresh init;
+		// idempotent so re-running on an already-current file is a
+		// silent no-op.
+		_ = applyDependabotInit(cmd, cwd)
 	}
 
 	// AGENTS.md refresh — idempotent.
@@ -598,6 +612,42 @@ func buildFirstDecisionEntry() string {
 			"---",
 		now,
 	)
+}
+
+// applyDependabotInit calls into inserter.EnsureDependabot and prints
+// the right "Created" / "Merged" / "Already current" line per the
+// returned result. Returns true when a write happened (so the caller
+// can stage `.github/dependabot.yml` for the init commit).
+//
+// We log to stdout via the same `✓ ...` / `↻ ...` glyphs used by the
+// surrounding init steps so output stays visually consistent. The
+// "existing ecosystem" branch surfaces a one-line nudge so the user
+// can opt into the thrillmade group manually if they want it — we
+// don't auto-mutate a user-owned github-actions block (Dependabot
+// rejects duplicate ecosystem+directory pairs).
+func applyDependabotInit(cmd *cobra.Command, cwd string) bool {
+	result, err := inserter.EnsureDependabot(cwd)
+	out := cmd.OutOrStdout()
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: dependabot.yml setup failed:", err)
+		return false
+	}
+	switch result {
+	case inserter.DependabotCreated:
+		fmt.Fprintln(out, "✓ Created .github/dependabot.yml")
+		return true
+	case inserter.DependabotMerged:
+		fmt.Fprintln(out, "✓ Merged thrillmade group into .github/dependabot.yml")
+		return true
+	case inserter.DependabotExistingEcosystem:
+		// Don't auto-mutate user-owned blocks. Surface a single nudge
+		// so the user can choose to opt in by hand-editing.
+		fmt.Fprintln(out,
+			"  .github/dependabot.yml already covers github-actions — add a `thrillmade` group under `groups:` to bundle thrillmade/* action bumps into one PR (optional).")
+		return false
+	default:
+		return false
+	}
 }
 
 // commitInitialFiles stages + commits the listed paths. Best-effort:

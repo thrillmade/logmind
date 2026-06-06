@@ -1,0 +1,19 @@
+# logmind-dependabot-marker: v1
+# Installed by `logmind init` (v1.1.0+).
+#
+# Keeps the `thrillmade/setup-logmind` action pin (and any other
+# thrillmade/* actions you use) current via Dependabot's
+# `github-actions` ecosystem. Daily cadence so the action ref tracks
+# fresh logmind releases without manual ceremony — paired with the
+# self-update workflow (which only handles template-body refreshes,
+# not pin bumps).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    groups:
+      thrillmade:
+        patterns:
+          - "thrillmade/*"

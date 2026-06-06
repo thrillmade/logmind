@@ -25,19 +25,46 @@ detail. AGENTS.md is the canonical agent-instruction file; per-tool files
 
 ## Install
 
+### On your laptop
+
 ```bash
 # Homebrew (recommended on macOS + Linux)
 brew install thrillmade/tap/logmind
 
-# Or — curl one-liner
-curl -fsSL https://logmind.dev/install.sh | sh
+# Or — curl one-liner (auto-fetches the latest release)
+curl -fsSL https://logmind.dev/install.sh | bash
+
+# Pin to a specific version on either path:
+LOGMIND_VERSION=v1.0.0 curl -fsSL https://logmind.dev/install.sh | bash
 ```
 
 Verify the install:
 
 ```bash
-logmind --version  # logmind 1.0.0 (spec 0.1.0)
+logmind --version  # logmind 1.1.0 (spec 0.1.1)
 ```
+
+The curl installer is idempotent — re-running it when the same version
+is already installed is a fast no-op, so you can drop it into a
+shell-rc or laptop bootstrap script without worrying about churn. It
+also auto-detects `GITHUB_ACTIONS=true` and nudges you toward the
+dedicated CI install path described next.
+
+### In GitHub Actions
+
+Use the [`thrillmade/setup-logmind`](https://github.com/thrillmade/setup-logmind)
+action. It handles platform detection, version pinning, and step
+caching:
+
+```yaml
+- uses: thrillmade/setup-logmind@v1.0.0
+- run: logmind check-links
+```
+
+`logmind init` (v1.1.0+) installs a `.github/dependabot.yml` block that
+tells Dependabot to bump the action ref on every new logmind release.
+You pin once, and the ecosystem keeps you current — no manual sweeps,
+no `pip install logmind==...` lines, no curl-install inside CI.
 
 Both paths deliver signed + notarized binaries from the
 [GitHub Releases page](https://github.com/thrillmade/logmind/releases) —

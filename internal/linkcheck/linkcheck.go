@@ -43,11 +43,21 @@ var LinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
 // DefaultAllowOrphans matches DEFAULT_ALLOW_ORPHANS in the Python
 // source. `docs/decisions-branches/` is a directory prefix
 // (trailing `/`) — any `.md` under it is exempt.
+//
+// `docs/reviews/` is the SPEC §6.2 review-writeback path: clud-bug-app
+// writes `docs/reviews/PR-<n>.md` files as append-only review telemetry
+// (consumed by `logmind sync` per internal/skill/sync.go). Those files
+// are never cross-linked from README/AGENTS/docs by design — every PR
+// that picks up a review would otherwise fail `check-links` with an
+// orphan finding. The directory itself is owned by the App + sync
+// pipeline, so we exclude the whole prefix (matching the
+// `docs/decisions-branches/` precedent) rather than glob just `PR-*.md`.
 var DefaultAllowOrphans = []string{
 	"docs/decisions.md",
 	"docs/decisions-archive.md",
 	"docs/file-structure.md",
 	"docs/decisions-branches/",
+	"docs/reviews/",
 }
 
 // DefaultRoots matches DEFAULT_ROOTS in the Python source — the

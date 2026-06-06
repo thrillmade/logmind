@@ -44,13 +44,38 @@ Override defaults:
 # Install system-wide
 curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=/usr/local
 
-# Pin to a specific version
+# Pin to a specific version (flag form)
 curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
+
+# Pin to a specific version (env form — equivalent, lower precedence than --version)
+LOGMIND_VERSION=v1.0.0 curl -fsSL logmind.dev/install.sh | bash
 ```
+
+Re-running the installer when the same version is already installed
+exits with a fast "already installed" message — idempotent, safe to
+drop into bootstrap scripts.
 
 If `~/.local/bin` isn't on your `$PATH`, the installer prints the exact
 line to add to your shell rc. We deliberately don't auto-edit dotfiles —
 too many shells, too easy to clobber the wrong thing.
+
+## GitHub Actions
+
+For CI use the [`thrillmade/setup-logmind`](https://github.com/thrillmade/setup-logmind)
+action instead of curl-install:
+
+```yaml
+- uses: thrillmade/setup-logmind@v1.0.0
+- run: logmind check-links
+```
+
+`logmind init` (v1.1.0+) installs a `.github/dependabot.yml` block that
+groups `thrillmade/*` action bumps, so Dependabot opens one PR per
+logmind release. You pin once and the ecosystem keeps you current.
+
+If `curl logmind.dev/install.sh | bash` ever slips into a workflow
+file, the installer detects `GITHUB_ACTIONS=true` and prints a one-line
+nudge at the end of the run pointing at `setup-logmind`.
 
 ## Manual download
 
@@ -115,7 +140,7 @@ same path as macOS) cover the trust gap.
 
 ```bash
 logmind --version
-# logmind 1.0.0 (spec 0.1.0)
+# logmind 1.1.0 (spec 0.1.1)
 ```
 
 The `--version` line is the protocol contract — downstream tooling

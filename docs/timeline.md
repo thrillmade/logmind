@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (83 decisions)
+## 2026-06 (86 decisions)
 
-- **2026-06-03** — feat(skill push): privacy gate layers 1+2 (frontmatter + dir convention) (§8.2 first slice) *(feat/skill-push-privacy-gate-layers-1-2)* — [decisions-branches/feat__skill-push-privacy-gate-layers-1-2.md](decisions-branches/feat__skill-push-privacy-gate-layers-1-2.md)
-- *... 81 more decisions ...*
+- **2026-06-05** — Ship v1.1.0: install.sh fetch-latest + setup-logmind scaffold *(feat/v1.1.0-install-and-scaffold)* — [decisions-branches/feat__v1.1.0-install-and-scaffold.md](decisions-branches/feat__v1.1.0-install-and-scaffold.md)
+- *... 84 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
