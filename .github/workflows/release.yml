@@ -138,7 +138,7 @@ jobs:
 
       - name: GoReleaser snapshot (dry run)
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: latest
           # --skip=publish,sign,notarize,homebrew: snapshot mode never
@@ -162,7 +162,7 @@ jobs:
         # re-publishing a tag whose first run died midway, e.g.
         # notarytool timeout — retrigger from UI instead of re-tagging).
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true') }}
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: latest
           # GoReleaser pushes the cask-bump commit directly to
