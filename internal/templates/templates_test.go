@@ -152,6 +152,79 @@ func TestWorkflowTemplates_UseSetupLogmindAction(t *testing.T) {
 	}
 }
 
+// TestCheckDocLinksTemplate_V5_DualModeSelfHeal pins the v1.2.0 Layer
+// 3 self-heal shape (plan §8.7): the workflow template marker bumps
+// to v5, AND it contains both the mode-A (ANTHROPIC_API_KEY auto-fix)
+// and mode-B (deterministic PR comment) conditional branches. Either
+// mode missing means the dual-mode promise is broken.
+func TestCheckDocLinksTemplate_V5_DualModeSelfHeal(t *testing.T) {
+	body := Workflow("check-doc-links.yml.template")
+
+	// Marker bump v4 → v5.
+	if !strings.Contains(body, "# logmind-template-version: v5") {
+		t.Errorf("check-doc-links template missing v5 marker (plan §8.7 / Layer 3)")
+	}
+
+	// Mode A: ANTHROPIC_API_KEY-gated. Must mention the secret + run
+	// some auto-fix machinery + push back to the PR head ref.
+	if !strings.Contains(body, "secrets.ANTHROPIC_API_KEY") {
+		t.Errorf("v5 template missing ANTHROPIC_API_KEY conditional (mode A)")
+	}
+	if !strings.Contains(body, "ANTHROPIC_API_KEY != ''") {
+		t.Errorf("v5 template missing mode-A gate (env.ANTHROPIC_API_KEY != '')")
+	}
+	if !strings.Contains(body, "Mode A") {
+		t.Errorf("v5 template missing mode-A label in step name/comment")
+	}
+
+	// Mode B: fallback when no key. Must post a PR comment via gh.
+	if !strings.Contains(body, "ANTHROPIC_API_KEY == ''") {
+		t.Errorf("v5 template missing mode-B gate (env.ANTHROPIC_API_KEY == '')")
+	}
+	if !strings.Contains(body, "Mode B") {
+		t.Errorf("v5 template missing mode-B label in step name/comment")
+	}
+	if !strings.Contains(body, "gh pr comment") {
+		t.Errorf("v5 template missing `gh pr comment` (mode B deterministic path)")
+	}
+
+	// Both modes share the `logmind check-links --json` machinery.
+	if !strings.Contains(body, "logmind check-links --json") {
+		t.Errorf("v5 template missing `logmind check-links --json` invocation")
+	}
+
+	// Self-heal job is gated on pull_request events to avoid pushing
+	// to main on push triggers.
+	if !strings.Contains(body, "github.event_name == 'pull_request'") {
+		t.Errorf("v5 self-heal job must be gated on pull_request events")
+	}
+
+	// Permissions: needs contents:write (commit) + pull-requests:write
+	// (comment). Without these the mode-A push and mode-B comment fail
+	// silently.
+	if !strings.Contains(body, "contents: write") {
+		t.Errorf("v5 template missing contents:write permission")
+	}
+	if !strings.Contains(body, "pull-requests: write") {
+		t.Errorf("v5 template missing pull-requests:write permission")
+	}
+}
+
+// TestDecisionsBranchHeader_Shape pins the v1.2.0 backlink header
+// template (plan §8.7 deliverable 3). The single-line shape +
+// trailing blank line + relative ../timeline.md path are
+// load-bearing: `logmind log` prepends this verbatim to a freshly-
+// created branch decision file so timeline ↔ branch decision linking
+// is bidirectional.
+func TestDecisionsBranchHeader_Shape(t *testing.T) {
+	body := DecisionsBranchHeader()
+	want := "← back to [docs/timeline.md](../timeline.md)\n\n"
+	if body != want {
+		t.Errorf("decisions-branch-header drift:\n--- want ---\n%q\n--- got ---\n%q",
+			want, body)
+	}
+}
+
 // pythonTemplatesDir walks up from the running test file's location
 // to find the repo root, then returns src/logmind/templates/. Returns
 // "" when the Python tree is absent.

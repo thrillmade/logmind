@@ -15,6 +15,21 @@ package version
 // Version is the logmind binary's semantic version. Bumped at release.
 // Overridable via -ldflags at build time; see package docstring.
 //
+// v1.2.0 (2026-06-07) — Go port of `logmind log` (Phase B3 catch-up)
+// + 3-layer markdown self-healing per plan §8.7. The shim that
+// previously lived in the Python v0.6.16 distribution is now native:
+// the Go binary writes the decision file, commits it, and runs
+// `linkcheck.Check()` as a self-heal gate. When the gate finds
+// issues, an interactive retry loop (TTY-gated) gives the user up to
+// three attempts to fix and re-check before the command exits. CI /
+// scripted invocations bypass the prompt via `--no-interactive`
+// or non-TTY auto-detection. The companion check-doc-links workflow
+// template bumps to v5 with dual-mode self-heal — full Anthropic
+// auto-fix when `ANTHROPIC_API_KEY` is set, a deterministic PR
+// comment otherwise. linkcheck.CheckReport() surfaces fix-suggestion
+// strings keyed to each finding so both interactive and CI surfaces
+// emit actionable guidance instead of red-only diagnostics.
+//
 // v1.1.0 (2026-06-05) — install.sh fetch-latest mode + setup-logmind
 // scaffold pattern. Per the 2026-06-05 distribution lock, consumer
 // repos no longer ship `pip install logmind==X.Y.Z` in workflow
@@ -22,7 +37,7 @@ package version
 // Dependabot bump the action pin. install.sh defaults to the latest
 // release (no hardcoded sweeps) and detects GITHUB_ACTIONS=true to
 // nudge CI users at setup-logmind.
-var Version = "1.1.0-dev"
+var Version = "1.2.0-dev"
 
 // SpecVersion is the version of the thrillmade/protocol logmind contract
 // this binary implements. Reported via `logmind --version` so downstream

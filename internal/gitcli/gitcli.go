@@ -348,6 +348,54 @@ func AddPaths(repoRoot string, paths ...string) error {
 	return nil
 }
 
+// AddAll runs `git add -A` against repoRoot. Mirrors Python's
+// git_handler.git_add_all — used by `logmind log --stage all` (the
+// default since v0.2.7) so every working-tree change is folded into
+// the decision commit. Returns the same GitError shape as AddPaths.
+//
+// Note: callers who only want to stage specific files should use
+// AddPaths instead. This is the "sweep everything" surface; the memory
+// note `feedback_logmind_stage_scoped.md` documents the user
+// preference for `--stage all` as the default to avoid silently
+// dropping unstaged work.
+func AddAll(repoRoot string) error {
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrGitNotFound
+		}
+		return &GitError{Op: "add -A", Err: err, Stderr: stderr.String()}
+	}
+	return nil
+}
+
+// Commit runs `git commit -m <message>` against repoRoot. Returns a
+// GitError carrying git's stderr when commit fails (e.g., nothing
+// staged, hook rejection). Used by `logmind log` after AddAll /
+// AddPaths.
+//
+// We don't expose --amend or --no-verify here — both are foot-guns
+// for a decision-logging primitive. Agents who need either should
+// shell out via RunCaptured.
+func Commit(repoRoot, message string) error {
+	cmd := exec.Command("git", "commit", "-m", message)
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrGitNotFound
+		}
+		return &GitError{Op: "commit", Err: err, Stderr: stderr.String()}
+	}
+	return nil
+}
+
 // GitError wraps a git subprocess failure with the captured stderr
 // so callers can present meaningful diagnostics. The Python helpers
 // raise GitError(f"...{e.stderr}") in the same style.
