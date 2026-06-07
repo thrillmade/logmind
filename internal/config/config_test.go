@@ -137,3 +137,152 @@ func TestLoadMalformedYaml(t *testing.T) {
 		t.Errorf("malformed config did not degrade to defaults")
 	}
 }
+
+// TestDefaultConfig_PrivacyScannerEmpty pins the §8.2 wave-2 safe-defaults
+// shape: empty Keywords / OrgDomains lists, nil SeverityOverrides map.
+// The scanner's hardcoded baseline still fires regardless of these
+// values — config purely WIDENS the deny set. If this test drifts, an
+// accidental DefaultConfig() change has started seeding patterns from
+// the config layer instead of the scanner package.
+func TestDefaultConfig_PrivacyScannerEmpty(t *testing.T) {
+	c := DefaultConfig()
+	if len(c.PrivacyScanner.Keywords) != 0 {
+		t.Errorf("PrivacyScanner.Keywords default = %v; want empty", c.PrivacyScanner.Keywords)
+	}
+	if len(c.PrivacyScanner.OrgDomains) != 0 {
+		t.Errorf("PrivacyScanner.OrgDomains default = %v; want empty", c.PrivacyScanner.OrgDomains)
+	}
+	if c.PrivacyScanner.SeverityOverrides != nil {
+		t.Errorf("PrivacyScanner.SeverityOverrides default = %v; want nil", c.PrivacyScanner.SeverityOverrides)
+	}
+}
+
+// TestDefaultConfig_AllowPromoteFromPrivate_FalseByDefault pins the
+// §8.2 wave-2 layer-4 safe default. A private source repo pushing to a
+// public catalog gets blocked unless the user explicitly opts in by
+// flipping this key. Drift on the default would silently disable the
+// cross-visibility gate for every fresh install.
+func TestDefaultConfig_AllowPromoteFromPrivate_FalseByDefault(t *testing.T) {
+	c := DefaultConfig()
+	if c.AllowPromoteFromPrivate {
+		t.Errorf("AllowPromoteFromPrivate default = true; want false (safe default)")
+	}
+}
+
+// TestLoadUserOverride_PrivacyScannerKeywords confirms a user-supplied
+// keywords list flows through Load() so `logmind skill push` picks it
+// up. Verifies the YAML deserialisation tag is wired correctly.
+func TestLoadUserOverride_PrivacyScannerKeywords(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".logmind")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "privacy_scanner:\n  keywords:\n    - acme-internal\n    - skunkworks\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"acme-internal", "skunkworks"}
+	if !reflect.DeepEqual(cfg.PrivacyScanner.Keywords, want) {
+		t.Errorf("PrivacyScanner.Keywords = %v; want %v", cfg.PrivacyScanner.Keywords, want)
+	}
+}
+
+// TestLoadUserOverride_PrivacyScannerOrgDomains — same shape as the
+// keywords override, but for the org_domains list. Org domains have NO
+// baseline (every org's internal-domain shape is different); the user
+// must opt in by listing them here.
+func TestLoadUserOverride_PrivacyScannerOrgDomains(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".logmind")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "privacy_scanner:\n  org_domains:\n    - acme.internal\n    - acme.local\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"acme.internal", "acme.local"}
+	if !reflect.DeepEqual(cfg.PrivacyScanner.OrgDomains, want) {
+		t.Errorf("PrivacyScanner.OrgDomains = %v; want %v", cfg.PrivacyScanner.OrgDomains, want)
+	}
+}
+
+// TestLoadUserOverride_PrivacyScannerSeverityOverrides verifies the
+// severity-overrides map round-trips. Note: this test only pins that
+// the YAML map deserialises into Go; the "can't weaken baseline"
+// contract is enforced by the scanner package (see scanner_test.go).
+func TestLoadUserOverride_PrivacyScannerSeverityOverrides(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".logmind")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "privacy_scanner:\n  severity_overrides:\n    local-path: block\n    org-domain: block\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := map[string]string{
+		"local-path": "block",
+		"org-domain": "block",
+	}
+	if !reflect.DeepEqual(cfg.PrivacyScanner.SeverityOverrides, want) {
+		t.Errorf("PrivacyScanner.SeverityOverrides = %v; want %v",
+			cfg.PrivacyScanner.SeverityOverrides, want)
+	}
+}
+
+// TestLoadUserOverride_AllowPromoteFromPrivate — the §8.2 wave-2 layer-4
+// opt-out flag flips from false to true when the user sets it. This is
+// the only way to push a private-source skill to a public catalog.
+func TestLoadUserOverride_AllowPromoteFromPrivate(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".logmind")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "allow_promote_from_private: true\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.AllowPromoteFromPrivate {
+		t.Errorf("AllowPromoteFromPrivate = false; want true (user override)")
+	}
+}
+
+// TestDefaultMap_PrivacyScannerSubkeysExist guards against the
+// `logmind config get privacy_scanner.keywords` 404 case on a fresh
+// install. The OrderedMap shape backs the config-list/config-get/config-set
+// commands; if DefaultMap() drifts and forgets the wave-2 sections, the
+// CLI surface for those keys silently disappears.
+func TestDefaultMap_PrivacyScannerSubkeysExist(t *testing.T) {
+	m := DefaultMap()
+	for _, path := range []string{
+		"privacy_scanner",
+		"privacy_scanner.keywords",
+		"privacy_scanner.org_domains",
+		"privacy_scanner.severity_overrides",
+		"allow_promote_from_private",
+	} {
+		if _, ok := GetPath(m, path); !ok {
+			t.Errorf("DefaultMap missing key %q — fresh install would 404 on `logmind config get %s`",
+				path, path)
+		}
+	}
+}

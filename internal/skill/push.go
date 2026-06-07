@@ -124,6 +124,29 @@ type PushOptions struct {
 	// Stdout receives progress lines + the final "ok skill: push ..."
 	// summary. Tests inject a buffer; production wires cmd.OutOrStdout().
 	Stdout io.Writer
+
+	// Stderr receives the layer-3 / layer-4 "warn"-severity diagnostics
+	// (bare local paths, org-domain references that the user hasn't
+	// promoted to block). Block-severity hits go to stdout as part of
+	// the rejection message; only the non-fatal warnings land on stderr.
+	// When nil, defaults to io.Discard — same convention as Stdout.
+	Stderr io.Writer
+
+	// ScannerConfig: §8.2 wave-2, layer 3. Loaded from
+	// .logmind/config.yml `privacy_scanner` by the CLI layer. Zero
+	// value means "scanner runs with hardcoded baseline only". The
+	// scanner's hardcoded baseline (credential prefixes + canonical
+	// internal-process keywords) ALWAYS fires; config purely WIDENS
+	// the deny set (never weakens it).
+	ScannerConfig ScannerConfig
+
+	// AllowPromoteFromPrivate: §8.2 wave-2, layer 4. When false
+	// (default), a private source repo pushing to a public catalog is
+	// rejected. When true, the visibility lookup still runs and
+	// records what it found, but doesn't reject. Layers 1-3 are
+	// unaffected by this flag — promotion-from-private still has to
+	// pass the content scanner + marker checks.
+	AllowPromoteFromPrivate bool
 }
 
 // PushResult captures what Push did so the CLI layer (and tests) can
@@ -216,6 +239,34 @@ func Push(opts PushOptions) (PushResult, error) {
 
 // pushWith is the testable core. Same surface as Push but takes
 // injectable runners for git + gh.
+//
+// Privacy gate evaluation order (§8.2):
+//
+//	(a) Skill-name validation (path-traversal block, Bug 4 / PR #136).
+//	(b) Layer 2 — directory convention (.claude/skills-private/<name>/).
+//	    Fires BEFORE the SKILL.md read so the body is never touched.
+//	(c) SKILL.md read + frontmatter structural validation.
+//	(d) Layer 1 — frontmatter markers (private: / do-not-promote:).
+//	(e) Layer 3 — content scanner. Runs AFTER frontmatter so we know
+//	    the body is structurally sound; runs BEFORE catalog-target
+//	    validation so the user sees content issues before catalog
+//	    setup nits.
+//	(f) Catalog target shape validation.
+//	(g) Source provenance lookup (HEAD sha, source-repo slug, author).
+//	(h) Layer 4 — repo-visibility check. Requires the source-repo slug
+//	    from (g), so runs after provenance lookup. Uses gh runner ahead
+//	    of the auth-status check — if gh isn't authed, fetchVisibility
+//	    degrades to empty-string visibility and layer 4 fails open
+//	    (same fail-open shape as the gh runner's other lookups).
+//	(i) Dry-run early-exit point.
+//	(j) gh auth status, clone, branch, copy, commit, push, PR create.
+//
+// The order is INTENTIONAL: cheaper / more-actionable checks run first
+// so users hit the most fixable error class without paying for the
+// later (network) phases. Privacy gates (b, d, e, h) ALL run on
+// dry-run too — the gate is the point of the push command, and skipping
+// it on `--dry-run` would mean the most common pre-merge sanity command
+// silently allows the leak the gate exists to catch.
 func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) {
 	res := PushResult{
 		SkillName:     opts.SkillName,
@@ -224,6 +275,9 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 
 	if opts.Stdout == nil {
 		opts.Stdout = io.Discard
+	}
+	if opts.Stderr == nil {
+		opts.Stderr = io.Discard
 	}
 	if opts.Now.IsZero() {
 		opts.Now = time.Now()
@@ -310,6 +364,59 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 		return res, newPrivateSkillError("%s", msg)
 	}
 
+	// 1.6. Privacy gate — LAYER 3 (content scanner). §8.2 wave-2. Runs
+	// over the full SKILL.md body so prose, code blocks, examples — all
+	// the places where a stray credential or internal-process keyword
+	// can hide — are checked uniformly. ScanContent returns ALL hits;
+	// we partition into blocking + warning and act on each. The hit
+	// list goes to stdout (block) / stderr (warn) so CI logs preserve
+	// the failure context.
+	//
+	// We run BEFORE the catalog-target shape validation so the user
+	// sees content issues before catalog setup nits. A skill with a
+	// credential pasted in the body is broken regardless of what
+	// catalog they pointed at; the leak signal is more actionable.
+	if hits := ScanContent(body, opts.ScannerConfig); len(hits) > 0 {
+		blocking := BlockingHits(hits)
+		warnings := WarningHits(hits)
+
+		// Warnings always print so the user sees them even on a
+		// successful push. Format matches the block path so eyeballs
+		// don't have to switch templates.
+		for _, h := range warnings {
+			fmt.Fprintf(opts.Stderr,
+				"warning [%s/%s] line %d: %s\n",
+				h.Layer, h.Kind, h.LineNumber, h.Match)
+		}
+
+		if len(blocking) > 0 {
+			// Build a single multi-line rejection. Listing every
+			// blocking hit means the author fixes all of them in one
+			// editing pass rather than hitting reject-fix-rerun for
+			// each in turn.
+			fmt.Fprintf(opts.Stdout,
+				"Error: skill %s blocked by privacy-scanner (%d block hit(s)):\n",
+				opts.SkillName, len(blocking))
+			for _, h := range blocking {
+				fmt.Fprintf(opts.Stdout,
+					"  - [%s/%s] line %d: %s\n",
+					h.Layer, h.Kind, h.LineNumber, h.Match)
+			}
+			fmt.Fprintf(opts.Stdout,
+				"Edit the SKILL.md to remove the offending content, OR move "+
+					"the skill under .claude/skills-private/%s/ if it should "+
+					"stay private. There is no --force flag.\n",
+				opts.SkillName)
+			msg := fmt.Sprintf("skill %s blocked by privacy-scanner (%d block hit(s))",
+				opts.SkillName, len(blocking))
+			return res, errors.Join(
+				fmt.Errorf("%s", msg),
+				ErrPrivacyScannerHit,
+				clierr.ErrSilent,
+			)
+		}
+	}
+
 	// Companion files: anything under .claude/skills/<name>/ EXCEPT
 	// PROVENANCE.md (which is the consumer-repo-internal counter file
 	// — the catalog gets its own PROVENANCE-push.yml summarising the
@@ -350,6 +457,38 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 		nonEmpty(res.SourceRepo, "(local, no remote)"), shortSHA)
 	fmt.Fprintf(opts.Stdout, "  branch: %s\n", res.Branch)
 	fmt.Fprintf(opts.Stdout, "  files: %s\n", strings.Join(res.CopiedFiles, ", "))
+
+	// 4.5. Privacy gate — LAYER 4 (repo-visibility check). §8.2 wave-2.
+	// Compares source-repo visibility against catalog visibility and
+	// rejects the cross-visibility case (private source → public
+	// catalog) unless `allow_promote_from_private: true` is set in
+	// `.logmind/config.yml`. Runs on dry-run too — same rationale as
+	// layers 1-3: the gate is the point of the command.
+	//
+	// gh failures inside CheckRepoVisibility are fail-OPEN — see the
+	// docstring there. We accept that opening for the same reason any
+	// network-dependent guard does: forcing CI to abort on a transient
+	// API failure trains users to ignore the gate.
+	visResult := CheckRepoVisibility(VisibilityCheckOptions{
+		SourceRepo:              res.SourceRepo,
+		CatalogTarget:           opts.CatalogTarget,
+		AllowPromoteFromPrivate: opts.AllowPromoteFromPrivate,
+	}, gh)
+	if visResult.Blocked {
+		fmt.Fprintf(opts.Stdout, "Error: %s\n", visResult.Reason)
+		return res, errors.Join(
+			fmt.Errorf("%s", visResult.Reason),
+			ErrCrossVisibilityPush,
+			clierr.ErrSilent,
+		)
+	}
+	// Informational line on successful cross-visibility check — only
+	// printed when we have BOTH visibilities so an opted-in promote
+	// flow leaves a visible audit trail in the user's terminal.
+	if visResult.SourceVisibility != "" && visResult.TargetVisibility != "" {
+		fmt.Fprintf(opts.Stdout, "  visibility: source=%s, target=%s\n",
+			visResult.SourceVisibility, visResult.TargetVisibility)
+	}
 
 	if opts.DryRun {
 		fmt.Fprintln(opts.Stdout, "→ Dry-run: skipping clone, push, and PR creation.")
