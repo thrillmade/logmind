@@ -20,3 +20,14 @@
 
 ---
 
+## 2026-06-07 15:08 - Regen derived docs after v1.2.0 decision log
+
+**Reasoning:** After the v1.2.0 decision was logged via the new Go binary, docs/timeline.md and docs/file-structure.md need refreshing so they reflect the new branch decision file. logmind log doesn't yet auto-regen on the Go path (deferred to a follow-up — Python carries this in the v0.6.16 shim's auto_update_file_structure + write_timeline calls); do it explicitly here.
+
+**Alternatives considered:** Wire auto-regen into the Go log command in this PR — rejected: out-of-scope, would balloon the diff. Tracked as a follow-up.
+
+**Implications:**
+- Two additional commits land on the branch (the regen) — the timeline test won't blink because the merge driver auto-resolves these on main.
+
+---
+
