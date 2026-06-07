@@ -187,6 +187,205 @@ func Check(repoRoot string, roots, allowOrphans []string) (broken, orphans []str
 	return broken, orphans, nil
 }
 
+// Finding is one orphan or broken-link entry enriched with a heuristic
+// SuggestedFix string the agent (or PR-comment workflow) can act on
+// without re-deriving the fix logic. The plain `[]string` slices
+// returned by `Check()` stay byte-identical to the Python output for
+// backward compatibility; callers that want the agent-readable report
+// switch to `CheckWithReport()` instead. Added in v1.2.0 per plan §8.7
+// (Layer 1 + Layer 3 self-healing).
+type Finding struct {
+	// Path is the repo-relative POSIX path of the markdown file with
+	// the problem. For broken-link findings, this is the source file
+	// containing the dead link; for orphans, this is the unlinked file.
+	Path string `json:"path"`
+
+	// Reason is a single-line human-readable description of the issue.
+	// For broken links it includes the dead target; for orphans it's a
+	// short "no parent doc links to it" phrase. Already tense + voice
+	// stable so PR-comment renderers can drop it in verbatim.
+	Reason string `json:"reason"`
+
+	// SuggestedFix is the heuristic next-step the agent should take.
+	// Designed to be the SINGLE most likely correct action — not a menu
+	// of options. Lines start with `→` so PR comments and terminal
+	// output share the same shape:
+	//
+	//   → run: logmind timeline --write docs/timeline.md
+	//   → add a link from AGENTS.md (canonical entry point per logmind convention)
+	//
+	// Always present; falls back to a generic instruction when no
+	// specific heuristic matches.
+	SuggestedFix string `json:"suggestedFix"`
+}
+
+// CheckReport is the agent-readable view returned by `CheckWithReport()`.
+// Mirrors the `Check()` shape (broken + orphans split) but each entry is
+// a `Finding` with a `SuggestedFix` attached.
+//
+// JSON-tagged for the v5 workflow template's mode-B comment path: the
+// shell wrapper invokes `logmind check-links --json` and parses this
+// struct verbatim.
+type CheckReport struct {
+	Broken  []Finding `json:"broken"`
+	Orphans []Finding `json:"orphans"`
+}
+
+// HasIssues returns true when either Broken or Orphans is non-empty.
+// Sugar for the retry-loop predicate in `logmind log`'s self-heal
+// (`if report.HasIssues() { prompt }`).
+func (r CheckReport) HasIssues() bool {
+	return len(r.Broken) > 0 || len(r.Orphans) > 0
+}
+
+// CheckWithReport runs the same check as `Check()` and returns a
+// `CheckReport` carrying agent-readable findings. Fix suggestions are
+// heuristic — see `suggestOrphanFix` / `suggestBrokenLinkFix` below for
+// the resolution order.
+//
+// Equivalent to `Check()` for repo discovery, allowlist application,
+// and error semantics. The two functions share `Check()`'s walk +
+// resolve machinery so the same paths reach the same verdict.
+func CheckWithReport(repoRoot string, roots, allowOrphans []string) (CheckReport, error) {
+	broken, orphans, err := Check(repoRoot, roots, allowOrphans)
+	if err != nil {
+		return CheckReport{}, err
+	}
+	abs, _ := filepath.Abs(repoRoot)
+	if resolved, errR := filepath.EvalSymlinks(abs); errR == nil {
+		abs = resolved
+	}
+
+	report := CheckReport{
+		Broken:  make([]Finding, 0, len(broken)),
+		Orphans: make([]Finding, 0, len(orphans)),
+	}
+	for _, line := range broken {
+		// Lines come from `Check()` as `"<source>: missing -> <target>"`.
+		// Split into source + target so the suggestion heuristic can
+		// reason about both.
+		source, target := splitBrokenLine(line)
+		report.Broken = append(report.Broken, Finding{
+			Path:         source,
+			Reason:       fmt.Sprintf("broken link → %s", target),
+			SuggestedFix: suggestBrokenLinkFix(abs, source, target),
+		})
+	}
+	for _, orphan := range orphans {
+		report.Orphans = append(report.Orphans, Finding{
+			Path:         orphan,
+			Reason:       "no parent doc links to it",
+			SuggestedFix: suggestOrphanFix(abs, orphan),
+		})
+	}
+	return report, nil
+}
+
+// splitBrokenLine inverts the `"<source>: missing -> <target>"` format
+// produced by `Check()`. Defensive: malformed inputs return the whole
+// line as the source and an empty target rather than panicking — the
+// Finding still surfaces to the user, just with a generic suggestion.
+func splitBrokenLine(line string) (source, target string) {
+	idx := strings.Index(line, ": missing -> ")
+	if idx < 0 {
+		return line, ""
+	}
+	return line[:idx], line[idx+len(": missing -> "):]
+}
+
+// suggestBrokenLinkFix picks the most likely actionable next step for a
+// broken markdown link. Heuristics, in order:
+//
+//  1. The target is `docs/decisions-branches/<branch>.md` or
+//     `docs/decisions/<branch>.md` referenced FROM `docs/timeline.md` —
+//     the timeline is auto-derived and stale; re-run `logmind timeline --write`.
+//  2. The target is `docs/file-structure.md` referenced FROM AGENTS.md /
+//     README.md — same story, re-run `logmind file-structure --write`.
+//  3. Anything else → suggest removing the dead link or restoring the
+//     target file.
+//
+// Returns a `→`-prefixed string ready for terminal + PR-comment display.
+func suggestBrokenLinkFix(repoRoot, source, target string) string {
+	sourceClean := filepath.ToSlash(source)
+	targetClean := filepath.ToSlash(target)
+
+	// Timeline regen heuristic — covers the common Layer 1 case where
+	// the user logs a new branch decision but forgets to run
+	// `logmind timeline --write`.
+	if sourceClean == "docs/timeline.md" &&
+		(strings.HasPrefix(targetClean, "docs/decisions-branches/") ||
+			strings.HasPrefix(targetClean, "decisions-branches/") ||
+			strings.HasPrefix(targetClean, "decisions/")) {
+		return "→ run: logmind timeline --write docs/timeline.md"
+	}
+
+	// File-structure regen heuristic.
+	if strings.HasSuffix(targetClean, "docs/file-structure.md") ||
+		targetClean == "file-structure.md" {
+		return "→ run: logmind file-structure --write docs/file-structure.md"
+	}
+
+	// Generic fallback. Mentions both fix paths so the user picks the
+	// right one for their intent — restoring is right when the link is
+	// load-bearing; removing is right when it was a typo.
+	return fmt.Sprintf("→ remove the dead link or restore %s", target)
+}
+
+// suggestOrphanFix picks the nearest parent doc that EXISTS in the repo
+// and suggests adding a link from it. Walks up `docs/` then root,
+// preferring well-known entry points (README, AGENTS, docs/timeline.md)
+// over arbitrary siblings.
+//
+// orphan is a repo-relative POSIX path (e.g. `docs/install.md`).
+func suggestOrphanFix(repoRoot, orphan string) string {
+	// Special-cased well-known orphans that have a canonical parent
+	// per logmind convention. These run first so the suggestion is
+	// concrete rather than directory-walk derived.
+	switch filepath.ToSlash(orphan) {
+	case "docs/timeline.md":
+		return "→ add a link from AGENTS.md (canonical entry point per logmind convention)"
+	case "docs/file-structure.md":
+		return "→ add a link from AGENTS.md (canonical entry point per logmind convention)"
+	}
+
+	// Walk up the directory tree from the orphan's parent looking for a
+	// `README.md`. Prefers the closest one (e.g., `docs/install/foo.md`
+	// would suggest linking from `docs/install/README.md` if it exists,
+	// then `docs/README.md`, then root `README.md`).
+	orphanDir := filepath.Dir(orphan)
+	dir := orphanDir
+	for {
+		candidate := filepath.Join(dir, "README.md")
+		if dir == "." || dir == "/" {
+			candidate = "README.md"
+		}
+		if _, err := os.Stat(filepath.Join(repoRoot, candidate)); err == nil {
+			return fmt.Sprintf("→ add a link from %s (parent doc by path heuristic)",
+				filepath.ToSlash(candidate))
+		}
+		if dir == "." || dir == "" {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	// AGENTS.md fallback — every logmind repo has one (init creates it),
+	// so this is the safe universal suggestion when no README is in the
+	// path.
+	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+	if _, err := os.Stat(agentsPath); err == nil {
+		return "→ add a link from AGENTS.md (canonical entry point per logmind convention)"
+	}
+
+	// Final fallback — pure shape, no anchor.
+	return fmt.Sprintf("→ add a link to %s from a parent doc (README.md / AGENTS.md / docs/timeline.md)",
+		filepath.ToSlash(orphan))
+}
+
 // FormatReport renders the human-readable report. Byte-identical to
 // link_check.format_report when `broken` and `orphans` carry the
 // same data.

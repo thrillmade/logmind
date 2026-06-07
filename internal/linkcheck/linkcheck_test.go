@@ -305,3 +305,138 @@ func repoRootFromCaller(t *testing.T) string {
 
 // Sanity: keep strings imported (used by the build-tagged version).
 var _ = strings.HasPrefix
+
+// --- CheckReport tests (v1.2.0, plan §8.7) -------------------------------
+
+// TestCheckWithReport_CleanRepo: parity with Check on a clean fixture.
+// Report carries empty slices + HasIssues==false.
+func TestCheckWithReport_CleanRepo(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md": "# Project\n",
+	})
+	report, err := CheckWithReport(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("CheckWithReport: %v", err)
+	}
+	if report.HasIssues() {
+		t.Fatalf("clean repo HasIssues = true; want false")
+	}
+	if len(report.Broken) != 0 || len(report.Orphans) != 0 {
+		t.Fatalf("clean report has entries: %+v", report)
+	}
+}
+
+// TestCheckWithReport_BrokenLinkFix_TimelineRegen: a broken link FROM
+// docs/timeline.md TO docs/decisions-branches/<branch>.md is the
+// signature stale-derived-doc case. SuggestedFix must point at
+// `logmind timeline --write docs/timeline.md`.
+func TestCheckWithReport_BrokenLinkFix_TimelineRegen(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md": "# Project\n[t](docs/timeline.md)\n",
+		"docs/timeline.md": "# Timeline\n\n" +
+			"- 2026-01-01 [link](decisions-branches/missing.md)\n",
+	})
+	report, err := CheckWithReport(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("CheckWithReport: %v", err)
+	}
+	if len(report.Broken) != 1 {
+		t.Fatalf("expected 1 broken; got %d: %+v", len(report.Broken), report.Broken)
+	}
+	if !strings.Contains(report.Broken[0].SuggestedFix, "logmind timeline --write") {
+		t.Fatalf("SuggestedFix should suggest timeline regen; got: %q",
+			report.Broken[0].SuggestedFix)
+	}
+}
+
+// TestCheckWithReport_BrokenLinkFix_Generic: a broken link with no
+// timeline/file-structure heuristic match falls back to the generic
+// "remove or restore" suggestion.
+func TestCheckWithReport_BrokenLinkFix_Generic(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md": "# Project\n[broken](nope.md)\n",
+	})
+	report, err := CheckWithReport(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("CheckWithReport: %v", err)
+	}
+	if len(report.Broken) != 1 {
+		t.Fatalf("expected 1 broken; got %d", len(report.Broken))
+	}
+	if !strings.Contains(report.Broken[0].SuggestedFix, "remove the dead link") {
+		t.Fatalf("generic SuggestedFix expected; got: %q", report.Broken[0].SuggestedFix)
+	}
+}
+
+// TestCheckWithReport_OrphanFix_KnownWellKnown: docs/timeline.md as
+// an orphan gets the canonical AGENTS.md suggestion (logmind
+// convention).
+func TestCheckWithReport_OrphanFix_KnownWellKnown(t *testing.T) {
+	// timeline.md is not on DefaultAllowOrphans, so when no doc links
+	// to it the orphan check fires.
+	dir := setupFixture(t, map[string]string{
+		"README.md":        "# Project\n",
+		"docs/timeline.md": "# Timeline\n",
+	})
+	report, err := CheckWithReport(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("CheckWithReport: %v", err)
+	}
+	if len(report.Orphans) != 1 {
+		t.Fatalf("expected 1 orphan; got %d: %+v", len(report.Orphans), report.Orphans)
+	}
+	if !strings.Contains(report.Orphans[0].SuggestedFix, "AGENTS.md") {
+		t.Fatalf("expected AGENTS.md suggestion for timeline.md; got: %q",
+			report.Orphans[0].SuggestedFix)
+	}
+}
+
+// TestCheckWithReport_OrphanFix_GenericReadme: an arbitrary orphan
+// under docs/ gets the README.md heuristic when a root README exists.
+func TestCheckWithReport_OrphanFix_GenericReadme(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md":       "# Project\n",
+		"docs/install.md": "# Install\n",
+	})
+	report, err := CheckWithReport(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("CheckWithReport: %v", err)
+	}
+	if len(report.Orphans) != 1 {
+		t.Fatalf("expected 1 orphan; got %d", len(report.Orphans))
+	}
+	fix := report.Orphans[0].SuggestedFix
+	// Either README.md (parent doc by path heuristic) or AGENTS.md
+	// fallback — both are valid resolutions of the heuristic. Test
+	// that ONE of the two canonical suggestions fires.
+	if !strings.Contains(fix, "README.md") && !strings.Contains(fix, "AGENTS.md") {
+		t.Fatalf("expected README.md or AGENTS.md suggestion; got: %q", fix)
+	}
+}
+
+// TestCheckWithReport_FindingFields: HasIssues + every Finding carries
+// non-empty Path, Reason, SuggestedFix.
+func TestCheckWithReport_FindingFields(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md":       "# Project\n[broken](nope.md)\n",
+		"docs/install.md": "# Install\n",
+	})
+	report, err := CheckWithReport(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("CheckWithReport: %v", err)
+	}
+	if !report.HasIssues() {
+		t.Fatalf("expected HasIssues=true")
+	}
+	for _, f := range append(report.Broken, report.Orphans...) {
+		if f.Path == "" {
+			t.Errorf("Finding.Path is empty: %+v", f)
+		}
+		if f.Reason == "" {
+			t.Errorf("Finding.Reason is empty: %+v", f)
+		}
+		if f.SuggestedFix == "" {
+			t.Errorf("Finding.SuggestedFix is empty: %+v", f)
+		}
+	}
+}

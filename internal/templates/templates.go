@@ -36,6 +36,7 @@ import (
 
 //go:embed AGENTS.md.template AGENTS.md.slim.template agent-stub.md logmind-section.md CLAUDE.md.template
 //go:embed config.yml.template decisions.md.template decisions-archive.md.template file-structure.md.template
+//go:embed decisions-branch-header.md.template
 //go:embed dependabot.yml.template
 //go:embed github/*.yml.template
 var embedFS embed.FS
@@ -141,6 +142,32 @@ func DecisionsArchiveTemplate() string {
 // (used as a placeholder before the first real tree walk overwrites it).
 func FileStructureTemplate() string {
 	return readEmbed("file-structure.md.template")
+}
+
+// DecisionsBranchHeader returns the single-line backlink header
+// prepended to a freshly-created `docs/decisions-branches/<branch>.md`
+// file by `logmind log`. Format (POSIX line endings):
+//
+//	← back to [docs/timeline.md](../timeline.md)
+//	<blank line>
+//
+// Ships in v1.2.0 alongside the Go port of `log` (plan §8.7 deliverable
+// 3). Provides bidirectional linking by design: timeline.md already
+// links INTO each branch decision file; the header completes the
+// round-trip so an agent reading a branch file can navigate back to
+// the canonical entry point without re-running `find`.
+//
+// The header is written ONLY on first creation of the branch decision
+// file — subsequent `logmind log` invocations on the same branch
+// append the new decision entry after existing content (header
+// preserved verbatim).
+//
+// Not added to the default-branch `docs/decisions.md` (no `..` parent
+// hop needed; the link target would be `timeline.md` not
+// `../timeline.md`, and `decisions.md` is the original entry point
+// rather than a derived per-branch file).
+func DecisionsBranchHeader() string {
+	return readEmbed("decisions-branch-header.md.template")
 }
 
 // DependabotTemplate returns the bundled .github/dependabot.yml seed

@@ -15,7 +15,7 @@ func TestCheckLinks_CleanRepo(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	var stdout bytes.Buffer
-	if err := runCheckLinks(dir, &stdout); err != nil {
+	if err := runCheckLinks(dir, false, &stdout); err != nil {
 		t.Fatalf("runCheckLinks: %v", err)
 	}
 	checkGolden(t, "check_links_clean.golden", stdout.String())
@@ -29,7 +29,7 @@ func TestCheckLinks_BrokenLink(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	var stdout bytes.Buffer
-	err := runCheckLinks(dir, &stdout)
+	err := runCheckLinks(dir, false, &stdout)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("runCheckLinks err = %v; want ErrSilent", err)
 	}
@@ -49,7 +49,7 @@ func TestCheckLinks_OrphanFile(t *testing.T) {
 		t.Fatalf("write orphan: %v", err)
 	}
 	var stdout bytes.Buffer
-	err := runCheckLinks(dir, &stdout)
+	err := runCheckLinks(dir, false, &stdout)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("runCheckLinks err = %v; want ErrSilent", err)
 	}

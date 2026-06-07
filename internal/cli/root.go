@@ -70,6 +70,11 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newSelfUpdateCmd())
+	// v1.2.0 (plan §8.7 — deferred from Phase B3): `logmind log` ports
+	// the Python shim's decision-logging primitive into Go and bolts
+	// Layer 1 of markdown self-healing on top (linkcheck-driven
+	// interactive retry loop). See internal/cli/log.go.
+	root.AddCommand(newLogCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.

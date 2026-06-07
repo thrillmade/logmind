@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (86 decisions)
+## 2026-06 (90 decisions)
 
-- **2026-06-05** — Ship v1.1.0: install.sh fetch-latest + setup-logmind scaffold *(feat/v1.1.0-install-and-scaffold)* — [decisions-branches/feat__v1.1.0-install-and-scaffold.md](decisions-branches/feat__v1.1.0-install-and-scaffold.md)
-- *... 84 more decisions ...*
+- **2026-06-07** — Regen derived docs after v1.2.0 decision log *(feat/v1.2.0-log-go-port-self-heal)* — [decisions-branches/feat__v1.2.0-log-go-port-self-heal.md](decisions-branches/feat__v1.2.0-log-go-port-self-heal.md)
+- *... 88 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
