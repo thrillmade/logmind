@@ -43,6 +43,8 @@ permissions:
 
 jobs:
   check-derived-docs:
+    # Skip for dependabot PRs — they never touch decisions/derived docs.
+    if: github.actor != 'dependabot[bot]'
     name: check-derived-docs
     runs-on: ubuntu-latest
     steps:
@@ -63,7 +65,7 @@ jobs:
       # consumer repos. Dependabot keeps the action ref current via the
       # `github-actions` ecosystem block in `.github/dependabot.yml` (also
       # installed by `logmind init`).
-      - uses: thrillmade/setup-logmind@v1.0.1
+      - uses: thrillmade/setup-logmind@v1.0.0
 
       - name: Regenerate derived docs
         run: |

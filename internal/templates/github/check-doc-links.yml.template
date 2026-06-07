@@ -35,6 +35,8 @@ permissions:
 
 jobs:
   check-links:
+    # Skip for dependabot PRs — they never touch markdown links.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     outputs:
       report: ${{ steps.check.outputs.report }}
@@ -55,7 +57,7 @@ jobs:
       # consumer repos. Dependabot keeps the action ref current via the
       # `github-actions` ecosystem block in `.github/dependabot.yml` (also
       # installed by `logmind init`).
-      - uses: thrillmade/setup-logmind@v1.0.1
+      - uses: thrillmade/setup-logmind@v1.0.0
 
       - name: Check markdown link integrity
         id: check
@@ -91,7 +93,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - uses: thrillmade/setup-logmind@v1.0.1
+      - uses: thrillmade/setup-logmind@v1.0.0
 
       # Mode A — ANTHROPIC_API_KEY is configured: invoke Claude to
       # propose minimal markdown link fixes, apply, commit, push back to
