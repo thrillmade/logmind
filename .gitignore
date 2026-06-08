@@ -75,3 +75,4 @@ homebrew-tap/
 bin/
 *.test
 *.out
+.playwright-mcp/

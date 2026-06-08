@@ -5,59 +5,66 @@ name: logmind / check-derived-docs
 # are derived artifacts, deterministically computed from sources (per-branch
 # logs + decisions.md + archive for timeline; tree walk for file-structure).
 #
-# Two modes (v0.3.4+):
+# v5 (logmind v1.2.1+) — GITHUB_TOKEN single-job dual-mode.
 #
-# 1. AUTO-FIX mode (preferred — happy path).
-#    Triggered when `LOGMIND_AUTO_REGEN_PAT` secret is configured on the repo
-#    (or inherited from the org). When derived docs are stale, the workflow
-#    regenerates them and pushes the fix back to the PR branch using the PAT.
-#    Downstream CI re-runs naturally (PAT-pushed commits DO trigger workflows,
-#    unlike GITHUB_TOKEN-pushed ones). Author sees one extra commit with a
-#    clear `[bot]` author; nothing else changes about their PR.
+# The v4 PAT-based design (LOGMIND_AUTO_REGEN_PAT) failed for Dependabot
+# PRs because GitHub isolates repo secrets from PRs authored by bots —
+# the secret resolves to empty in that context, forcing fail-fast on
+# every Dependabot PR. Worse, Dependabot PRs are the COMMON case for
+# stale derived-doc drift (each bump shifts file-structure.md
+# byte-by-byte without touching decisions).
 #
-# 2. FAIL-FAST mode (fallback — when no PAT configured).
-#    Without the PAT, the workflow falls back to the v0.2 behavior: fails red
-#    with the regenerate-locally message. Required because GITHUB_TOKEN
-#    commits don't re-trigger required status checks (anti-recursion safety),
-#    so auto-commit via GITHUB_TOKEN would leave the merge gate stuck on
-#    "Expected — Waiting for status to be reported" forever.
+# v5 mirrors the v4→v5 pattern that already shipped in
+# check-doc-links.yml: a single job that (a) regenerates derived docs
+# with the embedded logmind binary, (b) commits + pushes via
+# GITHUB_TOKEN to the PR head ref, (c) re-verifies in the same
+# execution. The auto-commit + re-verify happen in ONE workflow run —
+# GITHUB_TOKEN's "doesn't trigger downstream workflows" limitation
+# doesn't matter because we don't need a downstream trigger; verify is
+# the final step.
 #
-# Forked PRs always run in fail-fast mode (can't push back to the fork's
-# head ref). Internal PRs use auto-fix when the PAT is available.
+# Works for:
+#   - Author PRs (normal flow)
+#   - Dependabot PRs (GITHUB_TOKEN works; PAT doesn't)
+#   - Forked PRs (read-only fallback — can't push to fork's head ref;
+#     post-merge regen on main catches them)
 #
-# Setup for the PAT path:
-#   1. Create a fine-grained PAT scoped to this repo with Contents: write.
-#   2. Add it as `LOGMIND_AUTO_REGEN_PAT` under
-#      Settings → Secrets and variables → Actions (or at the org level if
-#      multiple repos use logmind).
+# No PAT configuration required. No per-repo secret setup. Default
+# zero-config self-heal.
 #
 # Replaces the v0.1.x `logmind-aggregate.yml` workflow.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master]
 
 permissions:
-  contents: write   # needed for the auto-fix push when PAT is configured
+  contents: write       # auto-commit regen back to PR head ref
   pull-requests: read
 
 jobs:
   check-derived-docs:
-    # Skip for dependabot PRs — they never touch decisions/derived docs.
-    if: github.actor != 'dependabot[bot]'
+    # Skip for dependabot PRs at the GH-trigger boundary? NO — v5
+    # explicitly handles Dependabot PRs since GITHUB_TOKEN works for
+    # them (unlike the v4 PAT path). The previous `if:` filter caused
+    # the check to be marked "Expected — Waiting" forever on Dependabot
+    # PRs, blocking their merge gate. v5 lets them in.
     name: check-derived-docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          # For internal PRs, check out the PR's head ref so we can push
-          # back to it. For forks, github.head_ref is set but we can't
-          # push to forks — handled below.
-          ref: ${{ github.head_ref || github.ref }}
+          # For PRs, check out the PR's head ref so the regen + push
+          # apply to the right branch. For push events to main, check
+          # out the main ref directly.
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           fetch-depth: 0
-          # Use PAT if available so the push triggers downstream checks.
-          # Falls through to GITHUB_TOKEN when absent (still allows checkout).
-          token: ${{ secrets.LOGMIND_AUTO_REGEN_PAT || secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN works in all contexts (PRs, Dependabot, push
+          # events). Replaces the v4 PAT-or-token compound expression.
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # logmind v1.1.0 (2026-06-05) switched from `pip install logmind==X.Y.Z`
       # to the dedicated `thrillmade/setup-logmind` action. The action handles
@@ -65,7 +72,7 @@ jobs:
       # consumer repos. Dependabot keeps the action ref current via the
       # `github-actions` ecosystem block in `.github/dependabot.yml` (also
       # installed by `logmind init`).
-      - uses: thrillmade/setup-logmind@v1.0.0
+      - uses: thrillmade/setup-logmind@v1.0.1
 
       - name: Regenerate derived docs
         run: |
@@ -77,53 +84,59 @@ jobs:
           logmind timeline --write docs/timeline.md
           logmind file-structure --write docs/file-structure.md
 
-      - name: Auto-fix or fail fast
+      - name: Auto-commit regen + verify
         env:
-          PAT: ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPO: ${{ github.repository }}
-          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # No diff → already current. Nothing to do.
+          # No diff after regen → already current. Verify passes.
           if git diff --quiet docs/timeline.md docs/file-structure.md 2>/dev/null; then
             echo "docs/timeline.md + docs/file-structure.md are up to date."
             exit 0
           fi
 
-          echo "Derived docs are stale on this PR."
+          echo "Derived docs were stale on this PR; regenerating in place."
 
           # Forked PR — can't push back to the fork's head ref.
-          # Fall back to fail-fast (today's behaviour).
-          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+          # Fall back to fail-fast (post-merge regen on main catches this).
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$BASE_REPO" ]; then
             echo "::error title=Stale derived docs::PR is from a fork ($HEAD_REPO). Auto-fix cannot push back. Run \`logmind timeline --write docs/timeline.md && logmind file-structure --write docs/file-structure.md\` locally and commit the regenerated files."
             git --no-pager diff docs/timeline.md docs/file-structure.md | head -80
             exit 1
           fi
 
-          # No PAT configured — fail-fast mode. GITHUB_TOKEN-pushed commits
-          # don't re-trigger required checks, so auto-commit would brick
-          # the merge gate. See workflow header comment for rationale.
-          if [ -z "${PAT:-}" ]; then
-            echo "::warning title=Stale derived docs::No \`LOGMIND_AUTO_REGEN_PAT\` configured — falling back to fail-fast."
-            echo "::warning::To enable auto-fix: create a fine-grained PAT with Contents: write on this repo, add it as \`LOGMIND_AUTO_REGEN_PAT\` secret. logmind will then push regenerated derived docs back to the PR branch on stale."
-            echo "::error title=Stale derived docs::Run \`logmind timeline --write docs/timeline.md && logmind file-structure --write docs/file-structure.md\` locally and commit the regenerated files."
-            git --no-pager diff docs/timeline.md docs/file-structure.md | head -80
-            exit 1
-          fi
-
-          # Auto-fix mode: commit + push back. The checkout step above
-          # already authenticated with the PAT, so `git push` here uses
-          # the PAT credentials and the push triggers downstream CI.
-          echo "::notice title=Auto-fixing stale derived docs::Regenerating and pushing back to ${HEAD_REF}."
-          git config user.name "logmind-auto-regen[bot]"
-          git config user.email "logmind-auto-regen@users.noreply.github.com"
+          # Push events to main — regen + commit + push directly.
+          # PRs (non-fork) — regen + commit + push to the PR head ref.
+          # In both cases, GITHUB_TOKEN is the auth.
+          #
+          # Use the canonical github-actions[bot] identity (the fake
+          # `logmind-auto-regen@users.noreply.github.com` email from v4
+          # isn't owned by any GitHub user — Vercel + many CI tools
+          # reject deployments authored by it).
+          echo "::notice title=Auto-fixing stale derived docs::Regenerating and committing via GITHUB_TOKEN."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/timeline.md docs/file-structure.md
-          git commit -m "chore: regen derived docs
+          git commit -m "chore: regen derived docs [auto]
 
-          Auto-fix by logmind's check-derived-docs workflow (v0.3.4+).
+          Auto-fix by logmind's check-derived-docs workflow (v5).
           The PR's docs/timeline.md or docs/file-structure.md was stale
           after a code change. Regenerated from the per-branch decision
           files (timeline) and current tree (file-structure)."
-          git push origin "HEAD:${HEAD_REF}"
-          echo "::notice::Derived docs regenerated and pushed. CI will re-run on the new commit."
+
+          # Push to the appropriate ref. PR → head ref; push → current branch.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git push origin "HEAD:${HEAD_REF}"
+          else
+            git push origin HEAD
+          fi
+
+          # Final verify in the SAME job — re-run the regen check.
+          # Since we just regen'd, this should pass; if not, something is
+          # non-deterministic about the regen and that's a real bug.
+          logmind timeline --check --write docs/timeline.md
+          logmind file-structure --check --write docs/file-structure.md
+          echo "::notice::Derived docs regenerated, committed, and verified clean."

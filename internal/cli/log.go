@@ -37,17 +37,32 @@
 //     found AND not interactive → print advisory and exit 0 (CI's
 //     check-doc-links workflow Layer 3 will catch it).
 //
-// Out of scope for v1.2.0 (carried by the Python shim until v1.3.x or
-// folded into a follow-up):
+// SPEC §3.1 stdout contract (v1.2.1, restored):
+//
+// Non-TTY OR --no-interactive paths emit EXACTLY 3 lines, byte-identical:
+//
+//	ℹ Default --stage all (v0.2.7+): every working-tree change is staged into this decision commit. Pass --stage scoped to keep unrelated WIP unstaged.
+//	✓ Logged decision: "<summary>"
+//	✓ Committed and pushed changes
+//
+// TTY-interactive paths MAY emit additional advisory + retry-prompt
+// lines AFTER those three (SPEC v0.2.0 §3.1.1 exemption, currently
+// in-flight in `protocol#3` — implementation assumes the relax lands
+// per plan §8.7 Layer 1 design).
+//
+// Restored in v1.2.1 (closes audit-flagged regression):
+//   - SPEC §3.1 byte-identical 3-line contract
+//   - --no-push flag (Python parity; cli.py:874)
+//   - Push step after commit (Python parity; cli.py:1029-1030)
+//
+// Out of scope (carried by the Python shim until v1.3.x or follow-up):
 //
 //   - decisions-archive rotation when count > max_recent. Python
 //     handles this via _archive_oldest_decision; the Go port lands
-//     the rotation in a follow-up so v1.2.0 stays focused on the
-//     self-heal feature.
+//     the rotation in a follow-up so v1.2.x stays focused on the
+//     self-heal feature + SPEC §3.1 conformance.
 //   - `--template` flag for pre-filled reasoning/alternatives/impl
 //     (low-traffic; users craft their own entries with -r/-a/-i).
-//   - `--no-push` (push is a follow-up; v1.2.0 commits but does not
-//     push, matching the safer default for the new Go path).
 package cli
 
 import (
@@ -109,12 +124,13 @@ func isStdinTerminal() bool {
 // the Python click signature but skips fields not yet ported (see
 // file-level docstring "Out of scope" list).
 type logFlags struct {
-	reasoning      string
-	alternatives   []string
-	implications   []string
-	noCommit       bool
-	noInteractive  bool
-	stage          string
+	reasoning     string
+	alternatives  []string
+	implications  []string
+	noCommit      bool
+	noPush        bool
+	noInteractive bool
+	stage         string
 }
 
 // newLogCmd wires the `logmind log <summary>` subcommand.
@@ -165,6 +181,8 @@ Example:
 		"Implication of this decision (repeatable).")
 	cmd.Flags().BoolVar(&f.noCommit, "no-commit", false,
 		"Don't auto-commit the decision (write the file only).")
+	cmd.Flags().BoolVar(&f.noPush, "no-push", false,
+		"Don't auto-push after committing. Honored alongside .logmind/config.yml's git.auto_push (CLI flag wins).")
 	cmd.Flags().BoolVar(&f.noInteractive, "no-interactive", false,
 		"Skip the Layer 1 interactive retry prompt; print advisory + exit 0 when linkcheck has issues.")
 	cmd.Flags().StringVar(&f.stage, "stage", "all",
@@ -208,6 +226,20 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 	}
 
 	cfg, _ := config.Load(cwd)
+
+	// Resolve commit + push behavior. CLI flags override config (matches
+	// Python cli.py:951-952 — `should_X = config.auto_X if not no_X else False`).
+	shouldCommit := cfg.Git.AutoCommit && !f.noCommit
+	shouldPush := cfg.Git.AutoPush && !f.noPush
+
+	// SPEC §3.1 line 1 — stage notice. Emitted BEFORE filesystem work
+	// so the line lands regardless of subsequent errors (mirrors
+	// Python's order at cli.py:959-966). Only fires when --stage all
+	// AND we're going to commit (Python condition: `if should_commit
+	// and stage == "all"`).
+	if shouldCommit && f.stage == "all" {
+		fmt.Fprintln(stdout, "ℹ Default --stage all (v0.2.7+): every working-tree change is staged into this decision commit. Pass --stage scoped to keep unrelated WIP unstaged.")
+	}
 
 	// Resolve target file based on git state + config.branch_aware.
 	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
@@ -254,11 +286,13 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 		relTarget = target
 	}
 	relTarget = filepath.ToSlash(relTarget)
-	fmt.Fprintf(stdout, "✓ Logged decision to %s\n", relTarget)
 
-	// Commit (unless --no-commit OR not in a git repo).
-	committed := false
-	if !f.noCommit && gitcli.IsRepo(cwd) {
+	// SPEC §3.1 line 2 — logged-decision confirmation. Byte-identical
+	// to Python cli.py:1026 — `f'✓ Logged decision: "{decision}"'`.
+	fmt.Fprintf(stdout, "✓ Logged decision: %q\n", summary)
+
+	// Commit + push (unless --no-commit OR not in a git repo).
+	if shouldCommit && gitcli.IsRepo(cwd) {
 		if err := commitDecision(cwd, target, relTarget, f.stage, summary, cfg); err != nil {
 			// Commit failure isn't fatal to the decision-logging
 			// surface: the file is on disk; the user can commit
@@ -266,17 +300,39 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 			// to follow up.
 			fmt.Fprintf(stderr, "Warning: auto-commit failed: %v\n", err)
 		} else {
-			committed = true
-			fmt.Fprintln(stdout, "✓ Committed decision")
+			// Push (unless --no-push OR config.git.auto_push=false).
+			pushed := false
+			if shouldPush {
+				if err := gitcli.Push(cwd); err != nil {
+					// Push failure is non-fatal — commit landed locally.
+					// Surface to stderr; emit the "committed" line without
+					// "pushed" so the user knows to retry the push manually.
+					fmt.Fprintf(stderr, "Warning: auto-push failed: %v\n", err)
+				} else {
+					pushed = true
+				}
+			}
+			// SPEC §3.1 line 3 — committed/pushed confirmation. Byte-identical
+			// to Python cli.py:1030 / 1032:
+			//   pushed     → "✓ Committed and pushed changes"
+			//   not pushed → "✓ Committed changes (push disabled)"
+			if pushed {
+				fmt.Fprintln(stdout, "✓ Committed and pushed changes")
+			} else {
+				fmt.Fprintln(stdout, "✓ Committed changes (push disabled)")
+			}
 		}
-	} else if !f.noCommit {
+	} else if shouldCommit {
 		fmt.Fprintln(stderr, "Warning: not inside a git repo; skipping auto-commit.")
 	}
-	_ = committed // future use: gate the post-commit advisory message
 
 	// Layer 1 self-heal — runs whether we committed or not. The file is
 	// on disk either way, so a stale link introduced by this decision
 	// should surface immediately.
+	//
+	// SPEC v0.2.0 §3.1.1 exemption (per protocol#3, plan §8.7): the
+	// extended advisory output only fires on TTY + interactive paths.
+	// CI / piped / --no-interactive callers see ONLY the 3 lines above.
 	if err := runSelfHealLayer1(cwd, f.noInteractive, stdin, stdout, stderr); err != nil {
 		// runSelfHealLayer1 returns ErrSilent on user abort (`q` reply)
 		// or three failed retries. Propagate so the CLI exits non-zero
@@ -414,13 +470,16 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 // retry loop per plan §8.7. Returns ErrSilent on user abort (`q`
 // reply) or 3 failed retries; nil otherwise.
 //
-// Flow:
+// Flow (post-v1.2.1 — SPEC §3.1 conformance):
 //
 //   - Run linkcheck.CheckWithReport(). Clean → exit 0 silently.
 //   - Issues found, NOT interactive (--no-interactive OR no TTY):
-//     print advisory + nudge that CI Layer 3 will catch it + exit 0.
-//   - Issues found, interactive: print advisory + enter retry loop.
-//     Up to 3 attempts of y/n/q.
+//     stay silent on stdout to preserve the 3-line contract; emit the
+//     advisory to STDERR so CI logs still surface what needs fixing.
+//     Layer 3 (check-doc-links workflow) catches the issues at PR time.
+//   - Issues found, interactive: print advisory on stdout + enter
+//     retry loop. SPEC v0.2.0 §3.1.1 exemption permits extended
+//     interactive stdout AFTER the 3 SPEC §3.1 lines.
 //
 // The advisory format is the one the plan locked in §8.7:
 //
@@ -445,14 +504,21 @@ func runSelfHealLayer1(cwd string, forceNonInteractive bool, stdin io.Reader, st
 
 	interactive := !forceNonInteractive && isTerminalFunc()
 
-	printAdvisory(stdout, report)
-
 	if !interactive {
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Non-interactive context — decision is saved but docs may be stale.")
-		fmt.Fprintln(stdout, "The check-doc-links workflow's Layer 3 self-heal will catch this at PR time.")
+		// SPEC §3.1 contract: non-interactive paths emit EXACTLY 3
+		// lines on stdout. Surface the advisory to STDERR so CI logs
+		// + scripted callers redirecting `2>&1` still see actionable
+		// guidance; stdout stays valid for byte-comparison fixtures.
+		printAdvisory(stderr, report)
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Non-interactive context — decision is saved but docs may be stale.")
+		fmt.Fprintln(stderr, "The check-doc-links workflow's Layer 3 self-heal will catch this at PR time.")
 		return nil
 	}
+
+	// TTY-interactive path: advisory + retry loop go to stdout per
+	// SPEC v0.2.0 §3.1.1 exemption.
+	printAdvisory(stdout, report)
 
 	const maxTries = 3
 	reader := bufio.NewReader(stdin)

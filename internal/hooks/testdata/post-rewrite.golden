@@ -1,6 +1,6 @@
 #!/bin/sh
 # logmind post-rewrite hook
-# logmind-hook-version: 1.2.0-dev
+# logmind-hook-version: 1.2.1
 # Installed by `logmind init` (v0.5.11+). Companion to the post-merge
 # hook. Fires after `git rebase` or `git commit --amend` and
 # regenerates derived docs from the FULL post-rewrite working tree.

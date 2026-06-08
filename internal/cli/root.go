@@ -75,6 +75,12 @@ func NewRootCmd() *cobra.Command {
 	// Layer 1 of markdown self-healing on top (linkcheck-driven
 	// interactive retry loop). See internal/cli/log.go.
 	root.AddCommand(newLogCmd())
+	// v1.2.1 (SPEC §A.3 / §3.2 + §3.3): `show` and `search` were
+	// unintentionally dropped in the v1.0 Go rewrite. Restored from
+	// Python v0.6.16 with byte-identical surface so downstream tools
+	// (agents grepping the `ok` trailer) keep working.
+	root.AddCommand(newShowCmd())
+	root.AddCommand(newSearchCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.

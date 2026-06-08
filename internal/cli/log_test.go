@@ -83,7 +83,8 @@ func TestLog_DefaultBranch_WritesToDecisionsMd(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "Logged decision to docs/decisions.md")
+			// v1.2.1 SPEC §3.1: "Logged decision: " (not "Logged decision to <path>").
+			mustContain(t, out.String(), `✓ Logged decision: "Test decision"`)
 		})
 	})
 	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions.md"))
@@ -128,7 +129,9 @@ func TestLog_FeatureBranch_WritesToBranchFile(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "docs/decisions-branches/feat__test.md")
+			// v1.2.1 SPEC §3.1: per-path "Logged decision to <path>" is dropped;
+			// only the file existence on disk verifies routing.
+			mustContain(t, out.String(), `✓ Logged decision: "Branch decision"`)
 		})
 	})
 	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions-branches", "feat__test.md"))
@@ -409,7 +412,15 @@ func TestLog_AutoCommit_OnGitRepo(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "✓ Committed decision")
+			// v1.2.1 SPEC §3.1: "Committed and pushed changes" (with push) OR
+			// "Committed changes (push disabled)" (no remote → push fails →
+			// fallback line). Test repo has no remote so push fails and we
+			// land in the "(push disabled)" path.
+			body := out.String()
+			if !strings.Contains(body, "✓ Committed and pushed changes") &&
+				!strings.Contains(body, "✓ Committed changes (push disabled)") {
+				t.Fatalf("missing SPEC §3.1 line 3; got:\n%s", body)
+			}
 		})
 	})
 	cmd := exec.Command("git", "log", "--oneline", "-1")
