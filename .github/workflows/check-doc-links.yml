@@ -1,4 +1,4 @@
-name: doc link integrity
+name: logmind / check-links
 
 # Dogfood version of the workflow that `logmind init` ships into
 # downstream projects (the template lives in internal/templates/github/).

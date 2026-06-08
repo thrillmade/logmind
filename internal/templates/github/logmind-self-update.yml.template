@@ -1,5 +1,5 @@
-# logmind-template-version: v8
-name: logmind self-update
+# logmind-template-version: v9
+name: logmind / self-update
 
 # Weekly check that the bundled logmind workflow templates are still on
 # the current template-version marker. When `logmind init` ships a new

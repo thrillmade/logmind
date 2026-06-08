@@ -1,5 +1,5 @@
-# logmind-template-version: v4
-name: check derived docs
+# logmind-template-version: v5
+name: logmind / check-derived-docs
 
 # Derived-file architecture (v0.2+): docs/timeline.md + docs/file-structure.md
 # are derived artifacts, deterministically computed from sources (per-branch

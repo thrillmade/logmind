@@ -1,4 +1,4 @@
-name: check derived docs
+name: logmind / check-derived-docs
 
 # Derived-file architecture: docs/timeline.md is a derived artifact,
 # deterministically computed from sources (per-branch logs + decisions.md

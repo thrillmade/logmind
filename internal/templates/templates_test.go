@@ -152,61 +152,66 @@ func TestWorkflowTemplates_UseSetupLogmindAction(t *testing.T) {
 	}
 }
 
-// TestCheckDocLinksTemplate_V5_DualModeSelfHeal pins the v1.2.0 Layer
-// 3 self-heal shape (plan §8.7): the workflow template marker bumps
-// to v5, AND it contains both the mode-A (ANTHROPIC_API_KEY auto-fix)
-// and mode-B (deterministic PR comment) conditional branches. Either
-// mode missing means the dual-mode promise is broken.
-func TestCheckDocLinksTemplate_V5_DualModeSelfHeal(t *testing.T) {
+// TestCheckDocLinksTemplate_V6_DualModeSelfHeal pins the v1.2.0 Layer
+// 3 self-heal shape (plan §8.7): the workflow template carries the
+// current marker AND contains both the mode-A (ANTHROPIC_API_KEY
+// auto-fix) and mode-B (deterministic PR comment) conditional
+// branches. Either mode missing means the dual-mode promise is broken.
+// Marker bumped v5 → v6 with the logmind/-prefix workflow rename.
+func TestCheckDocLinksTemplate_V6_DualModeSelfHeal(t *testing.T) {
 	body := Workflow("check-doc-links.yml.template")
 
-	// Marker bump v4 → v5.
-	if !strings.Contains(body, "# logmind-template-version: v5") {
-		t.Errorf("check-doc-links template missing v5 marker (plan §8.7 / Layer 3)")
+	// Marker bump v5 → v6 (workflow rename: doc link integrity → logmind / check-links).
+	if !strings.Contains(body, "# logmind-template-version: v6") {
+		t.Errorf("check-doc-links template missing v6 marker (logmind/-prefix rename)")
+	}
+	// Branded workflow name pinned: rename owner-obvious in PR checks.
+	if !strings.Contains(body, "name: logmind / check-links") {
+		t.Errorf("check-doc-links template missing branded `name: logmind / check-links`")
 	}
 
 	// Mode A: ANTHROPIC_API_KEY-gated. Must mention the secret + run
 	// some auto-fix machinery + push back to the PR head ref.
 	if !strings.Contains(body, "secrets.ANTHROPIC_API_KEY") {
-		t.Errorf("v5 template missing ANTHROPIC_API_KEY conditional (mode A)")
+		t.Errorf("v6 template missing ANTHROPIC_API_KEY conditional (mode A)")
 	}
 	if !strings.Contains(body, "ANTHROPIC_API_KEY != ''") {
-		t.Errorf("v5 template missing mode-A gate (env.ANTHROPIC_API_KEY != '')")
+		t.Errorf("v6 template missing mode-A gate (env.ANTHROPIC_API_KEY != '')")
 	}
 	if !strings.Contains(body, "Mode A") {
-		t.Errorf("v5 template missing mode-A label in step name/comment")
+		t.Errorf("v6 template missing mode-A label in step name/comment")
 	}
 
 	// Mode B: fallback when no key. Must post a PR comment via gh.
 	if !strings.Contains(body, "ANTHROPIC_API_KEY == ''") {
-		t.Errorf("v5 template missing mode-B gate (env.ANTHROPIC_API_KEY == '')")
+		t.Errorf("v6 template missing mode-B gate (env.ANTHROPIC_API_KEY == '')")
 	}
 	if !strings.Contains(body, "Mode B") {
-		t.Errorf("v5 template missing mode-B label in step name/comment")
+		t.Errorf("v6 template missing mode-B label in step name/comment")
 	}
 	if !strings.Contains(body, "gh pr comment") {
-		t.Errorf("v5 template missing `gh pr comment` (mode B deterministic path)")
+		t.Errorf("v6 template missing `gh pr comment` (mode B deterministic path)")
 	}
 
 	// Both modes share the `logmind check-links --json` machinery.
 	if !strings.Contains(body, "logmind check-links --json") {
-		t.Errorf("v5 template missing `logmind check-links --json` invocation")
+		t.Errorf("v6 template missing `logmind check-links --json` invocation")
 	}
 
 	// Self-heal job is gated on pull_request events to avoid pushing
 	// to main on push triggers.
 	if !strings.Contains(body, "github.event_name == 'pull_request'") {
-		t.Errorf("v5 self-heal job must be gated on pull_request events")
+		t.Errorf("v6 self-heal job must be gated on pull_request events")
 	}
 
 	// Permissions: needs contents:write (commit) + pull-requests:write
 	// (comment). Without these the mode-A push and mode-B comment fail
 	// silently.
 	if !strings.Contains(body, "contents: write") {
-		t.Errorf("v5 template missing contents:write permission")
+		t.Errorf("v6 template missing contents:write permission")
 	}
 	if !strings.Contains(body, "pull-requests: write") {
-		t.Errorf("v5 template missing pull-requests:write permission")
+		t.Errorf("v6 template missing pull-requests:write permission")
 	}
 }
 
