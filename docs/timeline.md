@@ -136,6 +136,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-06-10** — Bump dependabot-auto-merge caller pin to 6e1f9df → [detail](decisions-branches/chore__bump-dabm-pin-6e1f9df.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-06-08-rename-4-logmind-workflows-with-logmind-display-name-prefix -->
+- **2026-06-08** — rename 4 logmind workflows with 'logmind /' display-name prefix → [detail](decisions-branches/chore__rename-workflows-with-logmind-prefix.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-06-07-v1-2-0-port-logmind-log-to-go-and-add-3-layer-markdown-self- -->
 - **2026-06-07** — v1.2.0: Port logmind log to Go and add 3-layer markdown self-healing → [detail](decisions-branches/feat__v1.2.0-log-go-port-self-heal.md)
 <!-- logmind-entry-end -->
