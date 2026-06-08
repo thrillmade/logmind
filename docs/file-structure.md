@@ -15,11 +15,6 @@ logmind
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .logmind
 │   └── config.yml
-├── .playwright-mcp
-│   ├── console-2026-06-07T20-23-56-129Z.log
-│   ├── console-2026-06-07T20-25-16-101Z.log
-│   ├── page-2026-06-07T20-23-57-506Z.yml
-│   └── page-2026-06-07T20-24-29-044Z.yml
 ├── cmd
 │   └── logmind
 ├── docs
