@@ -1,5 +1,5 @@
-# logmind-template-version: v2
-name: decision-log check
+# logmind-template-version: v3
+name: logmind / check-decisions
 
 # Fail PRs that introduce >20 lines of non-docs code changes without
 # updating docs/decisions.md or a docs/decisions-branches/<branch>.md file.
