@@ -31,7 +31,7 @@ jobs:
       TAG: ${{ github.ref_name }}
     steps:
       - name: Checkout logmind
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0  # need history for `git describe` to find previous tag
 
@@ -146,7 +146,7 @@ jobs:
 
       - name: Checkout thrillmade/agent-skills
         if: steps.diff-check.outputs.skill-changed == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: thrillmade/agent-skills
           path: agent-skills
