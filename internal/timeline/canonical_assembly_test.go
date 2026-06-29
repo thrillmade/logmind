@@ -50,9 +50,10 @@ func TestGenerateMainCanonical_UnionNewestFirst(t *testing.T) {
 			t.Errorf("block[%d].Key = %q; want %q (newest-first)", i, blocks[i].Key, w)
 		}
 	}
-	// The markered branch body is copied VERBATIM.
-	if blocks[0].Body != "- **2026-06-29** — Add A" {
-		t.Errorf("block[0].Body = %q; want the verbatim marker body", blocks[0].Body)
+	// The markered headline + the detail link computed from the source path.
+	wantBody := "- **2026-06-29** — Add A → [detail](decisions-branches/feat__a.md)"
+	if blocks[0].Body != wantBody {
+		t.Errorf("block[0].Body = %q; want %q", blocks[0].Body, wantBody)
 	}
 }
 
@@ -113,10 +114,13 @@ func TestGenerateMainCanonical_CollisionGetsStableSuffix(t *testing.T) {
 		t.Errorf("keys = %v; want {2026-06-29-dup, 2026-06-29-dup-2}", got)
 	}
 	// The bare slug goes to the lexicographically-smallest source path
-	// (feat__a.md < feat__b.md), so it carries body-from-A.
+	// (feat__a.md < feat__b.md), so it carries body-from-A + its detail link.
 	for _, b := range blocks {
-		if b.Key == "2026-06-29-dup" && b.Body != "- body from A" {
-			t.Errorf("bare-slug body = %q; want body-from-A (smallest source path)", b.Body)
+		if b.Key == "2026-06-29-dup" {
+			want := "- body from A → [detail](decisions-branches/feat__a.md)"
+			if b.Body != want {
+				t.Errorf("bare-slug body = %q; want %q (smallest source path)", b.Body, want)
+			}
 		}
 	}
 }
