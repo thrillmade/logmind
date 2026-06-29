@@ -66,6 +66,7 @@ import (
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/linkcheck"
 	"github.com/thrillmade/logmind/internal/templates"
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
 // isTerminalFunc is the indirection seam used by tests to fake TTY
@@ -109,12 +110,12 @@ func isStdinTerminal() bool {
 // the Python click signature but skips fields not yet ported (see
 // file-level docstring "Out of scope" list).
 type logFlags struct {
-	reasoning      string
-	alternatives   []string
-	implications   []string
-	noCommit       bool
-	noInteractive  bool
-	stage          string
+	reasoning     string
+	alternatives  []string
+	implications  []string
+	noCommit      bool
+	noInteractive bool
+	stage         string
 }
 
 // newLogCmd wires the `logmind log <summary>` subcommand.
@@ -235,12 +236,26 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 		existing = data
 	}
 
-	// Compose: header (if first-creation branch file) + existing +
-	// entry. Header is the templates.DecisionsBranchHeader() POSIX-
-	// terminated single line + trailing blank line.
+	// Compose: header (if first-creation branch file) + the §1.6.3 timeline
+	// marker (main-canonical only) + existing + entry. Header is the
+	// templates.DecisionsBranchHeader() POSIX-terminated single line +
+	// trailing blank line.
 	var body strings.Builder
 	if firstCreation {
 		body.WriteString(templates.DecisionsBranchHeader())
+	}
+	// Main-canonical: open the branch detail page with its timeline marker
+	// (the PR headline the union consumes). First creation emits it right
+	// after the header; a later append inserts one only if the file has none
+	// yet (e.g. it predates the opt-in). Gated on isBranchFile + the config
+	// flag, so the default branch-divergent path writes byte-identical files.
+	if isBranchFile && cfg.Timeline.IsMainCanonical() {
+		now := time.Now()
+		if firstCreation {
+			body.WriteString(buildTimelineMarker(now, summary, prSuffixFromEnv()))
+		} else if !timeline.HasEntryBlocks(string(existing)) {
+			existing = insertMarkerAfterHeader(existing, buildTimelineMarker(now, summary, prSuffixFromEnv()))
+		}
 	}
 	body.Write(existing)
 	body.WriteString(entry)
@@ -374,6 +389,41 @@ func buildDecisionEntry(summary, reasoning string, alternatives, implications []
 
 	b.WriteString("---\n\n")
 	return b.String()
+}
+
+// buildTimelineMarker renders the §1.6.3 entry-block headline that opens a
+// branch detail page — the one per-PR row the main-canonical timeline unions.
+// The body is timeline.HeadlineLine (link-free; the union adds the detail
+// link from the source path). Per §1.6.3.1 the (#NN) PR suffix appears in the
+// visible line ONLY, never in the <date>-<slug> key. A trailing blank line
+// separates the marker from the decision entries below.
+func buildTimelineMarker(date time.Time, headline, prSuffix string) string {
+	key := date.Format("2006-01-02") + "-" + timeline.Slugify(headline)
+	line := timeline.HeadlineLine(date, headline+prSuffix)
+	return fmt.Sprintf("<!-- logmind-entry-start: %s -->\n%s\n<!-- logmind-entry-end -->\n\n", key, line)
+}
+
+// prSuffixFromEnv returns " (#NN)" when LOGMIND_PR is set (CI exports it),
+// else "". Tolerates a leading "#". Kept env-only so `logmind log` stays
+// fast + offline — no `gh` network call on the hot path.
+func prSuffixFromEnv() string {
+	v := strings.TrimPrefix(strings.TrimSpace(os.Getenv("LOGMIND_PR")), "#")
+	if v == "" {
+		return ""
+	}
+	return " (#" + v + ")"
+}
+
+// insertMarkerAfterHeader splices marker in right after the branch-file
+// backlink header, preserving the rest of the file. If the header isn't found
+// (a hand-edited file), the marker is prepended — never silently dropped.
+func insertMarkerAfterHeader(existing []byte, marker string) []byte {
+	header := templates.DecisionsBranchHeader()
+	s := string(existing)
+	if strings.HasPrefix(s, header) {
+		return []byte(s[:len(header)] + marker + s[len(header):])
+	}
+	return append([]byte(marker), existing...)
 }
 
 // commitDecision stages the relevant files and creates the commit.

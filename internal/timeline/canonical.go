@@ -179,9 +179,10 @@ func extractEntryBlocks(content string, stderr io.Writer) []entryBlock {
 // `timeline.canonical: main-canonical` is set; the default branch-divergent
 // path (Generate/Render) is untouched, so v0.6.14 output is byte-stable.
 
-// marked is one timeline row: its date+slug identity, the verbatim body
-// rendered between the entry-block markers, and its source path (used only
-// for the deterministic collision tiebreak — never rendered).
+// marked is one timeline row: its date+slug identity, the link-free headline
+// body rendered between the entry-block markers, and its source path (the
+// detail-page link target, AND the deterministic collision tiebreak — both
+// relative to docs/, e.g. "decisions-branches/feat__x.md" or "decisions.md").
 type marked struct {
 	date   time.Time
 	slug   string
@@ -207,12 +208,16 @@ func splitKey(key string) (date time.Time, slug string, ok bool) {
 	return d, slug, true
 }
 
-// branchLabel reverses _sanitize_branch for the legacy fallback's source
-// label (feat__auth.md → feat/auth). Mirrors decisions.branchLabelFromFilename
-// (unexported there); kept tiny + local rather than widening that package's
-// surface.
-func branchLabel(base string) string {
-	return strings.ReplaceAll(strings.TrimSuffix(base, ".md"), "__", "/")
+// HeadlineLine renders the deterministic visible line for a timeline row —
+// the body that lives BETWEEN the entry-block markers — WITHOUT a detail
+// link. The link is appended by renderCanonical from the row's source path,
+// so it is correct relative to docs/timeline.md regardless of where the
+// marker physically lives (a docs/-relative link baked into a branch file
+// would resolve wrong from that file's own directory and fail check-links).
+// Single-sourced here so `logmind log` (the marker writer) and the synthesized
+// rows share one exact byte format.
+func HeadlineLine(date time.Time, title string) string {
+	return fmt.Sprintf("- **%s** — %s", date.Format("2006-01-02"), title)
 }
 
 // GenerateMainCanonical builds the §1.6.4 deterministic-union timeline from
@@ -278,25 +283,18 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 			continue
 		}
 		e := entries[0]
-		e.SourcePath = rel
-		e.SourceLabel = branchLabel(base)
-		items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: renderEntryLine(e), source: rel})
+		items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: HeadlineLine(e.Date, e.Title), source: rel})
 	}
 
 	// (2) Direct-to-main + archive: one synthesized row per decision header
 	// (these sources carry no entry-block markers under the newspaper model).
-	for _, src := range []struct{ file, label string }{
-		{"decisions.md", "main"},
-		{"decisions-archive.md", "archive"},
-	} {
-		entries, err := decisions.Iter(filepath.Join(docsPath, src.file), stderr)
+	for _, file := range []string{"decisions.md", "decisions-archive.md"} {
+		entries, err := decisions.Iter(filepath.Join(docsPath, file), stderr)
 		if err != nil {
 			return nil, err
 		}
 		for _, e := range entries {
-			e.SourcePath = src.file
-			e.SourceLabel = src.label
-			items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: renderEntryLine(e), source: src.file})
+			items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: HeadlineLine(e.Date, e.Title), source: file})
 		}
 	}
 
@@ -423,8 +421,13 @@ func renderCanonical(items []marked) string {
 		b.WriteString(it.date.Format("2006-01-02") + "-" + it.slug)
 		b.WriteString(entryStartSuffix)
 		b.WriteString("\n")
+		// Body (the headline, link-free) + the detail link computed from the
+		// source path — correct relative to docs/timeline.md, where this row
+		// lands, not relative to the branch file the marker may live in.
 		b.WriteString(it.body)
-		b.WriteString("\n")
+		b.WriteString(" → [detail](")
+		b.WriteString(it.source)
+		b.WriteString(")\n")
 		b.WriteString(entryEndMarker)
 		b.WriteString("\n")
 	}
