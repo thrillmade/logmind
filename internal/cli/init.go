@@ -371,7 +371,8 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string) erro
 //
 //   - refresh=false: don't overwrite existing files.
 //   - refresh=true: overwrite when the installed marker differs from the
-//     bundled marker, OR when the pip-install pin needs bumping.
+//     bundled marker. (Go-era workflows use thrillmade/setup-logmind and
+//     carry no pip-install pin, so a matching marker is left as-is.)
 //
 // Returns (created, refreshed, err). Each list is a slice of relative
 // paths from cwd.
@@ -409,13 +410,8 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 			refreshed = append(refreshed, relativePath(repoRoot, target))
 			continue
 		}
-		// Body markers match — check pip-install pin separately.
-		if newBody, prev := refreshPin(string(existing)); prev != "" {
-			if err := os.WriteFile(target, []byte(newBody), 0o644); err != nil {
-				return nil, nil, err
-			}
-			refreshed = append(refreshed, relativePath(repoRoot, target))
-		}
+		// Body marker matches the bundled template — leave the installed
+		// file untouched (no pip-install pin to reconcile anymore).
 	}
 	return created, refreshed, nil
 }
@@ -438,47 +434,6 @@ func extractTemplateVersion(text string) string {
 		}
 	}
 	return ""
-}
-
-// refreshPin updates the `pip install "logmind==X.Y.Z"` line in an
-// installed workflow body to the current binary's version. Returns
-// (newBody, prevPin). prevPin is "" when no rewrite was needed.
-func refreshPin(installed string) (string, string) {
-	// Use the same regex as the doctor's installed-version probe to
-	// avoid two truth sources.
-	// We re-implement the surgical rewrite here without importing the
-	// doctor package (cycle).
-	const needle = `pip install`
-	idx := strings.Index(installed, needle)
-	if idx < 0 {
-		return installed, ""
-	}
-	// Find the `logmind==` substring within ~80 chars.
-	rest := installed[idx:]
-	logmindIdx := strings.Index(rest, "logmind==")
-	if logmindIdx < 0 || logmindIdx > 80 {
-		return installed, ""
-	}
-	verStart := idx + logmindIdx + len("logmind==")
-	// Capture digits + dots until a non-version char.
-	verEnd := verStart
-	for verEnd < len(installed) {
-		c := installed[verEnd]
-		if (c >= '0' && c <= '9') || c == '.' {
-			verEnd++
-			continue
-		}
-		break
-	}
-	if verEnd == verStart {
-		return installed, ""
-	}
-	prev := installed[verStart:verEnd]
-	if prev == version.Version {
-		return installed, ""
-	}
-	newBody := installed[:verStart] + version.Version + installed[verEnd:]
-	return newBody, prev
 }
 
 // enabledAgentList resolves the agents flag. --all-agents wins;

@@ -22,7 +22,12 @@
 //   - PATH probe (v0.6.16 carry-forward): `which logmind` resolves to a
 //     binary whose `--version` should match the currently-running
 //     process. Drift here is the tokenomics-recurrence root cause.
-//   - PyPI probe is best-effort (2s timeout, swallows all errors).
+//
+// Doctor makes no network calls. The honest "installed version" is the
+// running binary's version.Version; the PATH probe above already catches
+// a stale on-PATH binary, so no version signal is lost. (The legacy
+// best-effort PyPI probe was removed once the Go-era workflows switched
+// to thrillmade/setup-logmind and dropped pip-install pins.)
 //
 // Read-only by design: doctor never writes. The suggested action
 // (`brew install thrillmade/tap/logmind` or curl-pipe-bash from
@@ -40,8 +45,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,7 +71,6 @@ var LogmindWorkflows = []string{
 
 // Marker regexes match Python's compiled patterns at the source.
 var (
-	logmindPinRe          = regexp.MustCompile(`pip install\s+["']?logmind==([\d.]+)["']?`)
 	logmindMarkerRe       = regexp.MustCompile(`^# logmind-template-version:\s*(\S+)`)
 	logmindBlockVersionRe = regexp.MustCompile(`<!--\s*logmind-block-version:\s*(\S+)\s*-->`)
 	logmindVersionLineRe  = regexp.MustCompile(`version\s+(\S+)`)
@@ -78,11 +80,11 @@ var (
 // hook, or other on-disk artifact probe. Reported uniformly so the
 // renderer doesn't care about category.
 type WorkflowStatus struct {
-	Name           string  `json:"name"`
-	Installed      bool    `json:"installed"`
-	Marker         *string `json:"marker"`
-	BundledMarker  *string `json:"bundled_marker"`
-	Drift          string  `json:"drift"`
+	Name          string  `json:"name"`
+	Installed     bool    `json:"installed"`
+	Marker        *string `json:"marker"`
+	BundledMarker *string `json:"bundled_marker"`
+	Drift         string  `json:"drift"`
 }
 
 // ToolStatus aggregates per-tool fields (currently just `logmind`;
@@ -118,52 +120,20 @@ func (r *StatusReport) ToJSON() (string, error) {
 	return string(b), nil
 }
 
-// maxProbeBodyBytes caps the body read for any best-effort probe.
-// PyPI / npm JSON responses are well under this; the cap prevents a
-// rogue server from buffering MB through `io.ReadAll` while the 2s
-// context timeout governs only wall-clock latency (not bytes).
-const maxProbeBodyBytes = 1 << 20 // 1 MiB
-
-// httpGetJSON is a best-effort JSON GET — returns nil on any failure
-// (timeout, network, parse, status>=400). Mirrors Python's
-// _http_get_json semantics: never raises.
-func httpGetJSON(url string, timeout time.Duration) map[string]any {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("User-Agent", "logmind-doctor")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return nil
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
-	if err != nil {
-		return nil
-	}
-	var out map[string]any
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil
-	}
-	return out
-}
-
 // CollectStatus assembles the full StatusReport. project_root may be
 // "" — when empty, the current working directory is used (matches
 // Python's Path.cwd() default).
+//
+// The `offline` parameter is retained for call-site / signature
+// compatibility but is now a no-op: doctor makes no network calls, so
+// NetworkUsed is always false.
 func CollectStatus(projectRoot string, offline bool) StatusReport {
 	if projectRoot == "" {
 		if cwd, err := os.Getwd(); err == nil {
 			projectRoot = cwd
 		}
 	}
-	tools := []ToolStatus{collectLogmindStatus(projectRoot, offline)}
+	tools := []ToolStatus{collectLogmindStatus(projectRoot)}
 
 	overall := "OK"
 	for _, t := range tools {
@@ -206,24 +176,18 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 		ProjectRoot: projectRoot,
 		Tools:       tools,
 		Overall:     overall,
-		NetworkUsed: !offline,
+		NetworkUsed: false,
 		Suggestions: suggestions,
 	}
 }
 
-// collectLogmindStatus builds the per-tool report for `logmind`.
-func collectLogmindStatus(projectRoot string, offline bool) ToolStatus {
-	installed := logmindInstalledVersion(projectRoot)
-	var latest *string
-	if !offline {
-		if data := httpGetJSON("https://pypi.org/pypi/logmind/json", 2*time.Second); data != nil {
-			if info, ok := data["info"].(map[string]any); ok {
-				if v, ok := info["version"].(string); ok {
-					latest = &v
-				}
-			}
-		}
-	}
+// collectLogmindStatus builds the per-tool report for `logmind`. The
+// "installed version" is the running binary's version.Version — doctor
+// no longer parses pip-install pins or queries PyPI. The on-PATH probe
+// (probePathResolution) still surfaces a stale binary resolved ahead of
+// this one on PATH, so no version-drift signal is lost.
+func collectLogmindStatus(projectRoot string) ToolStatus {
+	running := version.Version
 
 	var workflows []WorkflowStatus
 	for _, name := range LogmindWorkflows {
@@ -239,11 +203,11 @@ func collectLogmindStatus(projectRoot string, offline bool) ToolStatus {
 	// decides whether to report stale/current/missing.
 	workflows = append(workflows, probePathResolution())
 
-	drift := classifyLogmindDrift(installed, latest, workflows, projectRoot)
+	drift := classifyLogmindDrift(workflows)
 	return ToolStatus{
 		Name:             "logmind",
-		InstalledVersion: installed,
-		LatestVersion:    latest,
+		InstalledVersion: &running,
+		LatestVersion:    nil,
 		Workflows:        workflows,
 		Drift:            drift,
 		Extras:           map[string]string{},
@@ -251,14 +215,11 @@ func collectLogmindStatus(projectRoot string, offline bool) ToolStatus {
 }
 
 // classifyLogmindDrift aggregates per-workflow drift into the tool-level
-// drift. ANY stale workflow OR (installed != latest) flips the tool to
-// "stale"; remaining unknowns flip to "unknown"; otherwise "ok". Mirrors
-// the Python aggregation in collect_logmind_status.
-func classifyLogmindDrift(installed, latest *string, workflows []WorkflowStatus, projectRoot string) string {
-	// Version mismatch (when both known) — stale.
-	if installed != nil && latest != nil && *installed != *latest {
-		return "stale"
-	}
+// drift. ANY stale workflow/hook/probe row flips the tool to "stale";
+// remaining unknowns flip to "unknown"; otherwise "ok". (The version
+// signal now lives entirely in the on-PATH probe row — there's no
+// installed-vs-latest comparison since doctor makes no network calls.)
+func classifyLogmindDrift(workflows []WorkflowStatus) string {
 	for _, wf := range workflows {
 		if wf.Drift == "stale" {
 			return "stale"
@@ -270,19 +231,6 @@ func classifyLogmindDrift(installed, latest *string, workflows []WorkflowStatus,
 		}
 	}
 	return "ok"
-}
-
-func logmindInstalledVersion(projectRoot string) *string {
-	content, err := os.ReadFile(filepath.Join(projectRoot, ".github", "workflows", "regen-timeline.yml"))
-	if err != nil {
-		return nil
-	}
-	m := logmindPinRe.FindStringSubmatch(string(content))
-	if len(m) < 2 {
-		return nil
-	}
-	v := m[1]
-	return &v
 }
 
 func bundledLogmindMarker(workflowName string) *string {
@@ -512,14 +460,14 @@ func probeCommitMsgHook(projectRoot string) WorkflowStatus {
 // src/logmind/core/doctor._probe_path_resolution:
 //
 //   - drift="current"   when `which logmind`'s --version matches the
-//                       running binary.
+//     running binary.
 //   - drift="stale"     when versions differ — marker shows both
-//                       versions + the conflicting path so the user
-//                       can act on it without invoking `which -a`.
+//     versions + the conflicting path so the user
+//     can act on it without invoking `which -a`.
 //   - drift="missing"   when no logmind found on PATH (merge driver
-//                       shell-outs will fail).
+//     shell-outs will fail).
 //   - drift="markerless" when the PATH binary exists but its
-//                       --version is unreadable / unparseable.
+//     --version is unreadable / unparseable.
 //
 // Errors are best-effort: every failure path produces a status row
 // (no panics). This is the v0.6.16 carry-forward that bubbles up
@@ -571,17 +519,13 @@ func probePathResolution() WorkflowStatus {
 	}
 }
 
-// formatVersion renders an optional version pointer with the same
-// Python `?` / `(offline)` placeholder for the "latest" column when the
-// PyPI probe couldn't return a value.
-func formatVersion(v *string, offline bool) string {
+// formatVersion renders an optional version pointer — the dereferenced
+// value when set, else "unknown".
+func formatVersion(v *string) string {
 	if v != nil {
 		return *v
 	}
-	if offline {
-		return "(offline)"
-	}
-	return "?"
+	return "unknown"
 }
 
 func formatDrift(drift string) string {
@@ -605,24 +549,19 @@ func formatDrift(drift string) string {
 // RenderStatus formats a StatusReport for the default (non-JSON)
 // output mode. Mirrors src/logmind/core/doctor.render_status.
 func RenderStatus(r StatusReport) string {
-	offline := !r.NetworkUsed
 	var lines []string
 
 	// Stable iteration: tools were already inserted in order by the
 	// collector; loop preserves it.
 	for _, tool := range r.Tools {
-		installed := formatVersion(tool.InstalledVersion, false)
-		latest := formatVersion(tool.LatestVersion, offline)
-		if tool.InstalledVersion == nil && tool.Name == "logmind" {
-			installed = "(dev install)"
-		}
+		installed := formatVersion(tool.InstalledVersion)
 		statusWord := formatDrift("ok")
 		if tool.Drift != "ok" {
 			statusWord = formatDrift(tool.Drift)
 		}
 		lines = append(lines, fmt.Sprintf(
-			"%s %s installed · %s latest · %s",
-			tool.Name, installed, latest, statusWord,
+			"%s %s · %s",
+			tool.Name, installed, statusWord,
 		))
 
 		for _, wf := range tool.Workflows {
