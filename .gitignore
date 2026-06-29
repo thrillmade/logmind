@@ -66,6 +66,10 @@ skills-lock.json
 # Agent(isolation: "worktree"). Local-only; never commit.
 .claude/worktrees/
 
+# Browser-automation MCP scratch (console/page dumps). Local-only — these
+# must never land in commits or the derived docs/file-structure.md tree.
+.playwright-mcp/
+
 # Intentionally untracked: live in separate repos (Homebrew tap lives
 # at thrillmade/homebrew-tap, not in this repo).
 homebrew-logmind/

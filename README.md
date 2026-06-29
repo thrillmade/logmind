@@ -80,22 +80,31 @@ verification, and the legacy Python path).
 > section](#legacy-install-python-frozen-at-v0616) at the bottom has the
 > details for users migrating off it.
 
-## Required repo settings
+## Recommended repo settings
 
-`logmind init` ships a GitHub Action (`regen-timeline.yml`) that VERIFIES
-`docs/timeline.md` is up to date on every PR — fail-fast if stale, no
-auto-commit. For the derived-file architecture to stay conflict-free
-between concurrent PRs, your repo needs:
+`logmind init` ships a GitHub Action (`regen-timeline.yml`) that keeps the
+derived docs (`docs/timeline.md` + `docs/file-structure.md`) current on
+every PR. It **self-heals** rather than blocks: when the derived docs are
+stale, the workflow regenerates them and commits the fix back to the PR
+(via `GITHUB_TOKEN`), then re-verifies in the same run. Forked PRs (where
+it can't push back) get a `::warning::` advisory and the post-merge run on
+`main` reconciles. **A stale derived doc never red-lights your PR**, and no
+PAT or per-repo secret is required.
+
+For the derived-file architecture to stay conflict-free across *concurrent*
+PRs, the following is **recommended** (no longer required just to avoid
+blocking):
 
 - **Strict required status checks on `main`** —
   `Settings → Branches → Branch protection rule (or Ruleset)` →
   *"Require branches to be up to date before merging"*. This forces a
-  PR to be rebased on latest `main` before merge, which is what makes
+  PR to be rebased on latest `main` before merge, which keeps
   `docs/timeline.md` (and any other derived file) conflict-free across
   concurrent PRs.
 
 Without that toggle, two PRs in flight can both regenerate against
-different base commits and merge-conflict on the derived file.
+different base commits and merge-conflict on the derived file — the
+self-heal fixes each PR independently, but a rebase is still cleaner.
 
 ### One-command setup via reporulez
 

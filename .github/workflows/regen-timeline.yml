@@ -1,28 +1,47 @@
-name: check derived docs
+# logmind-template-version: v5
+name: logmind / check-derived-docs
 
-# Derived-file architecture: docs/timeline.md is a derived artifact,
-# deterministically computed from sources (per-branch logs + decisions.md
-# + archive). This workflow VERIFIES that docs/timeline.md on the PR
-# matches what `logmind timeline` would produce — same pattern as
-# Prettier/ESLint/Black checks. If stale, the build fails red with a
-# clear message and the user regenerates locally + pushes.
+# Self-heal derived-doc gate (build-from-source variant of the v5
+# consumer template `internal/templates/github/regen-timeline.yml.template`).
 #
-# Why fail-fast instead of auto-commit: GitHub deliberately blocks
-# GITHUB_TOKEN-pushed commits from triggering downstream workflows
-# (anti-recursion safety). An auto-commit approach leaves required
-# status checks stuck on "Expected — Waiting for status to be reported"
-# forever. Fail-fast avoids this entire class of problem — no PAT,
-# no token games.
+# docs/timeline.md and docs/file-structure.md are DERIVED artifacts —
+# deterministically recomputed from sources (per-branch decision logs +
+# decisions.md + archive for the timeline; the project tree for
+# file-structure). The old design VERIFIED them and FAILED RED when stale,
+# which wedged every PR with no self-service fix other than "regenerate
+# locally and push" — a step that races the next concurrent PR and blocked
+# even docs-only changes. This version SELF-HEALS instead:
 #
-# Post-cutover: builds the Go binary from this PR's source instead of
-# `pip install -e .` (Python source tree removed in #149).
+#   * Same-repo PRs + pushes to main: on drift, regenerate, commit, and
+#     push the regen back via GITHUB_TOKEN (github-actions[bot] identity),
+#     then re-verify in the SAME job. The auto-commit + re-verify happen in
+#     one run, so GITHUB_TOKEN's "doesn't trigger downstream workflows"
+#     limitation is irrelevant — verify is the final step, not a separate
+#     triggered run. NEVER blocks.
+#
+#   * Forked PRs: GITHUB_TOKEN can't push to the fork's head ref, so we
+#     emit a ::warning:: advisory and EXIT 0 (do NOT fail). The push to
+#     main self-heals on the next run after merge. This matches the SPEC
+#     §5.1.1 rule that fork PRs MUST NOT fail the derived-doc check.
+#
+# Why build-from-source (not setup-logmind like the consumer template):
+# this IS the logmind repo, so it regenerates with the binary built from
+# THIS PR's source — the change under review generates its own derived docs.
+#
+# No PAT, no per-repo secret, no branch-protection prerequisite to avoid
+# blocking. (Strict "require up to date before merge" remains the
+# recommended default to keep concurrent PRs conflict-free, but is no
+# longer required to merge.)
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master]
 
 permissions:
-  contents: read
+  contents: write       # auto-commit the regen back to the PR head ref / main
+  pull-requests: read
 
 jobs:
   check-derived-docs:
@@ -31,7 +50,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # For PRs, check out the PR's head ref so the regen + push apply
+          # to the right branch. For pushes to main, check out the ref
+          # directly. Forked PRs check out the fork's head repo (read-only
+          # for the auto-commit step, which falls back to advisory).
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v5
         with:
@@ -41,7 +67,7 @@ jobs:
       - name: Build logmind from source
         run: make build
 
-      - name: Verify docs/timeline.md is current
+      - name: Regenerate derived docs
         run: |
           set -euo pipefail
           if [ ! -f docs/timeline.md ]; then
@@ -49,9 +75,57 @@ jobs:
             exit 1
           fi
           ./bin/logmind timeline --write docs/timeline.md
-          if ! git diff --quiet docs/timeline.md; then
-            echo "::error::docs/timeline.md is stale. Run \`logmind timeline --write docs/timeline.md\` locally and commit the regenerated file."
-            git --no-pager diff docs/timeline.md | head -50
-            exit 1
+          ./bin/logmind file-structure --write docs/file-structure.md
+
+      - name: Auto-commit regen + verify
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # No diff after regen → already current. Verify passes.
+          if git diff --quiet docs/timeline.md docs/file-structure.md 2>/dev/null; then
+            echo "docs/timeline.md + docs/file-structure.md are up to date."
+            exit 0
           fi
-          echo "docs/timeline.md is up to date."
+
+          echo "Derived docs were stale on this ref; healing in place."
+
+          # Forked PR — can't push back to the fork's head ref. Advisory
+          # only, exit 0 (post-merge regen on main reconciles). Per SPEC
+          # §5.1.1, fork PRs MUST NOT fail the derived-doc check.
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::warning title=Stale derived docs (fork PR)::This PR is from a fork ($HEAD_REPO); the auto-fix can't push back to the fork. Run \`logmind timeline --write docs/timeline.md && logmind file-structure --write docs/file-structure.md\` locally and commit, or a maintainer will reconcile on merge."
+            git --no-pager diff docs/timeline.md docs/file-structure.md | head -80
+            exit 0
+          fi
+
+          # Same-repo PR or push to main — regen + commit + push via
+          # GITHUB_TOKEN. Use the canonical github-actions[bot] identity
+          # (a real GitHub user, unlike a fabricated bot email).
+          echo "::notice title=Auto-fixing stale derived docs::Regenerating and committing via GITHUB_TOKEN."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/timeline.md docs/file-structure.md
+          git commit -m "chore: regen derived docs [auto]
+
+          Auto-fix by logmind's check-derived-docs workflow.
+          docs/timeline.md or docs/file-structure.md was stale after a
+          change; regenerated from the per-branch decision files (timeline)
+          and the current tree (file-structure)."
+
+          # Push to the appropriate ref. PR → head ref; push → current branch.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git push origin "HEAD:${HEAD_REF}"
+          else
+            git push origin HEAD
+          fi
+
+          # Final verify in the SAME job — re-run the check. Since we just
+          # regenerated, this passes; a failure here means the regen is
+          # non-deterministic, which is a real bug worth failing on.
+          ./bin/logmind timeline --check --write docs/timeline.md
+          ./bin/logmind file-structure --check --write docs/file-structure.md
+          echo "::notice::Derived docs regenerated, committed, and verified clean."
