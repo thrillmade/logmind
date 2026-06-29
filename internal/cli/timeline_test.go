@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
 // makeDocs lays out a minimal docs/ tree with a few decision entries.
@@ -167,6 +169,39 @@ func TestTimelineCheckRequiresWrite(t *testing.T) {
 	want := "Error: --check requires --write PATH to compare against.\n"
 	if stdout.String() != want {
 		t.Errorf("stdout = %q; want %q", stdout.String(), want)
+	}
+}
+
+// TestTimelineMainCanonicalDispatch proves the config gate flips the emitted
+// format AND that --write/--check use the SAME generator (no false-stale
+// wedge). The existing golden tests above are the default-mode byte-parity
+// guard; this is the opt-in path.
+func TestTimelineMainCanonicalDispatch(t *testing.T) {
+	cwd := makeDocs(t, "", "", map[string]string{
+		"feat__x.md": "<!-- logmind-entry-start: 2026-06-29-x -->\n- row\n<!-- logmind-entry-end -->\n",
+	})
+	if err := os.MkdirAll(filepath.Join(cwd, ".logmind"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, ".logmind", "config.yml"),
+		[]byte("timeline:\n  canonical: main-canonical\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(cwd, "docs", "timeline.md")
+
+	var stdout, stderr bytes.Buffer
+	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+		t.Fatalf("write: %v (%s)", err, stderr.String())
+	}
+	got, _ := os.ReadFile(target)
+	if !timeline.HasEntryBlocks(string(got)) {
+		t.Errorf("main-canonical mode did not emit entry-block format:\n%s", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runTimeline(cwd, target, true, false, &stdout, &stderr); err != nil {
+		t.Errorf("--check after a main-canonical write reported stale: %v\n%s", err, stdout.String())
 	}
 }
 

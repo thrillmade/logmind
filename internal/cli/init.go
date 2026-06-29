@@ -156,7 +156,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	}
 	fmt.Fprintln(out, "✓ Created docs/file-structure.md")
 
-	if body, err := timeline.Generate(docsPath, false, cmd.ErrOrStderr()); err == nil {
+	if body, err := timeline.GenerateFor(docsPath, false, canonicalEnabled(cwd), cmd.ErrOrStderr()); err == nil {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), body)
 	} else {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), "# Timeline\n")
@@ -255,7 +255,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	// timeline regen path. Without this re-render, the tree-walk only
 	// sees docs/ and the timeline lacks the first decision row.
 	_, _ = tree.WriteFileStructure(filepath.Join(docsPath, "file-structure.md"), cwd, 2)
-	if body, err := timeline.Generate(docsPath, false, cmd.ErrOrStderr()); err == nil {
+	if body, err := timeline.GenerateFor(docsPath, false, canonicalEnabled(cwd), cmd.ErrOrStderr()); err == nil {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), body)
 	}
 

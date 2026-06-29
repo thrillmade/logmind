@@ -34,9 +34,10 @@ type Entry struct {
 
 // decisionHeader mirrors Python's DECISION_HEADER regex
 // (core/parser.py:9). Captures:
-//   1: date  (YYYY-MM-DD)
-//   2: time  (HH:MM)
-//   3: title (free-form, ends at line break)
+//
+//	1: date  (YYYY-MM-DD)
+//	2: time  (HH:MM)
+//	3: title (free-form, ends at line break)
 var decisionHeader = regexp.MustCompile(`^## (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) - (.+)$`)
 
 // Iter reads `path` and emits every decision header found in it.
@@ -152,7 +153,7 @@ func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
 	}
 
 	branchesDir := filepath.Join(docsPath, "decisions-branches")
-	branchFiles, err := listBranchFiles(branchesDir)
+	branchFiles, err := ListBranchFiles(branchesDir)
 	if err != nil {
 		return nil, err
 	}
@@ -178,9 +179,9 @@ func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
 	return out, nil
 }
 
-// listBranchFiles returns the sorted set of <docsPath>/decisions-branches/*.md
+// ListBranchFiles returns the sorted set of <docsPath>/decisions-branches/*.md
 // paths. Mirrors Python sorted(branches_dir.glob("*.md")).
-func listBranchFiles(dir string) ([]string, error) {
+func ListBranchFiles(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {

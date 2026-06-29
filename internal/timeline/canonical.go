@@ -11,7 +11,13 @@ package timeline
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
+
+	"github.com/thrillmade/logmind/internal/decisions"
 )
 
 // Entry-block markers (SPEC §1.6.3.1). Each marker occupies its own line,
@@ -163,4 +169,264 @@ func extractEntryBlocks(content string, stderr io.Writer) []entryBlock {
 		}
 	}
 	return out
+}
+
+// --- §1.6.4 main-canonical assembly ---------------------------------------
+//
+// The main-canonical timeline is a DETERMINISTIC UNION of §1.6.3 entry-block
+// markers — no LLM, no re-summarization. Same source tree ⇒ same bytes on
+// any branch, worktree, or checkout path. It is reachable ONLY when
+// `timeline.canonical: main-canonical` is set; the default branch-divergent
+// path (Generate/Render) is untouched, so v0.6.14 output is byte-stable.
+
+// marked is one timeline row: its date+slug identity, the verbatim body
+// rendered between the entry-block markers, and its source path (used only
+// for the deterministic collision tiebreak — never rendered).
+type marked struct {
+	date   time.Time
+	slug   string
+	body   string
+	source string
+}
+
+// splitKey parses a "<YYYY-MM-DD>-<slug>" entry-block key into its date and
+// slug. Returns ok=false on a malformed key.
+func splitKey(key string) (date time.Time, slug string, ok bool) {
+	const dateLen = len("2006-01-02") // 10
+	if len(key) < dateLen+2 || key[dateLen] != '-' {
+		return time.Time{}, "", false
+	}
+	d, err := time.Parse("2006-01-02", key[:dateLen])
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	slug = key[dateLen+1:]
+	if slug == "" {
+		return time.Time{}, "", false
+	}
+	return d, slug, true
+}
+
+// branchLabel reverses _sanitize_branch for the legacy fallback's source
+// label (feat__auth.md → feat/auth). Mirrors decisions.branchLabelFromFilename
+// (unexported there); kept tiny + local rather than widening that package's
+// surface.
+func branchLabel(base string) string {
+	return strings.ReplaceAll(strings.TrimSuffix(base, ".md"), "__", "/")
+}
+
+// GenerateMainCanonical builds the §1.6.4 deterministic-union timeline from
+// the same source set as the default model (decisions.md + archive +
+// decisions-branches/*), rendered in entry-block format.
+func GenerateMainCanonical(docsPath string, stderr io.Writer) (string, error) {
+	items, err := collectMarked(docsPath, stderr)
+	if err != nil {
+		return "", err
+	}
+	return renderCanonical(items), nil
+}
+
+// GenerateFor is the single in-process dispatch point: main-canonical when
+// canonical is true, else the byte-stable default brief/full path. Every
+// caller (runTimeline's three sites + init's two) routes through here so the
+// model selection lives in exactly one place.
+func GenerateFor(docsPath string, brief, canonical bool, stderr io.Writer) (string, error) {
+	if canonical {
+		return GenerateMainCanonical(docsPath, stderr)
+	}
+	return Generate(docsPath, brief, stderr)
+}
+
+// collectMarked gathers one marked row per timeline entry from all sources.
+func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	var items []marked
+
+	// (1) Branch detail pages: use their entry-block markers when present;
+	// otherwise (markerless legacy file) synthesize one row from the first
+	// decision header so existing repos render with zero file edits.
+	branchesDir := filepath.Join(docsPath, "decisions-branches")
+	branchFiles, err := decisions.ListBranchFiles(branchesDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, bf := range branchFiles {
+		base := filepath.Base(bf)
+		rel := "decisions-branches/" + base
+		data, err := os.ReadFile(bf)
+		if err != nil {
+			return nil, err
+		}
+		if blocks := extractEntryBlocks(string(data), stderr); len(blocks) > 0 {
+			for _, b := range blocks {
+				d, slug, ok := splitKey(b.Key)
+				if !ok {
+					fmt.Fprintf(stderr, "logmind: skipping entry-block with unparseable key %q in %s\n", b.Key, rel)
+					continue
+				}
+				items = append(items, marked{date: d, slug: slug, body: b.Body, source: rel})
+			}
+			continue
+		}
+		entries, err := decisions.Iter(bf, stderr)
+		if err != nil {
+			return nil, err
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		e := entries[0]
+		e.SourcePath = rel
+		e.SourceLabel = branchLabel(base)
+		items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: renderEntryLine(e), source: rel})
+	}
+
+	// (2) Direct-to-main + archive: one synthesized row per decision header
+	// (these sources carry no entry-block markers under the newspaper model).
+	for _, src := range []struct{ file, label string }{
+		{"decisions.md", "main"},
+		{"decisions-archive.md", "archive"},
+	} {
+		entries, err := decisions.Iter(filepath.Join(docsPath, src.file), stderr)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			e.SourcePath = src.file
+			e.SourceLabel = src.label
+			items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: renderEntryLine(e), source: src.file})
+		}
+	}
+
+	return dedupeAndSuffix(items), nil
+}
+
+// dedupeAndSuffix collapses identical entries sharing a <date>-<slug> key
+// (the same-entry carve-out: a decision present in two sources is ONE entry),
+// and when genuinely distinct entries collide on that key appends a numeric
+// suffix (-2, -3, …) per §1.6.3.1. Every generated key is checked against a
+// GLOBAL used-key set, so a suffix can never duplicate another entry's key —
+// including a literal "<slug>-2" that already exists elsewhere in the union
+// (§1.6.3.1: the <date>-<slug> pair MUST be unique within the file). Within a
+// collision the bare key goes to the lexicographically-smallest source path.
+// Output is sorted newest-first by date, tiebreak slug DESCENDING (§1.6.3.2)
+// — deterministic, independent of input order and of the checkout path.
+//
+// Suffix numbers are positional (rank among same-key collisions), so adding a
+// collision member that sorts EARLIER renumbers the later ones: keys stay
+// unique and bytes stay deterministic, but a given entry's suffix is not
+// stable across unrelated additions. (Cross-regeneration suffix stability is
+// a §1.6.4 ratification item — see PR7.)
+func dedupeAndSuffix(items []marked) []marked {
+	// Group by the bare <date>-<slug> key. groupKeys preserves first-seen
+	// order for deterministic collision processing; the final sort below
+	// fixes output order regardless.
+	groups := map[string][]marked{}
+	var groupKeys []string
+	for _, it := range items {
+		k := it.date.Format("2006-01-02") + "-" + it.slug
+		if _, ok := groups[k]; !ok {
+			groupKeys = append(groupKeys, k)
+		}
+		groups[k] = append(groups[k], it)
+	}
+
+	// Pass 1: collapse identical bodies within each group, and RESERVE every
+	// singleton's intrinsic key so a colliding group's suffix can't duplicate
+	// it (e.g. an organic "dup" collision must not generate "dup-2" when a
+	// literal "dup-2" entry already exists).
+	collapsed := make(map[string][]marked, len(groupKeys))
+	used := map[string]bool{}
+	for _, k := range groupKeys {
+		seen := map[string]bool{}
+		var distinct []marked
+		for _, it := range groups[k] {
+			if seen[it.body] {
+				continue
+			}
+			seen[it.body] = true
+			distinct = append(distinct, it)
+		}
+		collapsed[k] = distinct
+		if len(distinct) == 1 {
+			used[k] = true
+		}
+	}
+
+	// Pass 2: emit singletons as-is; assign collision members the next free
+	// key (checked against `used`), smallest source path first.
+	var out []marked
+	for _, k := range groupKeys {
+		distinct := collapsed[k]
+		if len(distinct) == 1 {
+			out = append(out, distinct[0])
+			continue
+		}
+		sort.SliceStable(distinct, func(i, j int) bool {
+			if distinct[i].source != distinct[j].source {
+				return distinct[i].source < distinct[j].source
+			}
+			return distinct[i].body < distinct[j].body
+		})
+		datePrefix := distinct[0].date.Format("2006-01-02") + "-"
+		baseSlug := distinct[0].slug
+		n := 1
+		for i := range distinct {
+			var slug string
+			for {
+				if n == 1 {
+					slug = baseSlug
+				} else {
+					slug = fmt.Sprintf("%s-%d", baseSlug, n)
+				}
+				n++
+				if !used[datePrefix+slug] {
+					break
+				}
+			}
+			used[datePrefix+slug] = true
+			distinct[i].slug = slug
+			out = append(out, distinct[i])
+		}
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].date.Equal(out[j].date) {
+			return out[i].date.After(out[j].date)
+		}
+		return out[i].slug > out[j].slug
+	})
+	return out
+}
+
+// renderCanonical assembles the entry-block-format timeline: the shared
+// header, `## YYYY-MM` month landmarks (OUTSIDE the markers, §1.6.3.2), and
+// each row wrapped in its `<date>-<slug>` entry-block markers (§1.6.3.1).
+func renderCanonical(items []marked) string {
+	if len(items) == 0 {
+		return header + emptyBody
+	}
+	var b strings.Builder
+	b.WriteString(header)
+	lastMonth := ""
+	for _, it := range items {
+		if month := it.date.Format("2006-01"); month != lastMonth {
+			b.WriteString("\n## ")
+			b.WriteString(month)
+			b.WriteString("\n")
+			lastMonth = month
+		}
+		b.WriteString("\n")
+		b.WriteString(entryStartPrefix)
+		b.WriteString(it.date.Format("2006-01-02") + "-" + it.slug)
+		b.WriteString(entryStartSuffix)
+		b.WriteString("\n")
+		b.WriteString(it.body)
+		b.WriteString("\n")
+		b.WriteString(entryEndMarker)
+		b.WriteString("\n")
+	}
+	return b.String()
 }

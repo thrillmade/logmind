@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (95 decisions)
+## 2026-06 (96 decisions)
 
-- **2026-06-29** — Slice 2 PR2: timeline.canonical + file_structure.root_label config keys (typed-only) *(feat/timeline-config-keys)* — [decisions-branches/feat__timeline-config-keys.md](decisions-branches/feat__timeline-config-keys.md)
-- *... 93 more decisions ...*
+- **2026-06-29** — Slice 2 PR3: main-canonical timeline read path (GenerateMainCanonical) + single-point config dispatch *(feat/timeline-main-canonical-readpath)* — [decisions-branches/feat__timeline-main-canonical-readpath.md](decisions-branches/feat__timeline-main-canonical-readpath.md)
+- *... 94 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
