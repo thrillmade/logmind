@@ -1,5 +1,164 @@
 # logmind: Plan & Architecture
 
+> **Heads-up for the next reader:** the "Development History / Phase 1–11"
+> material further down this file is the **legacy Python plan** (pre-v1.0).
+> The Go rewrite (v1.0+) already shipped most of it under `internal/`.
+> The **active plan** is the shape-up below. Start here.
+
+## Shape-up (2026-06): stop logmind from creating friction in consumer repos
+
+**Theme:** logmind v1.2.x core logging works, but it generates real
+friction in the repos that depend on it (it *is* the commit primitive for
+every thrillmade repo, so any friction is felt on every commit). This
+shape-up is **not "more features"** — it is "stop blocking the repos that
+already adopted us." Slices are sequenced **blocker-first**.
+
+The cross-repo contract these changes MUST honor lives in the sibling
+`protocol` repo's `SPEC.md` (not in-tree, so not linked): **§2** git-hook contract,
+**§4** branch routing, **§5** workflow contract. logmind does not own a
+single "logmind section" of the SPEC — its surface is spread across those
+sections (filesystem §1, hooks §2, CLI §3, branch routing §4, workflows
+§5). That is the right shape; no new top-level SPEC section is proposed.
+One **drift** is flagged below: the shipped `regen-timeline.yml.template`
+is at `v5` (GITHUB_TOKEN single-job self-heal) but the SPEC only documents
+through `v4` — §5.1.1 should be extended to describe v5 (tracked in Slice 1).
+
+### Reality check vs the legacy Phase 5–11 checklist
+
+The friction brief described some of these as "half-built." Audited against
+the Go source, the real state is:
+
+- **Phase 5 — branch-aware storage: DONE in Go.**
+  `internal/cli/log.go::resolveDecisionsPath` routes feature-branch logs to
+  `docs/decisions-branches/<sanitized-branch>.md` with the first-creation
+  backlink header; `internal/gitcli` has `CurrentBranch`/`DefaultBranch`;
+  `config.Decisions.BranchAware` (default true) gates it. Opt-out and
+  detached-HEAD/non-git fallbacks to `docs/decisions.md` are implemented.
+- **Phase 6 — PR-merge aggregation: superseded, needs a decision (Slice 5).**
+  The standalone `logmind-aggregate.yml` was retired; `logmind timeline`
+  now aggregates branch files into `docs/timeline.md` directly, so agents
+  already see branch decisions without a per-merge append to `decisions.md`.
+  The "Merged: <branch> (#NN)" one-liners in `decisions.md` are now legacy.
+  Either finish a deterministic merge-append step or formally retire it.
+- **Phases 7/8/10/11 — link-check, AGENTS.md consolidation, the skill, OSS
+  hygiene: shipped** (`internal/linkcheck`, AGENTS.md `v3-slim` block, the
+  `logmind` agent skill, `CONTRIBUTING.md`/`SECURITY.md`/release workflows).
+- **Phase 9 — tree-gen hardening: NOT done, and it is now a blocker** for
+  putting `docs/file-structure.md` behind the CI gate (Slice 2).
+
+### Friction triage (blocker vs polish)
+
+| # | Friction | Verdict | Slice |
+|---|----------|---------|-------|
+| 1 | Derived-doc CI gate **fail-exits** on stale `timeline.md`/`file-structure.md` — wedges every PR, no grace, no auto-fix | **Consumer BLOCKER (#1 pain)** | **Slice 1 — ship first** |
+| 2 | Branch divergence / merge conflicts on derived files when branch protection isn't strict (`logmind log` auto-pushes; CI commits regen) | Consumer blocker (latent) | Slice 4 |
+| 3 | Version drift in hooks / workflow templates / AGENTS.md blocks; `doctor` reports DRIFT but never fixes; no "clear a repo" path | Consumer friction (silent rot) | Slice 3 |
+| 4 | Phase 6 merge-aggregation incomplete / superseded | Polish (timeline.md already covers the need) | Slice 5 |
+| 5 | Stale `AGENTS.md` — duplicate `## Development Commands` / `## Project Overview` + an entire CLAUDE.md/Cursor dump (Python→Go migration artifact) | Polish (cosmetic, this repo only) | Slice 6 |
+| — | `file-structure.md` non-determinism (tree root = cwd basename; `.playwright-mcp/` + nested-gitignore artifacts leak in) | Blocker for Slice 1's file-structure coverage | Slice 2 |
+
+### Slice 1 — derived-doc CI gate must not block PRs **(SHIPPING FIRST)**
+
+The repo's own `.github/workflows/regen-timeline.yml` is still the
+**fail-fast** design (`permissions: contents: read`, exit 1 on stale
+`timeline.md`, no auto-commit, and it doesn't even check
+`file-structure.md`). A stale derived doc red-lights every open PR with no
+self-service fix other than "regenerate locally and push" — which races the
+next concurrent PR. Meanwhile the **consumer template is already at v5**
+(GITHUB_TOKEN single-job self-heal). The repo's own gate never got the
+upgrade — that is the gate that blocked this very work session repeatedly.
+
+**Fix:** convert the repo's own gate to the **self-heal** model, adapted to
+build-from-source (the repo can't `setup-logmind` itself):
+
+- Regenerate **both** `timeline.md` and `file-structure.md`.
+- **Same-repo PRs + pushes to `main`:** on drift, auto-commit + push the
+  regen via `GITHUB_TOKEN` (`github-actions[bot]` identity), then re-verify
+  in the same job. Never blocks.
+- **Forked PRs:** `GITHUB_TOKEN` can't push to the fork head ref → emit a
+  `::warning::` advisory and **exit 0** (per SPEC §5.1.1: forks MUST NOT
+  fail the check; the post-merge regen on `main` reconciles). This is
+  strictly less blocking than the shipped v5 template, which currently
+  *fails* forks — reconcile the template + SPEC §5.1.1 to "v5 advisory on
+  fork" as a fast follow.
+
+Eventually-correct guarantee: even when a fork PR merges stale, the push to
+`main` self-heals on the next run. No PAT, no per-repo secret, no
+branch-protection prerequisite to *not block*.
+
+### Slice 2 — tree-gen determinism hardening (legacy Phase 9)
+
+Required before `file-structure.md` can be a *clean* gate (Slice 1 makes it
+non-blocking via auto-commit, but a non-deterministic generator churns a
+regen commit on every PR opened from a differently-named worktree):
+
+- Root label is `filepath.Base(repoRoot)` (`internal/tree/tree.go:227`) —
+  make it deterministic (fixed label or git-derived repo name), not the
+  checkout directory name.
+- Tree walker reads only the **root** `.gitignore`; nested `site/.gitignore`
+  entries (`next-env.d.ts`, `tsconfig.tsbuildinfo`) leak in. Honor nested
+  ignores or add them to `file_structure.ignore_patterns`.
+- `.playwright-mcp/` (local MCP scratch) is untracked + un-ignored → leaks
+  into the tree. Add it to `.gitignore` (done opportunistically in Slice 1).
+
+### Slice 3 — `logmind doctor --fix` + a one-command "clear a repo"
+
+`doctor` is read-only today (`internal/doctor/doctor.go`); it reports DRIFT
+on hooks / workflow templates / AGENTS.md blocks but never heals, so
+consumer repos rot silently. Add:
+
+- `logmind doctor --fix` — re-write drifted git hooks (the installers in
+  `internal/hooks` already refuse-foreign / overwrite-ours), re-apply
+  drifted workflow templates and the AGENTS.md marker block to the bundled
+  version. Dry-run by default surface; `--fix` opts into writes.
+- `logmind reset` (or `doctor --clear`) — a single command to remove
+  logmind-managed hooks / `.gitattributes` block / config so a consumer can
+  cleanly detach or re-init.
+
+### Slice 4 — robustness to branch divergence on derived files (friction #2)
+
+Make the auto-push + CI-regen interaction not require strict branch
+protection to avoid local↔remote divergence: keep derived files out of the
+local commit on feature branches (regen is CI's job on the canonical
+checkout), and/or have `logmind log` rebase-pull before pushing when the
+remote moved. Pairs with Slice 1 — once CI is the single source of truth for
+derived docs, local logs shouldn't fight it.
+
+### Slice 5 — finish or formally retire Phase 6 merge-aggregation (friction #4)
+
+Decide: (a) a deterministic post-merge step that appends a `Merged: <branch>
+(#NN)` one-liner to `decisions.md`, or (b) retire the concept (timeline.md
+already aggregates branch decisions) and document `timeline.md` as the
+canonical cross-branch view. Lean (b); it removes a moving part.
+
+### Slice 6 — AGENTS.md cleanup (friction #5)
+
+`AGENTS.md` carries a duplicate `## Development Commands` / `## Project
+Overview` pair and an entire inlined CLAUDE.md + Cursor-rules dump — a
+Python→Go `agents-sync` artifact. Trim to the canonical block + project
+sections. Cosmetic, this-repo-only; do last.
+
+### Org-level actions (not code — flag for a human)
+
+- **Branch-protection default:** the canonical `clud-bug-logmind` ruleset in
+  `reporulez` should ship "Require branches up to date before merging" so
+  derived files stay conflict-free across concurrent PRs. Slice 1 removes
+  this as a *hard* requirement (gate self-heals), but it remains the
+  recommended default. No per-repo secret is needed — v5/Slice 1 use
+  `GITHUB_TOKEN`, so the old `LOGMIND_AUTO_REGEN_PAT` is **not** required.
+- **SPEC update:** extend `protocol/SPEC.md §5.1.1` to document
+  `regen-timeline.yml` **v5** (GITHUB_TOKEN single-job self-heal) — the
+  template shipped ahead of the spec.
+
+### Future cross-repo spec idea (flagged, NOT built here)
+
+logmind could be **clud-bug-aware**: when a `logmind log` commit lands in a
+repo whose `.claude/skills/.clud-bug.json` declares clud-bug installed,
+logmind could signal/trigger the clud-bug review for that commit (SkDD:
+log the *why*, then review against the skills that motivated it). This is a
+cross-repo concern — it belongs in a future SPEC section (interop, §10
+neighborhood), not in logmind's own code yet. Recorded here so it isn't lost.
+
 ## Vision
 
 logmind is a decision logging system for AI-assisted development. It automatically tracks decisions made during development, maintains up-to-date documentation, and provides rich context for AI agents.
