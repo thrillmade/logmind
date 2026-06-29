@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (92 decisions)
+## 2026-06 (93 decisions)
 
-- **2026-06-29** — Add `logmind doctor --fix`: one-command idempotent repo refresh (Slice 1) *(fix/doctor-fix)* — [decisions-branches/fix__doctor-fix.md](decisions-branches/fix__doctor-fix.md)
-- *... 90 more decisions ...*
+- **2026-06-29** — Drop vestigial pip/PyPI machinery from doctor + init (Slice 4 cleanup) *(chore/doctor-drop-vestigial-pypi)* — [decisions-branches/chore__doctor-drop-vestigial-pypi.md](decisions-branches/chore__doctor-drop-vestigial-pypi.md)
+- *... 91 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
