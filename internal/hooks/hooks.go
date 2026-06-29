@@ -86,6 +86,19 @@ func hookVersion() string {
 // pull-up). Local merges that introduce new commits not yet on origin
 // (the multi-branch self-heal case) MUST still trigger regen. See
 // the v0.6.16 inline comment block below for the contract.
+//
+// Slice 2 (main-canonical timeline) roll-up — this hook is the LOCAL
+// reconciler and needs NO change for it. Its `logmind timeline --write`
+// call dispatches on timeline.canonical (internal/cli/timeline.go), so on a
+// repo opted into main-canonical the SAME unchanged body rebuilds the §1.6.4
+// union from the full merged working tree — no hook-body edit, no
+// HookVersionPrefix bump, no fleet-wide "hook updated" churn. Branch detail
+// pages are KEPT (never folded), so the union always has its sources. The
+// server-side reconciler is the advisory regen-timeline.yml workflow (PR
+// #159). We deliberately add NO push-to-default trigger here: it would
+// reintroduce the GITHUB_TOKEN-stranding + self-trigger loop the advisory
+// model exists to avoid. The TestPostMergeBody_RollupInvariants guard pins
+// "regenerates the timeline, never pushes" even across a golden regen.
 func BuildPostMergeBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind post-merge hook\n" +

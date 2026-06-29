@@ -33,6 +33,33 @@ func TestPostRewriteBody_MatchesGolden(t *testing.T) {
 	checkGolden(t, "post-rewrite.golden", BuildPostRewriteBody())
 }
 
+// TestPostMergeBody_RollupInvariants pins the Slice 2 roll-up contract as
+// INTENT (distinct from the byte-golden): the post-merge hook MUST regenerate
+// the timeline + file-structure (so a main-canonical repo rebuilds its §1.6.4
+// union on every local merge — the regen command dispatches on config) and
+// MUST NOT push to a branch (no push-to-default → no GITHUB_TOKEN stranding /
+// self-trigger loop). A golden regen that silently violated either still
+// trips THIS test. (The "leave regens unstaged" v0.6.7 behavior is pinned by
+// the golden + the in-body comment, which itself names `git add`, so we don't
+// substring-match that here.)
+func TestPostMergeBody_RollupInvariants(t *testing.T) {
+	body := BuildPostMergeBody()
+	for _, must := range []string{
+		"logmind timeline --write docs/timeline.md",
+		"logmind file-structure --write docs/file-structure.md",
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("post-merge body missing roll-up regen %q", must)
+		}
+	}
+	// Match an actual push invocation, not a stray mention: a `git push` at a
+	// shell-command position (line start, after indentation). The body has
+	// none — the roll-up never pushes.
+	if regexp.MustCompile(`(?m)^\s*git push`).MatchString(body) {
+		t.Errorf("post-merge body issues `git push` — the roll-up must NEVER push to a branch")
+	}
+}
+
 // TestPostMergeBody_ByteIdenticalToPython is THE parity contract for
 // wave B2. It shells to the Python interpreter (skipping the test if
 // Python or the src/logmind package isn't importable), captures
