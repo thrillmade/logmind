@@ -24,6 +24,10 @@ jobs:
     # jobs replace the job-id-based context with the `name:` template.
     name: go (${{ matrix.os }} / go${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      # Guard against the macOS "signal: abort trap" SIGABRT that crashes
+      # go test binaries on startup on newer runner images (no-op on Linux).
+      MallocNanoZone: "0"
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +38,11 @@ jobs:
         os: [ubuntu-latest]
         go-version: ["1.22", "1.24"]
         include:
-          - os: macos-latest
+          # Pinned to macos-14: macos-latest rolled to an image where go1.22
+          # test binaries abort on startup ("signal: abort trap"), red-lighting
+          # every PR. macos-14 is a known-good image for the go1.22 floor.
+          # Revisit when the go floor moves past 1.22.
+          - os: macos-14
             go-version: "1.22"
     steps:
       - uses: actions/checkout@v7
