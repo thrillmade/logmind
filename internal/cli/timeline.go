@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/timeline"
 )
 
@@ -72,9 +73,16 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 		return ErrSilent
 	}
 	brief := !full
+	// Model dispatch: main-canonical (§1.6.4) when opted in via config, else
+	// the byte-stable default.
+	canonical := canonicalEnabled(cwd)
 	mode := "brief"
 	if full {
 		mode = "full"
+	}
+	if canonical {
+		// Main-canonical is single-format (entry-block); --full is inert.
+		mode = "canonical"
 	}
 
 	if check {
@@ -85,7 +93,7 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 			fmt.Fprintln(stdout, "Error: --check requires --write PATH to compare against.")
 			return ErrSilent
 		}
-		rendered, err := timeline.Generate(docsPath, brief, stderr)
+		rendered, err := timeline.GenerateFor(docsPath, brief, canonical, stderr)
 		if err != nil {
 			return err
 		}
@@ -100,7 +108,7 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 	}
 
 	if writePath == "" {
-		rendered, err := timeline.Generate(docsPath, brief, stderr)
+		rendered, err := timeline.GenerateFor(docsPath, brief, canonical, stderr)
 		if err != nil {
 			return err
 		}
@@ -116,7 +124,7 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 		return nil
 	}
 
-	rendered, err := timeline.Generate(docsPath, brief, stderr)
+	rendered, err := timeline.GenerateFor(docsPath, brief, canonical, stderr)
 	if err != nil {
 		return err
 	}
@@ -155,4 +163,14 @@ func writeAtomic(path, data string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// canonicalEnabled reports whether the repo at cwd has opted into the
+// main-canonical timeline (`timeline.canonical: main-canonical`). Fail-safe:
+// a missing or broken config degrades to false (the byte-stable default), so
+// no regen path can fail or silently flip on a config error. Shared by
+// runTimeline and the in-process init re-render calls.
+func canonicalEnabled(cwd string) bool {
+	cfg, err := config.Load(cwd)
+	return err == nil && cfg.Timeline.IsMainCanonical()
 }
