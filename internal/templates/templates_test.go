@@ -152,6 +152,67 @@ func TestWorkflowTemplates_UseSetupLogmindAction(t *testing.T) {
 	}
 }
 
+// TestRegenTimelineTemplate_V5_Advisory pins the Slice-1 de-friction
+// contract: the derived-doc gate must NEVER hard-block a PR and must NEVER
+// push with the default GITHUB_TOKEN (a GITHUB_TOKEN push moves the PR head
+// SHA without re-triggering checks, stranding every required check). On
+// stale docs it either pushes via LOGMIND_AUTO_REGEN_PAT (which re-triggers
+// checks) or emits an advisory ::warning:: and exits 0.
+func TestRegenTimelineTemplate_V5_Advisory(t *testing.T) {
+	body := Workflow("regen-timeline.yml.template")
+
+	// Marker bump v4 → v5.
+	if !strings.Contains(body, "# logmind-template-version: v5") {
+		t.Errorf("regen-timeline template missing v5 marker")
+	}
+	// Advisory, never fail-fast: no literal `exit 1`. Staleness must not
+	// red-light the PR (a real tool crash still fails the job via `set -e`).
+	if strings.Contains(body, "exit 1") {
+		t.Errorf("regen-timeline v5 must not `exit 1` — the gate is advisory and must never block a PR")
+	}
+	// The no-PAT / fork path must warn and pass.
+	if !strings.Contains(body, "::warning") || !strings.Contains(body, "exit 0") {
+		t.Errorf("regen-timeline v5 missing the advisory warn + exit 0 path")
+	}
+	// The PAT auto-push path is retained (the only path that pushes).
+	if !strings.Contains(body, "LOGMIND_AUTO_REGEN_PAT") {
+		t.Errorf("regen-timeline v5 missing the LOGMIND_AUTO_REGEN_PAT auto-push path")
+	}
+	// Regen commits carry the [skip-logmind] convention (SPEC §5.1/§5.2).
+	if !strings.Contains(body, "[skip-logmind]") {
+		t.Errorf("regen-timeline v5 PAT-push commit missing the [skip-logmind] prefix")
+	}
+	// The job must NOT filter itself out by actor: a filtered required check
+	// strands as "Expected — Waiting…". Bots/forks take the advisory path.
+	if strings.Contains(body, "github.actor != ") {
+		t.Errorf("regen-timeline v5 must not filter the job by actor (a filtered required check hangs forever)")
+	}
+	// Fork PRs must reach the advisory path, not die at checkout: the
+	// checkout MUST set `repository:` to the PR head repo (a fork's head_ref
+	// does not exist on the base repo, so checkout would otherwise fail red).
+	if !strings.Contains(body, "repository: ${{ github.event.pull_request.head.repo.full_name") {
+		t.Errorf("regen-timeline v5 checkout must set repository to the PR head repo (else fork PRs fail at checkout)")
+	}
+	// The advisory diff display MUST be SIGPIPE/pipefail-guarded: a large
+	// stale diff piped into `head` exits 141 under `set -euo pipefail` and
+	// would abort the job before `exit 0` — re-blocking on big diffs.
+	if !strings.Contains(body, "| head -80 || true") {
+		t.Errorf("regen-timeline v5 advisory diff must be `|| true`-guarded against SIGPIPE/pipefail")
+	}
+	// GITHUB_TOKEN must never push: the workflow token stays read-only and
+	// the push (if any) uses the explicit PAT-credentialed URL.
+	if !strings.Contains(body, "contents: read") {
+		t.Errorf("regen-timeline v5 must keep the workflow token read-only (contents: read)")
+	}
+	if !strings.Contains(body, "x-access-token:${PAT}") {
+		t.Errorf("regen-timeline v5 PAT push must use the explicit PAT URL, not a persisted/GITHUB_TOKEN credential")
+	}
+	// The PAT/token must not be persisted into .git during regeneration/build.
+	if !strings.Contains(body, "persist-credentials: false") {
+		t.Errorf("regen-timeline v5 checkout must set persist-credentials: false")
+	}
+}
+
 // TestCheckDocLinksTemplate_V5_DualModeSelfHeal pins the v1.2.0 Layer
 // 3 self-heal shape (plan §8.7): the workflow template marker bumps
 // to v5, AND it contains both the mode-A (ANTHROPIC_API_KEY auto-fix)
