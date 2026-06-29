@@ -8,14 +8,14 @@
 //
 //   - Defaults are hard-coded in DefaultConfig(). When the user's
 //     .logmind/config.yml is missing or unparseable, the loader silently
-//     returns the defaults — matching the Python ``except Exception:
-//     return defaults`` branch in core/config.py:104-110. Logmind treats
+//     returns the defaults — matching the Python “except Exception:
+//     return defaults“ branch in core/config.py:104-110. Logmind treats
 //     a broken config as user fixing it later; we never abort a derived-
 //     doc command just because YAML failed.
 //
 //   - Deep merge: user keys override defaults LEAFWISE, not whole-section.
-//     If a user only sets ``file_structure.auto_update: false``, the
-//     ``ignore_patterns`` list still comes from defaults. Matches Python
+//     If a user only sets “file_structure.auto_update: false“, the
+//     “ignore_patterns“ list still comes from defaults. Matches Python
 //     _deep_update (core/config.py:115-127).
 //
 //   - This package never WRITES config — that's `logmind config set`
@@ -37,7 +37,10 @@ type Config struct {
 	Git           GitConfig           `yaml:"git"`
 	Decisions     DecisionsConfig     `yaml:"decisions"`
 	FileStructure FileStructureConfig `yaml:"file_structure"`
-	Agents        map[string]bool     `yaml:"agents"`
+	// Timeline gates the §1.6.4 main-canonical timeline (Slice 2, 0.8.0).
+	// Additive: the default reproduces today's output byte-for-byte.
+	Timeline TimelineConfig  `yaml:"timeline"`
+	Agents   map[string]bool `yaml:"agents"`
 	// CatalogTarget is the default `<owner>/<repo>` slug `logmind skill
 	// push` opens PRs against. Overrideable on the CLI via --catalog.
 	// Per plan §"Skill suggestion cycle §4" + §"Skill catalog
@@ -105,6 +108,29 @@ type DecisionsConfig struct {
 type FileStructureConfig struct {
 	AutoUpdate     bool     `yaml:"auto_update"`
 	IgnorePatterns []string `yaml:"ignore_patterns"`
+	// RootLabel overrides the file-structure tree's root line. Default ""
+	// = the checkout directory's basename (today's behavior); a fixed
+	// string makes file-structure.md deterministic across checkouts /
+	// worktrees, and "auto" resolves to the git remote repo name (wired in
+	// Slice 2 PR5). Additive: "" preserves byte-parity.
+	RootLabel string `yaml:"root_label"`
+}
+
+// TimelineConfig mirrors the `timeline:` section (Slice 2, §1.6.4).
+type TimelineConfig struct {
+	// Canonical selects the timeline assembly model: "branch-divergent"
+	// (default — today's full-regen union, byte-identical to v0.6.14) or
+	// "main-canonical" (deterministic union of §1.6.3 entry-block lines).
+	// Validated fail-safe via IsMainCanonical.
+	Canonical string `yaml:"canonical"`
+}
+
+// IsMainCanonical reports whether main-canonical timeline assembly is
+// enabled. Fail-safe: ONLY the exact string "main-canonical" qualifies, so
+// a typo, empty value, or future/unknown value can never silently flip the
+// timeline's output away from the byte-stable default.
+func (t TimelineConfig) IsMainCanonical() bool {
+	return t.Canonical == "main-canonical"
 }
 
 // DefaultConfig returns a fresh Config populated with the same values
@@ -138,6 +164,14 @@ func DefaultConfig() Config {
 				"build",
 				"*.egg-info",
 			},
+			RootLabel: "",
+		},
+		// Timeline: default "branch-divergent" reproduces today's output
+		// byte-for-byte; the main-canonical opt-in + the eventual default
+		// flip ride later releases. NOT added to DefaultMap (below) — that
+		// would change `logmind config list` bytes and break Python parity.
+		Timeline: TimelineConfig{
+			Canonical: "branch-divergent",
 		},
 		Agents: map[string]bool{
 			"claude":   true,
