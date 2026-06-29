@@ -330,44 +330,35 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string) erro
 	fmt.Fprintln(out, "logmind is already initialized — running in refresh mode.")
 	fmt.Fprintln(out)
 
+	res, err := applyRefresh(cwd, refreshOpts{githubActions: f.githubActions, git: true})
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: refresh failed:", err)
+	}
+
 	if f.githubActions {
-		created, refreshed, err := installWorkflowTemplates(cwd, true)
-		if err != nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), "Warning: workflow refresh failed:", err)
-		}
-		for _, wf := range created {
+		for _, wf := range res.WorkflowsCreated {
 			fmt.Fprintln(out, "✓ Created", wf)
 		}
-		for _, wf := range refreshed {
+		for _, wf := range res.WorkflowsRefreshed {
 			fmt.Fprintln(out, "↻ Refreshed", wf, "to current template")
 		}
-		if len(created) == 0 && len(refreshed) == 0 {
+		if len(res.WorkflowsCreated) == 0 && len(res.WorkflowsRefreshed) == 0 {
 			fmt.Fprintln(out, "  All workflow templates already current.")
 		}
-		// Dependabot config — same merge semantics as a fresh init;
-		// idempotent so re-running on an already-current file is a
-		// silent no-op.
+		// Dependabot config is init-owned (doctor doesn't probe it, so
+		// applyRefresh leaves it alone); keep init's own merge semantics +
+		// existing-ecosystem nudge here.
 		_ = applyDependabotInit(cmd, cwd)
 	}
 
-	// AGENTS.md refresh — idempotent.
-	if msg, err := inserter.EnsureAgentsMD(cwd); err == nil && msg != "" {
-		fmt.Fprintln(out, msg)
+	if res.AgentsMDMsg != "" {
+		fmt.Fprintln(out, res.AgentsMDMsg)
 	}
-
-	// .gitattributes + merge driver config + hooks.
-	if changed, err := gitattr.EnsureBlock(filepath.Join(cwd, ".gitattributes")); err == nil && changed {
+	if res.GitattrChanged {
 		fmt.Fprintln(out, "✓ Added logmind block to .gitattributes")
 	}
-	_ = gitattr.ConfigureMergeDrivers(cwd)
-	if changed, _ := hooks.InstallPostMerge(cwd); changed {
-		fmt.Fprintln(out, "✓ Refreshed .git/hooks/post-merge")
-	}
-	if changed, _ := hooks.InstallPostRewrite(cwd); changed {
-		fmt.Fprintln(out, "✓ Refreshed .git/hooks/post-rewrite")
-	}
-	if changed, _ := hooks.InstallCommitMsg(cwd); changed {
-		fmt.Fprintln(out, "✓ Refreshed .git/hooks/commit-msg")
+	for _, h := range res.HooksRefreshed {
+		fmt.Fprintln(out, "✓ Refreshed .git/hooks/"+h)
 	}
 
 	fmt.Fprintln(out)
