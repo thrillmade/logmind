@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
 // DefaultFileStructureDepth mirrors Python's DEFAULT_FILE_STRUCTURE_DEPTH.
@@ -58,9 +59,9 @@ const fileStructureTemplateTail = "\n```\n" +
 //
 // Patterns are stored as raw strings; matching happens at the leaf via
 // filepath.Match. Per pattern we test three targets per item:
-//   1. full repo-relative path (e.g. "site/.next/cache")
-//   2. each path component individually
-//   3. the basename
+//  1. full repo-relative path (e.g. "site/.next/cache")
+//  2. each path component individually
+//  3. the basename
 //
 // First match wins for ignore-vs-negate (negate beats ignore — matches
 // gitignore precedence).
@@ -223,10 +224,22 @@ func dedup(in []string) []string {
 // excludes them. Both are matched against the entry's repo-relative
 // posix path (e.g. "site/.next/cache").
 func Render(rootPath string, rules IgnoreRules, maxDepth int) (string, error) {
+	return RenderWithLabel(rootPath, rules, maxDepth, "")
+}
+
+// RenderWithLabel is Render with an explicit root label. label=="" reproduces
+// Render's basename behavior EXACTLY (byte-parity with v0.6.14). A non-empty
+// label makes the root line deterministic across checkouts/worktrees —
+// fixing the churn where /tmp/foo and /work/logmind-pr otherwise produced
+// different first lines (and thus a perpetually-"stale" file-structure.md).
+func RenderWithLabel(rootPath string, rules IgnoreRules, maxDepth int, label string) (string, error) {
 	rootPath = filepath.Clean(rootPath)
-	rootName := filepath.Base(rootPath)
-	if rootName == "" || rootName == "/" {
-		rootName = "."
+	rootName := label
+	if rootName == "" {
+		rootName = filepath.Base(rootPath)
+		if rootName == "" || rootName == "/" {
+			rootName = "."
+		}
 	}
 	var b strings.Builder
 	b.WriteString(rootName)
@@ -354,11 +367,23 @@ func GenerateFileStructure(repoRoot string, maxDepth int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tree, err := Render(repoRoot, rules, maxDepth)
+	tree, err := RenderWithLabel(repoRoot, rules, maxDepth, resolveRootLabel(repoRoot, cfg.FileStructure.RootLabel))
 	if err != nil {
 		return "", err
 	}
 	return fileStructureTemplateHead + tree + fileStructureTemplateTail, nil
+}
+
+// resolveRootLabel maps the config value to the literal root label.
+// Empty (default) → "" (RenderWithLabel falls back to the checkout basename,
+// byte-parity). "auto" → the git remote repo name, or "" when it can't be
+// resolved (shallow/fork CI, no origin) so it degrades to the basename. Any
+// other value is used verbatim.
+func resolveRootLabel(repoRoot, configured string) string {
+	if configured == "auto" {
+		return gitcli.RemoteRepoName(repoRoot)
+	}
+	return configured
 }
 
 // WriteFileStructure atomically writes the rendered file-structure to

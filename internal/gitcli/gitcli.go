@@ -136,6 +136,31 @@ func RemoteHEAD(repoRoot string) string {
 	return out
 }
 
+// RemoteRepoName returns the repository name parsed from origin's URL — the
+// last path segment with any ".git" suffix stripped. Handles both scp-style
+// ("git@github.com:thrillmade/logmind.git" → "logmind") and URL-style
+// ("https://github.com/thrillmade/logmind" → "logmind"). Empty string on any
+// failure (no origin, parse miss). Used only for the OPTIONAL
+// file_structure.root_label: "auto" convenience, which falls back to the
+// checkout basename when this is empty.
+func RemoteRepoName(repoRoot string) string {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	url := strings.TrimSpace(stdout.String())
+	url = strings.TrimSuffix(url, "/")
+	url = strings.TrimSuffix(url, ".git")
+	if i := strings.LastIndexAny(url, "/:"); i >= 0 {
+		url = url[i+1:]
+	}
+	return url
+}
+
 // DiffCachedNames returns the list of staged file paths
 // (`git diff --cached --name-only`). Empty slice on any failure or
 // when nothing is staged.
@@ -256,12 +281,12 @@ func StatusPorcelain(repoRoot, path string) string {
 // DefaultBranch resolves the repo's default branch following the same
 // 5-step search Python's git_handler.default_branch uses:
 //
-//   1. refs/remotes/origin/HEAD                  (set by `git clone` or
-//                                                 `git remote set-head`)
-//   2. local `main` if it exists, else `master`
-//   3. single-branch repo: that branch IS the default
-//   4. `git config init.defaultBranch`
-//   5. hard fallback: "main"
+//  1. refs/remotes/origin/HEAD                  (set by `git clone` or
+//     `git remote set-head`)
+//  2. local `main` if it exists, else `master`
+//  3. single-branch repo: that branch IS the default
+//  4. `git config init.defaultBranch`
+//  5. hard fallback: "main"
 //
 // Used by `logmind rebase` (B3) when --base isn't supplied. Same
 // resolution order as Python so a consuming repo configured to point

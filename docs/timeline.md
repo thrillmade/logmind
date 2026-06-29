@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (97 decisions)
+## 2026-06 (98 decisions)
 
-- **2026-06-29** — Slice 2 PR4: logmind log writes the §1.6.3 timeline marker; union computes the detail link *(feat/timeline-log-marker)* — [decisions-branches/feat__timeline-log-marker.md](decisions-branches/feat__timeline-log-marker.md)
-- *... 95 more decisions ...*
+- **2026-06-29** — Slice 2 PR5: deterministic file-structure root label (RenderWithLabel + file_structure.root_label) *(feat/tree-root-label)* — [decisions-branches/feat__tree-root-label.md](decisions-branches/feat__tree-root-label.md)
+- *... 96 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)
