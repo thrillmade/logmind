@@ -43,6 +43,17 @@ func TestSlugify_TruncatesTo60Bytes(t *testing.T) {
 	}
 }
 
+func TestSlugify_TruncateMayEndInDash(t *testing.T) {
+	// Step 4 truncates AFTER step-3 trim; the spec defines no re-trim, so a
+	// truncated slug MAY end in '-'. This locks the exact byte output the
+	// <date>-<slug> union key depends on — a future "tidy the slug" refactor
+	// that re-trimmed would silently change every colliding key downstream.
+	got := Slugify(strings.Repeat("a", 59) + " bbb")
+	if want := strings.Repeat("a", 59) + "-"; got != want {
+		t.Errorf("Slugify trailing-dash truncation = %q; want %q", got, want)
+	}
+}
+
 func TestSlugify_NeverSplitsCodepoint(t *testing.T) {
 	// Defensive: truncateRunes must not split a multi-byte rune. Build a
 	// raw string whose byte-60 boundary lands mid-rune and feed it directly
@@ -131,5 +142,21 @@ func TestExtractEntryBlocks_NoMarkers(t *testing.T) {
 	got := extractEntryBlocks("# Timeline\n\njust prose, no markers\n", &stderr)
 	if len(got) != 0 {
 		t.Errorf("got %d; want 0", len(got))
+	}
+}
+
+func TestExtractEntryBlocks_TolerateCRLF(t *testing.T) {
+	// On a CRLF (Windows autocrlf) checkout the marker lines end in "\r".
+	// The detector (HasEntryBlocks) and the parser must AGREE — otherwise
+	// the detector says "entry-block format" while the parser silently
+	// extracts nothing.
+	content := entryStartPrefix + "2026-06-29-x" + entryStartSuffix + "\r\nbody\r\n" + entryEndMarker + "\r\n"
+	if !HasEntryBlocks(content) {
+		t.Errorf("HasEntryBlocks = false on CRLF content")
+	}
+	var stderr bytes.Buffer
+	got := extractEntryBlocks(content, &stderr)
+	if len(got) != 1 || got[0].Key != "2026-06-29-x" {
+		t.Errorf("got %+v (stderr=%s); want 1 block keyed 2026-06-29-x", got, stderr.String())
 	}
 }

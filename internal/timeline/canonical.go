@@ -106,7 +106,7 @@ func parseStartMarker(line string) (key string, ok bool) {
 		return "", false
 	}
 	// Allow trailing whitespace after the suffix but require the suffix.
-	trimmed := strings.TrimRight(line, " \t")
+	trimmed := strings.TrimRight(line, " \t\r")
 	if !strings.HasSuffix(trimmed, entryStartSuffix) {
 		return "", false
 	}
@@ -120,7 +120,7 @@ func parseStartMarker(line string) (key string, ok bool) {
 // isEndMarker reports whether line is the closing marker (at column 0,
 // trailing whitespace tolerated).
 func isEndMarker(line string) bool {
-	return strings.TrimRight(line, " \t") == entryEndMarker
+	return strings.TrimRight(line, " \t\r") == entryEndMarker
 }
 
 // extractEntryBlocks scans content for matched §1.6.3 entry-blocks and
