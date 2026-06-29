@@ -121,6 +121,31 @@ func TestGenerateMainCanonical_CollisionGetsStableSuffix(t *testing.T) {
 	}
 }
 
+func TestGenerateMainCanonical_CrossGroupKeysStayUnique(t *testing.T) {
+	docs := filepath.Join(t.TempDir(), "docs")
+	// An organic 2-way collision on "dup" (different bodies) PLUS a separate
+	// literal entry already keyed "dup-2". The collision's generated suffix
+	// must NOT duplicate the literal key — §1.6.3.1 requires unique keys.
+	writeDoc(t, docs, "decisions-branches/feat__a.md", block("2026-06-29-dup", "- body A"))
+	writeDoc(t, docs, "decisions-branches/feat__b.md", block("2026-06-29-dup", "- body B"))
+	writeDoc(t, docs, "decisions-branches/feat__c.md", block("2026-06-29-dup-2", "- literal dup-2"))
+	var stderr bytes.Buffer
+	out, _ := GenerateMainCanonical(docs, &stderr)
+	blocks := extractEntryBlocks(out, &stderr)
+	if len(blocks) != 3 {
+		t.Fatalf("got %d blocks; want 3\n%s", len(blocks), out)
+	}
+	counts := map[string]int{}
+	for _, b := range blocks {
+		counts[b.Key]++
+	}
+	for k, n := range counts {
+		if n != 1 {
+			t.Errorf("key %q appears %dx; §1.6.3.1 requires unique keys\n%s", k, n, out)
+		}
+	}
+}
+
 func TestGenerateMainCanonical_SameEntryTwoSourcesCollapses(t *testing.T) {
 	docs := filepath.Join(t.TempDir(), "docs")
 	// Identical body in two sources = ONE entry (the same-entry carve-out).

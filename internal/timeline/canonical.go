@@ -305,16 +305,24 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 
 // dedupeAndSuffix collapses identical entries sharing a <date>-<slug> key
 // (the same-entry carve-out: a decision present in two sources is ONE entry),
-// and when genuinely distinct entries collide on that key appends a stable
-// numeric suffix (-2, -3, …) per §1.6.3.1. The bare slug goes to the
-// lexicographically-smallest source path so adding a new file never
-// renumbers an existing key. Output is sorted newest-first by date, tiebreak
-// slug DESCENDING (§1.6.3.2) — deterministic, independent of input order and
-// of the checkout path.
+// and when genuinely distinct entries collide on that key appends a numeric
+// suffix (-2, -3, …) per §1.6.3.1. Every generated key is checked against a
+// GLOBAL used-key set, so a suffix can never duplicate another entry's key —
+// including a literal "<slug>-2" that already exists elsewhere in the union
+// (§1.6.3.1: the <date>-<slug> pair MUST be unique within the file). Within a
+// collision the bare key goes to the lexicographically-smallest source path.
+// Output is sorted newest-first by date, tiebreak slug DESCENDING (§1.6.3.2)
+// — deterministic, independent of input order and of the checkout path.
+//
+// Suffix numbers are positional (rank among same-key collisions), so adding a
+// collision member that sorts EARLIER renumbers the later ones: keys stay
+// unique and bytes stay deterministic, but a given entry's suffix is not
+// stable across unrelated additions. (Cross-regeneration suffix stability is
+// a §1.6.4 ratification item — see PR7.)
 func dedupeAndSuffix(items []marked) []marked {
 	// Group by the bare <date>-<slug> key. groupKeys preserves first-seen
-	// order only for stable iteration; the final sort below is what fixes
-	// output order, so determinism does not depend on it.
+	// order for deterministic collision processing; the final sort below
+	// fixes output order regardless.
 	groups := map[string][]marked{}
 	var groupKeys []string
 	for _, it := range items {
@@ -325,36 +333,62 @@ func dedupeAndSuffix(items []marked) []marked {
 		groups[k] = append(groups[k], it)
 	}
 
-	var out []marked
+	// Pass 1: collapse identical bodies within each group, and RESERVE every
+	// singleton's intrinsic key so a colliding group's suffix can't duplicate
+	// it (e.g. an organic "dup" collision must not generate "dup-2" when a
+	// literal "dup-2" entry already exists).
+	collapsed := make(map[string][]marked, len(groupKeys))
+	used := map[string]bool{}
 	for _, k := range groupKeys {
-		g := groups[k]
-		// Collapse identical bodies (same entry seen in >1 source).
 		seen := map[string]bool{}
 		var distinct []marked
-		for _, it := range g {
+		for _, it := range groups[k] {
 			if seen[it.body] {
 				continue
 			}
 			seen[it.body] = true
 			distinct = append(distinct, it)
 		}
+		collapsed[k] = distinct
+		if len(distinct) == 1 {
+			used[k] = true
+		}
+	}
+
+	// Pass 2: emit singletons as-is; assign collision members the next free
+	// key (checked against `used`), smallest source path first.
+	var out []marked
+	for _, k := range groupKeys {
+		distinct := collapsed[k]
 		if len(distinct) == 1 {
 			out = append(out, distinct[0])
 			continue
 		}
-		// Genuine collision: stable order by source path then body, so suffix
-		// assignment is deterministic and never renumbers as the set grows.
 		sort.SliceStable(distinct, func(i, j int) bool {
 			if distinct[i].source != distinct[j].source {
 				return distinct[i].source < distinct[j].source
 			}
 			return distinct[i].body < distinct[j].body
 		})
-		for idx, it := range distinct {
-			if idx > 0 {
-				it.slug = fmt.Sprintf("%s-%d", it.slug, idx+1)
+		datePrefix := distinct[0].date.Format("2006-01-02") + "-"
+		baseSlug := distinct[0].slug
+		n := 1
+		for i := range distinct {
+			var slug string
+			for {
+				if n == 1 {
+					slug = baseSlug
+				} else {
+					slug = fmt.Sprintf("%s-%d", baseSlug, n)
+				}
+				n++
+				if !used[datePrefix+slug] {
+					break
+				}
 			}
-			out = append(out, it)
+			used[datePrefix+slug] = true
+			distinct[i].slug = slug
+			out = append(out, distinct[i])
 		}
 	}
 
