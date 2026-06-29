@@ -75,3 +75,6 @@ homebrew-tap/
 bin/
 *.test
 *.out
+
+# Browser-automation MCP scratch (console/page dumps) — local-only.
+.playwright-mcp/

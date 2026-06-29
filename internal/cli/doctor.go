@@ -65,7 +65,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Emit the report as JSON.")
-	cmd.Flags().BoolVar(&offline, "offline", false, "Skip PyPI / npm probes; use only locally-readable signals.")
+	cmd.Flags().BoolVar(&offline, "offline", false, "No-op: doctor makes no network calls (kept for backward compatibility).")
 	cmd.Flags().BoolVar(&exitZero, "exit-zero", false, "Always exit 0, even on drift (for informational CI runs).")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Re-install drifted workflows, AGENTS.md block, .gitattributes, merge-driver config, and git hooks (idempotent). Never edits docs/ decisions, foreign hooks, or PATH.")
 	return cmd
