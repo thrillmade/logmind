@@ -83,6 +83,19 @@ func TestCollectStatus_FreshRepoListsAllProbes(t *testing.T) {
 	}
 }
 
+// TestCollectStatus_OfflineParamIsNoOp pins the post-cleanup contract:
+// the `offline` parameter is retained for signature/back-compat but doctor
+// no longer makes network calls, so it must NEVER re-enable network use.
+// Without this, a regression re-introducing `NetworkUsed: !offline` would
+// pass every other test (they all call with offline=true).
+func TestCollectStatus_OfflineParamIsNoOp(t *testing.T) {
+	for _, offline := range []bool{true, false} {
+		if r := CollectStatus(t.TempDir(), offline); r.NetworkUsed {
+			t.Errorf("CollectStatus(offline=%v): NetworkUsed=true; want false", offline)
+		}
+	}
+}
+
 func TestCollectStatus_StaleWorkflowFlipsToDrift(t *testing.T) {
 	dir := freshRepo(t)
 	origPath := os.Getenv("PATH")
