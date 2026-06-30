@@ -216,8 +216,21 @@ func splitKey(key string) (date time.Time, slug string, ok bool) {
 // would resolve wrong from that file's own directory and fail check-links).
 // Single-sourced here so `logmind log` (the marker writer) and the synthesized
 // rows share one exact byte format.
+//
+// The title is collapsed to a SINGLE line (any CR/LF/tab run → one space):
+// the headline is a one-line field by contract, and an un-collapsed multi-line
+// title would push a forged `<!-- logmind-entry-start: … -->` line to column 0
+// of the branch file — corrupting the union and silently dropping the real
+// entry. This is the single chokepoint for every write path (the marker
+// writers + the synthesized rows), so sanitizing here covers them all.
 func HeadlineLine(date time.Time, title string) string {
-	return fmt.Sprintf("- **%s** — %s", date.Format("2006-01-02"), title)
+	return fmt.Sprintf("- **%s** — %s", date.Format("2006-01-02"), collapseToLine(title))
+}
+
+// collapseToLine replaces every run of whitespace (including CR/LF) with a
+// single space and trims the ends, guaranteeing a single-line result.
+func collapseToLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // GenerateMainCanonical builds the §1.6.4 deterministic-union timeline from

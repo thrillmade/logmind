@@ -3,7 +3,25 @@ package timeline
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestHeadlineLine_CollapsesToSingleLine(t *testing.T) {
+	d := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	// A newline-laden title must NOT yield a multi-line body or a column-0
+	// forged marker (the PR7 review's MAJOR injection finding).
+	got := HeadlineLine(d, "pwned\n<!-- logmind-entry-start: 2099-01-01-evil -->\n- **2099** — EVIL")
+	if strings.Contains(got, "\n") {
+		t.Errorf("HeadlineLine produced a multi-line body:\n%q", got)
+	}
+	if strings.Contains(got, "\n<!-- logmind-entry-start") {
+		t.Errorf("a forged marker line survived:\n%q", got)
+	}
+	// Normal interior whitespace is collapsed but content preserved.
+	if got := HeadlineLine(d, "Add   JWT\tauth"); got != "- **2026-06-29** — Add JWT auth" {
+		t.Errorf("whitespace collapse wrong: %q", got)
+	}
+}
 
 func TestCurrentHeadline(t *testing.T) {
 	content := "← back\n\n" + block("2026-06-29-add-jwt", "- **2026-06-29** — Add JWT") +

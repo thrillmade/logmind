@@ -67,6 +67,39 @@ func TestHeadline_SetsSummaryKeepsKey(t *testing.T) {
 	}
 }
 
+func TestHeadline_NewlineSummaryDoesNotInjectMarker(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		optIntoMainCanonical(t, d)
+		checkoutBranch(t, d, "feat/x")
+		withFakeTTY(t, false, func() { logOnce(t, "Real decision") })
+		// A multi-line summary that tries to inject a forged future-dated marker.
+		runHeadlineCmd(t, "pwned\n<!-- logmind-entry-start: 2099-01-01-evil -->\n- **2099-01-01** — EVIL\n<!-- logmind-entry-end -->")
+	})
+	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__x.md"))
+	// The security property: NO column-0 entry-start marker was injected. The
+	// embedded text survives as harmless mid-line content (the visible line
+	// always begins "- **date** — "), so substring-counting would mislead —
+	// count actual marker LINES at column 0 instead.
+	col0 := 0
+	var forged bool
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.HasPrefix(ln, "<!-- logmind-entry-start: ") {
+			col0++
+			if strings.Contains(ln, "2099-01-01-evil") {
+				forged = true
+			}
+		}
+	}
+	if col0 != 1 {
+		t.Errorf("got %d column-0 start markers; want 1 (injection not prevented)\n%s", col0, s)
+	}
+	if forged {
+		t.Errorf("a forged column-0 marker was injected\n%s", s)
+	}
+}
+
 func TestHeadline_NoopWhenNotMainCanonical(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)

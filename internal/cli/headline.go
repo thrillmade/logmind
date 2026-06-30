@@ -84,6 +84,13 @@ func runHeadline(cwd, summary string, stdout, stderr io.Writer) error {
 
 	updated, replaced := timeline.ReplaceFirstHeadline(content, summary, prSuffix)
 	if !replaced {
+		if timeline.HasEntryBlocks(content) {
+			// A marker exists but couldn't be rewritten (unclosed/malformed) —
+			// don't stack a second one. logmind never writes such a marker, so
+			// this only fires on a hand-corrupted file.
+			fmt.Fprintln(stdout, "Branch file has a malformed timeline marker — fix it manually, then retry.")
+			return ErrSilent
+		}
 		// Markerless (pre-opt-in) branch file — insert a marker now.
 		updated = string(insertMarkerAfterHeader([]byte(content), buildTimelineMarker(time.Now(), summary, prSuffix)))
 	}
