@@ -312,3 +312,51 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// TestCollectStatus_SummariesNeeded classifies branch files in main-canonical
+// mode: markerless → "no summary", marker==first-title → "placeholder",
+// enriched → excluded. The advisory MUST NOT flip Overall to DRIFT.
+func TestCollectStatus_SummariesNeeded(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, ".logmind", "config.yml"), "timeline:\n  canonical: main-canonical\n")
+	mustWrite(t, filepath.Join(dir, "docs", "decisions.md"), "# D\n")
+	// markerless
+	mustWrite(t, filepath.Join(dir, "docs", "decisions-branches", "feat__cache.md"),
+		"← back\n\n## 2026-06-10 09:00 - Add caching\n\n---\n")
+	// placeholder — marker headline equals the first decision's title
+	mustWrite(t, filepath.Join(dir, "docs", "decisions-branches", "feat__login.md"),
+		"← back\n\n<!-- logmind-entry-start: 2026-06-12-add-login -->\n- **2026-06-12** — Add login\n<!-- logmind-entry-end -->\n\n## 2026-06-12 10:00 - Add login\n\n---\n")
+	// enriched — marker headline differs from the first title
+	mustWrite(t, filepath.Join(dir, "docs", "decisions-branches", "feat__api.md"),
+		"← back\n\n<!-- logmind-entry-start: 2026-06-14-add-api -->\n- **2026-06-14** — Built the full REST API with auth and pagination\n<!-- logmind-entry-end -->\n\n## 2026-06-14 10:00 - Add API\n\n---\n")
+
+	r := CollectStatus(dir, true)
+	if r.Overall == "DRIFT" {
+		t.Errorf("Overall = DRIFT; the summary advisory must never be drift")
+	}
+	if len(r.SummariesNeeded) != 2 {
+		t.Fatalf("SummariesNeeded = %d (%v); want 2 (markerless cache + placeholder login; enriched api excluded)", len(r.SummariesNeeded), r.SummariesNeeded)
+	}
+	joined := strings.Join(r.SummariesNeeded, "\n")
+	if !strings.Contains(joined, "feat__cache.md") || !strings.Contains(joined, "no summary") {
+		t.Errorf("missing markerless advisory: %v", r.SummariesNeeded)
+	}
+	if !strings.Contains(joined, "feat__login.md") || !strings.Contains(joined, "placeholder") {
+		t.Errorf("missing placeholder advisory: %v", r.SummariesNeeded)
+	}
+	if strings.Contains(joined, "feat__api.md") {
+		t.Errorf("enriched branch must NOT be listed: %v", r.SummariesNeeded)
+	}
+}
+
+// TestCollectStatus_SummariesNeeded_DefaultModeEmpty: in the default
+// branch-divergent mode the check is OFF entirely (doctor output unchanged).
+func TestCollectStatus_SummariesNeeded_DefaultModeEmpty(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, ".logmind", "config.yml"), "git:\n  auto_commit: true\n")
+	mustWrite(t, filepath.Join(dir, "docs", "decisions-branches", "feat__x.md"),
+		"← back\n\n## 2026-06-10 09:00 - X\n\n---\n")
+	if r := CollectStatus(dir, true); len(r.SummariesNeeded) != 0 {
+		t.Errorf("branch-divergent SummariesNeeded = %v; want empty (main-canonical-only feature)", r.SummariesNeeded)
+	}
+}

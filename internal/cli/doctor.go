@@ -23,11 +23,16 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/doctor"
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -41,8 +46,9 @@ func newDoctorCmd() *cobra.Command {
 			"on drift so it's CI-pluggable.\n\n" +
 			"With --fix, re-installs the drifted on-disk artifacts (workflows,\n" +
 			"AGENTS.md block, .gitattributes, merge-driver config, git hooks) in\n" +
-			"one idempotent pass. --fix never edits docs/ decision content,\n" +
-			"foreign (hand-written) hooks, or your PATH.",
+			"one idempotent pass, and (main-canonical only) backfills a §1.6.3\n" +
+			"timeline marker into any markerless branch detail file. --fix never\n" +
+			"rewrites decision text, foreign (hand-written) hooks, or your PATH.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if fix {
@@ -67,7 +73,7 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Emit the report as JSON.")
 	cmd.Flags().BoolVar(&offline, "offline", false, "No-op: doctor makes no network calls (kept for backward compatibility).")
 	cmd.Flags().BoolVar(&exitZero, "exit-zero", false, "Always exit 0, even on drift (for informational CI runs).")
-	cmd.Flags().BoolVar(&fix, "fix", false, "Re-install drifted workflows, AGENTS.md block, .gitattributes, merge-driver config, and git hooks (idempotent). Never edits docs/ decisions, foreign hooks, or PATH.")
+	cmd.Flags().BoolVar(&fix, "fix", false, "Re-install drifted workflows, AGENTS.md block, .gitattributes, merge-driver config, and git hooks (idempotent); and (main-canonical) backfill markers into markerless branch files. Never rewrites decision text, foreign hooks, or PATH.")
 	return cmd
 }
 
@@ -87,6 +93,12 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return ErrSilent
 	}
 
+	// Backfill the §1.6.3 timeline marker into any markerless branch detail
+	// file (main-canonical only) — the deterministic structural half of the
+	// branch-summary migration. The rich one-sentence summary stays the
+	// agent's job (doctor's advisory lists the placeholders to enrich).
+	summariesBackfilled := backfillBranchSummaries(cwd)
+
 	// Re-probe to compute the residual drift that --fix cannot address.
 	after := doctor.CollectStatus(cwd, offline)
 	residual := residualProbes(after)
@@ -100,7 +112,7 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return nil
 	}
 
-	cmd.Println(formatDoctorFixOK(res, residual))
+	cmd.Println(formatDoctorFixOK(res, residual, summariesBackfilled))
 	for _, name := range residual {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"note: %q still drifted — not auto-fixable by `doctor --fix` "+
@@ -125,7 +137,7 @@ func residualProbes(r doctor.StatusReport) []string {
 }
 
 // formatDoctorFixOK renders the single quiet `ok` summary line.
-func formatDoctorFixOK(res refreshResult, residual []string) string {
+func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled int) string {
 	state := func(changed bool, changedWord string) string {
 		if changed {
 			return changedWord
@@ -133,12 +145,51 @@ func formatDoctorFixOK(res refreshResult, residual []string) string {
 		return "current"
 	}
 	return fmt.Sprintf(
-		"ok doctor-fix workflows=%d agents-md=%s gitattributes=%s merge-driver=%s hooks=%d residual=%d",
+		"ok doctor-fix workflows=%d agents-md=%s gitattributes=%s merge-driver=%s hooks=%d summaries-backfilled=%d residual=%d",
 		len(res.WorkflowsCreated)+len(res.WorkflowsRefreshed),
 		state(res.AgentsMDMsg != "", "changed"),
 		state(res.GitattrChanged, "written"),
 		state(res.MergeDriverSet, "set"),
 		len(res.HooksRefreshed),
+		summariesBackfilled,
 		len(residual),
 	)
+}
+
+// backfillBranchSummaries inserts the deterministic §1.6.3 marker (first-
+// decision-title headline) into every markerless branch detail file — the
+// structural half of the branch-summary migration. Main-canonical only;
+// returns the count fixed. Best-effort: a per-file read/write error skips that
+// file. Reuses the cli-local marker helpers (buildTimelineMarker /
+// insertMarkerAfterHeader), so no export is needed.
+func backfillBranchSummaries(cwd string) int {
+	cfg, _ := config.Load(cwd)
+	if !cfg.Timeline.IsMainCanonical() {
+		return 0
+	}
+	files, err := decisions.ListBranchFiles(filepath.Join(cwd, "docs", "decisions-branches"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, bf := range files {
+		data, err := os.ReadFile(bf)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		if timeline.HasEntryBlocks(content) {
+			continue // already has a marker
+		}
+		entries, _ := decisions.Iter(bf, io.Discard)
+		if len(entries) == 0 {
+			continue // empty file — nothing to summarize
+		}
+		marker := buildTimelineMarker(entries[0].Date, entries[0].Title, prSuffixFromEnv())
+		updated := string(insertMarkerAfterHeader([]byte(content), marker))
+		if err := writeAtomic(bf, updated); err == nil {
+			n++
+		}
+	}
+	return n
 }
