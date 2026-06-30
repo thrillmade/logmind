@@ -45,6 +45,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,9 +55,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/templates"
+	"github.com/thrillmade/logmind/internal/timeline"
 	"github.com/thrillmade/logmind/internal/version"
 )
 
@@ -108,6 +112,11 @@ type StatusReport struct {
 	Overall     string       `json:"overall"`
 	NetworkUsed bool         `json:"network_used"`
 	Suggestions []string     `json:"suggestions"`
+	// SummariesNeeded is an ADVISORY list (main-canonical only) of branch
+	// detail files missing a §1.6.3 timeline marker or still on a placeholder
+	// headline (== the first decision's title). It is a graceful best-practice
+	// nudge for the agent to enrich — it NEVER affects Overall (not drift).
+	SummariesNeeded []string `json:"summaries_needed"`
 }
 
 // ToJSON serialises the report with 2-space indent, matching Python's
@@ -173,12 +182,61 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 	}
 
 	return StatusReport{
-		ProjectRoot: projectRoot,
-		Tools:       tools,
-		Overall:     overall,
-		NetworkUsed: false,
-		Suggestions: suggestions,
+		ProjectRoot:     projectRoot,
+		Tools:           tools,
+		Overall:         overall,
+		NetworkUsed:     false,
+		Suggestions:     suggestions,
+		SummariesNeeded: collectSummariesNeeded(projectRoot),
 	}
+}
+
+// collectSummariesNeeded returns — IN MAIN-CANONICAL MODE ONLY — the advisory
+// list of branch detail files that lack a §1.6.3 timeline marker, or whose
+// headline is still the deterministic placeholder (== the first decision's
+// title, i.e. nobody wrote a real one-sentence branch summary). It is empty in
+// the default branch-divergent mode, so doctor's output is unchanged there.
+// Purely informational — it never feeds Overall (a graceful nudge, not drift).
+func collectSummariesNeeded(projectRoot string) []string {
+	cfg, _ := config.Load(projectRoot)
+	if !cfg.Timeline.IsMainCanonical() {
+		return nil
+	}
+	files, err := decisions.ListBranchFiles(filepath.Join(projectRoot, "docs", "decisions-branches"))
+	if err != nil {
+		return nil
+	}
+	var needed []string
+	for _, bf := range files {
+		data, err := os.ReadFile(bf)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		entries, _ := decisions.Iter(bf, io.Discard)
+		if len(entries) == 0 {
+			continue // no decisions → nothing to summarize (and --fix would skip it)
+		}
+		rel := "docs/decisions-branches/" + filepath.Base(bf)
+		if !timeline.HasEntryBlocks(content) {
+			needed = append(needed, rel+" — no summary (run `logmind doctor --fix` to backfill, then enrich)")
+			continue
+		}
+		current, _ := timeline.CurrentHeadline(content)
+		placeholder := timeline.HeadlineLine(entries[0].Date, entries[0].Title)
+		if stripPRSuffix(current) == placeholder {
+			needed = append(needed, rel+" — placeholder summary (enrich: logmind headline --file "+rel+" \"…\")")
+		}
+	}
+	return needed
+}
+
+var prSuffixRe = regexp.MustCompile(` \(#\d+\)$`)
+
+// stripPRSuffix removes a trailing " (#NN)" PR suffix so a placeholder headline
+// compares equal whether or not LOGMIND_PR was set when the marker was written.
+func stripPRSuffix(s string) string {
+	return prSuffixRe.ReplaceAllString(s, "")
 }
 
 // collectLogmindStatus builds the per-tool report for `logmind`. The
@@ -607,6 +665,13 @@ func RenderStatus(r StatusReport) string {
 		lines = append(lines, "Suggested:")
 		for _, s := range r.Suggestions {
 			lines = append(lines, fmt.Sprintf("  %s", s))
+		}
+	}
+	if len(r.SummariesNeeded) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Branch summaries needing attention (%d) — enrich the important ones:", len(r.SummariesNeeded)))
+		for _, s := range r.SummariesNeeded {
+			lines = append(lines, fmt.Sprintf("  • %s", s))
 		}
 	}
 	return strings.Join(lines, "\n")

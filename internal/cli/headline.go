@@ -24,6 +24,7 @@ import (
 )
 
 func newHeadlineCmd() *cobra.Command {
+	var file string
 	cmd := &cobra.Command{
 		Use:   "headline <summary>",
 		Short: "Set the one-sentence branch summary shown at the top of the timeline",
@@ -47,34 +48,67 @@ Example:
 			if err != nil {
 				return err
 			}
-			return runHeadline(cwd, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runHeadline(cwd, args[0], file, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.Flags().StringVar(&file, "file", "",
+		"Target a specific branch decision file (e.g. docs/decisions-branches/feat__x.md) instead of the current branch — for summarizing old/merged branches.")
 	return cmd
 }
 
-func runHeadline(cwd, summary string, stdout, stderr io.Writer) error {
+func runHeadline(cwd, summary, fileOverride string, stdout, stderr io.Writer) error {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
 		fmt.Fprintln(stdout, "Error: headline summary is empty.")
 		return ErrSilent
 	}
-	docsPath := filepath.Join(cwd, "docs")
 	cfg, _ := config.Load(cwd)
 	if !cfg.Timeline.IsMainCanonical() {
 		fmt.Fprintln(stdout, "Branch summaries are a main-canonical-timeline feature.")
 		fmt.Fprintln(stdout, "Enable it with `timeline.canonical: main-canonical` in .logmind/config.yml.")
 		return nil
 	}
-	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
-	if !isBranchFile {
-		fmt.Fprintln(stdout, "Branch summaries apply on a feature branch; the default branch logs to docs/decisions.md directly.")
-		return nil
+
+	var target string
+	if fileOverride != "" {
+		// Explicit file (e.g. an old/merged branch) — skip git-branch resolution.
+		target = fileOverride
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(cwd, target)
+		}
+		target = filepath.Clean(target)
+		// Only branch detail files carry timeline markers — refuse to splice a
+		// marker into decisions.md/archive or anything outside the branches dir.
+		if filepath.Dir(target) != filepath.Join(cwd, "docs", "decisions-branches") {
+			fmt.Fprintf(stdout, "--file must target a file under docs/decisions-branches/ (got %s).\n", fileOverride)
+			return ErrSilent
+		}
+		if !pathExists(target) {
+			fmt.Fprintf(stdout, "No such branch file: %s\n", fileOverride)
+			return ErrSilent
+		}
+	} else {
+		docsPath := filepath.Join(cwd, "docs")
+		t, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
+		if !isBranchFile {
+			fmt.Fprintln(stdout, "Branch summaries apply on a feature branch; the default branch logs to docs/decisions.md directly.")
+			return nil
+		}
+		if !pathExists(t) {
+			fmt.Fprintln(stdout, "No decisions logged on this branch yet — run `logmind log` first, then set the summary.")
+			return nil
+		}
+		target = t
 	}
-	if !pathExists(target) {
-		fmt.Fprintln(stdout, "No decisions logged on this branch yet — run `logmind log` first, then set the summary.")
-		return nil
-	}
+	return setHeadlineInFile(cwd, target, summary, stdout)
+}
+
+// setHeadlineInFile sets/refreshes the §1.6.3 marker headline in the given
+// branch file: it rewrites the visible line of an existing marker (keeping the
+// stable <date>-<slug> key), or inserts a marker if the file has none. Shared
+// by `logmind headline` (current branch + --file). main-canonical gating is
+// the caller's responsibility.
+func setHeadlineInFile(cwd, target, summary string, stdout io.Writer) error {
 	data, err := os.ReadFile(target)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", target, err)
