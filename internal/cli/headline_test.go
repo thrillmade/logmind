@@ -1,0 +1,215 @@
+package cli
+
+import (
+	"bytes"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// checkoutBranch creates + switches to a feature branch in dir.
+func checkoutBranch(t *testing.T, dir, name string) {
+	t.Helper()
+	cmd := exec.Command("git", "checkout", "-b", name)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("checkout %s: %v\n%s", name, err, out)
+	}
+}
+
+// runHeadlineCmd runs `logmind headline <summary>` and returns combined output.
+func runHeadlineCmd(t *testing.T, summary string) string {
+	t.Helper()
+	root := NewRootCmd()
+	root.SetArgs([]string{"headline", summary})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("headline %q: %v\n%s", summary, err, out.String())
+	}
+	return out.String()
+}
+
+// logOnceH runs `logmind log <summary> -H <headline>` non-interactively.
+func logOnceH(t *testing.T, summary, headline string) {
+	t.Helper()
+	root := NewRootCmd()
+	root.SetArgs([]string{"log", summary, "-r", "Why", "-H", headline, "--no-commit", "--no-interactive"})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("log -H %q: %v\n%s", summary, err, out.String())
+	}
+}
+
+func TestHeadline_SetsSummaryKeepsKey(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		optIntoMainCanonical(t, d)
+		checkoutBranch(t, d, "feat/login")
+		withFakeTTY(t, false, func() { logOnce(t, "Add JWT auth") })
+		runHeadlineCmd(t, "Added the full JWT session lifecycle")
+	})
+	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__login.md"))
+	if !strings.Contains(s, "— Added the full JWT session lifecycle\n") {
+		t.Errorf("summary not set:\n%s", s)
+	}
+	// Key derives from the FIRST decision and stays stable.
+	if !strings.Contains(s, "-add-jwt-auth -->") {
+		t.Errorf("key not stable:\n%s", s)
+	}
+	if n := strings.Count(s, "logmind-entry-start"); n != 1 {
+		t.Errorf("marker count = %d; want 1", n)
+	}
+}
+
+func TestHeadline_NoopWhenNotMainCanonical(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t) // default config → branch-divergent
+		checkoutBranch(t, d, "feat/x")
+		withFakeTTY(t, false, func() { logOnce(t, "decision") })
+		out := runHeadlineCmd(t, "some summary")
+		if !strings.Contains(out, "main-canonical") {
+			t.Errorf("expected a main-canonical opt-in notice; got:\n%s", out)
+		}
+	})
+}
+
+func TestHeadline_EmptyRejected(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		optIntoMainCanonical(t, d)
+		checkoutBranch(t, d, "feat/x")
+		withFakeTTY(t, false, func() { logOnce(t, "decision") })
+		root := NewRootCmd()
+		root.SetArgs([]string{"headline", "   "})
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		if err := root.Execute(); err == nil {
+			t.Errorf("empty summary should error; output:\n%s", out.String())
+		}
+	})
+}
+
+func TestHeadline_InsertsMarkerOnMarkerlessFile(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		checkoutBranch(t, d, "feat/legacy")
+		// Log in DEFAULT mode → a markerless branch file.
+		withFakeTTY(t, false, func() { logOnce(t, "Pre-opt-in decision") })
+		// Opt in, then set the summary → marker must be inserted.
+		optIntoMainCanonical(t, d)
+		runHeadlineCmd(t, "The branch summary")
+	})
+	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__legacy.md"))
+	if n := strings.Count(s, "logmind-entry-start"); n != 1 {
+		t.Fatalf("marker count = %d; want 1 inserted\n%s", n, s)
+	}
+	if !strings.Contains(s, "— The branch summary\n") {
+		t.Errorf("inserted marker missing the summary:\n%s", s)
+	}
+}
+
+func TestLog_HeadlineFlag_SetsAndUpdatesKeepingKey(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		optIntoMainCanonical(t, d)
+		checkoutBranch(t, d, "feat/login")
+		withFakeTTY(t, false, func() {
+			logOnceH(t, "Add JWT auth", "JWT auth added")
+			logOnceH(t, "Add logout", "JWT auth + logout — full lifecycle")
+		})
+	})
+	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__login.md"))
+	if !strings.Contains(s, "— JWT auth + logout — full lifecycle\n") {
+		t.Errorf("-H did not update the headline on append:\n%s", s)
+	}
+	if n := strings.Count(s, "logmind-entry-start"); n != 1 {
+		t.Errorf("marker count = %d; want 1", n)
+	}
+	// Key from the FIRST -H headline ("JWT auth added"), stable across updates.
+	if !strings.Contains(s, "-jwt-auth-added -->") {
+		t.Errorf("key not stable across -H updates:\n%s", s)
+	}
+}
+
+func TestLog_NudgeAdvisoryOnNonTTY(t *testing.T) {
+	var out string
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		optIntoMainCanonical(t, d)
+		checkoutBranch(t, d, "feat/x")
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "decision", "-r", "why", "--no-commit", "--no-interactive"})
+			var b bytes.Buffer
+			root.SetOut(&b)
+			root.SetErr(&b)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("%v\n%s", err, b.String())
+			}
+			out = b.String()
+		})
+	})
+	if !strings.Contains(out, "📝 Branch summary:") || !strings.Contains(out, "logmind headline") {
+		t.Errorf("expected the non-TTY advisory nudge; got:\n%s", out)
+	}
+}
+
+func TestLog_NudgeSkippedWithHeadlineFlag(t *testing.T) {
+	var out string
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		optIntoMainCanonical(t, d)
+		checkoutBranch(t, d, "feat/x")
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "decision", "-r", "why", "-H", "the summary", "--no-commit", "--no-interactive"})
+			var b bytes.Buffer
+			root.SetOut(&b)
+			root.SetErr(&b)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("%v\n%s", err, b.String())
+			}
+			out = b.String()
+		})
+	})
+	if strings.Contains(out, "📝 Branch summary:") {
+		t.Errorf("nudge must be skipped when -H is provided; got:\n%s", out)
+	}
+}
+
+func TestLog_NudgeInteractiveEditOnTTY(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		optIntoMainCanonical(t, d)
+		checkoutBranch(t, d, "feat/x")
+		withFakeTTY(t, true, func() { // pretend stdin is a TTY
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "decision", "-r", "why", "--no-commit"})
+			root.SetIn(strings.NewReader("y\nThe edited branch summary\n"))
+			var b bytes.Buffer
+			root.SetOut(&b)
+			root.SetErr(&b)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("%v\n%s", err, b.String())
+			}
+		})
+	})
+	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__x.md"))
+	if !strings.Contains(s, "— The edited branch summary\n") {
+		t.Errorf("interactive nudge edit did not apply:\n%s", s)
+	}
+}

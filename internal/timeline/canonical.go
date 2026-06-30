@@ -433,3 +433,45 @@ func renderCanonical(items []marked) string {
 	}
 	return b.String()
 }
+
+// CurrentHeadline returns the verbatim body of the FIRST entry-block in
+// content (the branch's visible headline line), and ok=false when content has
+// no marker. Used to show "[current: …]" in the per-log summary nudge.
+func CurrentHeadline(content string) (headline string, ok bool) {
+	blocks := extractEntryBlocks(content, io.Discard)
+	if len(blocks) == 0 {
+		return "", false
+	}
+	return blocks[0].Body, true
+}
+
+// ReplaceFirstHeadline rewrites the visible body of the FIRST entry-block to a
+// fresh HeadlineLine built from `summary` + `prSuffix`, while KEEPING the
+// existing <date>-<slug> key (the stable identity — only the sentence is
+// refined) and the marker dates. Returns (newContent, true) when a marker was
+// found and rewritten; (content, false) when there is no marker, an unclosed
+// marker, or a malformed key — so the caller can fall back to inserting one.
+func ReplaceFirstHeadline(content, summary, prSuffix string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		key, ok := parseStartMarker(line)
+		if !ok {
+			continue
+		}
+		date, _, ok := splitKey(key)
+		if !ok {
+			return content, false // malformed key — don't touch it
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if isEndMarker(lines[j]) {
+				out := make([]string, 0, len(lines))
+				out = append(out, lines[:i+1]...)                       // through the start marker
+				out = append(out, HeadlineLine(date, summary+prSuffix)) // the new single body line
+				out = append(out, lines[j:]...)                         // from the end marker on
+				return strings.Join(out, "\n"), true
+			}
+		}
+		return content, false // unclosed marker
+	}
+	return content, false // no marker
+}
