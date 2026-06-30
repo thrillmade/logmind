@@ -116,6 +116,10 @@ type logFlags struct {
 	noCommit      bool
 	noInteractive bool
 	stage         string
+	// headline, when set, becomes the branch's one-sentence timeline summary
+	// (the §1.6.3 marker headline) — the bundled form of `logmind headline`.
+	// Empty leaves the marker on its deterministic default / prior value.
+	headline string
 }
 
 // newLogCmd wires the `logmind log <summary>` subcommand.
@@ -170,6 +174,8 @@ Example:
 		"Skip the Layer 1 interactive retry prompt; print advisory + exit 0 when linkcheck has issues.")
 	cmd.Flags().StringVar(&f.stage, "stage", "all",
 		"What to stage in the decision commit: 'all' (default) sweeps the working tree, 'scoped' stages only the decision file(s).")
+	cmd.Flags().StringVarP(&f.headline, "headline", "H", "",
+		"Set/refresh the branch's one-sentence timeline summary (main-canonical only). Bundled form of `logmind headline`.")
 	return cmd
 }
 
@@ -251,10 +257,25 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 	// flag, so the default branch-divergent path writes byte-identical files.
 	if isBranchFile && cfg.Timeline.IsMainCanonical() {
 		now := time.Now()
-		if firstCreation {
-			body.WriteString(buildTimelineMarker(now, summary, prSuffixFromEnv()))
-		} else if !timeline.HasEntryBlocks(string(existing)) {
-			existing = insertMarkerAfterHeader(existing, buildTimelineMarker(now, summary, prSuffixFromEnv()))
+		prSuffix := prSuffixFromEnv()
+		// The headline is the branch SUMMARY when --headline is given, else the
+		// decision summary (the deterministic default until the agent refines
+		// it via the nudge or `logmind headline`).
+		headlineText := summary
+		if f.headline != "" {
+			headlineText = f.headline
+		}
+		switch {
+		case firstCreation:
+			body.WriteString(buildTimelineMarker(now, headlineText, prSuffix))
+		case !timeline.HasEntryBlocks(string(existing)):
+			existing = insertMarkerAfterHeader(existing, buildTimelineMarker(now, headlineText, prSuffix))
+		case f.headline != "":
+			// Marker already present + an explicit --headline → refresh the
+			// visible line, keeping the stable <date>-<slug> key.
+			if replaced, ok := timeline.ReplaceFirstHeadline(string(existing), f.headline, prSuffix); ok {
+				existing = []byte(replaced)
+			}
 		}
 	}
 	body.Write(existing)
@@ -270,6 +291,15 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 	}
 	relTarget = filepath.ToSlash(relTarget)
 	fmt.Fprintf(stdout, "✓ Logged decision to %s\n", relTarget)
+
+	// Branch-summary nudge — steer the author toward a clean one-sentence
+	// summary of the WHOLE branch (the timeline headline the next agent reads).
+	// Skipped when --headline was just set (already current). Runs BEFORE the
+	// commit so a TTY edit lands in the same commit. Gated to a main-canonical
+	// branch file. Best-effort: never fails the log.
+	if isBranchFile && cfg.Timeline.IsMainCanonical() && f.headline == "" {
+		nudgeBranchSummary(target, f.noInteractive, stdin, stdout)
+	}
 
 	// Commit (unless --no-commit OR not in a git repo).
 	committed := false
@@ -424,6 +454,56 @@ func insertMarkerAfterHeader(existing []byte, marker string) []byte {
 		return []byte(s[:len(header)] + marker + s[len(header):])
 	}
 	return append([]byte(marker), existing...)
+}
+
+// nudgeBranchSummary steers the author toward a clean one-sentence branch
+// summary after a log. At a TTY it offers an interactive edit (the new summary
+// is written before the caller commits, so it lands in the same commit). For
+// an agent (non-TTY) it prints an advisory with the current summary + how to
+// refresh it — a blocking prompt can't reach a non-TTY caller, so the agent
+// acts asynchronously via `logmind headline`. Best-effort: any IO error just
+// skips the nudge; it never fails the log.
+func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader, stdout io.Writer) {
+	data, err := os.ReadFile(target)
+	if err != nil {
+		return
+	}
+	current, ok := timeline.CurrentHeadline(string(data))
+	if !ok {
+		return
+	}
+
+	if forceNonInteractive || !isTerminalFunc() {
+		// Agent / CI: advisory only — never block on stdin.
+		fmt.Fprintf(stdout, "\n📝 Branch summary: %s\n", current)
+		fmt.Fprintln(stdout, "   Keep it a one-sentence summary of the whole branch — refresh with: logmind headline \"<one sentence>\"")
+		return
+	}
+
+	// Interactive TTY: offer an inline edit.
+	reader := bufio.NewReader(stdin)
+	fmt.Fprintf(stdout, "\nBranch summary: %s\n", current)
+	fmt.Fprint(stdout, "Update it to a one-sentence summary of the whole branch? [y to edit / N to keep]: ")
+	line, _ := reader.ReadString('\n')
+	if strings.ToLower(strings.TrimSpace(line)) != "y" {
+		return
+	}
+	fmt.Fprint(stdout, "New summary: ")
+	newSummary, _ := reader.ReadString('\n')
+	newSummary = strings.TrimSpace(newSummary)
+	if newSummary == "" {
+		fmt.Fprintln(stdout, "  (empty — kept the current summary)")
+		return
+	}
+	updated, replaced := timeline.ReplaceFirstHeadline(string(data), newSummary, prSuffixFromEnv())
+	if !replaced {
+		return
+	}
+	if err := writeAtomic(target, updated); err != nil {
+		fmt.Fprintf(stdout, "  (could not write summary: %v)\n", err)
+		return
+	}
+	fmt.Fprintln(stdout, "✓ Branch summary updated.")
 }
 
 // commitDecision stages the relevant files and creates the commit.

@@ -75,6 +75,9 @@ func NewRootCmd() *cobra.Command {
 	// Layer 1 of markdown self-healing on top (linkcheck-driven
 	// interactive retry loop). See internal/cli/log.go.
 	root.AddCommand(newLogCmd())
+	// Slice 2: set the branch's one-sentence timeline headline (the
+	// main-canonical summary line). Companion to `logmind log --headline`.
+	root.AddCommand(newHeadlineCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.

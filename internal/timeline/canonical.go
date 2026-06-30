@@ -216,8 +216,21 @@ func splitKey(key string) (date time.Time, slug string, ok bool) {
 // would resolve wrong from that file's own directory and fail check-links).
 // Single-sourced here so `logmind log` (the marker writer) and the synthesized
 // rows share one exact byte format.
+//
+// The title is collapsed to a SINGLE line (any CR/LF/tab run → one space):
+// the headline is a one-line field by contract, and an un-collapsed multi-line
+// title would push a forged `<!-- logmind-entry-start: … -->` line to column 0
+// of the branch file — corrupting the union and silently dropping the real
+// entry. This is the single chokepoint for every write path (the marker
+// writers + the synthesized rows), so sanitizing here covers them all.
 func HeadlineLine(date time.Time, title string) string {
-	return fmt.Sprintf("- **%s** — %s", date.Format("2006-01-02"), title)
+	return fmt.Sprintf("- **%s** — %s", date.Format("2006-01-02"), collapseToLine(title))
+}
+
+// collapseToLine replaces every run of whitespace (including CR/LF) with a
+// single space and trims the ends, guaranteeing a single-line result.
+func collapseToLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // GenerateMainCanonical builds the §1.6.4 deterministic-union timeline from
@@ -432,4 +445,46 @@ func renderCanonical(items []marked) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// CurrentHeadline returns the verbatim body of the FIRST entry-block in
+// content (the branch's visible headline line), and ok=false when content has
+// no marker. Used to show "[current: …]" in the per-log summary nudge.
+func CurrentHeadline(content string) (headline string, ok bool) {
+	blocks := extractEntryBlocks(content, io.Discard)
+	if len(blocks) == 0 {
+		return "", false
+	}
+	return blocks[0].Body, true
+}
+
+// ReplaceFirstHeadline rewrites the visible body of the FIRST entry-block to a
+// fresh HeadlineLine built from `summary` + `prSuffix`, while KEEPING the
+// existing <date>-<slug> key (the stable identity — only the sentence is
+// refined) and the marker dates. Returns (newContent, true) when a marker was
+// found and rewritten; (content, false) when there is no marker, an unclosed
+// marker, or a malformed key — so the caller can fall back to inserting one.
+func ReplaceFirstHeadline(content, summary, prSuffix string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		key, ok := parseStartMarker(line)
+		if !ok {
+			continue
+		}
+		date, _, ok := splitKey(key)
+		if !ok {
+			return content, false // malformed key — don't touch it
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if isEndMarker(lines[j]) {
+				out := make([]string, 0, len(lines))
+				out = append(out, lines[:i+1]...)                       // through the start marker
+				out = append(out, HeadlineLine(date, summary+prSuffix)) // the new single body line
+				out = append(out, lines[j:]...)                         // from the end marker on
+				return strings.Join(out, "\n"), true
+			}
+		}
+		return content, false // unclosed marker
+	}
+	return content, false // no marker
 }
