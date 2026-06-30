@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-06 (100 decisions)
+## 2026-06 (101 decisions)
 
-- **2026-06-29** — Slice 2 PR7: agent-authored branch summary — logmind headline + log -H + per-log nudge *(feat/branch-summary-headline)* — [decisions-branches/feat__branch-summary-headline.md](decisions-branches/feat__branch-summary-headline.md)
-- *... 98 more decisions ...*
+- **2026-06-29** — Slice 2 PR8: add clud-bug reviewContext (byte-parity / marker-injection / GITHUB_TOKEN / determinism); defer branch-summary convention wiring *(feat/branch-summary-convention)* — [decisions-branches/feat__branch-summary-convention.md](decisions-branches/feat__branch-summary-convention.md)
+- *... 99 more decisions ...*
 - **2026-06-01** — chore: propagate clud-bug v0.6.30 (cross-review aggregation reads workflow artifacts) *(chore/clud-bug-v0.6.30)* — [decisions-branches/chore__clud-bug-v0.6.30.md](decisions-branches/chore__clud-bug-v0.6.30.md)
 
 ## 2026-05 (87 decisions)

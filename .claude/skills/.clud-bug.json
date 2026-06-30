@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "reviewContext": "logmind is a deterministic Go CLI with a hard byte-parity contract against the frozen Python v0.6.14 reference. On ANY change touching timeline / decisions / config / template output, verify these load-bearing invariants: (1) DEFAULT-PATH BYTE-PARITY — the default branch-divergent timeline and `config list` output stay byte-identical; main-canonical features MUST be gated behind `timeline.canonical` and never alter default output (e.g. new keys go in DefaultConfig but NOT DefaultMap). (2) MARKER-INJECTION SAFETY — any free-text CLI input written into docs/markers (decision summaries, branch headlines) MUST be single-line and unable to forge or break an entry-block marker (`<!-- logmind-entry-start/end -->`); a multi-line value that pushes a marker to column 0 corrupts the union and can evict a real entry. (3) NO GITHUB_TOKEN PUSH — CI self-heal MUST NOT push with GITHUB_TOKEN (it strands required checks → permanently unmergeable); advisory (warn + exit 0) or PAT-push only. (4) DETERMINISM — derived docs (timeline, file-structure) must be byte-identical across checkout paths/worktrees.",
   "installed": [
     {
       "slug": "critical-issues-only",
