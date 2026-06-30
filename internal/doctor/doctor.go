@@ -213,13 +213,13 @@ func collectSummariesNeeded(projectRoot string) []string {
 			continue
 		}
 		content := string(data)
+		entries, _ := decisions.Iter(bf, io.Discard)
+		if len(entries) == 0 {
+			continue // no decisions → nothing to summarize (and --fix would skip it)
+		}
 		rel := "docs/decisions-branches/" + filepath.Base(bf)
 		if !timeline.HasEntryBlocks(content) {
 			needed = append(needed, rel+" — no summary (run `logmind doctor --fix` to backfill, then enrich)")
-			continue
-		}
-		entries, _ := decisions.Iter(bf, io.Discard)
-		if len(entries) == 0 {
 			continue
 		}
 		current, _ := timeline.CurrentHeadline(content)

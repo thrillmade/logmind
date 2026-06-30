@@ -255,6 +255,16 @@ func GenerateFor(docsPath string, brief, canonical bool, stderr io.Writer) (stri
 	return Generate(docsPath, brief, stderr)
 }
 
+// dateOnly truncates a timestamp to midnight in its own location, so a
+// synthesized/fallback row sorts at DATE granularity — exactly like a marker
+// row (whose <date>-<slug> key is date-only) and as §1.6.3.2 requires (order
+// by <date>, tiebreak slug). Without this, the same entry sorts at HH:MM as a
+// markerless fallback but at midnight once `doctor --fix` backfills its marker,
+// silently reordering same-day rows. Date-only makes markerless == backfilled.
+func dateOnly(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
 // collectMarked gathers one marked row per timeline entry from all sources.
 func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 	if stderr == nil {
@@ -296,7 +306,8 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 			continue
 		}
 		e := entries[0]
-		items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: HeadlineLine(e.Date, e.Title), source: rel})
+		d := dateOnly(e.Date)
+		items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: rel})
 	}
 
 	// (2) Direct-to-main + archive: one synthesized row per decision header
@@ -307,7 +318,8 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 			return nil, err
 		}
 		for _, e := range entries {
-			items = append(items, marked{date: e.Date, slug: Slugify(e.Title), body: HeadlineLine(e.Date, e.Title), source: file})
+			d := dateOnly(e.Date)
+			items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: file})
 		}
 	}
 

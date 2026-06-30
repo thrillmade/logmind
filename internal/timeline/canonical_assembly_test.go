@@ -78,6 +78,37 @@ func TestGenerateMainCanonical_DeterministicAcrossCheckoutPaths(t *testing.T) {
 	}
 }
 
+// TestGenerateMainCanonical_BackfillIsTimelineNeutral pins the determinism the
+// doctor --fix backfill depends on: a markerless branch's fallback row (sorted
+// by its decision's HH:MM) and the SAME branch's backfilled date-only marker
+// must render IDENTICALLY — otherwise backfilling silently reorders same-day
+// rows. Guards the day-vs-timestamp sort fix (date-only synthesized rows).
+func TestGenerateMainCanonical_BackfillIsTimelineNeutral(t *testing.T) {
+	build := func(markered bool) string {
+		docs := filepath.Join(t.TempDir(), "docs")
+		// A direct-to-main decision at 09:00 the same day as the branch's
+		// first decision at 15:00 — the case where time-order ≠ date-order.
+		writeDoc(t, docs, "decisions.md", "# D\n\n## 2026-06-10 09:00 - Zebra direct to main\nbody\n")
+		if markered {
+			writeDoc(t, docs, "decisions-branches/feat__a.md",
+				"← back\n\n"+block("2026-06-10-apple-branch-work", "- **2026-06-10** — Apple branch work")+
+					"\n## 2026-06-10 15:00 - Apple branch work\nbody\n")
+		} else {
+			writeDoc(t, docs, "decisions-branches/feat__a.md",
+				"← back\n\n## 2026-06-10 15:00 - Apple branch work\nbody\n")
+		}
+		var sb bytes.Buffer
+		out, err := GenerateMainCanonical(docs, &sb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if fallback, backfilled := build(false), build(true); fallback != backfilled {
+		t.Errorf("backfilling reordered/changed the timeline (determinism violated):\n--- fallback ---\n%s\n--- backfilled ---\n%s", fallback, backfilled)
+	}
+}
+
 func TestGenerateMainCanonical_LegacyMarkerlessFallback(t *testing.T) {
 	docs := filepath.Join(t.TempDir(), "docs")
 	// A markerless (pre-Slice-2) branch file: only decision headers. It must

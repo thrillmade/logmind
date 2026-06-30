@@ -76,6 +76,13 @@ func runHeadline(cwd, summary, fileOverride string, stdout, stderr io.Writer) er
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(cwd, target)
 		}
+		target = filepath.Clean(target)
+		// Only branch detail files carry timeline markers — refuse to splice a
+		// marker into decisions.md/archive or anything outside the branches dir.
+		if filepath.Dir(target) != filepath.Join(cwd, "docs", "decisions-branches") {
+			fmt.Fprintf(stdout, "--file must target a file under docs/decisions-branches/ (got %s).\n", fileOverride)
+			return ErrSilent
+		}
 		if !pathExists(target) {
 			fmt.Fprintf(stdout, "No such branch file: %s\n", fileOverride)
 			return ErrSilent
