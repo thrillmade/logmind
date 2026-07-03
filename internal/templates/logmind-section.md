@@ -2,7 +2,7 @@
 <!-- logmind-start -->
 ## Decision Logging (logmind)
 
-**IMPORTANT:** This project uses [logmind](https://github.com/logmind/logmind) for decision tracking.
+**IMPORTANT:** This project uses [logmind](https://logmind.dev) for decision tracking.
 
 ### REQUIREMENT: AI Agents MUST Log All Decisions
 
@@ -17,16 +17,6 @@
 **BEFORE writing code, ask yourself: "Should this be logged?" If yes, log it IMMEDIATELY.**
 
 ### How to Log Decisions
-
-**Python API (example):**
-```python
-from logmind import log
-
-log("Decision summary",
-    reasoning="Why this approach",
-    alternatives=["Option A", "Option B"],
-    implications=["Impact 1", "Impact 2"])
-```
 
 **CLI (example for shell commands):**
 ```bash

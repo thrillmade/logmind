@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 <!-- logmind-start -->
 ## Decision Logging (logmind)
 
-**IMPORTANT:** This project uses [logmind](https://github.com/logmind/logmind) for decision tracking.
+**IMPORTANT:** This project uses [logmind](https://logmind.dev) for decision tracking.
 
 ### REQUIREMENT: AI Agents MUST Log All Decisions
 
@@ -19,13 +19,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **How to log:**
 
-```python
-from logmind import log
-
-log("Decision summary",
-    reasoning="Why this approach",
-    alternatives=["Option A", "Option B"],
-    implications=["Impact 1", "Impact 2"])
+```bash
+logmind log "Decision summary" \
+  -r "Why this approach" \
+  -a "Option A" -a "Option B" \
+  -i "Impact 1" -i "Impact 2"
 ```
 
 **BEFORE writing code, ask yourself: "Should this be logged?" If yes, log it IMMEDIATELY.**
@@ -33,7 +31,6 @@ log("Decision summary",
 ### Required Reading
 
 **READ THESE FILES FIRST** before starting any work:
-- **[docs/logmind-readme.md](docs/logmind-readme.md)** - Complete logmind documentation and usage guide (REQUIRED)
 - **[docs/decisions.md](docs/decisions.md)** - 20 most recent decisions (REQUIRED)
 - **[docs/file-structure.md](docs/file-structure.md)** - Current project structure (REQUIRED)
 
