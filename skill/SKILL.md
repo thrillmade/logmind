@@ -34,19 +34,6 @@ context months later is not.
 
 ## How to log
 
-### Python
-
-```python
-from logmind import log
-
-log("Use PostgreSQL for primary database",
-    reasoning="Need ACID compliance and complex joins",
-    alternatives=["MongoDB", "SQLite"],
-    implications=["Connection pooling required", "Schema migrations needed"])
-```
-
-### CLI
-
 ```bash
 logmind log "Use PostgreSQL for primary database" \
   -r "Need ACID compliance and complex joins" \
