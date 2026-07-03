@@ -80,16 +80,6 @@ logmind log "Use PostgreSQL for primary database" \
   -i "Schema migrations via alembic"
 ```
 
-**Python API:**
-```python
-from logmind import log
-
-log("Use PostgreSQL for primary database",
-    reasoning="Need ACID compliance and complex joins",
-    alternatives=["MongoDB", "SQLite"],
-    implications=["Connection pooling required", "Schema migrations via alembic"])
-```
-
 ### Branch-aware routing (automatic)
 
 On a feature branch, the entry lands in
