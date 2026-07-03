@@ -8,8 +8,10 @@
 // to inject the actual tag.
 //
 // SpecVersion tracks the thrillmade/protocol SPEC.md document — bumped
-// to "0.1.1" 2026-06-03 (protocol PR #1 + tag v0.1.1: align AGENTS.md
-// marker versions v5→v6 and v7-pointer→v8-pointer per §8.3).
+// to "0.8.0" 2026-07-03 (protocol #26: the Slice-2 main-canonical
+// timeline pass — §1.6.4 union assembly, the agent-authored headline
+// convention, the headline/doctor CLI, and the §5.1.2 advisory-first
+// regen-timeline template).
 package version
 
 // Version is the logmind binary's semantic version. Bumped at release.
@@ -43,4 +45,4 @@ var Version = "1.2.0-dev"
 // this binary implements. Reported via `logmind --version` so downstream
 // tools can detect protocol skew without parsing the binary version.
 // Overridable via -ldflags at build time; see package docstring.
-var SpecVersion = "0.1.1"
+var SpecVersion = "0.8.0"
