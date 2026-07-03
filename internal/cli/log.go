@@ -298,7 +298,7 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 	// commit so a TTY edit lands in the same commit. Gated to a main-canonical
 	// branch file. Best-effort: never fails the log.
 	if isBranchFile && cfg.Timeline.IsMainCanonical() && f.headline == "" {
-		nudgeBranchSummary(target, f.noInteractive, stdin, stdout)
+		nudgeBranchSummary(target, f.noInteractive, stdin, stdout, stderr)
 	}
 
 	// Commit (unless --no-commit OR not in a git repo).
@@ -463,7 +463,7 @@ func insertMarkerAfterHeader(existing []byte, marker string) []byte {
 // refresh it — a blocking prompt can't reach a non-TTY caller, so the agent
 // acts asynchronously via `logmind headline`. Best-effort: any IO error just
 // skips the nudge; it never fails the log.
-func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader, stdout io.Writer) {
+func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader, stdout, stderr io.Writer) {
 	data, err := os.ReadFile(target)
 	if err != nil {
 		return
@@ -474,9 +474,11 @@ func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader
 	}
 
 	if forceNonInteractive || !isTerminalFunc() {
-		// Agent / CI: advisory only — never block on stdin.
-		fmt.Fprintf(stdout, "\n📝 Branch summary: %s\n", current)
-		fmt.Fprintln(stdout, "   Keep it a one-sentence summary of the whole branch — refresh with: logmind headline \"<one sentence>\"")
+		// Agent / CI: advisory only — never block on stdin, and the nudge
+		// MUST go to stderr so stdout stays byte-identical to the three §3.1
+		// log lines (SPEC §3.1.1: the non-TTY headline nudge is stderr-only).
+		fmt.Fprintf(stderr, "\n📝 Branch summary: %s\n", current)
+		fmt.Fprintln(stderr, "   Keep it a one-sentence summary of the whole branch — refresh with: logmind headline \"<one sentence>\"")
 		return
 	}
 
