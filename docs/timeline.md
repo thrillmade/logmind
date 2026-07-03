@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (5 decisions)
+## 2026-07 (6 decisions)
 
-- **2026-07-03** — hygiene: gofmt sweep + gofmt/vet CI gate + surface doctor --fix backfill write errors *(fix/gofmt-sweep-and-ci-gate)* — [decisions-branches/fix__gofmt-sweep-and-ci-gate.md](decisions-branches/fix__gofmt-sweep-and-ci-gate.md)
-- *... 3 more decisions ...*
+- **2026-07-03** — docs: repo version consistency — SpecVersion 0.1.1→0.8.0, README badges/version, AGENTS.md Python-era dedup *(fix/repo-docs-version-consistency)* — [decisions-branches/fix__repo-docs-version-consistency.md](decisions-branches/fix__repo-docs-version-consistency.md)
+- *... 4 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)

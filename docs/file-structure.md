@@ -56,11 +56,13 @@ logmind
 │   ├── app
 │   ├── public
 │   ├── .gitignore
+│   ├── next-env.d.ts
 │   ├── next.config.ts
 │   ├── package-lock.json
 │   ├── package.json
 │   ├── postcss.config.mjs
-│   └── tsconfig.json
+│   ├── tsconfig.json
+│   └── tsconfig.tsbuildinfo
 ├── skill
 │   └── SKILL.md
 ├── .cursorrules
