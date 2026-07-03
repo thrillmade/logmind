@@ -43,19 +43,17 @@ This file provides guidance to Claude Code...
 <!-- logmind-start -->
 ## Decision Logging (logmind)
 
-This project uses [logmind](https://github.com/logmind/logmind) for decision tracking.
+This project uses [logmind](https://logmind.dev) for decision tracking.
 
 ### For AI Agents
 
 When making significant decisions or writing important code:
 
-```python
-from logmind import log
-
-log("Decision summary",
-    reasoning="Why this approach",
-    alternatives=["Option A", "Option B"],
-    implications=["Impact 1", "Impact 2"])
+```bash
+logmind log "Decision summary" \
+  -r "Why this approach" \
+  -a "Option A" -a "Option B" \
+  -i "Impact 1" -i "Impact 2"
 ```
 
 ### Context Files
