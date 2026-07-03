@@ -28,7 +28,7 @@ import (
 // projects don't override).
 //
 // `--json` (v1.2.0+): instead of the human-readable report, emit the
-// CheckReport struct as JSON. Used by the v5 check-doc-links workflow
+// CheckReport struct as JSON. Used by the v6 check-doc-links workflow
 // template's mode-B self-heal job (the deterministic PR-comment path
 // that runs when no ANTHROPIC_API_KEY is configured). The JSON shape
 // is intentionally stable so workflow-side consumers don't break on
@@ -54,7 +54,7 @@ default. Configure roots and orphan allowlist via .logmind/config.yml:
 Exits 0 on a clean run, 1 if any broken or orphan links are found.
 
 With --json, emits the agent-readable CheckReport (broken/orphans
-with SuggestedFix strings) used by the v5 check-doc-links workflow's
+with SuggestedFix strings) used by the v6 check-doc-links workflow's
 mode-B self-heal job.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -67,7 +67,7 @@ mode-B self-heal job.`,
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false,
 		"Emit the CheckReport as JSON instead of the human-readable text. "+
-			"Used by the v5 check-doc-links workflow's mode-B self-heal job.")
+			"Used by the v6 check-doc-links workflow's mode-B self-heal job.")
 	return cmd
 }
 

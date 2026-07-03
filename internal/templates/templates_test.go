@@ -213,61 +213,109 @@ func TestRegenTimelineTemplate_V5_Advisory(t *testing.T) {
 	}
 }
 
-// TestCheckDocLinksTemplate_V5_DualModeSelfHeal pins the v1.2.0 Layer
-// 3 self-heal shape (plan §8.7): the workflow template marker bumps
-// to v5, AND it contains both the mode-A (ANTHROPIC_API_KEY auto-fix)
-// and mode-B (deterministic PR comment) conditional branches. Either
-// mode missing means the dual-mode promise is broken.
-func TestCheckDocLinksTemplate_V5_DualModeSelfHeal(t *testing.T) {
+// TestCheckDocLinksTemplate_V6_AdvisoryNoStrand pins the v1.2.0 advisory
+// contract for the doc-link gate: like regen-timeline, it must NEVER
+// hard-block a PR and must NEVER push with the default GITHUB_TOKEN (a
+// GITHUB_TOKEN push moves the PR head SHA without re-triggering checks,
+// stranding every required check). check-links is advisory (warn +
+// exit 0); the dual-mode self-heal either PAT-pushes a Claude fix
+// (mode A) or posts a deterministic PR comment (mode B).
+func TestCheckDocLinksTemplate_V6_AdvisoryNoStrand(t *testing.T) {
 	body := Workflow("check-doc-links.yml.template")
 
-	// Marker bump v4 → v5.
-	if !strings.Contains(body, "# logmind-template-version: v5") {
-		t.Errorf("check-doc-links template missing v5 marker (plan §8.7 / Layer 3)")
+	// Marker bump v5 → v6.
+	if !strings.Contains(body, "# logmind-template-version: v6") {
+		t.Errorf("check-doc-links template missing v6 marker")
 	}
 
-	// Mode A: ANTHROPIC_API_KEY-gated. Must mention the secret + run
-	// some auto-fix machinery + push back to the PR head ref.
-	if !strings.Contains(body, "secrets.ANTHROPIC_API_KEY") {
-		t.Errorf("v5 template missing ANTHROPIC_API_KEY conditional (mode A)")
+	// Advisory: the old `exit $rc` (re-raise the linkcheck exit) red-lit
+	// the PR — it must be gone, replaced by an advisory warning + exit 0.
+	if strings.Contains(body, "exit $rc") {
+		t.Errorf("check-doc-links v6 must not `exit $rc` — check-links is advisory and must never block a PR")
 	}
-	if !strings.Contains(body, "ANTHROPIC_API_KEY != ''") {
-		t.Errorf("v5 template missing mode-A gate (env.ANTHROPIC_API_KEY != '')")
-	}
-	if !strings.Contains(body, "Mode A") {
-		t.Errorf("v5 template missing mode-A label in step name/comment")
+	if !strings.Contains(body, "::warning") {
+		t.Errorf("check-doc-links v6 missing the advisory ::warning:: on broken links")
 	}
 
-	// Mode B: fallback when no key. Must post a PR comment via gh.
-	if !strings.Contains(body, "ANTHROPIC_API_KEY == ''") {
-		t.Errorf("v5 template missing mode-B gate (env.ANTHROPIC_API_KEY == '')")
+	// No GITHUB_TOKEN push: the old `git push origin HEAD:<head-ref>`
+	// (authenticated by GITHUB_TOKEN) stranded the PR. Any push must go
+	// through the explicit PAT-credentialed URL.
+	if strings.Contains(body, "git push origin") {
+		t.Errorf("check-doc-links v6 must not `git push origin` (a GITHUB_TOKEN push strands the PR's required checks)")
 	}
-	if !strings.Contains(body, "Mode B") {
-		t.Errorf("v5 template missing mode-B label in step name/comment")
+	if !strings.Contains(body, "x-access-token:${PAT}") {
+		t.Errorf("check-doc-links v6 mode-A push must use the explicit PAT URL, not a GITHUB_TOKEN credential")
+	}
+
+	// Mode A is PAT-gated: without LOGMIND_AUTO_REGEN_PAT there is no safe
+	// push, so mode A must require it (and fall through to mode B otherwise).
+	if !strings.Contains(body, "LOGMIND_AUTO_REGEN_PAT") {
+		t.Errorf("check-doc-links v6 missing the LOGMIND_AUTO_REGEN_PAT push gate")
+	}
+	if !strings.Contains(body, "env.PAT != ''") {
+		t.Errorf("check-doc-links v6 mode-A must be gated on a configured PAT (env.PAT != '')")
+	}
+
+	// Workflow token stays read-only; the PAT does any push.
+	if !strings.Contains(body, "contents: read") {
+		t.Errorf("check-doc-links v6 must keep the workflow token read-only (contents: read)")
+	}
+	if strings.Contains(body, "contents: write") {
+		t.Errorf("check-doc-links v6 must not grant contents: write (the PAT, not GITHUB_TOKEN, pushes)")
+	}
+
+	// No actor filter: a filtered required check strands as "Expected —
+	// Waiting…". Bots/forks take the advisory / mode-B path.
+	if strings.Contains(body, "github.actor != ") {
+		t.Errorf("check-doc-links v6 must not filter a job by actor (a filtered required check hangs forever)")
+	}
+
+	// Fork PRs must reach the advisory path, not die at checkout.
+	if !strings.Contains(body, "repository: ${{ github.event.pull_request.head.repo.full_name") {
+		t.Errorf("check-doc-links v6 checkout must set repository to the PR head repo (else fork PRs fail at checkout)")
+	}
+	// No token persisted into .git; the PAT is injected only at push time.
+	if !strings.Contains(body, "persist-credentials: false") {
+		t.Errorf("check-doc-links v6 checkout must set persist-credentials: false")
+	}
+
+	// Dual-mode self-heal preserved: mode A (Claude auto-fix) + mode B
+	// (deterministic PR comment), both keyed off the check-links report.
+	if !strings.Contains(body, "Mode A") || !strings.Contains(body, "Mode B") {
+		t.Errorf("check-doc-links v6 missing a self-heal mode (both mode A and mode B required)")
+	}
+	if !strings.Contains(body, "secrets.ANTHROPIC_API_KEY") || !strings.Contains(body, "ANTHROPIC_API_KEY != ''") {
+		t.Errorf("check-doc-links v6 missing the mode-A ANTHROPIC_API_KEY gate")
 	}
 	if !strings.Contains(body, "gh pr comment") {
-		t.Errorf("v5 template missing `gh pr comment` (mode B deterministic path)")
+		t.Errorf("check-doc-links v6 missing `gh pr comment` (mode B deterministic path)")
 	}
-
-	// Both modes share the `logmind check-links --json` machinery.
 	if !strings.Contains(body, "logmind check-links --json") {
-		t.Errorf("v5 template missing `logmind check-links --json` invocation")
+		t.Errorf("check-doc-links v6 missing `logmind check-links --json` invocation")
 	}
 
-	// Self-heal job is gated on pull_request events to avoid pushing
-	// to main on push triggers.
+	// Self-heal fires on pull_request when check-links reported issues
+	// (keyed off the `failed` output, since check-links now always exits 0).
 	if !strings.Contains(body, "github.event_name == 'pull_request'") {
-		t.Errorf("v5 self-heal job must be gated on pull_request events")
+		t.Errorf("check-doc-links v6 self-heal must be gated on pull_request events")
+	}
+	if !strings.Contains(body, "needs.check-links.outputs.failed != '0'") {
+		t.Errorf("check-doc-links v6 self-heal must key off the check-links `failed` output")
+	}
+	// pull-requests:write is still needed for the mode-B comment.
+	if !strings.Contains(body, "pull-requests: write") {
+		t.Errorf("check-doc-links v6 missing pull-requests:write permission (mode B comment)")
 	}
 
-	// Permissions: needs contents:write (commit) + pull-requests:write
-	// (comment). Without these the mode-A push and mode-B comment fail
-	// silently.
-	if !strings.Contains(body, "contents: write") {
-		t.Errorf("v5 template missing contents:write permission")
+	// Both self-heal modes are best-effort advisory: a transient auto-fix
+	// failure (mode A) or a read-only fork token 403 (mode B) MUST degrade
+	// to a ::warning:: and never red-light the helper job. Guarding these is
+	// what keeps the header's "forks take the mode-B path" promise honest.
+	if !strings.Contains(body, "if ! python3") {
+		t.Errorf("check-doc-links v6 mode A must guard the Claude auto-fix (a transient failure must not red the self-heal job)")
 	}
-	if !strings.Contains(body, "pull-requests: write") {
-		t.Errorf("v5 template missing pull-requests:write permission")
+	if !strings.Contains(body, "if ! gh pr comment") {
+		t.Errorf("check-doc-links v6 mode B must guard `gh pr comment` (a fork 403 must not red the self-heal job)")
 	}
 }
 
