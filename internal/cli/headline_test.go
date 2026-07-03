@@ -176,7 +176,7 @@ func TestLog_HeadlineFlag_SetsAndUpdatesKeepingKey(t *testing.T) {
 }
 
 func TestLog_NudgeAdvisoryOnNonTTY(t *testing.T) {
-	var out string
+	var outStr, errStr string
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
@@ -185,17 +185,23 @@ func TestLog_NudgeAdvisoryOnNonTTY(t *testing.T) {
 		withFakeTTY(t, false, func() {
 			root := NewRootCmd()
 			root.SetArgs([]string{"log", "decision", "-r", "why", "--no-commit", "--no-interactive"})
-			var b bytes.Buffer
-			root.SetOut(&b)
-			root.SetErr(&b)
+			var outBuf, errBuf bytes.Buffer
+			root.SetOut(&outBuf)
+			root.SetErr(&errBuf)
 			if err := root.Execute(); err != nil {
-				t.Fatalf("%v\n%s", err, b.String())
+				t.Fatalf("%v\nout:%s\nerr:%s", err, outBuf.String(), errBuf.String())
 			}
-			out = b.String()
+			outStr, errStr = outBuf.String(), errBuf.String()
 		})
 	})
-	if !strings.Contains(out, "📝 Branch summary:") || !strings.Contains(out, "logmind headline") {
-		t.Errorf("expected the non-TTY advisory nudge; got:\n%s", out)
+	// The non-TTY advisory nudge MUST land on stderr...
+	if !strings.Contains(errStr, "📝 Branch summary:") || !strings.Contains(errStr, "logmind headline") {
+		t.Errorf("expected the non-TTY advisory nudge on stderr; got stderr:\n%s", errStr)
+	}
+	// ...and MUST NOT contaminate stdout (SPEC §3.1.1: stdout stays the
+	// three log lines, byte-identical to the §6.6 fixtures).
+	if strings.Contains(outStr, "📝 Branch summary:") {
+		t.Errorf("the nudge must not appear on stdout (breaks the §3.1.1 three-line contract); got stdout:\n%s", outStr)
 	}
 }
 
