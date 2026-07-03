@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (8 decisions)
+## 2026-07 (9 decisions)
 
-- **2026-07-03** — skill: drop the dead Python-API section from the logmind skill (off-Python completeness) *(fix/skill-drop-python-api)* — [decisions-branches/fix__skill-drop-python-api.md](decisions-branches/fix__skill-drop-python-api.md)
-- *... 6 more decisions ...*
+- **2026-07-03** — feat: logmind context — one-read agent cold-start payload (timeline + file-structure) *(feat/context-command)* — [decisions-branches/feat__context-command.md](decisions-branches/feat__context-command.md)
+- *... 7 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)

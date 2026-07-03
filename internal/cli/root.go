@@ -56,6 +56,7 @@ func NewRootCmd() *cobra.Command {
 	// B3: derived doc generators + rebase wrapper.
 	root.AddCommand(newTimelineCmd())
 	root.AddCommand(newFileStructureCmd())
+	root.AddCommand(newContextCmd())
 	root.AddCommand(newTreeCmd())
 	root.AddCommand(newRebaseCmd())
 	// B4: agent file templating subcommand tree.
