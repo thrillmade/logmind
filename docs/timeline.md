@@ -13,6 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
+## 2026-07
+
+- **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
+
 ## 2026-06 (102 decisions)
 
 - **2026-06-29** — Slice 2 PR10: doctor branch-summary health (advisory + --fix backfill) + logmind headline --file *(feat/doctor-branch-summary)* — [decisions-branches/feat__doctor-branch-summary.md](decisions-branches/feat__doctor-branch-summary.md)
