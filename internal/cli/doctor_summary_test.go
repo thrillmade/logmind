@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,7 +57,7 @@ func TestBackfillBranchSummaries(t *testing.T) {
 			"← back\n\n## 2026-06-10 09:00 - Old\n\n---\n")
 		mustWriteUnder(t, d, "docs/decisions-branches/feat__has.md",
 			"← back\n\n<!-- logmind-entry-start: 2026-06-11-x -->\n- **2026-06-11** — X\n<!-- logmind-entry-end -->\n\n## 2026-06-11 10:00 - X\n\n---\n")
-		if n := backfillBranchSummaries(d); n != 1 {
+		if n := backfillBranchSummaries(d, io.Discard); n != 1 {
 			t.Errorf("backfillBranchSummaries = %d; want 1 (only the markerless one)", n)
 		}
 	})
@@ -64,7 +65,7 @@ func TestBackfillBranchSummaries(t *testing.T) {
 		t.Errorf("markerless file not backfilled (markers=%d)", n)
 	}
 	// Idempotent: a second pass changes nothing.
-	if n := backfillBranchSummaries(dir); n != 0 {
+	if n := backfillBranchSummaries(dir, io.Discard); n != 0 {
 		t.Errorf("second backfill = %d; want 0 (idempotent)", n)
 	}
 }
@@ -76,7 +77,7 @@ func TestBackfillBranchSummaries_DefaultModeNoop(t *testing.T) {
 		mustWriteUnder(t, d, ".logmind/config.yml", "git:\n  auto_commit: true\n")
 		mustWriteUnder(t, d, "docs/decisions-branches/feat__old.md",
 			"← back\n\n## 2026-06-10 09:00 - Old\n\n---\n")
-		if n := backfillBranchSummaries(d); n != 0 {
+		if n := backfillBranchSummaries(d, io.Discard); n != 0 {
 			t.Errorf("default-mode backfill = %d; want 0", n)
 		}
 	})

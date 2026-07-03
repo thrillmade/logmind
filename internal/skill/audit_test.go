@@ -47,10 +47,10 @@ func TestAuditSkills_OneSkill(t *testing.T) {
 // TestClassify_Ghost: 0 decisions + over-tight bytes → ghost.
 func TestClassify_Ghost(t *testing.T) {
 	row := AuditRow{
-		Name: "ghost",
-		Bytes: 5000, // > auditTightCap (2000)
+		Name:          "ghost",
+		Bytes:         5000, // > auditTightCap (2000)
 		DecisionCount: 0,
-		LastModified: "2026-06-02",
+		LastModified:  "2026-06-02",
 	}
 	if got := Classify(row, time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)); got != "ghost" {
 		t.Errorf("Classify ghost = %q; want ghost", got)
@@ -60,10 +60,10 @@ func TestClassify_Ghost(t *testing.T) {
 // TestClassify_Aging: last_modified > 90 days ago → aging.
 func TestClassify_Aging(t *testing.T) {
 	row := AuditRow{
-		Name: "old",
-		Bytes: 100,
+		Name:          "old",
+		Bytes:         100,
 		DecisionCount: 5,
-		LastModified: "2025-01-01",
+		LastModified:  "2025-01-01",
 	}
 	if got := Classify(row, time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)); got != "aging" {
 		t.Errorf("Classify aging = %q; want aging", got)
@@ -73,10 +73,10 @@ func TestClassify_Aging(t *testing.T) {
 // TestClassify_Active: small + recent + cited → active.
 func TestClassify_Active(t *testing.T) {
 	row := AuditRow{
-		Name: "ok",
-		Bytes: 100,
+		Name:          "ok",
+		Bytes:         100,
 		DecisionCount: 5,
-		LastModified: "2026-06-01",
+		LastModified:  "2026-06-01",
 	}
 	if got := Classify(row, time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)); got != "active" {
 		t.Errorf("Classify active = %q; want active", got)
@@ -122,8 +122,8 @@ func TestCountWholeWord(t *testing.T) {
 		Name   string
 		Want   int
 	}{
-		{"go to going", "go", 1},     // matches "go", not "going"
-		{"api API APIs", "API", 1},   // matches "API" once, not "APIs"
+		{"go to going", "go", 1},   // matches "go", not "going"
+		{"api API APIs", "API", 1}, // matches "API" once, not "APIs"
 		{"hello world hello", "hello", 2},
 		{"clud-bug-collaboration cited; clud-bug-collaboration again", "clud-bug-collaboration", 2},
 		{"", "anything", 0},

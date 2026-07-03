@@ -97,7 +97,7 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 	// file (main-canonical only) — the deterministic structural half of the
 	// branch-summary migration. The rich one-sentence summary stays the
 	// agent's job (doctor's advisory lists the placeholders to enrich).
-	summariesBackfilled := backfillBranchSummaries(cwd)
+	summariesBackfilled := backfillBranchSummaries(cwd, cmd.ErrOrStderr())
 
 	// Re-probe to compute the residual drift that --fix cannot address.
 	after := doctor.CollectStatus(cwd, offline)
@@ -162,7 +162,7 @@ func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled
 // returns the count fixed. Best-effort: a per-file read/write error skips that
 // file. Reuses the cli-local marker helpers (buildTimelineMarker /
 // insertMarkerAfterHeader), so no export is needed.
-func backfillBranchSummaries(cwd string) int {
+func backfillBranchSummaries(cwd string, stderr io.Writer) int {
 	cfg, _ := config.Load(cwd)
 	if !cfg.Timeline.IsMainCanonical() {
 		return 0
@@ -187,9 +187,13 @@ func backfillBranchSummaries(cwd string) int {
 		}
 		marker := buildTimelineMarker(entries[0].Date, entries[0].Title, prSuffixFromEnv())
 		updated := string(insertMarkerAfterHeader([]byte(content), marker))
-		if err := writeAtomic(bf, updated); err == nil {
-			n++
+		if err := writeAtomic(bf, updated); err != nil {
+			// Best-effort: surface the failure so a partial --fix is not
+			// silently indistinguishable from a clean no-op.
+			fmt.Fprintf(stderr, "note: could not backfill %s: %v\n", bf, err)
+			continue
 		}
+		n++
 	}
 	return n
 }

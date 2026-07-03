@@ -96,7 +96,7 @@ func TestCheck_DirectoryPrefixAllowlist(t *testing.T) {
 	// docs/decisions-branches/ trailing-slash entry: any .md under
 	// it must be exempt.
 	dir := setupFixture(t, map[string]string{
-		"README.md": "# Project\n",
+		"README.md":                          "# Project\n",
 		"docs/decisions-branches/feature.md": "# Feature branch decisions\n",
 	})
 	_, orphans, err := Check(dir, nil, nil)

@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (4 decisions)
+## 2026-07 (5 decisions)
 
-- **2026-07-03** — templates: drop dead Python-API blocks, fix wrong-org URLs + dead required-reading *(fix/templates-dead-python-api-and-links)* — [decisions-branches/fix__templates-dead-python-api-and-links.md](decisions-branches/fix__templates-dead-python-api-and-links.md)
-- *... 2 more decisions ...*
+- **2026-07-03** — hygiene: gofmt sweep + gofmt/vet CI gate + surface doctor --fix backfill write errors *(fix/gofmt-sweep-and-ci-gate)* — [decisions-branches/fix__gofmt-sweep-and-ci-gate.md](decisions-branches/fix__gofmt-sweep-and-ci-gate.md)
+- *... 3 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)

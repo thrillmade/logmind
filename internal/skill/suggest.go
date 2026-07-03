@@ -65,10 +65,10 @@ var suggestStopwords = map[string]struct{}{
 // interestingTokenRE mirrors Python's _INTERESTING_TOKEN_RE — same
 // alternation order, same anchoring. Token kinds (in order):
 //
-//	1. kebab-case multi-word: api-versioning, file-structure-check
-//	2. PascalCase / camelCase: PostgreSQL, AuthHandler
-//	3. acronyms: API, JWT, CI, RPC
-//	4. snake_case multi-word: skill_cli, my_handler
+//  1. kebab-case multi-word: api-versioning, file-structure-check
+//  2. PascalCase / camelCase: PostgreSQL, AuthHandler
+//  3. acronyms: API, JWT, CI, RPC
+//  4. snake_case multi-word: skill_cli, my_handler
 var interestingTokenRE = regexp.MustCompile(
 	`\b(` +
 		`[a-z]+(?:-[a-z]+)+` + // kebab-case multi-word

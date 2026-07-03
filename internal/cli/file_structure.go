@@ -15,9 +15,9 @@ import (
 //
 // Behaviour mirror of Python cli.file_structure_cmd (cli.py:2693-2792):
 //
-//   --max-depth N (positive)   → truncate at depth N (root is depth 0)
-//   --max-depth 0              → unbounded (full tree)
-//   --max-depth omitted        → default 2 (DEFAULT_FILE_STRUCTURE_DEPTH)
+//	--max-depth N (positive)   → truncate at depth N (root is depth 0)
+//	--max-depth 0              → unbounded (full tree)
+//	--max-depth omitted        → default 2 (DEFAULT_FILE_STRUCTURE_DEPTH)
 //
 // Output is byte-identical to Python v0.6.14 (stdout messages, sizes,
 // labels). Like timeline, the --check-without-write divergence vs

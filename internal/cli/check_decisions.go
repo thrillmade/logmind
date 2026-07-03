@@ -17,10 +17,10 @@ import (
 // Behaviour mirror of src/logmind/cli.check_decisions (cli.py:2425-2519).
 // Output strings are byte-identical to Python v0.6.14:
 //
-//   not-a-git-repo:      "Not a git repository, skipping check."  (exit 0)
-//   decision file staged: "✓ A decision log file is staged — changes are documented."
-//   under threshold:     "✓ N lines changed (below T-line threshold)."  (exit 0)
-//   over threshold:      multi-line warning, exit 1 unless --no-fail
+//	not-a-git-repo:      "Not a git repository, skipping check."  (exit 0)
+//	decision file staged: "✓ A decision log file is staged — changes are documented."
+//	under threshold:     "✓ N lines changed (below T-line threshold)."  (exit 0)
+//	over threshold:      multi-line warning, exit 1 unless --no-fail
 //
 // "Decision file" matches the Python predicate:
 //   - exact path "docs/decisions.md"
