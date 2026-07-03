@@ -180,4 +180,3 @@ func checkGolden(t *testing.T, name, got string) {
 			path, want, got)
 	}
 }
-

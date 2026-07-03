@@ -14,9 +14,9 @@ import (
 //
 // Mirror of Python cli.rebase (cli.py:1029-1156). Three-step wrapper:
 //
-//   1. git fetch origin <base>          (unless --no-fetch)
-//   2. git rebase origin/<base>
-//   3. git push --force-with-lease      (unless --no-push)
+//  1. git fetch origin <base>          (unless --no-fetch)
+//  2. git rebase origin/<base>
+//  3. git push --force-with-lease      (unless --no-push)
 //
 // Refuses to run when:
 //   - not in a git repo                        → "Error: not in a git repository."

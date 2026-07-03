@@ -7,12 +7,12 @@
 //
 // Brief-mode algorithm (default since Python v0.5.4):
 //
-//   1. Group entries by year-month, newest-first.
-//   2. For months with < 3 entries: render every entry verbatim.
-//   3. For months with >= 3 entries: render the FIRST (newest) entry,
-//      an italic elision line `- *... N more decisions ...*`, then the
-//      LAST (oldest) entry. The "decision"/"decisions" noun is
-//      singularized when N == 1, plural otherwise.
+//  1. Group entries by year-month, newest-first.
+//  2. For months with < 3 entries: render every entry verbatim.
+//  3. For months with >= 3 entries: render the FIRST (newest) entry,
+//     an italic elision line `- *... N more decisions ...*`, then the
+//     LAST (oldest) entry. The "decision"/"decisions" noun is
+//     singularized when N == 1, plural otherwise.
 //
 // Full mode (`--full`): every entry rendered, one per line, with the
 // month header carrying no count suffix.
@@ -51,7 +51,7 @@ const emptyBody = "\n*(no decisions logged yet)*\n"
 
 // renderEntryLine matches Python timeline._render_entry_line (line 138-143):
 //
-//	- **YYYY-MM-DD** — <title> *(<source_label>)* — [<source_path>](<source_path>)
+//   - **YYYY-MM-DD** — <title> *(<source_label>)* — [<source_path>](<source_path>)
 //
 // source_path is the entry's posix-form path (no backslashes); Iter +
 // Collect already store it that way so no extra transform here.

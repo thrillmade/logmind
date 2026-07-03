@@ -55,6 +55,31 @@ jobs:
       - name: Test
         run: make test
 
+  lint:
+    # gofmt + vet gate. CI previously had no formatting/vet check, so
+    # unformatted files accumulated silently. Runs once (not per matrix
+    # cell); the `test` aggregator below `needs` it, so a lint failure
+    # red-lights the required check.
+    name: lint (gofmt + vet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^vendor/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These Go files are not gofmt-formatted (run: gofmt -w <file>):"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "All Go files are gofmt-formatted."
+      - name: go vet
+        run: go vet ./...
+
   test:
     # Aggregator under the literal `test` context — the org ruleset's
     # required_status_checks rule pins this exact name. Without this
@@ -63,7 +88,7 @@ jobs:
     # `needs:` blocks until every cell completes; `if: always()` plus the
     # inner `result` check propagates failure correctly when any cell
     # fails.
-    needs: go
+    needs: [go, lint]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -73,4 +98,8 @@ jobs:
             echo "::error::One or more go test matrix cells failed (needs.go.result=${{ needs.go.result }})"
             exit 1
           fi
-          echo "All go test matrix cells passed."
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "::error::lint (gofmt/vet) failed (needs.lint.result=${{ needs.lint.result }})"
+            exit 1
+          fi
+          echo "All go test matrix cells + lint passed."
