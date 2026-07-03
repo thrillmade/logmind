@@ -1,7 +1,5 @@
 # logmind
 
-[![PyPI](https://img.shields.io/pypi/v/logmind.svg)](https://pypi.org/project/logmind/)
-[![Python versions](https://img.shields.io/pypi/pyversions/logmind.svg)](https://pypi.org/project/logmind/)
 [![CI](https://github.com/thrillmade/logmind/actions/workflows/test.yml/badge.svg)](https://github.com/thrillmade/logmind/actions/workflows/test.yml)
 [![skills.sh](https://www.skills.sh/b/thrillmade/agent-skills/logmind)](https://www.skills.sh/thrillmade/agent-skills/logmind)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -41,7 +39,7 @@ LOGMIND_VERSION=v1.0.0 curl -fsSL https://logmind.dev/install.sh | bash
 Verify the install:
 
 ```bash
-logmind --version  # logmind 1.1.0 (spec 0.1.1)
+logmind --version  # logmind 1.2.0 (spec 0.8.0)
 ```
 
 The curl installer is idempotent — re-running it when the same version

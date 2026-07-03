@@ -54,90 +54,22 @@ permissions, ruleset bypass details, and rotation procedure.
 
 ## Project Overview
 
-<!-- Replace with a short description of what this project does. -->
+**logmind** is a decision-logging CLI (Go) — the commit primitive for this
+repo and its consumers. It scaffolds `docs/` structure via `logmind init`,
+records the "why" behind changes via `logmind log`, and keeps the derived
+`docs/timeline.md` + `docs/file-structure.md` in sync as agent-readable
+context. One leg of the thrillmade SkDD toolchain (with clud-bug = review,
+agent-skills = catalog). Entry point `cmd/logmind/main.go`; code under
+`internal/`. See [docs/plan.md](docs/plan.md) for architecture + roadmap.
 
 ## Development Commands
 
-<!-- Common commands a contributor needs (build, test, lint, run). -->
-
-## From Claude Code
-
-# CLAUDE.md
-
-
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project Overview
-
-**logmind** is an AI decision logging system that scaffolds documentation structure and tracks development decisions automatically.
-
-**Key concept:** A pip-installable package that runs `logmind init` to create standardized docs, then serves as the decision logging engine.
-
-## Essential Documentation
-
-- **[docs/plan.md](docs/plan.md)** - Complete architecture, approach, and roadmap
-- **[README.md](README.md)** - User-facing overview and quick start
-
-## Development Commands
-
-This is a Python package. Standard commands:
-
 ```bash
-# Setup development environment
-python3 -m venv venv
-source venv/bin/activate
-pip install -e ".[dev]"
-
-# Run tests
-pytest                    # All tests
-pytest tests/test_*.py -v # Specific test file
-
-# Build package
-python -m build
+go build ./cmd/logmind      # build the binary
+go test ./...               # run the full suite
+go vet ./...                # static checks
+gofmt -l .                  # list any unformatted files
 ```
-
-## logmind CLI Commands
-
-You can use logmind via CLI or Python API:
-
-```bash
-# View recent decisions
-logmind show
-logmind show --all  # Include archive
-
-# Search decisions
-logmind search "postgres"
-logmind search "API" --case-sensitive
-logmind search "config" --no-archive
-
-# Log decision via CLI
-logmind log "Use Redis for caching" \
-  -r "Need fast session storage" \
-  -a "Memcached" -a "In-memory dict" \
-  -i "Need to run Redis server"
-```
-
-## Current Status
-
-**Phase 2 Complete** - Configuration system and search functionality implemented
-
-✅ Phase 1: Core package (init, log, show)
-✅ Phase 2: Configuration + search
-🔲 Phase 3: AI integrations (decorators, plugins)
-
-See [docs/plan.md](docs/plan.md) for complete roadmap.
-
-## From Cursor
-
-# Cursor Rules
-
-
-
-
-## Project Rules
-
-[Add your Cursor rules here]
 
 <!-- clud-bug-start -->
 <!-- clud-bug-block-version: v3-app -->
