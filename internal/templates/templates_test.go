@@ -306,6 +306,17 @@ func TestCheckDocLinksTemplate_V6_AdvisoryNoStrand(t *testing.T) {
 	if !strings.Contains(body, "pull-requests: write") {
 		t.Errorf("check-doc-links v6 missing pull-requests:write permission (mode B comment)")
 	}
+
+	// Both self-heal modes are best-effort advisory: a transient auto-fix
+	// failure (mode A) or a read-only fork token 403 (mode B) MUST degrade
+	// to a ::warning:: and never red-light the helper job. Guarding these is
+	// what keeps the header's "forks take the mode-B path" promise honest.
+	if !strings.Contains(body, "if ! python3") {
+		t.Errorf("check-doc-links v6 mode A must guard the Claude auto-fix (a transient failure must not red the self-heal job)")
+	}
+	if !strings.Contains(body, "if ! gh pr comment") {
+		t.Errorf("check-doc-links v6 mode B must guard `gh pr comment` (a fork 403 must not red the self-heal job)")
+	}
 }
 
 // TestDecisionsBranchHeader_Shape pins the v1.2.0 backlink header

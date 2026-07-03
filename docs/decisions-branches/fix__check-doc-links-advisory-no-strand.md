@@ -11,3 +11,14 @@
 
 ---
 
+## 2026-07-03 11:20 - Harden check-doc-links self-heal to fully advisory (never red the helper job)
+
+**Reasoning:** The adversarial verifier found two MEDIUMs: mode B's gh pr comment 403s on fork PRs (GitHub caps the token read-only) and set -euo pipefail then reds the self-heal job — contradicting the header's claim that forks take the comment path; mode A similarly reds on a transient API error or an unappliable Claude diff. A non-required helper job going red is noisy and defeats the advisory promise.
+
+**Alternatives considered:** Leave as-is (self-heal is not a required check, so it never blocks the merge), Fix only the mode-B fork 403
+
+**Implications:**
+- Both modes now use set -uo (not -e) and guard their fallible call — if ! python3 (mode A) / if ! gh pr comment (mode B) — degrading to a ::warning:: + exit 0 like regen-timeline; header 'NEVER blocks' scoped to check-links; a test pins both guards so a fork-red can't be reintroduced.
+
+---
+

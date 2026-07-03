@@ -5,8 +5,8 @@ name: doc link integrity
 # they follow [link](path.md) references between docs. Installed by
 # `logmind init`.
 #
-# ADVISORY MODEL (v6 — logmind v1.2.0+). This gate NEVER blocks a PR and
-# NEVER pushes with the default GITHUB_TOKEN:
+# ADVISORY MODEL (v6 — logmind v1.2.0+). The check-links gate NEVER blocks
+# a PR, and the self-heal helper NEVER pushes with the default GITHUB_TOKEN:
 #
 #   * check-links runs on every PR / main push and reports link issues as
 #     a `::warning::` — it always EXITS 0, so a broken link never
@@ -14,7 +14,11 @@ name: doc link integrity
 #     blocking form, the advisory derived-doc gate in check-derived-docs;
 #     many link "breaks" are just stale timeline/file-structure regens.)
 #
-#   * self-heal fires only when check-links found issues on a PR:
+#   * self-heal fires only when check-links found issues on a PR. It is a
+#     best-effort HELPER (never a required check): every failure path —
+#     a transient API error, an unappliable diff, or a read-only fork
+#     token — degrades to a `::warning::` and exits 0, so the helper never
+#     red-lights the PR.
 #       - Mode A (auto-fix): requires BOTH `ANTHROPIC_API_KEY` and a
 #         same-repo `LOGMIND_AUTO_REGEN_PAT`. Claude proposes a minimal
 #         markdown-only diff; it is applied, committed, and pushed to the
@@ -23,7 +27,9 @@ name: doc link integrity
 #         gate stays healthy.
 #       - Mode B (deterministic comment): no key, no PAT, or a fork PR.
 #         Posts a PR comment listing each finding + a suggested fix from
-#         `logmind check-links --json`. Comment scope only — no head move.
+#         `logmind check-links --json` (comment scope only — no head move).
+#         On a fork PR the token is read-only, so the comment call is
+#         replaced by a `::warning::` carrying the findings in the job log.
 #
 # It NEVER `git push`es with GITHUB_TOKEN. A GITHUB_TOKEN-authored push
 # moves the PR head SHA but does NOT re-trigger workflows (GitHub's
@@ -130,11 +136,13 @@ jobs:
       - name: Self-heal via Claude (mode A)
         if: ${{ env.ANTHROPIC_API_KEY != '' && env.PAT != '' && env.HEAD_REPO == env.BASE_REPO }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           echo "Mode A: ANTHROPIC_API_KEY + PAT detected — invoking Claude for auto-fix."
           # Constrained prompt; reads the report; produces a unified diff
-          # touching only markdown files; applies via `git apply`.
-          python3 <<'PY'
+          # touching only markdown files; applies via `git apply`. Best-effort:
+          # any failure (transient API, unparseable diff, apply failure) is
+          # caught below and degraded to an advisory warning.
+          if ! python3 <<'PY'
           import json, os, subprocess, sys, urllib.request
 
           report = json.loads(os.environ.get("REPORT_JSON", "{}") or "{}")
@@ -179,12 +187,16 @@ jobs:
               print(diff_text[:500])
               sys.exit(1)
 
-          # Apply via `git apply`. Failure surfaces a real error so the
-          # workflow stays red and a human reviews.
+          # Apply via `git apply`. A failure exits this block non-zero and is
+          # caught below as an advisory warning (the helper never reds).
           with open("/tmp/self-heal.patch", "w") as f:
               f.write(diff_text)
           subprocess.run(["git", "apply", "--whitespace=fix", "/tmp/self-heal.patch"], check=True)
           PY
+          then
+            echo "::warning::Link self-heal (mode A) could not apply an auto-fix (transient API or patch error); the check-links report stands. This does not block the PR."
+            exit 0
+          fi
 
           # Auto-fix common derived-doc cases by re-running the regen
           # commands (idempotent; no-op when content is already correct).
@@ -208,6 +220,7 @@ jobs:
               echo "::warning::Could not push the link self-heal (push race or protected head ref); it reconciles on merge or the next run."
             fi
           fi
+          exit 0
 
       # Mode B — deterministic PR comment. Runs when mode A cannot: no
       # ANTHROPIC_API_KEY, no PAT, or a fork PR. Lists each finding + the
@@ -218,7 +231,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           echo "Mode B: posting deterministic PR comment."
           python3 <<'PY' > /tmp/pr-comment.md
           import json, os
@@ -252,4 +265,11 @@ jobs:
               print()
           print("_Posted by check-doc-links workflow (logmind self-heal, mode B)._")
           PY
-          gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
+          # `gh pr comment` needs pull-requests:write, which GitHub caps to
+          # read-only on FORK PRs → 403. Degrade to an advisory ::warning:: +
+          # the findings in the job log so the self-heal helper never reds.
+          if ! gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md 2>/dev/null; then
+            echo "::warning::Could not post the link-issues PR comment (the token is read-only on fork PRs). Findings:"
+            cat /tmp/pr-comment.md
+          fi
+          exit 0
