@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (6 decisions)
+## 2026-07 (7 decisions)
 
-- **2026-07-03** — docs: repo version consistency — SpecVersion 0.1.1→0.8.0, README badges/version, AGENTS.md Python-era dedup *(fix/repo-docs-version-consistency)* — [decisions-branches/fix__repo-docs-version-consistency.md](decisions-branches/fix__repo-docs-version-consistency.md)
-- *... 4 more decisions ...*
+- **2026-07-03** — templates: drop the last dead Python-API block from AGENTS.md.template (completes the off-Python template purge) *(fix/agents-template-drop-python-api)* — [decisions-branches/fix__agents-template-drop-python-api.md](decisions-branches/fix__agents-template-drop-python-api.md)
+- *... 5 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)
