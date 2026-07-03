@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (3 decisions)
+## 2026-07 (4 decisions)
 
 - **2026-07-03** — templates: drop dead Python-API blocks, fix wrong-org URLs + dead required-reading *(fix/templates-dead-python-api-and-links)* — [decisions-branches/fix__templates-dead-python-api-and-links.md](decisions-branches/fix__templates-dead-python-api-and-links.md)
-- *... 1 more decision ...*
+- *... 2 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)
