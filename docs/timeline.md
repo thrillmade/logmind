@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (19 decisions)
+## 2026-07 (20 decisions)
 
-- **2026-07-04** — repomap ranking + --map-tokens budget packing (token-killer R3) *(feat/repomap-rank-budget)* — [decisions-branches/feat__repomap-rank-budget.md](decisions-branches/feat__repomap-rank-budget.md)
-- *... 17 more decisions ...*
+- **2026-07-04** — R3 review fixes: §14.5 never-worse passthrough + ranking-signal robustness *(feat/repomap-rank-budget)* — [decisions-branches/feat__repomap-rank-budget.md](decisions-branches/feat__repomap-rank-budget.md)
+- *... 18 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)
