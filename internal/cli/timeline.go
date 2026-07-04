@@ -48,7 +48,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			return runTimeline(cwd, writePath, check, full, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runTimeline(cwd, writePath, check, full, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&writePath, "write", "",
@@ -64,12 +64,14 @@ Examples:
 	return cmd
 }
 
-func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writer) error {
+func runTimeline(cwd, writePath string, check, full, quiet bool, stdout, stderr io.Writer) error {
+	q := newQout(quiet, stdout, stderr)
 	docsPath := filepath.Join(cwd, "docs")
 	if !pathExists(docsPath) {
 		// Python: click.secho fg=red + sys.exit(1). secho defaults to
-		// stdout — we match. Then ErrSilent triggers exit 1.
-		fmt.Fprintln(stdout, "Error: docs/ directory not found. Run 'logmind init' first.")
+		// stdout — we match (quiet routes it to stderr). Then ErrSilent
+		// triggers exit 1.
+		q.fail("Error: docs/ directory not found. Run 'logmind init' first.\n")
 		return ErrSilent
 	}
 	brief := !full
@@ -89,8 +91,8 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 		if writePath == "" {
 			// Python sys.exit(2); we exit 1 via ErrSilent. Stdout
 			// message is byte-identical so consumers see the same
-			// diagnostic.
-			fmt.Fprintln(stdout, "Error: --check requires --write PATH to compare against.")
+			// diagnostic (quiet routes it to stderr).
+			q.fail("Error: --check requires --write PATH to compare against.\n")
 			return ErrSilent
 		}
 		rendered, err := timeline.GenerateFor(docsPath, brief, canonical, stderr)
@@ -99,11 +101,15 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 		}
 		existing, _ := os.ReadFile(writePath)
 		if string(existing) != rendered {
-			fmt.Fprintf(stdout, "✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", writePath, writePath)
+			q.fail("✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", writePath, writePath)
 			return ErrSilent
 		}
-		fmt.Fprintf(stdout, "✓ %s is up to date\n", writePath)
-		fmt.Fprintf(stdout, "ok timeline: %s up to date\n", writePath)
+		q.chat("✓ %s is up to date\n", writePath)
+		if quiet {
+			q.ok("timeline path=%s mode=%s state=up-to-date", writePath, mode)
+		} else {
+			fmt.Fprintf(stdout, "ok timeline: %s up to date\n", writePath)
+		}
 		return nil
 	}
 
@@ -112,15 +118,22 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 		if err != nil {
 			return err
 		}
-		// Python: _orig_click_echo(rendered, nl=False) — no trailing
-		// newline added beyond what render produces. Render already
-		// ends with `\n`, so the next-line ok still starts on its own
-		// line.
-		fmt.Fprint(stdout, rendered)
-		// utf-8 byte count. Python uses len(rendered.encode('utf-8'))
-		// for the same reason — em-dashes/non-ASCII would otherwise
-		// undercount. Go strings ARE UTF-8 bytes, so len() works.
-		fmt.Fprintf(stdout, "ok timeline: %d bytes (stdout, %s)\n", len(rendered), mode)
+		// Default mode prints the rendered timeline itself (the payload the
+		// agent asked for) then the trailer. Quiet mode suppresses the body
+		// — an agent that opted into quiet wants only the receipt.
+		if !quiet {
+			// Python: _orig_click_echo(rendered, nl=False) — no trailing
+			// newline added beyond what render produces. Render already
+			// ends with `\n`, so the next-line ok still starts on its own
+			// line.
+			fmt.Fprint(stdout, rendered)
+			// utf-8 byte count. Python uses len(rendered.encode('utf-8'))
+			// for the same reason — em-dashes/non-ASCII would otherwise
+			// undercount. Go strings ARE UTF-8 bytes, so len() works.
+			fmt.Fprintf(stdout, "ok timeline: %d bytes (stdout, %s)\n", len(rendered), mode)
+		} else {
+			q.ok("timeline bytes=%d mode=%s sink=stdout", len(rendered), mode)
+		}
 		return nil
 	}
 
@@ -134,15 +147,19 @@ func runTimeline(cwd, writePath string, check, full bool, stdout, stderr io.Writ
 		if err := writeAtomic(writePath, rendered); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "✓ Regenerated %s\n", writePath)
+		q.chat("✓ Regenerated %s\n", writePath)
 	} else {
-		fmt.Fprintf(stdout, "  %s already up to date\n", writePath)
+		q.chat("  %s already up to date\n", writePath)
 	}
 	st, err := os.Stat(writePath)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "ok timeline: %s (%d bytes, %s)\n", writePath, st.Size(), mode)
+	if quiet {
+		q.ok("timeline path=%s bytes=%d mode=%s changed=%t", writePath, st.Size(), mode, changed)
+	} else {
+		fmt.Fprintf(stdout, "ok timeline: %s (%d bytes, %s)\n", writePath, st.Size(), mode)
+	}
 	return nil
 }
 

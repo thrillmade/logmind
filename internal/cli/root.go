@@ -48,6 +48,17 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 
+	// Persistent --quiet flag (token-killer Phase 1b). Inherited by every
+	// subcommand; wired verbs (log, timeline, file-structure, doctor,
+	// headline) then suppress progress chatter and emit a single chainable
+	// `ok <k=v>` line. Opt-in twin of the LOGMIND_QUIET env var — the default
+	// (unset) path stays byte-identical. See quiet.go.
+	// NB: no back-quotes in this usage string — pflag's UnquoteUsage treats a
+	// back-quoted span as the flag's value placeholder, which would make this
+	// boolean flag render misleadingly as `--quiet ok <k=v>` in --help.
+	root.PersistentFlags().Bool(quietFlagName, false,
+		"Terse machine output: suppress progress chatter, emit one chainable 'ok <k=v>' line per verb (env: LOGMIND_QUIET=1). Errors still go to stderr.")
+
 	root.AddCommand(newVersionCmd())
 	// B2: git integration + hooks subcommands.
 	root.AddCommand(newInstallHookCmd())

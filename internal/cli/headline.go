@@ -48,7 +48,7 @@ Example:
 			if err != nil {
 				return err
 			}
-			return runHeadline(cwd, args[0], file, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runHeadline(cwd, args[0], file, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&file, "file", "",
@@ -56,16 +56,20 @@ Example:
 	return cmd
 }
 
-func runHeadline(cwd, summary, fileOverride string, stdout, stderr io.Writer) error {
+func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr io.Writer) error {
+	q := newQout(quiet, stdout, stderr)
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
-		fmt.Fprintln(stdout, "Error: headline summary is empty.")
+		q.fail("Error: headline summary is empty.\n")
 		return ErrSilent
 	}
 	cfg, _ := config.Load(cwd)
 	if !cfg.Timeline.IsMainCanonical() {
-		fmt.Fprintln(stdout, "Branch summaries are a main-canonical-timeline feature.")
-		fmt.Fprintln(stdout, "Enable it with `timeline.canonical: main-canonical` in .logmind/config.yml.")
+		q.chat("Branch summaries are a main-canonical-timeline feature.\n")
+		q.chat("Enable it with `timeline.canonical: main-canonical` in .logmind/config.yml.\n")
+		if quiet {
+			q.ok("headline state=skipped reason=not-main-canonical")
+		}
 		return nil
 	}
 
@@ -80,27 +84,33 @@ func runHeadline(cwd, summary, fileOverride string, stdout, stderr io.Writer) er
 		// Only branch detail files carry timeline markers — refuse to splice a
 		// marker into decisions.md/archive or anything outside the branches dir.
 		if filepath.Dir(target) != filepath.Join(cwd, "docs", "decisions-branches") {
-			fmt.Fprintf(stdout, "--file must target a file under docs/decisions-branches/ (got %s).\n", fileOverride)
+			q.fail("--file must target a file under docs/decisions-branches/ (got %s).\n", fileOverride)
 			return ErrSilent
 		}
 		if !pathExists(target) {
-			fmt.Fprintf(stdout, "No such branch file: %s\n", fileOverride)
+			q.fail("No such branch file: %s\n", fileOverride)
 			return ErrSilent
 		}
 	} else {
 		docsPath := filepath.Join(cwd, "docs")
 		t, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
 		if !isBranchFile {
-			fmt.Fprintln(stdout, "Branch summaries apply on a feature branch; the default branch logs to docs/decisions.md directly.")
+			q.chat("Branch summaries apply on a feature branch; the default branch logs to docs/decisions.md directly.\n")
+			if quiet {
+				q.ok("headline state=skipped reason=default-branch")
+			}
 			return nil
 		}
 		if !pathExists(t) {
-			fmt.Fprintln(stdout, "No decisions logged on this branch yet — run `logmind log` first, then set the summary.")
+			q.chat("No decisions logged on this branch yet — run `logmind log` first, then set the summary.\n")
+			if quiet {
+				q.ok("headline state=skipped reason=no-decisions")
+			}
 			return nil
 		}
 		target = t
 	}
-	return setHeadlineInFile(cwd, target, summary, stdout)
+	return setHeadlineInFile(cwd, target, summary, q)
 }
 
 // setHeadlineInFile sets/refreshes the §1.6.3 marker headline in the given
@@ -108,7 +118,7 @@ func runHeadline(cwd, summary, fileOverride string, stdout, stderr io.Writer) er
 // stable <date>-<slug> key), or inserts a marker if the file has none. Shared
 // by `logmind headline` (current branch + --file). main-canonical gating is
 // the caller's responsibility.
-func setHeadlineInFile(cwd, target, summary string, stdout io.Writer) error {
+func setHeadlineInFile(cwd, target, summary string, q qout) error {
 	data, err := os.ReadFile(target)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", target, err)
@@ -122,7 +132,7 @@ func setHeadlineInFile(cwd, target, summary string, stdout io.Writer) error {
 			// A marker exists but couldn't be rewritten (unclosed/malformed) —
 			// don't stack a second one. logmind never writes such a marker, so
 			// this only fires on a hand-corrupted file.
-			fmt.Fprintln(stdout, "Branch file has a malformed timeline marker — fix it manually, then retry.")
+			q.fail("Branch file has a malformed timeline marker — fix it manually, then retry.\n")
 			return ErrSilent
 		}
 		// Markerless (pre-opt-in) branch file — insert a marker now.
@@ -130,15 +140,23 @@ func setHeadlineInFile(cwd, target, summary string, stdout io.Writer) error {
 	}
 	rel := relForOk(cwd, target)
 	if updated == content {
-		fmt.Fprintln(stdout, "  branch summary already up to date")
-		fmt.Fprintf(stdout, "ok headline: %s (unchanged)\n", rel)
+		q.chat("  branch summary already up to date\n")
+		if q.quiet {
+			q.ok("headline path=%s state=unchanged", rel)
+		} else {
+			fmt.Fprintf(q.stdout, "ok headline: %s (unchanged)\n", rel)
+		}
 		return nil
 	}
 	if err := writeAtomic(target, updated); err != nil {
 		return fmt.Errorf("write %s: %w", target, err)
 	}
-	fmt.Fprintf(stdout, "✓ Branch summary set: %s\n", summary)
-	fmt.Fprintf(stdout, "ok headline: %s\n", rel)
+	q.chat("✓ Branch summary set: %s\n", summary)
+	if q.quiet {
+		q.ok("headline path=%s state=set", rel)
+	} else {
+		fmt.Fprintf(q.stdout, "ok headline: %s\n", rel)
+	}
 	return nil
 }
 

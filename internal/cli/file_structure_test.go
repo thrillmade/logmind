@@ -46,7 +46,7 @@ func TestFileStructureStdoutDefault(t *testing.T) {
 		"sub/d.txt": "d",
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runFileStructure(cwd, "", false, tree.DefaultFileStructureDepth, &stdout, &stderr); err != nil {
+	if err := runFileStructure(cwd, "", false, tree.DefaultFileStructureDepth, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	out := stdout.String()
@@ -68,7 +68,7 @@ func TestFileStructureStdoutUnbounded(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 	// effective = -1 (unbounded)
-	if err := runFileStructure(cwd, "", false, -1, &stdout, &stderr); err != nil {
+	if err := runFileStructure(cwd, "", false, -1, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "unbounded (stdout)") {
@@ -87,7 +87,7 @@ func TestFileStructureWriteIdempotent(t *testing.T) {
 	// stays content-equal to the first.
 	target := filepath.Join(t.TempDir(), "out.md")
 	var stdout, stderr bytes.Buffer
-	if err := runFileStructure(cwd, target, false, -1, &stdout, &stderr); err != nil {
+	if err := runFileStructure(cwd, target, false, -1, false, &stdout, &stderr); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "✓ Regenerated") {
@@ -95,7 +95,7 @@ func TestFileStructureWriteIdempotent(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := runFileStructure(cwd, target, false, -1, &stdout, &stderr); err != nil {
+	if err := runFileStructure(cwd, target, false, -1, false, &stdout, &stderr); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "already up to date") {
@@ -112,7 +112,7 @@ func TestFileStructureCheckStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	err := runFileStructure(cwd, target, true, -1, &stdout, &stderr)
+	err := runFileStructure(cwd, target, true, -1, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("stale check err = %v; want ErrSilent", err)
 	}
@@ -124,7 +124,7 @@ func TestFileStructureCheckStale(t *testing.T) {
 func TestFileStructureCheckRequiresWrite(t *testing.T) {
 	cwd := makeRepoForTree(t, nil)
 	var stdout, stderr bytes.Buffer
-	err := runFileStructure(cwd, "", true, -1, &stdout, &stderr)
+	err := runFileStructure(cwd, "", true, -1, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("err = %v; want ErrSilent", err)
 	}
