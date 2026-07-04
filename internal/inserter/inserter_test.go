@@ -282,6 +282,54 @@ func TestEnsureAgentsMD_NoMarkersInserts(t *testing.T) {
 	}
 }
 
+// TestEnsureAgentsMD_FullBlockRefreshesFullNotSlim pins the flavour-
+// preserving refresh contract for the `doctor --fix` / `init`-refresh
+// path (both go through EnsureAgentsMD). A repo that shipped a FULL block
+// (here a stale v6 full body) must refresh IN PLACE to the current full
+// v7 body — NOT get silently flipped to the slim v8-pointer default.
+// Second run is a no-op (idempotent). Mirrors invariant #3 documented on
+// agentsMDTemplate and the version-guard in matchingTemplate.
+func TestEnsureAgentsMD_FullBlockRefreshesFullNotSlim(t *testing.T) {
+	dir := t.TempDir()
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	// A stale v6 full block: correct FULL marker flavour, differing bytes.
+	staleFull := ReplaceMarkerBlock(templates.AgentsTemplate(),
+		"\n<!-- logmind-block-version: v6 -->\n## Decision Logging (logmind) — REQUIRED for substantive commits\nstale full body\n")
+	if err := os.WriteFile(agentsPath, []byte(staleFull), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	msg, err := EnsureAgentsMD(dir)
+	if err != nil {
+		t.Fatalf("EnsureAgentsMD: %v", err)
+	}
+	if msg == "" {
+		t.Fatalf("stale full block should have been refreshed; got no-op")
+	}
+	got, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(got), "logmind-block-version: v7") {
+		t.Errorf("full block must refresh to the v7 full body; marker missing")
+	}
+	if strings.Contains(string(got), "v8-pointer") {
+		t.Errorf("full block must NOT be flipped to the slim v8-pointer body")
+	}
+	if !strings.Contains(string(got), "Branch summary (headline)") {
+		t.Errorf("refreshed full body must carry the branch-summary convention")
+	}
+
+	// Idempotent: a second pass over the now-current full body is a no-op.
+	msg2, err := EnsureAgentsMD(dir)
+	if err != nil {
+		t.Fatalf("second EnsureAgentsMD: %v", err)
+	}
+	if msg2 != "" {
+		t.Errorf("second EnsureAgentsMD over current v7 body must be a no-op; got %q", msg2)
+	}
+}
+
 // TestGetAgentStatus_AllAbsent — no files anywhere → every entry has
 // exists=false, configured=false.
 func TestGetAgentStatus_AllAbsent(t *testing.T) {
@@ -558,16 +606,17 @@ func TestFindOutdatedMarkerBlocks_DriftedDetected(t *testing.T) {
 	}
 }
 
-// TestFindOutdatedMarkerBlocks_NeverFlipsFlavour — installed v6 full
+// TestFindOutdatedMarkerBlocks_NeverFlipsFlavour — installed v7 full
 // + Go binary defaults to slim → DO NOT report as outdated. Matches
-// the version-guard documented in matchingTemplate.
+// the version-guard documented in matchingTemplate. Also serves as the
+// "a repo already on the current full body is up-to-date" no-drift case.
 //
-// v0.6.16 bumped the full template v5→v6; the explicit guard against
-// silent full↔slim flips still fires because v6 maps to the full
-// template flavour, not slim.
+// The Slice-2 branch-summary wave bumped the full template v6→v7; the
+// explicit guard against silent full↔slim flips still fires because v7
+// maps to the full template flavour, not slim.
 func TestFindOutdatedMarkerBlocks_NeverFlipsFlavour(t *testing.T) {
 	dir := t.TempDir()
-	// Install the FULL v6 template. We don't want the slim default to
+	// Install the FULL v7 template. We don't want the slim default to
 	// silently rewrite this into v8-pointer.
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"),
 		[]byte(templates.AgentsTemplate()), 0o644); err != nil {
@@ -578,19 +627,19 @@ func TestFindOutdatedMarkerBlocks_NeverFlipsFlavour(t *testing.T) {
 		t.Fatalf("FindOutdatedMarkerBlocks: %v", err)
 	}
 	if len(out) != 0 {
-		t.Errorf("installed v6 vs default-slim must NOT be reported as outdated; got %v", out)
+		t.Errorf("installed v7 vs default-slim must NOT be reported as outdated; got %v", out)
 	}
 }
 
-// TestFindOutdatedMarkerBlocks_OldFullRefreshesToV6 — installed v5
-// full template (pre-v0.6.16) MUST be reported as outdated so the
-// `agents update --apply` workflow refreshes it to the v6 body
-// (REQUIRED-framing heading + DO-NOT blockquote). Without this,
-// existing v5 installs never see the v0.6.16 prose changes.
-func TestFindOutdatedMarkerBlocks_OldFullRefreshesToV6(t *testing.T) {
+// TestFindOutdatedMarkerBlocks_OldFullRefreshesToV7 — installed v5
+// full template MUST be reported as outdated so the `agents update
+// --apply` workflow refreshes it forward to the current v7 body
+// (branch-summary convention). Without this, existing full installs
+// never see the prose changes.
+func TestFindOutdatedMarkerBlocks_OldFullRefreshesToV7(t *testing.T) {
 	dir := t.TempDir()
 	// Synthesize a v5-shaped block body. The byte content differs from
-	// v6 (no DO-NOT blockquote), so the drift compare must fire.
+	// v7, so the drift compare must fire.
 	v5Body := "\n<!-- logmind-block-version: v5 -->\n## Decision Logging (logmind)\nold v5 body\n"
 	wrecked := ReplaceMarkerBlock(templates.AgentsTemplate(), v5Body)
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
@@ -601,10 +650,44 @@ func TestFindOutdatedMarkerBlocks_OldFullRefreshesToV6(t *testing.T) {
 		t.Fatalf("FindOutdatedMarkerBlocks: %v", err)
 	}
 	if len(out) != 1 {
-		t.Fatalf("v5 block vs v6 template must be reported as outdated; got %d entries", len(out))
+		t.Fatalf("v5 block vs v7 template must be reported as outdated; got %d entries", len(out))
 	}
-	if !strings.Contains(out[0].NewBody, "logmind-block-version: v6") {
-		t.Errorf("refresh target NewBody must carry v6 marker; got %q", out[0].NewBody)
+	if !strings.Contains(out[0].NewBody, "logmind-block-version: v7") {
+		t.Errorf("refresh target NewBody must carry v7 marker; got %q", out[0].NewBody)
+	}
+}
+
+// TestFindOutdatedMarkerBlocks_V6RefreshesToV7 — the load-bearing case
+// for the Slice-2 branch-summary wave: a repo carrying a v6 full block
+// (the immediately-prior full flavour, shipped to consumer repos before
+// this bump) MUST be reported as outdated and its refresh target MUST be
+// the v7 full body (carrying the branch-summary convention), NOT the slim
+// v8-pointer body. This is what lets consumer repos pick up v7 via
+// `agents update` / `doctor --fix` drift detection.
+func TestFindOutdatedMarkerBlocks_V6RefreshesToV7(t *testing.T) {
+	dir := t.TempDir()
+	// Synthesize a v6-shaped full block body (older marker, differing bytes).
+	v6Body := "\n<!-- logmind-block-version: v6 -->\n## Decision Logging (logmind) — REQUIRED for substantive commits\nold v6 body without the branch-summary convention\n"
+	wrecked := ReplaceMarkerBlock(templates.AgentsTemplate(), v6Body)
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out, err := FindOutdatedMarkerBlocks(dir)
+	if err != nil {
+		t.Fatalf("FindOutdatedMarkerBlocks: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("v6 block vs v7 template must be reported as outdated; got %d entries", len(out))
+	}
+	// Refresh target must be the FULL v7 body — not a full↔slim flip.
+	if !strings.Contains(out[0].NewBody, "logmind-block-version: v7") {
+		t.Errorf("refresh target NewBody must carry v7 marker; got %q", out[0].NewBody)
+	}
+	if strings.Contains(out[0].NewBody, "v8-pointer") {
+		t.Errorf("v6 full block must NOT refresh to the slim v8-pointer body")
+	}
+	if !strings.Contains(out[0].NewBody, "Branch summary (headline)") {
+		t.Errorf("v7 refresh target must carry the branch-summary (headline) convention")
 	}
 }
 
