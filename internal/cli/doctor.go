@@ -51,17 +51,29 @@ func newDoctorCmd() *cobra.Command {
 			"rewrites decision text, foreign (hand-written) hooks, or your PATH.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			quiet := quietEnabled(cmd)
 			if fix {
+				// --fix is already quiet-shaped: it emits exactly one
+				// `ok doctor-fix …` line to stdout and routes residual notes to
+				// stderr, so it satisfies the QUIET discipline in both modes.
 				return runDoctorFix(cmd, offline, asJSON)
 			}
 			report := doctor.CollectStatus("", offline)
-			if asJSON {
+			switch {
+			case asJSON:
+				// --json is an explicit format request that wins over quiet's
+				// terse line — an agent that asked for the full JSON report
+				// gets it.
 				out, err := report.ToJSON()
 				if err != nil {
 					return err
 				}
 				cmd.Println(out)
-			} else {
+			case quiet:
+				// Suppress the human table; emit the single chainable receipt.
+				fmt.Fprintf(cmd.OutOrStdout(), "ok doctor overall=%s drift=%d\n",
+					report.Overall, driftCount(report))
+			default:
 				cmd.Println(doctor.RenderStatus(report))
 			}
 			if report.Overall == "DRIFT" && !exitZero {
@@ -119,6 +131,23 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 				"(PATH/version, or a hand-written hook). See `logmind doctor`.\n", name)
 	}
 	return nil
+}
+
+// driftCount counts probe rows that are "stale" — the drift signal that flips
+// Overall to DRIFT (see doctor.CollectStatus). "missing" (benign in a fresh
+// repo) and "markerless" (a main-canonical migration advisory, not a hard
+// drift) are excluded so the QUIET `ok doctor …` receipt stays consistent
+// with `overall` (e.g. overall=OK never pairs with drift>0).
+func driftCount(r doctor.StatusReport) int {
+	n := 0
+	for _, t := range r.Tools {
+		for _, wf := range t.Workflows {
+			if wf.Drift == "stale" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // residualProbes returns the names of probes still drifted after a fix pass:

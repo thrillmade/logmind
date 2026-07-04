@@ -66,6 +66,9 @@ logmind show --all         # include archive
 logmind search "postgres"  # full-text across both files
 ```
 
+As an agent, set `LOGMIND_QUIET=1` for terse, chainable machine output: each
+verb suppresses progress chatter and prints a single `ok <key=value>` line.
+
 ## Setup (one-time, per project)
 
 If the project doesn't yet have logmind:

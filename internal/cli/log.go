@@ -159,7 +159,7 @@ Example:
 			if err != nil {
 				return err
 			}
-			return runLog(cwd, args[0], f, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runLog(cwd, args[0], f, quietEnabled(cmd), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVarP(&f.reasoning, "reasoning", "r", "",
@@ -185,15 +185,16 @@ Example:
 //
 // Returns nil on success, ErrSilent for user-facing errors already
 // printed to stdout, or a regular error for plumbing failures.
-func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io.Writer) error {
+func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdout, stderr io.Writer) error {
+	q := newQout(quiet, stdout, stderr)
 	docsPath := filepath.Join(cwd, "docs")
 	if !pathExists(docsPath) {
-		fmt.Fprintln(stdout, "Error: docs/ directory not found. Run 'logmind init' first.")
+		q.fail("Error: docs/ directory not found. Run 'logmind init' first.\n")
 		return ErrSilent
 	}
 
 	if strings.TrimSpace(summary) == "" {
-		fmt.Fprintln(stdout, "Error: decision summary is empty.")
+		q.fail("Error: decision summary is empty.\n")
 		return ErrSilent
 	}
 
@@ -201,7 +202,7 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 	// Python click.Choice behavior: print the actual user input + the
 	// allowed set so a typo is easy to fix.
 	if f.stage != "all" && f.stage != "scoped" {
-		fmt.Fprintf(stdout, "Error: invalid --stage %q (allowed: all, scoped).\n", f.stage)
+		q.fail("Error: invalid --stage %q (allowed: all, scoped).\n", f.stage)
 		return ErrSilent
 	}
 
@@ -290,14 +291,15 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 		relTarget = target
 	}
 	relTarget = filepath.ToSlash(relTarget)
-	fmt.Fprintf(stdout, "✓ Logged decision to %s\n", relTarget)
+	q.chat("✓ Logged decision to %s\n", relTarget)
 
 	// Branch-summary nudge — steer the author toward a clean one-sentence
 	// summary of the WHOLE branch (the timeline headline the next agent reads).
 	// Skipped when --headline was just set (already current). Runs BEFORE the
 	// commit so a TTY edit lands in the same commit. Gated to a main-canonical
-	// branch file. Best-effort: never fails the log.
-	if isBranchFile && cfg.Timeline.IsMainCanonical() && f.headline == "" {
+	// branch file. Best-effort: never fails the log. Suppressed under QUIET —
+	// an agent that opted into terse output doesn't want the multi-line nudge.
+	if isBranchFile && cfg.Timeline.IsMainCanonical() && f.headline == "" && !quiet {
 		nudgeBranchSummary(target, f.noInteractive, stdin, stdout, stderr)
 	}
 
@@ -312,21 +314,29 @@ func runLog(cwd, summary string, f *logFlags, stdin io.Reader, stdout, stderr io
 			fmt.Fprintf(stderr, "Warning: auto-commit failed: %v\n", err)
 		} else {
 			committed = true
-			fmt.Fprintln(stdout, "✓ Committed decision")
+			q.chat("✓ Committed decision\n")
 		}
 	} else if !f.noCommit {
 		fmt.Fprintln(stderr, "Warning: not inside a git repo; skipping auto-commit.")
 	}
-	_ = committed // future use: gate the post-commit advisory message
 
 	// Layer 1 self-heal — runs whether we committed or not. The file is
 	// on disk either way, so a stale link introduced by this decision
-	// should surface immediately.
-	if err := runSelfHealLayer1(cwd, f.noInteractive, stdin, stdout, stderr); err != nil {
+	// should surface immediately. Under QUIET the advisory is routed to
+	// stderr (never onto the single-ok-line stdout) and the prompt is
+	// skipped.
+	if err := runSelfHealLayer1(cwd, f.noInteractive, quiet, stdin, stdout, stderr); err != nil {
 		// runSelfHealLayer1 returns ErrSilent on user abort (`q` reply)
 		// or three failed retries. Propagate so the CLI exits non-zero
 		// and the agent sees the abort signal.
 		return err
+	}
+
+	// QUIET receipt — the single chainable summary line. Default mode keeps
+	// its historical multi-line ✓ output (no `ok` trailer) for byte parity;
+	// this line is the quiet MODE's sole stdout output.
+	if quiet {
+		q.ok("logged path=%s committed=%t", relTarget, committed)
 	}
 	return nil
 }
@@ -563,7 +573,7 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 //	    → fix: ...
 //	Fix the issues above, then reply [y] to re-check, [n] to skip, [q] to abort:
 //	>
-func runSelfHealLayer1(cwd string, forceNonInteractive bool, stdin io.Reader, stdout, stderr io.Writer) error {
+func runSelfHealLayer1(cwd string, forceNonInteractive, quiet bool, stdin io.Reader, stdout, stderr io.Writer) error {
 	report, err := linkcheck.CheckWithReport(cwd, nil, nil)
 	if err != nil {
 		// Linkcheck plumbing failure isn't a self-heal-able error;
@@ -572,6 +582,15 @@ func runSelfHealLayer1(cwd string, forceNonInteractive bool, stdin io.Reader, st
 		return nil
 	}
 	if !report.HasIssues() {
+		return nil
+	}
+
+	// QUIET: the link advisory is a recovery hint, not chatter — emit it to
+	// stderr (never onto the single-ok-line stdout) and skip the prompt. The
+	// decision is saved; CI's Layer 3 will catch any leftover issues.
+	if quiet {
+		printAdvisory(stderr, report)
+		fmt.Fprintln(stderr, "Non-interactive/quiet context — decision is saved but docs may be stale.")
 		return nil
 	}
 

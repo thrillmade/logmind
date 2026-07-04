@@ -41,7 +41,7 @@ func makeDocs(t *testing.T, decisionsBody, archiveBody string, branchFiles map[s
 func TestTimelineNoDocs(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, "", false, false, &stdout, &stderr)
+	err := runTimeline(cwd, "", false, false, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("err = %v; want ErrSilent", err)
 	}
@@ -61,7 +61,7 @@ func TestTimelineStdoutBrief(t *testing.T) {
 		"", nil,
 	)
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, "", false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, "", false, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	compareCLI(t, "timeline_stdout_brief.golden", stdout.String())
@@ -77,7 +77,7 @@ func TestTimelineStdoutFull(t *testing.T) {
 		"", nil,
 	)
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, "", false, true, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, "", false, true, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	compareCLI(t, "timeline_stdout_full.golden", stdout.String())
@@ -92,7 +92,7 @@ func TestTimelineWriteFresh(t *testing.T) {
 	)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("✓ Regenerated")) {
@@ -108,12 +108,12 @@ func TestTimelineWriteIdempotent(t *testing.T) {
 	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("already up to date")) {
@@ -127,12 +127,12 @@ func TestTimelineCheckClean(t *testing.T) {
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	// Seed the file by writing it first.
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, true, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, true, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("check err = %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("is up to date")) {
@@ -149,7 +149,7 @@ func TestTimelineCheckStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, target, true, false, &stdout, &stderr)
+	err := runTimeline(cwd, target, true, false, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("stale check err = %v; want ErrSilent", err)
 	}
@@ -162,7 +162,7 @@ func TestTimelineCheckStale(t *testing.T) {
 func TestTimelineCheckRequiresWrite(t *testing.T) {
 	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, "", true, false, &stdout, &stderr)
+	err := runTimeline(cwd, "", true, false, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("err = %v; want ErrSilent", err)
 	}
@@ -190,7 +190,7 @@ func TestTimelineMainCanonicalDispatch(t *testing.T) {
 	target := filepath.Join(cwd, "docs", "timeline.md")
 
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("write: %v (%s)", err, stderr.String())
 	}
 	got, _ := os.ReadFile(target)
@@ -200,7 +200,7 @@ func TestTimelineMainCanonicalDispatch(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, true, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, true, false, false, &stdout, &stderr); err != nil {
 		t.Errorf("--check after a main-canonical write reported stale: %v\n%s", err, stdout.String())
 	}
 }

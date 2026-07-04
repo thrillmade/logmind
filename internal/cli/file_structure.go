@@ -63,7 +63,7 @@ Examples:
 					effective = maxDepth
 				}
 			}
-			return runFileStructure(cwd, writePath, check, effective, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runFileStructure(cwd, writePath, check, effective, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&writePath, "write", "",
@@ -79,7 +79,8 @@ Examples:
 	return cmd
 }
 
-func runFileStructure(cwd, writePath string, check bool, effective int, stdout, stderr io.Writer) error {
+func runFileStructure(cwd, writePath string, check bool, effective int, quiet bool, stdout, stderr io.Writer) error {
+	q := newQout(quiet, stdout, stderr)
 	// File-structure doesn't insist on docs/ existing for stdout mode.
 	// Python's file-structure has no docs/-existence check either.
 	depthLabel := fmt.Sprintf("depth=%d", effective)
@@ -89,7 +90,7 @@ func runFileStructure(cwd, writePath string, check bool, effective int, stdout, 
 
 	if check {
 		if writePath == "" {
-			fmt.Fprintln(stdout, "Error: --check requires --write PATH to compare against.")
+			q.fail("Error: --check requires --write PATH to compare against.\n")
 			return ErrSilent
 		}
 		rendered, err := tree.GenerateFileStructure(cwd, effective)
@@ -98,11 +99,15 @@ func runFileStructure(cwd, writePath string, check bool, effective int, stdout, 
 		}
 		existing, _ := os.ReadFile(writePath)
 		if string(existing) != rendered {
-			fmt.Fprintf(stdout, "✗ %s is stale — re-run `logmind file-structure --write %s` and commit.\n", writePath, writePath)
+			q.fail("✗ %s is stale — re-run `logmind file-structure --write %s` and commit.\n", writePath, writePath)
 			return ErrSilent
 		}
-		fmt.Fprintf(stdout, "✓ %s is up to date\n", writePath)
-		fmt.Fprintf(stdout, "ok file-structure: %s up to date\n", writePath)
+		q.chat("✓ %s is up to date\n", writePath)
+		if quiet {
+			q.ok("file-structure path=%s %s state=up-to-date", writePath, depthLabel)
+		} else {
+			fmt.Fprintf(stdout, "ok file-structure: %s up to date\n", writePath)
+		}
 		return nil
 	}
 
@@ -111,8 +116,12 @@ func runFileStructure(cwd, writePath string, check bool, effective int, stdout, 
 		if err != nil {
 			return err
 		}
-		fmt.Fprint(stdout, rendered)
-		fmt.Fprintf(stdout, "ok file-structure: %d bytes, %s (stdout)\n", len(rendered), depthLabel)
+		if !quiet {
+			fmt.Fprint(stdout, rendered)
+			fmt.Fprintf(stdout, "ok file-structure: %d bytes, %s (stdout)\n", len(rendered), depthLabel)
+		} else {
+			q.ok("file-structure bytes=%d %s sink=stdout", len(rendered), depthLabel)
+		}
 		return nil
 	}
 
@@ -121,15 +130,19 @@ func runFileStructure(cwd, writePath string, check bool, effective int, stdout, 
 		return err
 	}
 	if changed {
-		fmt.Fprintf(stdout, "✓ Regenerated %s\n", writePath)
+		q.chat("✓ Regenerated %s\n", writePath)
 	} else {
-		fmt.Fprintf(stdout, "  %s already up to date\n", writePath)
+		q.chat("  %s already up to date\n", writePath)
 	}
 	st, err := os.Stat(writePath)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "ok %s (%d bytes, %s)\n", writePath, st.Size(), depthLabel)
+	if quiet {
+		q.ok("file-structure path=%s bytes=%d %s changed=%t", writePath, st.Size(), depthLabel, changed)
+	} else {
+		fmt.Fprintf(stdout, "ok %s (%d bytes, %s)\n", writePath, st.Size(), depthLabel)
+	}
 	return nil
 }
 
