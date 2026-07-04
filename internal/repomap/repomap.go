@@ -60,14 +60,32 @@ type FileSymbols struct {
 	Imports []string
 }
 
-// ExtractGo walks repoRoot for tracked, non-test .go files (honoring the same
-// ignore rules as docs/file-structure.md) and extracts each file's top-level
-// func / method / type signatures. Files are returned sorted by path; symbols
-// keep source order within a file — both deterministic, the property caching
-// depends on. A file that fails to parse is skipped, not fatal: the repomap is
-// a convenience, never a gate.
-func ExtractGo(repoRoot string, rules tree.IgnoreRules) ([]FileSymbols, error) {
-	var goFiles []string
+// langExtractor is one language's signature extractor. extract takes a file's
+// source and returns its top-level signatures (in source order) plus imported
+// paths (used for Go fan-in; empty for languages without import-graph support
+// yet). isTest reports whether a basename is that language's test file (skipped
+// like Go's `_test.go`).
+type langExtractor struct {
+	extract func(src string) ([]Symbol, []string)
+	isTest  func(base string) bool
+}
+
+// extractors maps a lowercased file extension to its extractor. Go uses the
+// standard-library parser (exact); other languages use zero-dep regex
+// extractors (a skeleton — less precise but deterministic). Additive by
+// construction: a new language is a new entry, no other code changes.
+var extractors = map[string]langExtractor{
+	".go": {extract: extractGoSource, isTest: func(b string) bool { return strings.HasSuffix(b, "_test.go") }},
+}
+
+// Extract walks repoRoot for tracked, non-test source files whose extension has
+// a registered extractor, honoring the same ignore rules as
+// docs/file-structure.md, and extracts each file's top-level signatures. Files
+// are returned sorted by path; symbols keep source order — both deterministic,
+// the property caching depends on. A file that fails to extract is skipped, not
+// fatal: the repomap is a convenience, never a gate.
+func Extract(repoRoot string, rules tree.IgnoreRules) ([]FileSymbols, error) {
+	var srcFiles []string
 	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// A permission-denied or vanished path is a recoverable I/O
@@ -90,35 +108,41 @@ func ExtractGo(repoRoot string, rules tree.IgnoreRules) ([]FileSymbols, error) {
 		base := d.Name()
 		if d.IsDir() {
 			// Skip ignored dirs AND testdata/ — Go tooling ignores testdata,
-			// and its .go fixtures are not part of the repo's API surface.
+			// and its fixtures are not part of the repo's API surface.
 			if base == "testdata" || rules.Matches(rel, base) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		// Regular files only: a symlinked .go would otherwise be counted twice
-		// (under both its own path and the target's); other irregular entries
-		// aren't real source.
+		// Regular files only: a symlinked source file would otherwise be counted
+		// twice (under both its own path and the target's); other irregular
+		// entries aren't real source.
 		if !d.Type().IsRegular() {
 			return nil
 		}
 		if rules.Matches(rel, base) {
 			return nil
 		}
-		if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
+		// Dispatch by extension: include the file only when a language extractor
+		// is registered for it and the file is not that language's test file.
+		if ex, ok := extractors[strings.ToLower(filepath.Ext(base))]; !ok || ex.isTest(base) {
 			return nil
 		}
-		goFiles = append(goFiles, rel)
+		srcFiles = append(srcFiles, rel)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(goFiles)
+	sort.Strings(srcFiles)
 
-	out := make([]FileSymbols, 0, len(goFiles))
-	for _, rel := range goFiles {
-		syms, imports := extractGoFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	out := make([]FileSymbols, 0, len(srcFiles))
+	for _, rel := range srcFiles {
+		data, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+		if err != nil {
+			continue // unreadable file — skip, never fatal
+		}
+		syms, imports := extractors[strings.ToLower(filepath.Ext(rel))].extract(string(data))
 		if len(syms) == 0 {
 			continue
 		}
@@ -127,12 +151,13 @@ func ExtractGo(repoRoot string, rules tree.IgnoreRules) ([]FileSymbols, error) {
 	return out, nil
 }
 
-// extractGoFile parses a single Go file and returns its top-level signatures in
+// extractGoSource parses Go source and returns its top-level signatures in
 // source order plus its imported package paths (unquoted). Returns nil, nil on
-// a parse error (skip, don't fail the whole map).
-func extractGoFile(absPath string) ([]Symbol, []string) {
+// a parse error (skip, don't fail the whole map). Standard-library parser —
+// exact, zero external dependency, no CGo.
+func extractGoSource(src string) ([]Symbol, []string) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, absPath, nil, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, nil
 	}
@@ -320,7 +345,7 @@ func Generate(repoRoot string, defaults []string) (string, []FileSymbols, error)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve ignore rules: %w", err)
 	}
-	files, err := ExtractGo(repoRoot, rules)
+	files, err := Extract(repoRoot, rules)
 	if err != nil {
 		return "", nil, err
 	}
@@ -337,7 +362,7 @@ func GenerateBudget(repoRoot string, defaults []string, maxTokens int) (text str
 	if err != nil {
 		return "", nil, 0, fmt.Errorf("resolve ignore rules: %w", err)
 	}
-	files, err := ExtractGo(repoRoot, rules)
+	files, err := Extract(repoRoot, rules)
 	if err != nil {
 		return "", nil, 0, err
 	}

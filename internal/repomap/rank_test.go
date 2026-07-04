@@ -34,7 +34,7 @@ func setupRankRepo(t *testing.T) (dir string, files []FileSymbols) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err = ExtractGo(dir, rules)
+	files, err = Extract(dir, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestRank_DecisionLinkSubstringNotMatched(t *testing.T) {
 	writeGo(t, dir, "docs/decisions.md", "## X\n\nWe touched data.go for reasons.\n")
 
 	rules, _ := tree.ResolveRules(dir, nil)
-	files, err := ExtractGo(dir, rules)
+	files, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
