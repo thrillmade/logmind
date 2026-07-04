@@ -88,3 +88,70 @@ func TestContext_Stats(t *testing.T) {
 		}
 	})
 }
+
+// TestContext_Repomap_DisabledByDefault: without the context.repomap opt-in,
+// the payload carries no repomap document (default stays byte-stable).
+func TestContext_Repomap_DisabledByDefault(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, "docs/file-structure.md", "FS\n")
+		mustWriteUnder(t, d, "docs/timeline.md", "TL\n")
+		mustWriteUnder(t, d, "svc.go", "package p\nfunc Serve() error { return nil }\n")
+		s := runContextCapture(t)
+		if strings.Contains(s, `type="repomap"`) {
+			t.Errorf("repomap doc present without opt-in (breaks byte-parity):\n%s", s)
+		}
+	})
+}
+
+// TestContext_Repomap_Enabled_StableFirst: context.repomap:true folds the
+// signature skeleton in as a <document type="repomap"> placed stable-first
+// (after file-structure, before the volatile timeline).
+func TestContext_Repomap_Enabled_StableFirst(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, "docs/file-structure.md", "FS\n")
+		mustWriteUnder(t, d, "docs/timeline.md", "TL\n")
+		mustWriteUnder(t, d, "svc.go", "package p\nfunc Serve() error { return nil }\n")
+		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  repomap: true\n")
+		s := runContextCapture(t)
+		if !strings.Contains(s, `<document type="repomap">`) {
+			t.Fatalf("repomap doc missing when enabled:\n%s", s)
+		}
+		if !strings.Contains(s, "func Serve() error") {
+			t.Errorf("repomap body missing the signature:\n%s", s)
+		}
+		iFS := strings.Index(s, `type="file-structure"`)
+		iRM := strings.Index(s, `type="repomap"`)
+		iTL := strings.Index(s, `type="decision-timeline"`)
+		if !(iFS < iRM && iRM < iTL) {
+			t.Errorf("repomap not stable-first (fs=%d repomap=%d tl=%d):\n%s", iFS, iRM, iTL, s)
+		}
+	})
+}
+
+// TestContext_Repomap_EnabledNoGo_Omitted: enabled but no Go symbols → the
+// repomap document is omitted cleanly (never an empty envelope).
+func TestContext_Repomap_EnabledNoGo_Omitted(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, "docs/file-structure.md", "FS\n")
+		mustWriteUnder(t, d, "docs/timeline.md", "TL\n")
+		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  repomap: true\n")
+		s := runContextCapture(t) // no .go files
+		if strings.Contains(s, `type="repomap"`) {
+			t.Errorf("empty repomap should be omitted, not an empty envelope:\n%s", s)
+		}
+	})
+}
+
+// TestContext_Repomap_Stats: --stats breaks out the repomap term when enabled.
+func TestContext_Repomap_Stats(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, "docs/file-structure.md", "FS\n")
+		mustWriteUnder(t, d, "docs/timeline.md", "TL\n")
+		mustWriteUnder(t, d, "svc.go", "package p\nfunc Serve() error { return nil }\n")
+		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  repomap: true\n")
+		s := runContextCapture(t, "--stats")
+		if !strings.Contains(s, "+ repomap ") {
+			t.Errorf("--stats missing the repomap term:\n%s", s)
+		}
+	})
+}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/repomap"
 	"github.com/thrillmade/logmind/internal/tokens"
 )
 
@@ -59,6 +61,11 @@ so treat it as a cacheable PREFIX —
   - use the 1-hour TTL for multi-step / multi-agent sessions, and pre-warm it,
   - read it ONCE per task; byte-identical re-reads hit the cache at ~0.1x input.
 
+Set 'context.repomap: true' in .logmind/config.yml to also fold in the Go
+signature skeleton (see 'logmind repomap') as a third, stable document — the
+repo's API surface, placed between the file map and the timeline. Default off
+keeps the payload byte-identical.
+
 --stats prints a deterministic token receipt (est. ~4 chars/token) instead of
 the payload.`,
 		Args: cobra.NoArgs,
@@ -80,17 +87,38 @@ the payload.`,
 
 // contextDoc is one document in the cold-start payload.
 type contextDoc struct {
-	rel   string // repo-relative path to the derived doc
+	rel   string // repo-relative path to the derived doc (file-backed docs)
 	typ   string // <document type=…> — machine label
 	regen string // command to regenerate it when missing
+	// gen, when non-nil, produces the document body IN-MEMORY instead of
+	// reading `rel` off disk (e.g. the repomap skeleton). It returns the body
+	// and a source label; an empty body omits the document entirely.
+	gen func(cwd string, cfg config.Config) (body, source string)
+	// enabled, when non-nil, gates whether this doc participates. Used for
+	// opt-in additive docs so the default payload stays byte-stable. nil =
+	// always included.
+	enabled func(cfg config.Config) bool
 }
 
-// contextDocs is the ordered payload: the stable "what" (file-structure)
-// before the volatile "why" (newest-first timeline), so the cacheable prefix
-// stays byte-identical for as long as possible.
+// contextDocs is the ordered payload, most-stable first so the cacheable
+// prefix stays byte-identical for as long as possible: the file map (what) →
+// the repomap API surface (also stable; opt-in) → the volatile newest-first
+// timeline (why).
 var contextDocs = []contextDoc{
-	{"docs/file-structure.md", "file-structure", "logmind file-structure --write docs/file-structure.md"},
-	{"docs/timeline.md", "decision-timeline", "logmind timeline --write docs/timeline.md"},
+	{rel: "docs/file-structure.md", typ: "file-structure", regen: "logmind file-structure --write docs/file-structure.md"},
+	{typ: "repomap", gen: repomapDoc, enabled: func(c config.Config) bool { return c.Context.Repomap }},
+	{rel: "docs/timeline.md", typ: "decision-timeline", regen: "logmind timeline --write docs/timeline.md"},
+}
+
+// repomapDoc renders the Go signature skeleton for the context payload. An
+// empty result (no Go symbols, or an extraction error) omits the document — the
+// repomap is a convenience, never a gate.
+func repomapDoc(cwd string, cfg config.Config) (body, source string) {
+	text, files, err := repomap.Generate(cwd, cfg.FileStructure.IgnorePatterns)
+	if err != nil || len(files) == 0 {
+		return "", ""
+	}
+	return text, "logmind repomap"
 }
 
 const contextPreface = "Pre-baked repo cold-start context: the file map (what) + the decision " +
@@ -102,10 +130,22 @@ const contextPreface = "Pre-baked repo cold-start context: the file map (what) +
 // Deterministic by construction (fixed strings + on-disk doc bytes, stable
 // order) — the property prompt caching depends on.
 func contextPayload(cwd string) string {
+	cfg, _ := config.Load(cwd)
 	var b strings.Builder
 	b.WriteString(contextPreface)
 	b.WriteString("\n<repo_context>\n")
 	for _, d := range contextDocs {
+		if d.enabled != nil && !d.enabled(cfg) {
+			continue // opt-in additive doc, disabled → omit (default byte-stable)
+		}
+		if d.gen != nil {
+			body, source := d.gen(cwd, cfg)
+			if body == "" {
+				continue // nothing to contribute — omit cleanly
+			}
+			writeDoc(&b, d.typ, source, []byte(body))
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(cwd, d.rel))
 		if err != nil {
 			// A missing doc becomes a self-closing element carrying the
@@ -115,15 +155,22 @@ func contextPayload(cwd string) string {
 			fmt.Fprintf(&b, "<document type=%q source=%q status=\"absent\" regenerate=%q/>\n", d.typ, d.rel, d.regen)
 			continue
 		}
-		fmt.Fprintf(&b, "<document type=%q>\n<source>%s</source>\n<document_content>\n", d.typ, d.rel)
-		b.Write(data)
-		if n := len(data); n == 0 || data[n-1] != '\n' {
-			b.WriteByte('\n')
-		}
-		b.WriteString("</document_content>\n</document>\n")
+		writeDoc(&b, d.typ, d.rel, data)
 	}
 	b.WriteString("</repo_context>\n")
 	return b.String()
+}
+
+// writeDoc emits one <document> envelope with a trailing-newline guarantee on
+// the body. Shared by the file-backed and generated doc paths so both render
+// byte-identically.
+func writeDoc(b *strings.Builder, typ, source string, data []byte) {
+	fmt.Fprintf(b, "<document type=%q>\n<source>%s</source>\n<document_content>\n", typ, source)
+	b.Write(data)
+	if n := len(data); n == 0 || data[n-1] != '\n' {
+		b.WriteByte('\n')
+	}
+	b.WriteString("</document_content>\n</document>\n")
 }
 
 func runContext(cwd string, stdout io.Writer) error {
@@ -134,14 +181,39 @@ func runContext(cwd string, stdout io.Writer) error {
 // runContextStats prints a deterministic token receipt: the payload size and
 // how much denser the timeline is than the raw decision logs it distills.
 func runContextStats(cwd string, stdout io.Writer) error {
+	cfg, _ := config.Load(cwd)
 	payload := contextPayload(cwd)
 	fsTok := tokens.Estimate(ctxReadOrEmpty(filepath.Join(cwd, "docs", "file-structure.md")))
 	tlTok := tokens.Estimate(ctxReadOrEmpty(filepath.Join(cwd, "docs", "timeline.md")))
 	rawWhy := rawDecisionTokens(cwd)
 
 	fmt.Fprint(stdout, "logmind context — token receipt (est. ~4 chars/token, deterministic)\n\n")
-	fmt.Fprintf(stdout, "  payload total:  %6d tok  (file-structure %d + timeline %d + framing)\n",
-		tokens.Estimate(payload), fsTok, tlTok)
+
+	// The repomap term appears only when it is enabled AND has symbols to
+	// contribute (matching what contextPayload actually emits).
+	mapTok, rawGo := 0, 0
+	if cfg.Context.Repomap {
+		if mapText, files, err := repomap.Generate(cwd, cfg.FileStructure.IgnorePatterns); err == nil && len(files) > 0 {
+			mapTok = tokens.Estimate(mapText)
+			for _, f := range files {
+				rawGo += tokens.Estimate(ctxReadOrEmpty(filepath.Join(cwd, filepath.FromSlash(f.Path))))
+			}
+		}
+	}
+	if mapTok > 0 {
+		fmt.Fprintf(stdout, "  payload total:  %6d tok  (file-structure %d + repomap %d + timeline %d + framing)\n",
+			tokens.Estimate(payload), fsTok, mapTok, tlTok)
+	} else {
+		fmt.Fprintf(stdout, "  payload total:  %6d tok  (file-structure %d + timeline %d + framing)\n",
+			tokens.Estimate(payload), fsTok, tlTok)
+	}
+	// Only claim density when the skeleton is genuinely smaller than the source
+	// it summarizes — on a trivial repo the `# Repomap` framing can exceed a
+	// one-file source, and "0.6x denser" reads worse than saying nothing.
+	if mapTok > 0 && rawGo > mapTok {
+		fmt.Fprintf(stdout, "  the repomap distills %d tok of Go source -> %.1fx denser.\n",
+			rawGo, float64(rawGo)/float64(mapTok))
+	}
 	if rawWhy > 0 && tlTok > 0 {
 		fmt.Fprintf(stdout, "  the timeline distills %d tok of raw decision logs -> %.1fx denser.\n",
 			rawWhy, float64(rawWhy)/float64(tlTok))

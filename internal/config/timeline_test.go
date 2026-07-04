@@ -84,6 +84,9 @@ func TestDefaultMap_OmitsNewKeys_PreservesConfigListByteParity(t *testing.T) {
 	if _, ok := m.Get("timeline"); ok {
 		t.Errorf("DefaultMap contains `timeline` — breaks `config list` byte-parity")
 	}
+	if _, ok := m.Get("context"); ok {
+		t.Errorf("DefaultMap contains `context` — breaks `config list` byte-parity")
+	}
 	fs, ok := m.Get("file_structure")
 	if !ok {
 		t.Fatal("file_structure missing from DefaultMap")
