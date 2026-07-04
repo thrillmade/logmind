@@ -76,6 +76,7 @@ logmind
 ├── go.mod
 ├── go.sum
 ├── LICENSE
+├── logmind
 ├── Makefile
 ├── README.md
 ├── SECURITY.md
