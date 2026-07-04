@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/thrillmade/logmind/internal/tree"
@@ -54,6 +55,9 @@ type Symbol struct {
 type FileSymbols struct {
 	Path    string // repo-relative, forward-slashed (stable across platforms)
 	Symbols []Symbol
+	// Imports is the file's imported package paths (unquoted). Used by Rank to
+	// compute intra-repo fan-in centrality; ignored by the default Render.
+	Imports []string
 }
 
 // ExtractGo walks repoRoot for tracked, non-test .go files (honoring the same
@@ -114,22 +118,23 @@ func ExtractGo(repoRoot string, rules tree.IgnoreRules) ([]FileSymbols, error) {
 
 	out := make([]FileSymbols, 0, len(goFiles))
 	for _, rel := range goFiles {
-		syms := extractGoFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+		syms, imports := extractGoFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
 		if len(syms) == 0 {
 			continue
 		}
-		out = append(out, FileSymbols{Path: rel, Symbols: syms})
+		out = append(out, FileSymbols{Path: rel, Symbols: syms, Imports: imports})
 	}
 	return out, nil
 }
 
 // extractGoFile parses a single Go file and returns its top-level signatures in
-// source order. Returns nil on a parse error (skip, don't fail the whole map).
-func extractGoFile(absPath string) []Symbol {
+// source order plus its imported package paths (unquoted). Returns nil, nil on
+// a parse error (skip, don't fail the whole map).
+func extractGoFile(absPath string) ([]Symbol, []string) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, absPath, nil, parser.SkipObjectResolution)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var syms []Symbol
 	for _, decl := range file.Decls {
@@ -146,7 +151,15 @@ func extractGoFile(absPath string) []Symbol {
 			}
 		}
 	}
-	return syms
+	// file.Imports is populated by the full parse — the file's imported package
+	// paths, used by Rank for intra-repo fan-in.
+	var imports []string
+	for _, imp := range file.Imports {
+		if p, err := strconv.Unquote(imp.Path.Value); err == nil {
+			imports = append(imports, p)
+		}
+	}
+	return syms, imports
 }
 
 // funcSignature renders a FuncDecl with its body (and doc) dropped — the exact
@@ -249,6 +262,25 @@ func flattenOneLine(s string) string {
 	return b.String()
 }
 
+const repomapHeader = "# Repomap\n\nSignature skeleton (bodies dropped) — the repo's API surface for agents.\n"
+
+// fileBlock renders one file's portion of the skeleton: a leading blank line,
+// the path, then each signature indented two spaces. Shared by Render and the
+// budget renderer so their output stays byte-identical, and used by Pack to
+// cost each file.
+func fileBlock(f FileSymbols) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(f.Path)
+	b.WriteString("\n")
+	for _, s := range f.Symbols {
+		b.WriteString("  ")
+		b.WriteString(s.Signature)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // Render assembles the deterministic skeleton text: each file's path as a
 // header, its signatures indented beneath. Byte-stable by construction.
 func Render(files []FileSymbols) string {
@@ -256,18 +288,26 @@ func Render(files []FileSymbols) string {
 		return "# Repomap\n\nNo Go symbols found.\n"
 	}
 	var b strings.Builder
-	b.WriteString("# Repomap\n\n")
-	b.WriteString("Signature skeleton (bodies dropped) — the repo's API surface for agents.\n")
+	b.WriteString(repomapHeader)
 	for _, f := range files {
-		b.WriteString("\n")
-		b.WriteString(f.Path)
-		b.WriteString("\n")
-		for _, s := range f.Symbols {
-			b.WriteString("  ")
-			b.WriteString(s.Signature)
-			b.WriteString("\n")
-		}
+		b.WriteString(fileBlock(f))
 	}
+	return b.String()
+}
+
+// RenderWithOmitted renders kept files plus, when omitted > 0, a canonical
+// truncation marker (§14.4) naming how many files were dropped to fit the
+// budget. omitted == 0 renders identically to Render(kept).
+func RenderWithOmitted(kept []FileSymbols, omitted int) string {
+	if omitted <= 0 {
+		return Render(kept)
+	}
+	var b strings.Builder
+	b.WriteString(repomapHeader)
+	for _, f := range kept {
+		b.WriteString(fileBlock(f))
+	}
+	fmt.Fprintf(&b, "\n... (%d files omitted to fit the token budget)\n", omitted)
 	return b.String()
 }
 
@@ -285,6 +325,28 @@ func Generate(repoRoot string, defaults []string) (string, []FileSymbols, error)
 		return "", nil, err
 	}
 	return Render(files), files, nil
+}
+
+// GenerateBudget is Generate + importance ranking + token-budget packing: it
+// ranks files (see Rank) and keeps as many whole files as fit maxTokens,
+// appending a truncation marker for the rest. maxTokens <= 0 behaves exactly
+// like Generate — no ranking, no budget, the byte-stable path-sorted default.
+// Returns the rendered text, the KEPT files, and the omitted count.
+func GenerateBudget(repoRoot string, defaults []string, maxTokens int) (text string, kept []FileSymbols, omitted int, err error) {
+	rules, err := tree.ResolveRules(repoRoot, defaults)
+	if err != nil {
+		return "", nil, 0, fmt.Errorf("resolve ignore rules: %w", err)
+	}
+	files, err := ExtractGo(repoRoot, rules)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	if maxTokens <= 0 {
+		return Render(files), files, 0, nil
+	}
+	ranked := Rank(repoRoot, files)
+	kept, omitted = Pack(ranked, maxTokens)
+	return RenderWithOmitted(kept, omitted), kept, omitted, nil
 }
 
 // CountSymbols totals the symbols across all files — the denominator for the
