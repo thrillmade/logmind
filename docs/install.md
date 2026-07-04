@@ -21,11 +21,20 @@ This installs the latest signed + notarized release from
 keyed to your CPU architecture (Apple Silicon, Intel, ARM64 Linux, x86_64
 Linux). Brew handles `$PATH` setup for you.
 
+The fully-qualified name (`thrillmade/tap/logmind`) auto-trusts the cask
+under Homebrew 6.0.0's [tap trust](https://docs.brew.sh/Tap-Trust) rules,
+so no extra `brew trust` step is needed.
+
 To upgrade later:
 
 ```bash
 brew upgrade thrillmade/tap/logmind
 ```
+
+> **Seeing a "tap trust is required" warning about `thrillmot/logmind`?**
+> That's a stale personal tap from before the `thrillmade` org migration.
+> Run `brew untap thrillmot/logmind` — see
+> [Troubleshooting](#troubleshooting).
 
 ## curl one-liner
 
@@ -167,6 +176,48 @@ A full consumer-repo migration recipe lands alongside the v1.0 cutover
 PR (Phase 3) — it will live in `docs/migrate-from-pip.md` once published.
 
 ## Troubleshooting
+
+- **"Homebrew is currently ignoring formulae, casks and commands from
+  these taps because tap trust is required" (mentions
+  `thrillmot/logmind`)**
+  Homebrew 6.0.0 (June 2026) added [tap
+  trust](https://docs.brew.sh/Tap-Trust): non-official third-party taps
+  must be explicitly trusted before their Ruby code runs, and any tap
+  that isn't trusted is ignored with this warning. The offender here is
+  the **stale personal tap** `thrillmot/logmind` — a pre-v0.3.1 install
+  path that predates the org migration to `thrillmade`. It was never the
+  canonical tap and nothing installs from it anymore. Remove it:
+
+  ```bash
+  brew untap thrillmot/logmind
+  ```
+
+  Then install (or reinstall) from the canonical tap:
+
+  ```bash
+  brew install thrillmade/tap/logmind
+  ```
+
+  **You do not need to run `brew trust` for the canonical path.** A
+  fully-qualified install (`brew install thrillmade/tap/logmind`)
+  auto-trusts that cask before installing — that's why the command above
+  Just Works under the new rules, and it's the form we document
+  everywhere. Tap trust is entirely client-side: the tap publisher signs
+  or attests nothing, so there is nothing for `thrillmade/homebrew-tap`
+  to change on its end.
+
+  Only if you prefer to tap first and install by the short name do you
+  need an explicit trust step:
+
+  ```bash
+  brew tap thrillmade/tap
+  brew trust thrillmade/tap   # required for the UNqualified `brew install logmind`
+  brew install logmind
+  ```
+
+  (`export HOMEBREW_NO_REQUIRE_TAP_TRUST=1` disables the check globally,
+  but Homebrew warns it's unsafe and slated for removal — untap the stale
+  tap instead.)
 
 - **"command not found: logmind" after install**
   Your install prefix's `bin/` directory isn't on `$PATH`. The curl
