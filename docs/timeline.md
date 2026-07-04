@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (15 decisions)
+## 2026-07 (16 decisions)
 
-- **2026-07-03** — Add repomap: deterministic Go signature skeleton (token-killer Phase 2, first slice) *(feat/repomap-go-signatures)* — [decisions-branches/feat__repomap-go-signatures.md](decisions-branches/feat__repomap-go-signatures.md)
-- *... 13 more decisions ...*
+- **2026-07-03** — repomap: preserve generic type params + make composite type rendering layout-independent *(feat/repomap-go-signatures)* — [decisions-branches/feat__repomap-go-signatures.md](decisions-branches/feat__repomap-go-signatures.md)
+- *... 14 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)
