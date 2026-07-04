@@ -43,11 +43,22 @@ const quietFlagName = "quiet"
 // quietEnabled reports whether QUIET output discipline is active for this
 // invocation: the persistent --quiet flag (inherited by every subcommand)
 // OR LOGMIND_QUIET in the environment. Opt-in only.
+//
+// Precedence: an EXPLICIT flag on the command line wins over the env var
+// (standard 12-factor precedence — explicit flag > environment). So
+// `--quiet=false` deliberately turns quiet OFF even when LOGMIND_QUIET=1,
+// and `--quiet` turns it ON regardless of the env. The env var only decides
+// when the flag was not passed at all.
 func quietEnabled(cmd *cobra.Command) bool {
 	if cmd != nil {
 		if f := cmd.Flags().Lookup(quietFlagName); f != nil {
-			if b, err := cmd.Flags().GetBool(quietFlagName); err == nil && b {
-				return true
+			if b, err := cmd.Flags().GetBool(quietFlagName); err == nil {
+				if f.Changed {
+					return b
+				}
+				if b {
+					return true
+				}
 			}
 		}
 	}

@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // assertSingleOK checks that out is exactly one line, an `ok ` receipt whose
@@ -46,6 +48,37 @@ func TestQuietEnvSet(t *testing.T) {
 		if got := quietEnvSet(); got != want {
 			t.Errorf("quietEnvSet(%q) = %v; want %v", v, got, want)
 		}
+	}
+}
+
+// TestQuietEnabled_ExplicitFlagBeatsEnv pins the precedence contract: an
+// explicit --quiet / --quiet=false on the command line wins over the
+// LOGMIND_QUIET env var; the env var only decides when the flag is absent.
+func TestQuietEnabled_ExplicitFlagBeatsEnv(t *testing.T) {
+	mk := func(args ...string) *cobra.Command {
+		c := &cobra.Command{Use: "x", RunE: func(*cobra.Command, []string) error { return nil }}
+		c.Flags().Bool(quietFlagName, false, "")
+		c.SetArgs(args)
+		if err := c.Execute(); err != nil {
+			t.Fatalf("parse %v: %v", args, err)
+		}
+		return c
+	}
+
+	t.Setenv(quietEnvVar, "1") // env says quiet ON
+	if quietEnabled(mk("--quiet=false")) {
+		t.Error("--quiet=false must override LOGMIND_QUIET=1 (explicit flag wins)")
+	}
+	if !quietEnabled(mk()) {
+		t.Error("LOGMIND_QUIET=1 with no flag should enable quiet")
+	}
+
+	t.Setenv(quietEnvVar, "0") // env says quiet OFF
+	if !quietEnabled(mk("--quiet")) {
+		t.Error("--quiet should enable quiet even with LOGMIND_QUIET=0")
+	}
+	if quietEnabled(mk()) {
+		t.Error("no flag + env off should be the default (non-quiet)")
 	}
 }
 
@@ -160,6 +193,36 @@ func TestQuiet_Headline_SetSingleOK(t *testing.T) {
 	assertSingleOK(t, out.String(), "headline", "state=set", "docs/decisions-branches/feat__x.md")
 	if strings.Contains(out.String(), "✓") {
 		t.Errorf("quiet leaked the ✓ chatter: %q", out.String())
+	}
+}
+
+// TestQuiet_Headline_SetDefaultReceipt closes the default-mode coverage gap:
+// on the headline SET path, default (non-quiet) stdout must carry the legacy
+// ✓ receipt + the `ok headline: <rel>` trailer, and NOT the quiet k=v form.
+func TestQuiet_Headline_SetDefaultReceipt(t *testing.T) {
+	cwd := t.TempDir()
+	branchDir := filepath.Join(cwd, "docs", "decisions-branches")
+	if err := os.MkdirAll(branchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(branchDir, "feat__x.md")
+	if err := os.WriteFile(target, []byte("## 2026-07-01 10:00 - First\n\n---\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errBuf bytes.Buffer
+	q := newQout(false, &out, &errBuf) // DEFAULT (non-quiet)
+	if err := setHeadlineInFile(cwd, target, "Whole-branch summary", q); err != nil {
+		t.Fatalf("setHeadlineInFile default: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "✓ Branch summary set: Whole-branch summary") {
+		t.Errorf("default mode dropped the ✓ receipt: %q", s)
+	}
+	if !strings.Contains(s, "ok headline: docs/decisions-branches/feat__x.md") {
+		t.Errorf("default mode dropped the legacy `ok headline:` trailer: %q", s)
+	}
+	if strings.Contains(s, "state=set") {
+		t.Errorf("default mode leaked the quiet k=v form: %q", s)
 	}
 }
 
