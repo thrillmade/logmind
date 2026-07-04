@@ -68,6 +68,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newTimelineCmd())
 	root.AddCommand(newFileStructureCmd())
 	root.AddCommand(newContextCmd())
+	root.AddCommand(newRepomapCmd())
 	root.AddCommand(newTreeCmd())
 	root.AddCommand(newRebaseCmd())
 	// B4: agent file templating subcommand tree.

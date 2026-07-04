@@ -45,6 +45,7 @@ logmind
 │   ├── hooks
 │   ├── inserter
 │   ├── linkcheck
+│   ├── repomap
 │   ├── skill
 │   ├── templates
 │   ├── timeline
@@ -75,6 +76,7 @@ logmind
 ├── go.mod
 ├── go.sum
 ├── LICENSE
+├── logmind
 ├── Makefile
 ├── README.md
 ├── SECURITY.md
