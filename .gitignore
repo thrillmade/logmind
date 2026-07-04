@@ -75,6 +75,9 @@ homebrew-tap/
 bin/
 *.test
 *.out
+# `go build ./cmd/logmind` from the repo root drops a ./logmind binary here;
+# ignore it so it's never re-committed (a 14MB one was, and removed in R4).
+/logmind
 
 # Browser-automation MCP scratch (console/page dumps) — local-only.
 .playwright-mcp/

@@ -72,7 +72,7 @@ func extractOne(t *testing.T, src string) []Symbol {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := ExtractGo(dir, rules)
+	files, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatalf("ExtractGo: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestExtractGo_ExcludesTestAndIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := ExtractGo(dir, rules)
+	files, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,11 +185,11 @@ func TestExtractGo_FilesSortedDeterministic(t *testing.T) {
 	writeGo(t, dir, "sub/mid.go", "package s\nfunc M() {}\n")
 	rules, _ := tree.ResolveRules(dir, nil)
 
-	a, err := ExtractGo(dir, rules)
+	a, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := ExtractGo(dir, rules)
+	b, _ := Extract(dir, rules)
 	var pathsA, pathsB []string
 	for _, f := range a {
 		pathsA = append(pathsA, f.Path)
@@ -259,7 +259,7 @@ func TestExtractGo_UnparseableSkipped(t *testing.T) {
 	writeGo(t, dir, "good.go", "package p\nfunc Good() {}\n")
 	writeGo(t, dir, "broken.go", "package p\nfunc Broken( {{{ not go\n")
 	rules, _ := tree.ResolveRules(dir, nil)
-	files, err := ExtractGo(dir, rules)
+	files, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatalf("a parse error must not be fatal: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestExtractGo_UnreadableDirSkipped(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) }) // let TempDir cleanup remove it
 
 	rules, _ := tree.ResolveRules(dir, nil)
-	files, err := ExtractGo(dir, rules)
+	files, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatalf("unreadable dir must not fail the walk: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestExtractGo_SkipsTestdata(t *testing.T) {
 	writeGo(t, dir, "real.go", "package p\nfunc Real() {}\n")
 	writeGo(t, dir, "testdata/fixture.go", "package p\nfunc FixtureSymbol() {}\n")
 	rules, _ := tree.ResolveRules(dir, nil)
-	files, err := ExtractGo(dir, rules)
+	files, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestExtractGo_SkipsSymlinkedGo(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 	rules, _ := tree.ResolveRules(dir, nil)
-	files, err := ExtractGo(dir, rules)
+	files, err := Extract(dir, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestRender_Deterministic(t *testing.T) {
 
 func TestRender_Empty(t *testing.T) {
 	out := Render(nil)
-	if !strings.Contains(out, "No Go symbols found") {
+	if !strings.Contains(out, "No symbols found") {
 		t.Errorf("empty render should note no symbols: %q", out)
 	}
 }

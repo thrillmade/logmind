@@ -27,8 +27,8 @@ func newRepomapCmd() *cobra.Command {
 	var mapTokens int
 	cmd := &cobra.Command{
 		Use:   "repomap",
-		Short: "Print a deterministic Go signature skeleton of the repo (experimental; token-killer Phase 2)",
-		Long: `Print a signature skeleton of the repository — every top-level Go function,
+		Short: "Print a deterministic signature skeleton of the repo (experimental; token-killer Phase 2)",
+		Long: `Print a signature skeleton of the repository — every top-level function,
 method, and type rendered as its signature with the BODY dropped.
 
 Where ` + "`logmind file-structure`" + ` gives an agent the name-tree (the WHERE),
@@ -36,17 +36,16 @@ the repomap gives the API surface it actually reasons over (the WHAT) — at a
 tiny, cache-stable fraction of the source's token cost. Read it to orient
 before opening any file.
 
-Deterministic (files sorted, stdlib pretty-printing, no timestamps / absolute
-paths / filesystem order) so it caches as a stable prefix, exactly like
-` + "`logmind context`" + `.
+Deterministic (files sorted, no timestamps / absolute paths / filesystem order)
+so it caches as a stable prefix, exactly like ` + "`logmind context`" + `.
 
 --map-tokens N ranks files by importance (files the team logged decisions
 about, then intra-repo import fan-in, then path) and keeps as many whole files
 as fit an estimated N-token budget, marking the rest omitted. Without it, every
 file is emitted in path order (unchanged, byte-stable).
 
-Experimental: currently Go-only (uses the go/parser standard library — zero
-external dependency). Other languages land in a later slice.`,
+Languages: Go (via the go/parser standard library — exact) and TypeScript /
+JavaScript (a zero-dependency regex scanner). Other file types are skipped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
