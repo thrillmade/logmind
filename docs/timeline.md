@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (9 decisions)
+## 2026-07 (11 decisions)
 
-- **2026-07-03** — feat: logmind context — one-read agent cold-start payload (timeline + file-structure) *(feat/context-command)* — [decisions-branches/feat__context-command.md](decisions-branches/feat__context-command.md)
-- *... 7 more decisions ...*
+- **2026-07-03** — context: make the missing-doc note strict-XML-safe (self-closing element, review fix) *(feat/token-killer-phase1-context)* — [decisions-branches/feat__token-killer-phase1-context.md](decisions-branches/feat__token-killer-phase1-context.md)
+- *... 9 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)
