@@ -75,7 +75,11 @@ type langExtractor struct {
 // extractors (a skeleton — less precise but deterministic). Additive by
 // construction: a new language is a new entry, no other code changes.
 var extractors = map[string]langExtractor{
-	".go": {extract: extractGoSource, isTest: func(b string) bool { return strings.HasSuffix(b, "_test.go") }},
+	".go":  {extract: extractGoSource, isTest: func(b string) bool { return strings.HasSuffix(b, "_test.go") }},
+	".ts":  {extract: extractTSJS, isTest: isJSTestFile},
+	".tsx": {extract: extractTSJS, isTest: isJSTestFile},
+	".js":  {extract: extractTSJS, isTest: isJSTestFile},
+	".jsx": {extract: extractTSJS, isTest: isJSTestFile},
 }
 
 // Extract walks repoRoot for tracked, non-test source files whose extension has

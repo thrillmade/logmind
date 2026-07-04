@@ -11,3 +11,14 @@
 
 ---
 
+## 2026-07-04 02:08 - repomap: TypeScript/JavaScript extractor (R4) via a zero-dep regex+brace scanner
+
+**Reasoning:** R4 adds the one non-Go language our toolchain touches (clud-bug is TS) plus the biggest ecosystem. Zero-dep stdlib (regexp/strings) — no tree-sitter/CGo, preserving the single static binary. Extracts top-level function/class/interface/type/enum/function-valued-const, depth-0 only (matching the Go path collapsing composite bodies to their bare keyword). A display+mask two-rendering scan neutralizes string and comment interiors so brace-depth and keyword matching stay robust. Deterministic (source order, no maps). Dogfooded on the real clud-bug repo: 52 files, 453 symbols, accurate, zero body-leaks or truncation artifacts.
+
+**Alternatives considered:** tree-sitter/CGo per language (rejected — breaks the single static binary and cross-compile). Python/Rust extractors (dropped this slice — the toolchain does not use them; the extension registry makes any language a one-step add later). Class-member descent (deferred — depth-0-only matches the Go collapsed-composite density).
+
+**Implications:**
+- internal/repomap/extract_tsjs.go + registry entries for .ts/.tsx/.js/.jsx (isJSTestFile skips .test./.spec.). Go path byte-identical. Bundled protocol 0.11.0 SPEC adds the multi-language note plus the deferred --map-tokens note from R3.
+
+---
+
