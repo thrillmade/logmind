@@ -51,7 +51,7 @@ func TestHeadline_FileFlag_TargetsArbitraryBranch(t *testing.T) {
 // markerless branch files, skips already-markered ones, and is idempotent.
 func TestBackfillBranchSummaries(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
-		mustWriteUnder(t, d, ".logmind/config.yml", "timeline:\n  canonical: main-canonical\n")
+		// backfill is unconditional since v2.0 — no timeline config needed.
 		mustWriteUnder(t, d, "docs/decisions-branches/feat__old.md",
 			"← back\n\n## 2026-06-10 09:00 - Old\n\n---\n")
 		mustWriteUnder(t, d, "docs/decisions-branches/feat__has.md",

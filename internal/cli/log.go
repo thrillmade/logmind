@@ -244,7 +244,7 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	}
 
 	// Compose: header (if first-creation branch file) + the §1.6.3 timeline
-	// marker (main-canonical only) + existing + entry. Header is the
+	// marker (unconditional since v2.0) + existing + entry. Header is the
 	// templates.DecisionsBranchHeader() POSIX-terminated single line +
 	// trailing blank line.
 	var body strings.Builder

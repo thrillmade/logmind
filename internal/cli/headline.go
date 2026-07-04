@@ -108,8 +108,8 @@ func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr i
 // setHeadlineInFile sets/refreshes the §1.6.3 marker headline in the given
 // branch file: it rewrites the visible line of an existing marker (keeping the
 // stable <date>-<slug> key), or inserts a marker if the file has none. Shared
-// by `logmind headline` (current branch + --file). main-canonical gating is
-// the caller's responsibility.
+// by `logmind headline` (current branch + --file). The caller ensures the
+// target is a branch detail file (markers belong only there).
 func setHeadlineInFile(cwd, target, summary string, q qout) error {
 	data, err := os.ReadFile(target)
 	if err != nil {
