@@ -349,11 +349,13 @@ func TestCollectStatus_SummariesNeeded(t *testing.T) {
 	}
 }
 
-// TestCollectStatus_SummariesNeeded_DefaultModeEmpty: in the default
-// branch-divergent mode the check is OFF entirely (doctor output unchanged).
-func TestCollectStatus_SummariesNeeded_DefaultModeEmpty(t *testing.T) {
+// TestCollectStatus_SummariesNeeded_BranchDivergentEmpty: in the
+// branch-divergent opt-out the check is OFF entirely (doctor output
+// unchanged). Post-v1.0 flip this must pin branch-divergent explicitly,
+// since main-canonical (which runs the check) is now the default.
+func TestCollectStatus_SummariesNeeded_BranchDivergentEmpty(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, ".logmind", "config.yml"), "git:\n  auto_commit: true\n")
+	mustWrite(t, filepath.Join(dir, ".logmind", "config.yml"), "timeline:\n  canonical: branch-divergent\n")
 	mustWrite(t, filepath.Join(dir, "docs", "decisions-branches", "feat__x.md"),
 		"← back\n\n## 2026-06-10 09:00 - X\n\n---\n")
 	if r := CollectStatus(dir, true); len(r.SummariesNeeded) != 0 {

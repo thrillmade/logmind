@@ -16,10 +16,30 @@ func writeTimelineCfg(t *testing.T, content string) string {
 	return path
 }
 
-func TestTimelineCanonical_DefaultIsBranchDivergent(t *testing.T) {
-	// An absent `timeline` key must yield the DefaultConfig default, with
-	// main-canonical OFF.
+func TestTimelineCanonical_DefaultIsMainCanonical(t *testing.T) {
+	// The v1.0 flip: an absent `timeline` key must yield the DefaultConfig
+	// default, with main-canonical ON. branch-divergent is now a supported
+	// but DEPRECATED opt-out (see TestTimelineCanonical_OptOutBranchDivergent).
 	cfg, err := LoadPath(writeTimelineCfg(t, "git:\n  auto_commit: true\n"))
+	if err != nil {
+		t.Fatalf("LoadPath: %v", err)
+	}
+	if cfg.Timeline.Canonical != "main-canonical" {
+		t.Errorf("Canonical = %q; want main-canonical", cfg.Timeline.Canonical)
+	}
+	if !cfg.Timeline.IsMainCanonical() {
+		t.Errorf("IsMainCanonical() = false; want true on the default")
+	}
+	// A wholly missing file degrades to the same default.
+	cfg2, _ := LoadPath(filepath.Join(t.TempDir(), "does-not-exist.yml"))
+	if !cfg2.Timeline.IsMainCanonical() {
+		t.Errorf("missing-file default must be main-canonical (the v1.0 default)")
+	}
+}
+
+func TestTimelineCanonical_OptOutBranchDivergent(t *testing.T) {
+	// branch-divergent survives the flip as an explicit, supported opt-out.
+	cfg, err := LoadPath(writeTimelineCfg(t, "timeline:\n  canonical: branch-divergent\n"))
 	if err != nil {
 		t.Fatalf("LoadPath: %v", err)
 	}
@@ -27,12 +47,7 @@ func TestTimelineCanonical_DefaultIsBranchDivergent(t *testing.T) {
 		t.Errorf("Canonical = %q; want branch-divergent", cfg.Timeline.Canonical)
 	}
 	if cfg.Timeline.IsMainCanonical() {
-		t.Errorf("IsMainCanonical() = true; want false on the default")
-	}
-	// A wholly missing file degrades to the same default.
-	cfg2, _ := LoadPath(filepath.Join(t.TempDir(), "does-not-exist.yml"))
-	if cfg2.Timeline.IsMainCanonical() {
-		t.Errorf("missing-file default must be branch-divergent (main-canonical OFF)")
+		t.Errorf("IsMainCanonical() = true; want false when opted out to branch-divergent")
 	}
 }
 

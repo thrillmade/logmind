@@ -12,9 +12,16 @@ import (
 
 // makeDocs lays out a minimal docs/ tree with a few decision entries.
 // Returns the cwd path the runTimeline subroutine should use.
+//
+// The default timeline mode flipped to main-canonical in v1.0, but these
+// fixtures assert the branch-divergent byte floor (the timeline_stdout_*
+// goldens) — so makeDocs pins the branch-divergent opt-out. Tests that want
+// main-canonical (e.g. TestTimelineMainCanonicalDispatch) overwrite this
+// config after calling makeDocs.
 func makeDocs(t *testing.T, decisionsBody, archiveBody string, branchFiles map[string]string) string {
 	t.Helper()
 	cwd := t.TempDir()
+	pinBranchDivergent(t, cwd)
 	docs := filepath.Join(cwd, "docs")
 	if err := os.MkdirAll(filepath.Join(docs, "decisions-branches"), 0o755); err != nil {
 		t.Fatal(err)

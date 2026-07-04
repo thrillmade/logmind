@@ -70,18 +70,20 @@ func TestBackfillBranchSummaries(t *testing.T) {
 	}
 }
 
-// TestBackfillBranchSummaries_DefaultModeNoop: branch-divergent mode never
-// backfills (the feature is main-canonical-only → default repos byte-stable).
-func TestBackfillBranchSummaries_DefaultModeNoop(t *testing.T) {
+// TestBackfillBranchSummaries_BranchDivergentNoop: the branch-divergent
+// opt-out never backfills (the feature is main-canonical-only → opted-out
+// repos stay byte-stable). Post-v1.0 flip this must pin branch-divergent
+// explicitly, since main-canonical (which DOES backfill) is now the default.
+func TestBackfillBranchSummaries_BranchDivergentNoop(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
-		mustWriteUnder(t, d, ".logmind/config.yml", "git:\n  auto_commit: true\n")
+		mustWriteUnder(t, d, ".logmind/config.yml", "timeline:\n  canonical: branch-divergent\n")
 		mustWriteUnder(t, d, "docs/decisions-branches/feat__old.md",
 			"← back\n\n## 2026-06-10 09:00 - Old\n\n---\n")
 		if n := backfillBranchSummaries(d, io.Discard); n != 0 {
-			t.Errorf("default-mode backfill = %d; want 0", n)
+			t.Errorf("branch-divergent backfill = %d; want 0", n)
 		}
 	})
 	if strings.Contains(readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__old.md")), "logmind-entry-start") {
-		t.Errorf("default mode wrote a marker; want none")
+		t.Errorf("branch-divergent mode wrote a marker; want none")
 	}
 }

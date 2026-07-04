@@ -152,7 +152,8 @@ func TestQuiet_FileStructure_DefaultUnchanged(t *testing.T) {
 }
 
 func TestQuiet_Headline_SkippedSingleOK(t *testing.T) {
-	cwd := t.TempDir() // no main-canonical config
+	cwd := t.TempDir()
+	pinBranchDivergent(t, cwd) // opt out of the main-canonical default → headline skips
 	var out, errBuf bytes.Buffer
 	if err := runHeadline(cwd, "A summary", "", true, &out, &errBuf); err != nil {
 		t.Fatalf("runHeadline quiet: %v", err)
@@ -162,6 +163,7 @@ func TestQuiet_Headline_SkippedSingleOK(t *testing.T) {
 
 func TestQuiet_Headline_DefaultUnchanged(t *testing.T) {
 	cwd := t.TempDir()
+	pinBranchDivergent(t, cwd) // opt out of the main-canonical default → guidance line
 	var out, errBuf bytes.Buffer
 	if err := runHeadline(cwd, "A summary", "", false, &out, &errBuf); err != nil {
 		t.Fatalf("runHeadline default: %v", err)

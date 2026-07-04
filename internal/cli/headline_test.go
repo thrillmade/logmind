@@ -103,7 +103,8 @@ func TestHeadline_NewlineSummaryDoesNotInjectMarker(t *testing.T) {
 func TestHeadline_NoopWhenNotMainCanonical(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
-		scaffoldDocs(t) // default config → branch-divergent
+		scaffoldDocs(t)
+		pinBranchDivergent(t, d) // explicit opt-out: headline is main-canonical-only
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() { logOnce(t, "decision") })
 		out := runHeadlineCmd(t, "some summary")

@@ -179,12 +179,13 @@ func DefaultConfig() Config {
 			},
 			RootLabel: "",
 		},
-		// Timeline: default "branch-divergent" reproduces today's output
-		// byte-for-byte; the main-canonical opt-in + the eventual default
-		// flip ride later releases. NOT added to DefaultMap (below) — that
-		// would change `logmind config list` bytes and break Python parity.
+		// Timeline: default "main-canonical" (the v1.0 flip). The conflict-free
+		// source-derived union (§1.6.4) is now the default assembly model;
+		// "branch-divergent" (the v0.1.x byte floor) remains a supported opt-out
+		// but is DEPRECATED. Version-gated: repos on pre-1.0 logmind are
+		// undisturbed until they upgrade.
 		Timeline: TimelineConfig{
-			Canonical: "branch-divergent",
+			Canonical: "main-canonical",
 		},
 		// Context.Repomap default false → `logmind context` emits today's
 		// two-doc payload byte-for-byte. NOT added to DefaultMap (below); the

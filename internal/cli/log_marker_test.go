@@ -8,14 +8,37 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
 // optIntoMainCanonical overwrites the scaffolded config to enable the
 // main-canonical timeline. Call after scaffoldDocs, before the first log.
+//
+// NOTE post-v1.0-flip: main-canonical is now the DEFAULT, so this call is
+// belt-and-suspenders on a scaffolded repo — it makes the mode explicit and
+// keeps these tests decoupled from any future default change.
 func optIntoMainCanonical(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, ".logmind", "config.yml"),
 		[]byte("timeline:\n  canonical: main-canonical\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
+// pinBranchDivergent writes the DEPRECATED-but-supported branch-divergent
+// opt-out into dir's config. Symmetric to optIntoMainCanonical. Post-v1.0
+// flip, branch-divergent-specific behavior (no entry-block marker, doctor
+// no-ops, the v0.1.x byte floor) must EXPLICITLY opt out of the new default.
+// Creates .logmind/ if absent so it works on a bare TempDir or after
+// scaffoldDocs (overriding the scaffolded default).
+func pinBranchDivergent(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".logmind"), 0o755); err != nil {
+		t.Fatalf("mkdir .logmind: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".logmind", "config.yml"),
+		[]byte("timeline:\n  canonical: branch-divergent\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 }
@@ -76,12 +99,16 @@ func TestLog_MainCanonical_WritesAndPreservesMarker(t *testing.T) {
 	}
 }
 
-// TestLog_DefaultMode_NoMarker: with no opt-in, branch files are byte-stable
-// — NO entry-block marker is written (the parity guard at the log layer).
-func TestLog_DefaultMode_NoMarker(t *testing.T) {
+// TestLog_BranchDivergent_NoMarker: in the branch-divergent opt-out, branch
+// files are byte-stable — NO entry-block marker is written (the v0.1.x parity
+// guard at the log layer). Post-v1.0 flip this must explicitly pin
+// branch-divergent, since main-canonical (which DOES write a marker) is now
+// the default; see TestLog_DefaultIsMainCanonical_WritesMarker.
+func TestLog_BranchDivergent_NoMarker(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
-		scaffoldDocs(t) // default config — branch-divergent
+		scaffoldDocs(t)
+		pinBranchDivergent(t, d) // explicit opt-out of the new default
 		cmd := exec.Command("git", "checkout", "-b", "feat/plain")
 		cmd.Dir = d
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -91,7 +118,45 @@ func TestLog_DefaultMode_NoMarker(t *testing.T) {
 	})
 	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__plain.md"))
 	if strings.Contains(s, "logmind-entry-start") {
-		t.Errorf("default mode wrote a marker; want none\n%s", s)
+		t.Errorf("branch-divergent mode wrote a marker; want none\n%s", s)
+	}
+}
+
+// TestLog_DefaultIsMainCanonical_WritesMarker is the v1.0-flip lock: with a
+// DEFAULT scaffolded config (config.yml.template has NO `timeline` key, so the
+// main-canonical default governs), the first log on a feature branch WRITES a
+// §1.6.3 entry-block marker and `logmind timeline` renders the main-canonical
+// (entry-block) format. Proves the flip is real end-to-end — no explicit opt-in.
+func TestLog_DefaultIsMainCanonical_WritesMarker(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t) // default config — main-canonical (the v1.0 default)
+		cmd := exec.Command("git", "checkout", "-b", "feat/default")
+		cmd.Dir = d
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("checkout: %v\n%s", err, out)
+		}
+		withFakeTTY(t, false, func() { logOnce(t, "Default-mode decision") })
+	})
+	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__default.md"))
+	if n := strings.Count(s, "<!-- logmind-entry-start: "); n != 1 {
+		t.Fatalf("default (main-canonical) mode marker count = %d; want 1\n%s", n, s)
+	}
+
+	// The default config must resolve to main-canonical timeline mode, and a
+	// --write render must emit the entry-block format (the same generator the
+	// --check path uses — no false-stale wedge).
+	if !canonicalEnabled(dir) {
+		t.Errorf("default config did not resolve to main-canonical timeline mode")
+	}
+	target := filepath.Join(dir, "docs", "timeline.md")
+	var stdout, stderr bytes.Buffer
+	if err := runTimeline(dir, target, false, false, false, &stdout, &stderr); err != nil {
+		t.Fatalf("runTimeline: %v (%s)", err, stderr.String())
+	}
+	got := readFileStr(t, target)
+	if !timeline.HasEntryBlocks(got) {
+		t.Errorf("default (main-canonical) timeline did not render entry-block format:\n%s", got)
 	}
 }
 
