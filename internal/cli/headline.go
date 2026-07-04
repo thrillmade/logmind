@@ -37,8 +37,8 @@ decision file and copied verbatim into docs/timeline.md. The <date>-<slug>
 key stays stable — only the sentence changes, so you can refine it as the
 branch grows.
 
-Requires timeline.canonical: main-canonical (a no-op otherwise, and on the
-default branch). Set LOGMIND_PR to append a (#NN) suffix to the visible line.
+A no-op on the default branch (which logs to docs/decisions.md directly).
+Set LOGMIND_PR to append a (#NN) suffix to the visible line.
 
 Example:
     logmind headline "Added JWT session auth with refresh-token rotation"`,
@@ -64,14 +64,6 @@ func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr i
 		return ErrSilent
 	}
 	cfg, _ := config.Load(cwd)
-	if !cfg.Timeline.IsMainCanonical() {
-		q.chat("Branch summaries are a main-canonical-timeline feature.\n")
-		q.chat("Enable it with `timeline.canonical: main-canonical` in .logmind/config.yml.\n")
-		if quiet {
-			q.ok("headline state=skipped reason=not-main-canonical")
-		}
-		return nil
-	}
 
 	var target string
 	if fileOverride != "" {

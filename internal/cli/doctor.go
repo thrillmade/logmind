@@ -29,7 +29,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/doctor"
 	"github.com/thrillmade/logmind/internal/timeline"
@@ -46,9 +45,9 @@ func newDoctorCmd() *cobra.Command {
 			"on drift so it's CI-pluggable.\n\n" +
 			"With --fix, re-installs the drifted on-disk artifacts (workflows,\n" +
 			"AGENTS.md block, .gitattributes, merge-driver config, git hooks) in\n" +
-			"one idempotent pass, and (main-canonical only) backfills a §1.6.3\n" +
-			"timeline marker into any markerless branch detail file. --fix never\n" +
-			"rewrites decision text, foreign (hand-written) hooks, or your PATH.",
+			"one idempotent pass, and backfills a §1.6.3 timeline marker into any\n" +
+			"markerless branch detail file. --fix never rewrites decision text,\n" +
+			"foreign (hand-written) hooks, or your PATH.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			quiet := quietEnabled(cmd)
@@ -187,15 +186,12 @@ func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled
 
 // backfillBranchSummaries inserts the deterministic §1.6.3 marker (first-
 // decision-title headline) into every markerless branch detail file — the
-// structural half of the branch-summary migration. Main-canonical only;
-// returns the count fixed. Best-effort: a per-file read/write error skips that
-// file. Reuses the cli-local marker helpers (buildTimelineMarker /
-// insertMarkerAfterHeader), so no export is needed.
+// structural half of the branch-summary migration. Runs unconditionally
+// (main-canonical is the sole timeline as of v2.0.0); returns the count
+// fixed. Best-effort: a per-file read/write error skips that file. Reuses
+// the cli-local marker helpers (buildTimelineMarker / insertMarkerAfterHeader),
+// so no export is needed.
 func backfillBranchSummaries(cwd string, stderr io.Writer) int {
-	cfg, _ := config.Load(cwd)
-	if !cfg.Timeline.IsMainCanonical() {
-		return 0
-	}
 	files, err := decisions.ListBranchFiles(filepath.Join(cwd, "docs", "decisions-branches"))
 	if err != nil {
 		return 0

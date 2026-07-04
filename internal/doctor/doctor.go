@@ -55,7 +55,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
@@ -191,17 +190,13 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 	}
 }
 
-// collectSummariesNeeded returns — IN MAIN-CANONICAL MODE ONLY — the advisory
-// list of branch detail files that lack a §1.6.3 timeline marker, or whose
-// headline is still the deterministic placeholder (== the first decision's
-// title, i.e. nobody wrote a real one-sentence branch summary). It is empty in
-// the default branch-divergent mode, so doctor's output is unchanged there.
-// Purely informational — it never feeds Overall (a graceful nudge, not drift).
+// collectSummariesNeeded returns the advisory list of branch detail files
+// that lack a §1.6.3 timeline marker, or whose headline is still the
+// deterministic placeholder (== the first decision's title, i.e. nobody wrote
+// a real one-sentence branch summary). Runs unconditionally (main-canonical is
+// the sole timeline as of v2.0.0). Purely informational — it never feeds
+// Overall (a graceful nudge, not drift).
 func collectSummariesNeeded(projectRoot string) []string {
-	cfg, _ := config.Load(projectRoot)
-	if !cfg.Timeline.IsMainCanonical() {
-		return nil
-	}
 	files, err := decisions.ListBranchFiles(filepath.Join(projectRoot, "docs", "decisions-branches"))
 	if err != nil {
 		return nil

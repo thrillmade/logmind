@@ -49,7 +49,6 @@ func TestHeadline_SetsSummaryKeepsKey(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		checkoutBranch(t, d, "feat/login")
 		withFakeTTY(t, false, func() { logOnce(t, "Add JWT auth") })
 		runHeadlineCmd(t, "Added the full JWT session lifecycle")
@@ -71,7 +70,6 @@ func TestHeadline_NewlineSummaryDoesNotInjectMarker(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() { logOnce(t, "Real decision") })
 		// A multi-line summary that tries to inject a forged future-dated marker.
@@ -100,24 +98,10 @@ func TestHeadline_NewlineSummaryDoesNotInjectMarker(t *testing.T) {
 	}
 }
 
-func TestHeadline_NoopWhenNotMainCanonical(t *testing.T) {
-	withTempCwd(t, func(d string) {
-		initLogTestGitRepo(t, d)
-		scaffoldDocs(t) // default config → branch-divergent
-		checkoutBranch(t, d, "feat/x")
-		withFakeTTY(t, false, func() { logOnce(t, "decision") })
-		out := runHeadlineCmd(t, "some summary")
-		if !strings.Contains(out, "main-canonical") {
-			t.Errorf("expected a main-canonical opt-in notice; got:\n%s", out)
-		}
-	})
-}
-
 func TestHeadline_EmptyRejected(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() { logOnce(t, "decision") })
 		root := NewRootCmd()
@@ -136,10 +120,10 @@ func TestHeadline_InsertsMarkerOnMarkerlessFile(t *testing.T) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
 		checkoutBranch(t, d, "feat/legacy")
-		// Log in DEFAULT mode → a markerless branch file.
-		withFakeTTY(t, false, func() { logOnce(t, "Pre-opt-in decision") })
-		// Opt in, then set the summary → marker must be inserted.
-		optIntoMainCanonical(t, d)
+		// A LEGACY markerless branch file (predating entry-block markers):
+		// header + a decision, no marker. Setting the summary must insert one.
+		mustWriteUnder(t, d, "docs/decisions-branches/feat__legacy.md",
+			"← back to [docs/timeline.md](../timeline.md)\n\n## 2026-06-10 09:00 - Pre decision\n\n---\n\n")
 		runHeadlineCmd(t, "The branch summary")
 	})
 	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__legacy.md"))
@@ -155,7 +139,6 @@ func TestLog_HeadlineFlag_SetsAndUpdatesKeepingKey(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		checkoutBranch(t, d, "feat/login")
 		withFakeTTY(t, false, func() {
 			logOnceH(t, "Add JWT auth", "JWT auth added")
@@ -180,7 +163,6 @@ func TestLog_NudgeAdvisoryOnNonTTY(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() {
 			root := NewRootCmd()
@@ -210,7 +192,6 @@ func TestLog_NudgeSkippedWithHeadlineFlag(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() {
 			root := NewRootCmd()
@@ -233,7 +214,6 @@ func TestLog_NudgeInteractiveEditOnTTY(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, true, func() { // pretend stdin is a TTY
 			root := NewRootCmd()

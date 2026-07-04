@@ -50,7 +50,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -101,9 +100,9 @@ func setupLogmindRepo(t *testing.T) string {
 	runGit(t, repo, "commit", "-qm", "initial")
 
 	// logmind init scaffolds docs/, .gitattributes, config, hooks,
-	// merge-driver git config. --no-skill-install skips the npx
+	// merge-driver git config. `--skill-install no` skips the npx
 	// skills.sh install which would fail without network in CI.
-	cmd := exec.Command(logmindOnPath, "init", "--no-skill-install")
+	cmd := exec.Command(logmindOnPath, "init", "--skill-install", "no")
 	cmd.Dir = repo
 	cmd.Env = testEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -257,45 +256,24 @@ func assertDecisionBranchesPresent(t *testing.T, repo string, branches []string,
 	}
 }
 
-// timelineMonthCountRE matches the `## YYYY-MM (N decisions)` header
-// that brief mode renders when a month has 3+ entries. The whole
-// regex is compiled with a placeholder for the count so the assertion
-// helper can format it inline.
-//
-// Singular ("decision") happens when the elided count is exactly 1
-// — see internal/timeline/timeline.go renderMonthBrief; the helper
-// below handles that case too.
-var timelineMonthCountRE = regexp.MustCompile(`## \d{4}-\d{2} \((\d+) decisions?\)`)
-
-// assertTimelineHasDecisionCount asserts that the timeline contains
-// a month header whose `(N decisions)` count equals expectedCount.
-// Brief mode collapses middle entries but renders an accurate total
-// in the header — the count is the durable signal that the regen
-// saw ALL decision sources.
-//
-// Mirrors Python `_assert_timeline_has_decision_count`.
+// assertTimelineHasDecisionCount asserts that the main-canonical timeline
+// contains exactly expectedCount rows. The v2.0.0 timeline is the §1.6.4
+// entry-block union: one row per source (each direct-to-main / archive
+// decision, plus one headline row per branch detail page), wrapped in a
+// `<!-- logmind-entry-start: … -->` marker. Counting those markers is the
+// durable signal that the regen saw ALL decision sources — the same guarantee
+// the old brief-mode `(N decisions)` header count gave.
 func assertTimelineHasDecisionCount(t *testing.T, repo string, expectedCount int, label string) {
 	t.Helper()
 	timeline, err := os.ReadFile(filepath.Join(repo, "docs", "timeline.md"))
 	if err != nil {
 		t.Fatalf("%s: read docs/timeline.md: %v", label, err)
 	}
-	matches := timelineMonthCountRE.FindAllStringSubmatch(string(timeline), -1)
-	// Months with < 3 entries render no count — fall through to the
-	// "no count rendered" check to mirror Python's short-month logic.
-	for _, m := range matches {
-		if m[1] == fmt.Sprintf("%d", expectedCount) {
-			return
-		}
+	got := strings.Count(string(timeline), "<!-- logmind-entry-start: ")
+	if got != expectedCount {
+		t.Fatalf("%s: expected %d timeline rows (entry-block markers), got %d:\n%s",
+			label, expectedCount, got, timeline)
 	}
-	if len(matches) == 0 && expectedCount < 3 {
-		// Short month uses no-count rendering; caller separately
-		// asserts on the per-branch decision files via
-		// assertDecisionBranchesPresent.
-		return
-	}
-	t.Fatalf("%s: expected timeline to show `(%d decisions)` count, got:\n%s",
-		label, expectedCount, timeline)
 }
 
 // TestMergeDriverSelfHealsTwoConcurrentBranches — THE keystone test

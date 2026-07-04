@@ -348,15 +348,3 @@ func TestCollectStatus_SummariesNeeded(t *testing.T) {
 		t.Errorf("enriched branch must NOT be listed: %v", r.SummariesNeeded)
 	}
 }
-
-// TestCollectStatus_SummariesNeeded_DefaultModeEmpty: in the default
-// branch-divergent mode the check is OFF entirely (doctor output unchanged).
-func TestCollectStatus_SummariesNeeded_DefaultModeEmpty(t *testing.T) {
-	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, ".logmind", "config.yml"), "git:\n  auto_commit: true\n")
-	mustWrite(t, filepath.Join(dir, "docs", "decisions-branches", "feat__x.md"),
-		"← back\n\n## 2026-06-10 09:00 - X\n\n---\n")
-	if r := CollectStatus(dir, true); len(r.SummariesNeeded) != 0 {
-		t.Errorf("branch-divergent SummariesNeeded = %v; want empty (main-canonical-only feature)", r.SummariesNeeded)
-	}
-}

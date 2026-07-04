@@ -33,9 +33,9 @@ func TestGenerateMainCanonical_UnionNewestFirst(t *testing.T) {
 	writeDoc(t, docs, "decisions.md", "# Decisions\n\n## 2026-06-20 09:00 - Hotfix C\nbody\n")
 
 	var stderr bytes.Buffer
-	out, err := GenerateMainCanonical(docs, &stderr)
+	out, err := Generate(docs, &stderr)
 	if err != nil {
-		t.Fatalf("GenerateMainCanonical: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 	if !HasEntryBlocks(out) {
 		t.Fatalf("output is not entry-block format:\n%s", out)
@@ -65,7 +65,7 @@ func TestGenerateMainCanonical_DeterministicAcrossCheckoutPaths(t *testing.T) {
 		writeDoc(t, docs, "decisions-branches/feat__alpha.md", block("2026-06-29-alpha", "- a"))
 		writeDoc(t, docs, "decisions.md", "# D\n\n## 2026-06-15 09:00 - Mid\nx\n")
 		var sb bytes.Buffer
-		out, err := GenerateMainCanonical(docs, &sb)
+		out, err := Generate(docs, &sb)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,7 +98,7 @@ func TestGenerateMainCanonical_BackfillIsTimelineNeutral(t *testing.T) {
 				"← back\n\n## 2026-06-10 15:00 - Apple branch work\nbody\n")
 		}
 		var sb bytes.Buffer
-		out, err := GenerateMainCanonical(docs, &sb)
+		out, err := Generate(docs, &sb)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestGenerateMainCanonical_LegacyMarkerlessFallback(t *testing.T) {
 	writeDoc(t, docs, "decisions-branches/feat__legacy.md",
 		"# legacy\n\n## 2026-06-10 12:00 - Legacy work\nbody\n## 2026-06-11 13:00 - More work\nbody\n")
 	var stderr bytes.Buffer
-	out, err := GenerateMainCanonical(docs, &stderr)
+	out, err := Generate(docs, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestGenerateMainCanonical_CollisionGetsStableSuffix(t *testing.T) {
 	writeDoc(t, docs, "decisions-branches/feat__a.md", block("2026-06-29-dup", "- body from A"))
 	writeDoc(t, docs, "decisions-branches/feat__b.md", block("2026-06-29-dup", "- body from B"))
 	var stderr bytes.Buffer
-	out, _ := GenerateMainCanonical(docs, &stderr)
+	out, _ := Generate(docs, &stderr)
 	blocks := extractEntryBlocks(out, &stderr)
 	if len(blocks) != 2 {
 		t.Fatalf("got %d; want 2 (collision → suffix)\n%s", len(blocks), out)
@@ -165,7 +165,7 @@ func TestGenerateMainCanonical_CrossGroupKeysStayUnique(t *testing.T) {
 	writeDoc(t, docs, "decisions-branches/feat__b.md", block("2026-06-29-dup", "- body B"))
 	writeDoc(t, docs, "decisions-branches/feat__c.md", block("2026-06-29-dup-2", "- literal dup-2"))
 	var stderr bytes.Buffer
-	out, _ := GenerateMainCanonical(docs, &stderr)
+	out, _ := Generate(docs, &stderr)
 	blocks := extractEntryBlocks(out, &stderr)
 	if len(blocks) != 3 {
 		t.Fatalf("got %d blocks; want 3\n%s", len(blocks), out)
@@ -187,7 +187,7 @@ func TestGenerateMainCanonical_SameEntryTwoSourcesCollapses(t *testing.T) {
 	writeDoc(t, docs, "decisions-branches/feat__a.md", block("2026-06-29-dup", "- identical body"))
 	writeDoc(t, docs, "decisions-branches/feat__b.md", block("2026-06-29-dup", "- identical body"))
 	var stderr bytes.Buffer
-	out, _ := GenerateMainCanonical(docs, &stderr)
+	out, _ := Generate(docs, &stderr)
 	blocks := extractEntryBlocks(out, &stderr)
 	if len(blocks) != 1 {
 		t.Errorf("got %d; want 1 (identical body collapses to one)\n%s", len(blocks), out)
@@ -200,30 +200,11 @@ func TestGenerateMainCanonical_EmptyDocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	out, err := GenerateMainCanonical(docs, &stderr)
+	out, err := Generate(docs, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out != header+emptyBody {
 		t.Errorf("empty docs = %q; want header+emptyBody", out)
-	}
-}
-
-func TestGenerateFor_DefaultIsByteIdenticalToGenerate(t *testing.T) {
-	// The byte-parity guard for the dispatch: with canonical=false, GenerateFor
-	// MUST produce exactly what Generate produces (the v0.6.14 path).
-	docs := filepath.Join(t.TempDir(), "docs")
-	writeDoc(t, docs, "decisions.md", "# D\n\n## 2026-06-20 09:00 - X\nbody\n")
-	var s1, s2 bytes.Buffer
-	viaFor, err := GenerateFor(docs, true, false, &s1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	viaGenerate, err := Generate(docs, true, &s2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if viaFor != viaGenerate {
-		t.Errorf("GenerateFor(canonical=false) diverged from Generate:\n--- For ---\n%s\n--- Generate ---\n%s", viaFor, viaGenerate)
 	}
 }

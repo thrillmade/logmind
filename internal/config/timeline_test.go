@@ -16,44 +16,19 @@ func writeTimelineCfg(t *testing.T, content string) string {
 	return path
 }
 
-func TestTimelineCanonical_DefaultIsBranchDivergent(t *testing.T) {
-	// An absent `timeline` key must yield the DefaultConfig default, with
-	// main-canonical OFF.
-	cfg, err := LoadPath(writeTimelineCfg(t, "git:\n  auto_commit: true\n"))
-	if err != nil {
-		t.Fatalf("LoadPath: %v", err)
-	}
-	if cfg.Timeline.Canonical != "branch-divergent" {
-		t.Errorf("Canonical = %q; want branch-divergent", cfg.Timeline.Canonical)
-	}
-	if cfg.Timeline.IsMainCanonical() {
-		t.Errorf("IsMainCanonical() = true; want false on the default")
-	}
-	// A wholly missing file degrades to the same default.
-	cfg2, _ := LoadPath(filepath.Join(t.TempDir(), "does-not-exist.yml"))
-	if cfg2.Timeline.IsMainCanonical() {
-		t.Errorf("missing-file default must be branch-divergent (main-canonical OFF)")
-	}
-}
-
-func TestTimelineCanonical_OptIn(t *testing.T) {
-	cfg, err := LoadPath(writeTimelineCfg(t, "timeline:\n  canonical: main-canonical\n"))
-	if err != nil {
-		t.Fatalf("LoadPath: %v", err)
-	}
-	if !cfg.Timeline.IsMainCanonical() {
-		t.Errorf("IsMainCanonical() = false; want true for `canonical: main-canonical`")
-	}
-}
-
-func TestTimelineCanonical_FailSafeOnUnknownValue(t *testing.T) {
-	// A typo / case-variant / unrelated value must NOT enable main-canonical
-	// — only the exact string qualifies. This is the guard against a silent
-	// output flip from a fat-fingered config.
-	for _, v := range []string{"maincanonical", "main_canonical", "MAIN-CANONICAL", "main-canonical ", "branch-divergent", "", "true"} {
-		cfg, _ := LoadPath(writeTimelineCfg(t, "timeline:\n  canonical: \""+v+"\"\n"))
-		if cfg.Timeline.IsMainCanonical() {
-			t.Errorf("canonical=%q enabled main-canonical; want fail-safe OFF", v)
+// TestTimelineCanonical_UnknownKeyIgnored: the `timeline.canonical` config key
+// was REMOVED in v2.0.0 (main-canonical is now the sole, unconditional
+// timeline). A repo whose .logmind/config.yml still carries it MUST load
+// cleanly — yaml.v3 struct unmarshal drops the now-unknown key rather than
+// erroring, so no code path fails on a legacy config.
+func TestTimelineCanonical_UnknownKeyIgnored(t *testing.T) {
+	for _, body := range []string{
+		"timeline:\n  canonical: main-canonical\n",
+		"timeline:\n  canonical: branch-divergent\n",
+		"timeline:\n  canonical: whatever\n",
+	} {
+		if _, err := LoadPath(writeTimelineCfg(t, body)); err != nil {
+			t.Errorf("LoadPath with legacy %q errored; want the unknown key ignored: %v", body, err)
 		}
 	}
 }
@@ -81,9 +56,6 @@ func TestDefaultMap_OmitsNewKeys_PreservesConfigListByteParity(t *testing.T) {
 	// serialized-output change the plan forbids. Surfacing them in
 	// config-list rides the coordinated v1.0 bump, not this slice.
 	m := DefaultMap()
-	if _, ok := m.Get("timeline"); ok {
-		t.Errorf("DefaultMap contains `timeline` — breaks `config list` byte-parity")
-	}
 	if _, ok := m.Get("context"); ok {
 		t.Errorf("DefaultMap contains `context` — breaks `config list` byte-parity")
 	}
