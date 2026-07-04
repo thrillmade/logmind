@@ -13,11 +13,11 @@
 //
 // Go extraction uses the standard library (go/parser + go/printer) — accurate,
 // zero external dependency, and no CGo, so logmind stays a single static
-// binary. Other languages get regex-based extraction in a later slice; this
-// slice ships the Go path (logmind's own dogfood case is exact).
+// binary. TypeScript/JavaScript uses a zero-dep regex+brace scanner (see
+// extract_tsjs.go). A new language is a new entry in the `extractors` registry.
 //
-// Known limitations, deferred to later slices (all intentional for this slice):
-//   - Go only. Non-Go files are not yet mapped.
+// Known limitations (all intentional for this slice):
+//   - Languages: Go + TS/JS. Other extensions are skipped (a registry add away).
 //   - Only funcs, methods, and types. Exported const/var (including sentinel
 //     errors) are omitted; a later slice may add ranked, budget-bounded ones.
 //   - Composite type bodies collapse to the bare keyword (`type T struct`), so a
@@ -314,7 +314,7 @@ func fileBlock(f FileSymbols) string {
 // header, its signatures indented beneath. Byte-stable by construction.
 func Render(files []FileSymbols) string {
 	if len(files) == 0 {
-		return "# Repomap\n\nNo Go symbols found.\n"
+		return "# Repomap\n\nNo symbols found.\n"
 	}
 	var b strings.Builder
 	b.WriteString(repomapHeader)

@@ -281,3 +281,56 @@ func TestIsJSTestFile(t *testing.T) {
 		}
 	}
 }
+
+// --- Regression tests for the R4 dual-review findings (const arrow detection
+// and the `extends` word-boundary). ---
+
+// A semicolon-less data const must NOT be emitted or latch onto the next
+// declaration's arrow (clud-bug MEDIUM).
+func TestExtractTSJS_SemicolonlessDataConst(t *testing.T) {
+	syms, _ := extractTSJS("const VERSION = '1.0.0'\nconst parse = (x) => x\n")
+	if _, ok := tsSigOf(syms, "VERSION"); ok {
+		t.Error("semicolon-less data const VERSION must be skipped, not emitted")
+	}
+	if s, ok := tsSigOf(syms, "parse"); !ok || s.Signature != "const parse = (x) =>" {
+		t.Errorf("parse arrow wrong: %q ok=%v", s.Signature, ok)
+	}
+}
+
+// An arrow with an object-literal RETURN TYPE must be kept (adversarial #1).
+func TestExtractTSJS_ArrowObjectReturnType(t *testing.T) {
+	syms, _ := extractTSJS("export const build = (): { ok: boolean } => ({ ok: true })\n")
+	if s, ok := tsSigOf(syms, "build"); !ok || s.Signature != "export const build = (): { ok: boolean } =>" {
+		t.Errorf("arrow with object return type wrong: %q ok=%v", s.Signature, ok)
+	}
+}
+
+// A const bound to an expression that merely CONTAINS an arrow (a ternary) is
+// not a direct arrow function → skipped, no misleading signature (adversarial #2).
+func TestExtractTSJS_ConstTernaryNotArrow(t *testing.T) {
+	syms, _ := extractTSJS("export const pick = cond ? (a) => a : fallback;\n")
+	if _, ok := tsSigOf(syms, "pick"); ok {
+		t.Error("const bound to a ternary must be skipped (not a direct arrow)")
+	}
+}
+
+// A generic arrow still extracts (guard against the rewrite regressing it).
+func TestExtractTSJS_GenericArrow(t *testing.T) {
+	syms, _ := extractTSJS("export const identity = <T>(x: T): T => x;\n")
+	if s, ok := tsSigOf(syms, "identity"); !ok || s.Signature != "export const identity = <T>(x: T): T =>" {
+		t.Errorf("generic arrow wrong: %q ok=%v", s.Signature, ok)
+	}
+}
+
+// A type/base name ending in "extends" must not trigger the `extends`
+// type-position heuristic and swallow the body + the next decl (adversarial #3).
+func TestExtractTSJS_ExtendsWordBoundary(t *testing.T) {
+	src := "class Foo extends myextends { hidden(): void {} }\nexport function afterFoo(): void {}\n"
+	syms, _ := extractTSJS(src)
+	if s, ok := tsSigOf(syms, "Foo"); !ok || s.Signature != "class Foo extends myextends" {
+		t.Errorf("class header should stop at the body brace: %q ok=%v", s.Signature, ok)
+	}
+	if _, ok := tsSigOf(syms, "afterFoo"); !ok {
+		t.Error("afterFoo must be extracted separately, not swallowed")
+	}
+}

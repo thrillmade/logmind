@@ -231,7 +231,7 @@ func inTypePosition(s string) bool {
 	if s == "" {
 		return false
 	}
-	if strings.HasSuffix(s, "=>") || strings.HasSuffix(s, "extends") {
+	if strings.HasSuffix(s, "=>") || endsWithWord(s, "extends") {
 		return true
 	}
 	switch s[len(s)-1] {
@@ -239,6 +239,17 @@ func inTypePosition(s string) bool {
 		return true
 	}
 	return false
+}
+
+// endsWithWord reports whether s ends with the whole word w (w preceded by a
+// non-identifier byte or start-of-string) — so a type named `myextends` does
+// NOT count as ending in the `extends` keyword.
+func endsWithWord(s, w string) bool {
+	if !strings.HasSuffix(s, w) {
+		return false
+	}
+	i := len(s) - len(w)
+	return i == 0 || !isIdentByte(s[i-1])
 }
 
 // scanType collects a `type Name = RHS` alias from off to its statement end:
@@ -323,21 +334,89 @@ func scanConst(display, mask string, off int, name string) (Symbol, int, bool) {
 		return Symbol{}, 0, false
 	}
 
-	// Arrow: the first `=>` at top level before any body `{` or terminator `;`.
-	p, br, bc := 0, 0, 0
-	for i := j; i < n; i++ {
-		c := mask[i]
-		if p == 0 && br == 0 && bc == 0 {
-			if c == '=' && i+1 < n && mask[i+1] == '>' {
-				return Symbol{Kind: "const", Name: name, Signature: tidyParams(collapse(display[off : i+2]))}, i + 1, true
-			}
-			if c == '{' || c == ';' {
-				return Symbol{}, 0, false // body/terminator before any arrow
-			}
+	// Arrow function. The RHS must be a DIRECT arrow — a parenthesized (or
+	// generic-then-parenthesized) parameter list, or a single bare-identifier
+	// param, reaching `=>` past an optional return type. This rejects a plain
+	// data const (string/number/object/call) and a const bound to an expression
+	// that merely CONTAINS an arrow (e.g. a ternary), and never crosses a
+	// statement boundary — so a semicolon-less data const cannot latch onto the
+	// next declaration's arrow.
+	k := j
+	if mask[k] == '<' { // generic arrow: <T>(params) =>
+		if k = matchAngle(mask, k); k < 0 {
+			return Symbol{}, 0, false
 		}
-		trackDepth(c, &p, &br, &bc)
+		k = skipSpace(mask, k)
+	}
+	if k < n && mask[k] == '(' {
+		closeParen := matchParen(mask, k)
+		if closeParen < 0 {
+			return Symbol{}, 0, false
+		}
+		if arrow := findArrow(display, mask, closeParen+1); arrow >= 0 {
+			return Symbol{Kind: "const", Name: name, Signature: tidyParams(collapse(display[off : arrow+2]))}, arrow + 1, true
+		}
+		return Symbol{}, 0, false
+	}
+	// Single unparenthesized param: `x => …`.
+	if k < n && isIdentByte(mask[k]) {
+		e := k
+		for e < n && isIdentByte(mask[e]) {
+			e++
+		}
+		if s := skipSpace(mask, e); s+1 < n && mask[s] == '=' && mask[s+1] == '>' {
+			return Symbol{Kind: "const", Name: name, Signature: tidyParams(collapse(display[off : s+2]))}, s + 1, true
+		}
 	}
 	return Symbol{}, 0, false
+}
+
+// matchAngle returns the index just past the `>` closing the `<` at open,
+// tracking nesting, or -1 for a malformed list. Best-effort (a type-parameter
+// list has no comparison operators to confuse the count).
+func matchAngle(mask string, open int) int {
+	depth := 0
+	for i := open; i < len(mask); i++ {
+		switch mask[i] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		case ';', '{', '(', ')':
+			return -1
+		}
+	}
+	return -1
+}
+
+// findArrow scans from off (just past an arrow's `)` parameter list) for the
+// `=>` that makes it an arrow function, allowing an optional return-type
+// annotation that may itself contain object-type braces (`(): { ok } =>`).
+// Returns the index of the `=` in `=>`, or -1 at a statement boundary (`;`, a
+// top-level newline, or a `{` that is a body rather than an object type).
+func findArrow(display, mask string, off int) int {
+	paren, brack, brace := 0, 0, 0
+	var b strings.Builder
+	for i := off; i < len(mask); i++ {
+		c := mask[i]
+		if paren == 0 && brack == 0 && brace == 0 {
+			if c == '=' && i+1 < len(mask) && mask[i+1] == '>' {
+				return i
+			}
+			if c == ';' || c == '\n' {
+				return -1
+			}
+			if c == '{' && !inTypePosition(b.String()) {
+				return -1
+			}
+		}
+		trackDepth(c, &paren, &brack, &brace)
+		b.WriteByte(display[i])
+	}
+	return -1
 }
 
 // trackDepth updates paren/bracket/brace counters for one masked char. Closers
@@ -425,7 +504,7 @@ func isIdentByte(b byte) bool {
 // that must continue onto the next line (so an ASI line break is NOT the end).
 func endsWithTypeCont(s string) bool {
 	s = strings.TrimRight(s, " \t")
-	if s == "" || strings.HasSuffix(s, "=>") || strings.HasSuffix(s, "extends") {
+	if s == "" || strings.HasSuffix(s, "=>") || endsWithWord(s, "extends") {
 		return true
 	}
 	switch s[len(s)-1] {
@@ -446,8 +525,7 @@ func nextStartsCont(mask string, off int) bool {
 	if i >= len(mask) || mask[i] == '\n' {
 		return false // blank line or EOF
 	}
-	rest := mask[i:]
-	if strings.HasPrefix(rest, "=>") || strings.HasPrefix(rest, "extends") {
+	if strings.HasPrefix(mask[i:], "=>") || hasWord(mask, i, "extends") {
 		return true
 	}
 	switch mask[i] {

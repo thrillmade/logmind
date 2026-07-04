@@ -346,7 +346,7 @@ func TestRender_Deterministic(t *testing.T) {
 
 func TestRender_Empty(t *testing.T) {
 	out := Render(nil)
-	if !strings.Contains(out, "No Go symbols found") {
+	if !strings.Contains(out, "No symbols found") {
 		t.Errorf("empty render should note no symbols: %q", out)
 	}
 }

@@ -22,3 +22,14 @@
 
 ---
 
+## 2026-07-04 02:29 - R4 review fixes: direct-arrow const detection + extends word-boundary + language-agnostic text
+
+**Reasoning:** Dual review found a MEDIUM (a semicolon-less data const latched onto the next statement's arrow, emitting a garbled signature on any no-semicolon codebase) plus minors: an arrow with an object-literal return type was dropped (common React idiom); a const bound to a ternary was misparsed; a base type ending in the letters 'extends' swallowed the class body; and the CLI help/Render message still said Go-only. Adversarial confirmed NO blockers (Go byte-identical, determinism, panic-safety all verified by 7.1M-exec fuzzing).
+
+**Alternatives considered:** Patch each symptom separately (rejected — rewriting scanConst's arrow detection to require a DIRECT arrow: params -> optional return type -> => via matchAngle/matchParen/findArrow fixes the MEDIUM plus two minors at the root). Track regex literals for exact brace depth (deferred — a documented best-effort masker limitation).
+
+**Implications:**
+- No-semicolon codebases, object-return-type arrows, and ternary/data consts are now handled correctly; generic arrows still extract; the extends type-position checks are word-boundary-aware; help/Render text is language-agnostic. 5 new regression tests; full suite green; clud-bug dogfood stable at 52 files/453 symbols.
+
+---
+
