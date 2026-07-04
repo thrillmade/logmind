@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (17 decisions)
+## 2026-07 (18 decisions)
 
-- **2026-07-04** — repomap review fixes: valid inline-composite rendering + walk robustness *(feat/repomap-go-signatures)* — [decisions-branches/feat__repomap-go-signatures.md](decisions-branches/feat__repomap-go-signatures.md)
-- *... 15 more decisions ...*
+- **2026-07-04** — context.repomap: fold the Go signature skeleton into logmind context (default off) *(feat/context-repomap)* — [decisions-branches/feat__context-repomap.md](decisions-branches/feat__context-repomap.md)
+- *... 16 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)

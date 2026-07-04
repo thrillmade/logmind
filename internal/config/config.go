@@ -39,8 +39,11 @@ type Config struct {
 	FileStructure FileStructureConfig `yaml:"file_structure"`
 	// Timeline gates the §1.6.4 main-canonical timeline (Slice 2, 0.8.0).
 	// Additive: the default reproduces today's output byte-for-byte.
-	Timeline TimelineConfig  `yaml:"timeline"`
-	Agents   map[string]bool `yaml:"agents"`
+	Timeline TimelineConfig `yaml:"timeline"`
+	// Context gates what `logmind context` folds into the cold-start payload
+	// (token-killer). Additive: the default reproduces today's payload.
+	Context ContextConfig   `yaml:"context"`
+	Agents  map[string]bool `yaml:"agents"`
 	// CatalogTarget is the default `<owner>/<repo>` slug `logmind skill
 	// push` opens PRs against. Overrideable on the CLI via --catalog.
 	// Per plan §"Skill suggestion cycle §4" + §"Skill catalog
@@ -125,6 +128,16 @@ type TimelineConfig struct {
 	Canonical string `yaml:"canonical"`
 }
 
+// ContextConfig mirrors the `context:` section — knobs for the `logmind
+// context` cold-start payload (token-killer Phase 2).
+type ContextConfig struct {
+	// Repomap folds the Go signature skeleton (see internal/repomap) into the
+	// context payload as a third <document>, inserted stable-first (after the
+	// file tree, before the volatile timeline). Default false preserves the
+	// current two-doc payload byte-for-byte; the v1.0 flip turns it on.
+	Repomap bool `yaml:"repomap"`
+}
+
 // IsMainCanonical reports whether main-canonical timeline assembly is
 // enabled. Fail-safe: ONLY the exact string "main-canonical" qualifies, so
 // a typo, empty value, or future/unknown value can never silently flip the
@@ -172,6 +185,12 @@ func DefaultConfig() Config {
 		// would change `logmind config list` bytes and break Python parity.
 		Timeline: TimelineConfig{
 			Canonical: "branch-divergent",
+		},
+		// Context.Repomap default false → `logmind context` emits today's
+		// two-doc payload byte-for-byte. NOT added to DefaultMap (below); the
+		// v1.0 flip turns it on and surfaces it in `config list`.
+		Context: ContextConfig{
+			Repomap: false,
 		},
 		Agents: map[string]bool{
 			"claude":   true,
