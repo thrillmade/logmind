@@ -244,19 +244,19 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	}
 
 	// Compose: header (if first-creation branch file) + the §1.6.3 timeline
-	// marker (main-canonical only) + existing + entry. Header is the
+	// marker (unconditional since v2.0) + existing + entry. Header is the
 	// templates.DecisionsBranchHeader() POSIX-terminated single line +
 	// trailing blank line.
 	var body strings.Builder
 	if firstCreation {
 		body.WriteString(templates.DecisionsBranchHeader())
 	}
-	// Main-canonical: open the branch detail page with its timeline marker
-	// (the PR headline the union consumes). First creation emits it right
-	// after the header; a later append inserts one only if the file has none
-	// yet (e.g. it predates the opt-in). Gated on isBranchFile + the config
-	// flag, so the default branch-divergent path writes byte-identical files.
-	if isBranchFile && cfg.Timeline.IsMainCanonical() {
+	// Open the branch detail page with its timeline marker (the PR headline
+	// the main-canonical union consumes). First creation emits it right after
+	// the header; a later append inserts one only if the file has none yet
+	// (e.g. a legacy file predating markers). Gated only on isBranchFile —
+	// main-canonical is the sole, unconditional timeline model as of v2.0.0.
+	if isBranchFile {
 		now := time.Now()
 		prSuffix := prSuffixFromEnv()
 		// The headline is the branch SUMMARY when --headline is given, else the
@@ -296,10 +296,10 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// Branch-summary nudge — steer the author toward a clean one-sentence
 	// summary of the WHOLE branch (the timeline headline the next agent reads).
 	// Skipped when --headline was just set (already current). Runs BEFORE the
-	// commit so a TTY edit lands in the same commit. Gated to a main-canonical
-	// branch file. Best-effort: never fails the log. Suppressed under QUIET —
-	// an agent that opted into terse output doesn't want the multi-line nudge.
-	if isBranchFile && cfg.Timeline.IsMainCanonical() && f.headline == "" && !quiet {
+	// commit so a TTY edit lands in the same commit. Gated to a branch file.
+	// Best-effort: never fails the log. Suppressed under QUIET — an agent that
+	// opted into terse output doesn't want the multi-line nudge.
+	if isBranchFile && f.headline == "" && !quiet {
 		nudgeBranchSummary(target, f.noInteractive, stdin, stdout, stderr)
 	}
 

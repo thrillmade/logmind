@@ -10,16 +10,6 @@ import (
 	"time"
 )
 
-// optIntoMainCanonical overwrites the scaffolded config to enable the
-// main-canonical timeline. Call after scaffoldDocs, before the first log.
-func optIntoMainCanonical(t *testing.T, dir string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, ".logmind", "config.yml"),
-		[]byte("timeline:\n  canonical: main-canonical\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-}
-
 func logOnce(t *testing.T, summary string) {
 	t.Helper()
 	root := NewRootCmd()
@@ -32,14 +22,13 @@ func logOnce(t *testing.T, summary string) {
 	}
 }
 
-// TestLog_MainCanonical_WritesAndPreservesMarker: the first log on a branch
-// writes ONE §1.6.3 marker between the header and the first entry; a second
-// log preserves it (no duplicate).
-func TestLog_MainCanonical_WritesAndPreservesMarker(t *testing.T) {
+// TestLog_WritesAndPreservesMarker: the first log on a branch writes ONE
+// §1.6.3 marker between the header and the first entry; a second log preserves
+// it (no duplicate). Unconditional as of v2.0.0 — no opt-in.
+func TestLog_WritesAndPreservesMarker(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		optIntoMainCanonical(t, d)
 		cmd := exec.Command("git", "checkout", "-b", "feat/login")
 		cmd.Dir = d
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -76,28 +65,9 @@ func TestLog_MainCanonical_WritesAndPreservesMarker(t *testing.T) {
 	}
 }
 
-// TestLog_DefaultMode_NoMarker: with no opt-in, branch files are byte-stable
-// — NO entry-block marker is written (the parity guard at the log layer).
-func TestLog_DefaultMode_NoMarker(t *testing.T) {
-	dir := withTempCwd(t, func(d string) {
-		initLogTestGitRepo(t, d)
-		scaffoldDocs(t) // default config — branch-divergent
-		cmd := exec.Command("git", "checkout", "-b", "feat/plain")
-		cmd.Dir = d
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("checkout: %v\n%s", err, out)
-		}
-		withFakeTTY(t, false, func() { logOnce(t, "Plain decision") })
-	})
-	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__plain.md"))
-	if strings.Contains(s, "logmind-entry-start") {
-		t.Errorf("default mode wrote a marker; want none\n%s", s)
-	}
-}
-
-// TestLog_MainCanonical_InsertsMarkerWhenAbsent: a branch file created before
-// the opt-in (no marker) gets one inserted after the header on the next log.
-func TestLog_MainCanonical_InsertsMarkerWhenAbsent(t *testing.T) {
+// TestLog_InsertsMarkerWhenAbsent: a LEGACY branch file predating markers (no
+// entry-block) gets one inserted after the header on the next log.
+func TestLog_InsertsMarkerWhenAbsent(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
@@ -106,15 +76,16 @@ func TestLog_MainCanonical_InsertsMarkerWhenAbsent(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("checkout: %v\n%s", err, out)
 		}
-		// First log in DEFAULT mode → markerless branch file.
-		withFakeTTY(t, false, func() { logOnce(t, "Pre-opt-in decision") })
-		// Now opt in and log again → marker must be inserted.
-		optIntoMainCanonical(t, d)
-		withFakeTTY(t, false, func() { logOnce(t, "Post-opt-in decision") })
+		// Simulate a legacy (pre-marker) branch file: the standard backlink
+		// header + a decision entry, but NO entry-block marker.
+		mustWriteUnder(t, d, "docs/decisions-branches/feat__upgrade.md",
+			"← back to [docs/timeline.md](../timeline.md)\n\n## 2026-06-10 09:00 - Pre-marker decision\n\n---\n\n")
+		// The next log must insert a marker after the header.
+		withFakeTTY(t, false, func() { logOnce(t, "Post decision") })
 	})
 	s := readFileStr(t, filepath.Join(dir, "docs", "decisions-branches", "feat__upgrade.md"))
 	if n := strings.Count(s, "<!-- logmind-entry-start: "); n != 1 {
-		t.Fatalf("marker count = %d; want 1 inserted on the post-opt-in log\n%s", n, s)
+		t.Fatalf("marker count = %d; want 1 inserted on the next log\n%s", n, s)
 	}
 	// Inserted right after the header, before any decision entry.
 	hdr := strings.Index(s, "← back to")

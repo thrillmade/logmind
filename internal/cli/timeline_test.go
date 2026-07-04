@@ -41,7 +41,7 @@ func makeDocs(t *testing.T, decisionsBody, archiveBody string, branchFiles map[s
 func TestTimelineNoDocs(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, "", false, false, false, &stdout, &stderr)
+	err := runTimeline(cwd, "", false, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("err = %v; want ErrSilent", err)
 	}
@@ -51,8 +51,10 @@ func TestTimelineNoDocs(t *testing.T) {
 	}
 }
 
-// TestTimelineStdoutBrief renders to stdout in brief mode.
-func TestTimelineStdoutBrief(t *testing.T) {
+// TestTimelineStdoutMainCanonical renders to stdout — the sole (main-canonical)
+// format. Output is the §1.6.4 entry-block union, not the removed brief/full
+// renderer.
+func TestTimelineStdoutMainCanonical(t *testing.T) {
 	cwd := makeDocs(t,
 		"## 2026-06-04 14:00 - Newest\n"+
 			"## 2026-06-03 10:00 - Mid 1\n"+
@@ -61,26 +63,42 @@ func TestTimelineStdoutBrief(t *testing.T) {
 		"", nil,
 	)
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, "", false, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, "", false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	compareCLI(t, "timeline_stdout_brief.golden", stdout.String())
+	if !timeline.HasEntryBlocks(stdout.String()) {
+		t.Errorf("stdout is not entry-block (main-canonical) format:\n%s", stdout.String())
+	}
+	// All four decisions surface as rows (no brief-mode elision).
+	for _, want := range []string{"Newest", "Mid 1", "Mid 2", "Oldest"} {
+		if !bytes.Contains(stdout.Bytes(), []byte(want)) {
+			t.Errorf("stdout missing decision %q:\n%s", want, stdout.String())
+		}
+	}
 }
 
-// TestTimelineStdoutFull renders all entries.
-func TestTimelineStdoutFull(t *testing.T) {
-	cwd := makeDocs(t,
-		"## 2026-06-04 14:00 - Newest\n"+
-			"## 2026-06-03 10:00 - Mid 1\n"+
-			"## 2026-06-02 09:00 - Mid 2\n"+
-			"## 2026-06-01 08:00 - Oldest\n",
-		"", nil,
-	)
-	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, "", false, true, false, &stdout, &stderr); err != nil {
-		t.Fatalf("err = %v", err)
+// TestTimelineFullFlagIsNoop: `--full` is accepted but ignored as of v2.0.0
+// (the timeline is single-format), so passing it produces identical output.
+func TestTimelineFullFlagIsNoop(t *testing.T) {
+	cwd := makeDocs(t, "## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
+	root := NewRootCmd()
+	root.SetArgs([]string{"timeline", "--full"})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	// Drive it from the real cobra tree so the --full flag is exercised. It
+	// must parse without error and emit entry-block output.
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
 	}
-	compareCLI(t, "timeline_stdout_full.golden", stdout.String())
+	defer os.Chdir(oldWd)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("timeline --full errored; the flag must be an accepted no-op: %v\n%s", err, out.String())
+	}
+	if !timeline.HasEntryBlocks(out.String()) {
+		t.Errorf("--full changed the format; it must be inert:\n%s", out.String())
+	}
 }
 
 // TestTimelineWriteFresh: writes the file and reports "Regenerated".
@@ -92,7 +110,7 @@ func TestTimelineWriteFresh(t *testing.T) {
 	)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("✓ Regenerated")) {
@@ -108,12 +126,12 @@ func TestTimelineWriteIdempotent(t *testing.T) {
 	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("already up to date")) {
@@ -127,12 +145,12 @@ func TestTimelineCheckClean(t *testing.T) {
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	// Seed the file by writing it first.
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, true, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, true, false, &stdout, &stderr); err != nil {
 		t.Fatalf("check err = %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("is up to date")) {
@@ -149,7 +167,7 @@ func TestTimelineCheckStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, target, true, false, false, &stdout, &stderr)
+	err := runTimeline(cwd, target, true, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("stale check err = %v; want ErrSilent", err)
 	}
@@ -162,7 +180,7 @@ func TestTimelineCheckStale(t *testing.T) {
 func TestTimelineCheckRequiresWrite(t *testing.T) {
 	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, "", true, false, false, &stdout, &stderr)
+	err := runTimeline(cwd, "", true, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("err = %v; want ErrSilent", err)
 	}
@@ -172,17 +190,19 @@ func TestTimelineCheckRequiresWrite(t *testing.T) {
 	}
 }
 
-// TestTimelineMainCanonicalDispatch proves the config gate flips the emitted
-// format AND that --write/--check use the SAME generator (no false-stale
-// wedge). The existing golden tests above are the default-mode byte-parity
-// guard; this is the opt-in path.
-func TestTimelineMainCanonicalDispatch(t *testing.T) {
+// TestTimelineLegacyConfigKeyIgnored proves a repo whose .logmind/config.yml
+// still carries the REMOVED `timeline.canonical` key loads + regenerates
+// cleanly (the now-unknown key is dropped, not errored), emits the sole
+// main-canonical entry-block format, and that --write/--check use the SAME
+// generator (no false-stale wedge).
+func TestTimelineLegacyConfigKeyIgnored(t *testing.T) {
 	cwd := makeDocs(t, "", "", map[string]string{
 		"feat__x.md": "<!-- logmind-entry-start: 2026-06-29-x -->\n- row\n<!-- logmind-entry-end -->\n",
 	})
 	if err := os.MkdirAll(filepath.Join(cwd, ".logmind"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A stale config carrying the removed key — must be ignored, not fatal.
 	if err := os.WriteFile(filepath.Join(cwd, ".logmind", "config.yml"),
 		[]byte("timeline:\n  canonical: main-canonical\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -190,42 +210,17 @@ func TestTimelineMainCanonicalDispatch(t *testing.T) {
 	target := filepath.Join(cwd, "docs", "timeline.md")
 
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("write: %v (%s)", err, stderr.String())
 	}
 	got, _ := os.ReadFile(target)
 	if !timeline.HasEntryBlocks(string(got)) {
-		t.Errorf("main-canonical mode did not emit entry-block format:\n%s", got)
+		t.Errorf("timeline did not emit entry-block format:\n%s", got)
 	}
 
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, true, false, false, &stdout, &stderr); err != nil {
-		t.Errorf("--check after a main-canonical write reported stale: %v\n%s", err, stdout.String())
-	}
-}
-
-// compareCLI is the shared cli-package snapshot helper. testdata
-// directory is internal/cli/testdata, shared with the existing
-// install_hook + check_decisions goldens. Reuses version_test.go's
-// `update` flag so a single `make snapshot` regenerates everything.
-func compareCLI(t *testing.T, name, got string) {
-	t.Helper()
-	path := filepath.Join("testdata", name)
-	if *update {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read golden %s: %v", path, err)
-	}
-	if got != string(want) {
-		t.Errorf("output mismatch for %s:\n=== got ===\n%s\n=== want ===\n%s", name, got, string(want))
+	if err := runTimeline(cwd, target, true, false, &stdout, &stderr); err != nil {
+		t.Errorf("--check after a write reported stale: %v\n%s", err, stdout.String())
 	}
 }

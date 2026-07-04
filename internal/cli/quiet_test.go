@@ -86,10 +86,10 @@ func TestQuiet_Timeline_StdoutSingleOK(t *testing.T) {
 	cwd := makeDocs(t,
 		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", false, false, true, &out, &errBuf); err != nil {
+	if err := runTimeline(cwd, "", false, true, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline quiet: %v", err)
 	}
-	assertSingleOK(t, out.String(), "timeline", "bytes=", "mode=brief")
+	assertSingleOK(t, out.String(), "timeline", "bytes=", "mode=canonical")
 	if strings.Contains(out.String(), "Newest") || strings.Contains(out.String(), "✓") {
 		t.Errorf("quiet stdout leaked the rendered body / chatter: %q", out.String())
 	}
@@ -99,7 +99,7 @@ func TestQuiet_Timeline_DefaultUnchanged(t *testing.T) {
 	cwd := makeDocs(t,
 		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", false, false, false, &out, &errBuf); err != nil {
+	if err := runTimeline(cwd, "", false, false, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline default: %v", err)
 	}
 	// Default mode keeps the legacy trailer AND the rendered body.
@@ -114,7 +114,7 @@ func TestQuiet_Timeline_DefaultUnchanged(t *testing.T) {
 func TestQuiet_Timeline_ErrorToStderr(t *testing.T) {
 	cwd := t.TempDir() // no docs/
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", false, false, true, &out, &errBuf); err == nil {
+	if err := runTimeline(cwd, "", false, true, &out, &errBuf); err == nil {
 		t.Fatal("expected ErrSilent when docs/ missing")
 	}
 	if out.Len() != 0 {
@@ -152,16 +152,16 @@ func TestQuiet_FileStructure_DefaultUnchanged(t *testing.T) {
 }
 
 func TestQuiet_Headline_SkippedSingleOK(t *testing.T) {
-	cwd := t.TempDir() // no main-canonical config
+	cwd := t.TempDir() // not a git repo → default-branch skip
 	var out, errBuf bytes.Buffer
 	if err := runHeadline(cwd, "A summary", "", true, &out, &errBuf); err != nil {
 		t.Fatalf("runHeadline quiet: %v", err)
 	}
-	assertSingleOK(t, out.String(), "headline", "state=skipped", "reason=not-main-canonical")
+	assertSingleOK(t, out.String(), "headline", "state=skipped", "reason=default-branch")
 }
 
 func TestQuiet_Headline_DefaultUnchanged(t *testing.T) {
-	cwd := t.TempDir()
+	cwd := t.TempDir() // not a git repo → default-branch skip
 	var out, errBuf bytes.Buffer
 	if err := runHeadline(cwd, "A summary", "", false, &out, &errBuf); err != nil {
 		t.Fatalf("runHeadline default: %v", err)
@@ -169,7 +169,7 @@ func TestQuiet_Headline_DefaultUnchanged(t *testing.T) {
 	if strings.Contains(out.String(), "ok ") {
 		t.Errorf("default mode emitted an ok line it never had before: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "main-canonical-timeline feature") {
+	if !strings.Contains(out.String(), "the default branch logs to docs/decisions.md") {
 		t.Errorf("default mode dropped its guidance line: %q", out.String())
 	}
 }

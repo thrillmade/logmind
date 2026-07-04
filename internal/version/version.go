@@ -8,14 +8,24 @@
 // to inject the actual tag.
 //
 // SpecVersion tracks the thrillmade/protocol SPEC.md document — bumped
-// to "0.8.0" 2026-07-03 (protocol #26: the Slice-2 main-canonical
-// timeline pass — §1.6.4 union assembly, the agent-authored headline
-// convention, the headline/doctor CLI, and the §5.1.2 advisory-first
-// regen-timeline template).
+// to "1.0.0" 2026-07-04 (the coordinated SPEC 1.0.0 that REMOVES the
+// branch-divergent timeline model: §1.6.4 main-canonical union assembly
+// is now the sole, unconditional timeline. See v2.0.0 below).
 package version
 
 // Version is the logmind binary's semantic version. Bumped at release.
 // Overridable via -ldflags at build time; see package docstring.
+//
+// v2.0.0 (2026-07-04) — BREAKING: the branch-divergent timeline model
+// (the Python-parity full-regen brief/full renderer) is removed
+// entirely. main-canonical (§1.6.4 deterministic source-derived union)
+// is now the SOLE, unconditional timeline assembly model. The
+// `timeline.canonical` config key is gone: a repo whose config still
+// carries it is unaffected (the now-unknown key is ignored). The
+// agent-authored branch headline, the per-log timeline marker, and the
+// `doctor --fix` marker backfill are always active — no opt-in. The
+// `logmind timeline --full` flag is accepted but ignored (the timeline
+// is single-format). SpecVersion advances to 1.0.0 to match.
 //
 // v1.2.0 (2026-06-07) — Go port of `logmind log` (Phase B3 catch-up)
 // + 3-layer markdown self-healing per plan §8.7. The shim that
@@ -39,10 +49,10 @@ package version
 // Dependabot bump the action pin. install.sh defaults to the latest
 // release (no hardcoded sweeps) and detects GITHUB_ACTIONS=true to
 // nudge CI users at setup-logmind.
-var Version = "1.2.0-dev"
+var Version = "2.0.0-dev"
 
 // SpecVersion is the version of the thrillmade/protocol logmind contract
 // this binary implements. Reported via `logmind --version` so downstream
 // tools can detect protocol skew without parsing the binary version.
 // Overridable via -ldflags at build time; see package docstring.
-var SpecVersion = "0.8.0"
+var SpecVersion = "1.0.0"

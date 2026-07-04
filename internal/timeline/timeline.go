@@ -1,35 +1,19 @@
 // Package timeline renders the decision timeline.
 //
-// Mirrors src/logmind/core/timeline.py — byte-identical output to
-// Python v0.6.14 is a hard requirement so the v0.3.0 custom merge
-// driver (which compares regenerated content against the on-disk file)
-// keeps converging across Python and Go runs.
+// As of v2.0.0 there is exactly ONE assembly model: main-canonical, the
+// §1.6.4 deterministic source-derived union (see canonical.go). The old
+// branch-divergent brief/full renderer — a Python-parity artifact — was
+// removed once the Python era retired; main-canonical is now the sole,
+// unconditional timeline.
 //
-// Brief-mode algorithm (default since Python v0.5.4):
-//
-//  1. Group entries by year-month, newest-first.
-//  2. For months with < 3 entries: render every entry verbatim.
-//  3. For months with >= 3 entries: render the FIRST (newest) entry,
-//     an italic elision line `- *... N more decisions ...*`, then the
-//     LAST (oldest) entry. The "decision"/"decisions" noun is
-//     singularized when N == 1, plural otherwise.
-//
-// Full mode (`--full`): every entry rendered, one per line, with the
-// month header carrying no count suffix.
+// This file holds only the shared rendered-file scaffolding (the header
+// preface + the empty-body sentinel) that renderCanonical consumes.
 package timeline
-
-import (
-	"fmt"
-	"io"
-	"strings"
-
-	"github.com/thrillmade/logmind/internal/decisions"
-)
 
 // header is the canonical preface for the rendered file.
 //
-// Pulled out as a const so the Python and Go strings stay in lock-step.
-// The trailing "---" + newline is included; the renderer then appends
+// Pulled out as a const so every render path shares one exact preamble.
+// The trailing "---" + newline is included; renderCanonical then appends
 // one blank line before the first month header.
 const header = `# Decision Timeline
 
@@ -46,126 +30,5 @@ PR's CI run, so this file is always coherent with current ` + "`main`" + `.
 ---
 `
 
-// emptyBody is what render returns when no entries are present.
+// emptyBody is what the renderer returns when no entries are present.
 const emptyBody = "\n*(no decisions logged yet)*\n"
-
-// renderEntryLine matches Python timeline._render_entry_line (line 138-143):
-//
-//   - **YYYY-MM-DD** — <title> *(<source_label>)* — [<source_path>](<source_path>)
-//
-// source_path is the entry's posix-form path (no backslashes); Iter +
-// Collect already store it that way so no extra transform here.
-func renderEntryLine(e decisions.Entry) string {
-	link := e.SourcePath
-	return fmt.Sprintf("- **%s** — %s *(%s)* — [%s](%s)",
-		e.Date.Format("2006-01-02"), e.Title, e.SourceLabel, link, link)
-}
-
-// monthKey returns the YYYY-MM grouping key used by the renderer.
-func monthKey(e decisions.Entry) string {
-	return e.Date.Format("2006-01")
-}
-
-// Render returns the markdown for the supplied entries.
-//
-// `entries` MUST be sorted newest-first (decisions.Collect already
-// does this). Render does not re-sort because Python relied on the
-// caller's ordering AND used a positional first/last selection inside
-// each month — re-sorting here would mask caller bugs.
-//
-// brief=true is the v0.5.4+ default (token-frugal). brief=false
-// renders every entry.
-//
-// Output ALWAYS ends with a trailing `\n`. The CLI's stdout path uses
-// `Fprint` (not Fprintln) so no extra newline is added downstream.
-func Render(entries []decisions.Entry, brief bool) string {
-	if len(entries) == 0 {
-		return header + emptyBody
-	}
-
-	// Group entries by YYYY-MM, preserving newest-first order. We can't
-	// use a map because group order would be lost; do a single linear
-	// pass and append to the last group when keys match (Python uses
-	// the same pattern in timeline.py:173-179).
-	type monthGroup struct {
-		key     string
-		entries []decisions.Entry
-	}
-	var months []monthGroup
-	for _, e := range entries {
-		k := monthKey(e)
-		if n := len(months); n > 0 && months[n-1].key == k {
-			months[n-1].entries = append(months[n-1].entries, e)
-			continue
-		}
-		months = append(months, monthGroup{key: k, entries: []decisions.Entry{e}})
-	}
-
-	// `lines` mirrors Python's lines list. Python initialises with
-	//   lines = [_TIMELINE_HEADER, ""]
-	// and the "\n".join inserts a newline BETWEEN each element. So the
-	// rendered preamble shape is:
-	//   HEADER (ends with "---\n")  +  \n  +  ""  +  \n  +  "## YYYY-MM"
-	// = "....---\n\n\n## YYYY-MM"  — three newlines.
-	//
-	// Python's per-month entries are likewise pure lines.append calls;
-	// "\n".join glues them with single newlines, then the trailing
-	// lines.append("") gives a final trailing newline.
-	//
-	// To get byte-identical output without simulating join semantics
-	// at the byte level, we assemble a []string mirror and join it
-	// with strings.Join — same shape as Python.
-	var lines []string
-	lines = append(lines, header, "")
-
-	for i, mg := range months {
-		if i > 0 {
-			// Inter-month blank — Python lines.append("").
-			lines = append(lines, "")
-		}
-		n := len(mg.entries)
-		if brief && n >= 3 {
-			lines = append(lines, fmt.Sprintf("## %s (%d decisions)", mg.key, n))
-		} else {
-			lines = append(lines, fmt.Sprintf("## %s", mg.key))
-		}
-		// Python lines.append("") between header and entries.
-		lines = append(lines, "")
-
-		if brief && n >= 3 {
-			lines = append(lines, renderEntryLine(mg.entries[0]))
-			elided := n - 2
-			noun := "decisions"
-			if elided == 1 {
-				noun = "decision"
-			}
-			lines = append(lines, fmt.Sprintf("- *... %d more %s ...*", elided, noun))
-			lines = append(lines, renderEntryLine(mg.entries[n-1]))
-		} else {
-			for _, e := range mg.entries {
-				lines = append(lines, renderEntryLine(e))
-			}
-		}
-	}
-
-	// Python trailing lines.append("") → final newline after join.
-	lines = append(lines, "")
-
-	// strings.Join(elements, "\n") puts a separator BETWEEN elements,
-	// not after. Together with the trailing "" element that produces a
-	// final \n.
-	return strings.Join(lines, "\n")
-}
-
-// Generate is the convenience wrapper that combines decisions.Collect +
-// Render. Matches Python's timeline.generate_timeline shape.
-//
-// stderr is plumbed through to the parser so malformed-header warnings
-// still reach the user.
-func Generate(docsPath string, brief bool, stderr io.Writer) (string, error) {
-	entries, err := decisions.Collect(docsPath, stderr)
-	if err != nil {
-		return "", err
-	}
-	return Render(entries, brief), nil
-}

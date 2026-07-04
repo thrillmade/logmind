@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/timeline"
 )
 
@@ -38,9 +37,8 @@ docs/decisions-branches/*.md as sources; renders a chronological
 timeline grouped by year-month. Sources are never modified.
 
 Examples:
-    logmind timeline                              # brief, to stdout
-    logmind timeline --full                       # full per-decision
-    logmind timeline --write docs/timeline.md     # brief, on disk
+    logmind timeline                              # to stdout
+    logmind timeline --write docs/timeline.md     # on disk
     logmind timeline --write docs/timeline.md --check  # CI gate`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -48,7 +46,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			return runTimeline(cwd, writePath, check, full, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runTimeline(cwd, writePath, check, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&writePath, "write", "",
@@ -57,14 +55,16 @@ Examples:
 	cmd.Flags().BoolVar(&check, "check", false,
 		"Exit nonzero if writing would change the file. Used in CI to fail "+
 			"the build before regen so the auto-commit step runs and updates the PR.")
+	// --full is accepted but ignored as of v2.0.0: the timeline is now a
+	// single format (the main-canonical entry-block union), so there is no
+	// brief/full distinction to select. Kept registered so existing scripts,
+	// hooks, and merge-driver invocations that still pass `--full` don't error.
 	cmd.Flags().BoolVar(&full, "full", false,
-		"Render the legacy per-decision format (one bullet per entry). "+
-			"Default is brief (v0.5.4+): first + last entry per month with a "+
-			"`... N more decisions ...` elision line — token-frugal on disk.")
+		"No-op (kept for backward compatibility). The timeline is single-format as of v2.0.0.")
 	return cmd
 }
 
-func runTimeline(cwd, writePath string, check, full, quiet bool, stdout, stderr io.Writer) error {
+func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Writer) error {
 	q := newQout(quiet, stdout, stderr)
 	docsPath := filepath.Join(cwd, "docs")
 	if !pathExists(docsPath) {
@@ -74,18 +74,10 @@ func runTimeline(cwd, writePath string, check, full, quiet bool, stdout, stderr 
 		q.fail("Error: docs/ directory not found. Run 'logmind init' first.\n")
 		return ErrSilent
 	}
-	brief := !full
-	// Model dispatch: main-canonical (§1.6.4) when opted in via config, else
-	// the byte-stable default.
-	canonical := canonicalEnabled(cwd)
-	mode := "brief"
-	if full {
-		mode = "full"
-	}
-	if canonical {
-		// Main-canonical is single-format (entry-block); --full is inert.
-		mode = "canonical"
-	}
+	// v2.0.0: main-canonical (§1.6.4) is the sole, unconditional model. The
+	// timeline is single-format (entry-block union) — `mode` stays a stable
+	// receipt token so the `ok timeline …` trailer keeps its shape.
+	const mode = "canonical"
 
 	if check {
 		if writePath == "" {
@@ -95,7 +87,7 @@ func runTimeline(cwd, writePath string, check, full, quiet bool, stdout, stderr 
 			q.fail("Error: --check requires --write PATH to compare against.\n")
 			return ErrSilent
 		}
-		rendered, err := timeline.GenerateFor(docsPath, brief, canonical, stderr)
+		rendered, err := timeline.Generate(docsPath, stderr)
 		if err != nil {
 			return err
 		}
@@ -114,7 +106,7 @@ func runTimeline(cwd, writePath string, check, full, quiet bool, stdout, stderr 
 	}
 
 	if writePath == "" {
-		rendered, err := timeline.GenerateFor(docsPath, brief, canonical, stderr)
+		rendered, err := timeline.Generate(docsPath, stderr)
 		if err != nil {
 			return err
 		}
@@ -137,7 +129,7 @@ func runTimeline(cwd, writePath string, check, full, quiet bool, stdout, stderr 
 		return nil
 	}
 
-	rendered, err := timeline.GenerateFor(docsPath, brief, canonical, stderr)
+	rendered, err := timeline.Generate(docsPath, stderr)
 	if err != nil {
 		return err
 	}
@@ -180,14 +172,4 @@ func writeAtomic(path, data string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-// canonicalEnabled reports whether the repo at cwd has opted into the
-// main-canonical timeline (`timeline.canonical: main-canonical`). Fail-safe:
-// a missing or broken config degrades to false (the byte-stable default), so
-// no regen path can fail or silently flip on a config error. Shared by
-// runTimeline and the in-process init re-render calls.
-func canonicalEnabled(cwd string) bool {
-	cfg, err := config.Load(cwd)
-	return err == nil && cfg.Timeline.IsMainCanonical()
 }

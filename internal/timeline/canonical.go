@@ -1,11 +1,10 @@
-// canonical.go — primitives for the main-canonical ("newspaper") timeline.
+// canonical.go — the main-canonical ("newspaper") timeline.
 //
-// These are the building blocks for SPEC §1.6.3's HTML-marker entry-block
-// format and the §1.6.4 deterministic-union timeline (Slice 2). This file
-// is PRIMITIVES ONLY — nothing here is wired into timeline generation yet;
-// the default branch-divergent path (Generate/Render in timeline.go) is
-// untouched, so output stays byte-identical until a later PR opts in via
-// config. See docs/plan / the protocol SPEC §1.6.3.
+// This implements SPEC §1.6.3's HTML-marker entry-block format and the
+// §1.6.4 deterministic-union timeline. As of v2.0.0 this is THE timeline:
+// Generate below is the sole assembly path. Same source tree ⇒ same bytes
+// on any branch, worktree, or checkout. See docs/plan / the protocol SPEC
+// §1.6.3.
 package timeline
 
 import (
@@ -175,9 +174,8 @@ func extractEntryBlocks(content string, stderr io.Writer) []entryBlock {
 //
 // The main-canonical timeline is a DETERMINISTIC UNION of §1.6.3 entry-block
 // markers — no LLM, no re-summarization. Same source tree ⇒ same bytes on
-// any branch, worktree, or checkout path. It is reachable ONLY when
-// `timeline.canonical: main-canonical` is set; the default branch-divergent
-// path (Generate/Render) is untouched, so v0.6.14 output is byte-stable.
+// any branch, worktree, or checkout path. As of v2.0.0 it is the SOLE,
+// unconditional timeline assembly model.
 
 // marked is one timeline row: its date+slug identity, the link-free headline
 // body rendered between the entry-block markers, and its source path (the
@@ -233,26 +231,15 @@ func collapseToLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// GenerateMainCanonical builds the §1.6.4 deterministic-union timeline from
-// the same source set as the default model (decisions.md + archive +
-// decisions-branches/*), rendered in entry-block format.
-func GenerateMainCanonical(docsPath string, stderr io.Writer) (string, error) {
+// Generate builds the §1.6.4 deterministic-union timeline from the full
+// source set (decisions.md + decisions-archive.md + decisions-branches/*),
+// rendered in entry-block format. This is the sole timeline generator.
+func Generate(docsPath string, stderr io.Writer) (string, error) {
 	items, err := collectMarked(docsPath, stderr)
 	if err != nil {
 		return "", err
 	}
 	return renderCanonical(items), nil
-}
-
-// GenerateFor is the single in-process dispatch point: main-canonical when
-// canonical is true, else the byte-stable default brief/full path. Every
-// caller (runTimeline's three sites + init's two) routes through here so the
-// model selection lives in exactly one place.
-func GenerateFor(docsPath string, brief, canonical bool, stderr io.Writer) (string, error) {
-	if canonical {
-		return GenerateMainCanonical(docsPath, stderr)
-	}
-	return Generate(docsPath, brief, stderr)
 }
 
 // dateOnly truncates a timestamp to midnight in its own location, so a
