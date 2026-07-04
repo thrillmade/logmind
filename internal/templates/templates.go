@@ -41,18 +41,20 @@ import (
 //go:embed github/*.yml.template
 var embedFS embed.FS
 
-// AgentsTemplate returns the full v6 AGENTS.md template (the inline
+// AgentsTemplate returns the full v7 AGENTS.md template (the inline
 // procedure variant) — used when the host doesn't have skills.sh
 // available, or when the caller explicitly requests the full body.
 //
 // The block between `<!-- logmind-start -->` and `<!-- logmind-end -->`
-// carries the version marker `<!-- logmind-block-version: v6 -->`. The
+// carries the version marker `<!-- logmind-block-version: v7 -->`. The
 // inserter package uses that marker to decide whether an installed block
 // is stale.
 //
-// v0.6.16 bumped v5→v6: heading reframed as "REQUIRED for substantive
-// commits", added an explicit DO-NOT-git-commit blockquote that pairs
-// with the commit-msg hook installed by `logmind init`.
+// The Slice-2 branch-summary wave bumped v6→v7: added the branch-summary
+// (headline) convention to the inline procedure. v0.6.16 bumped v5→v6:
+// heading reframed as "REQUIRED for substantive commits", added an
+// explicit DO-NOT-git-commit blockquote that pairs with the commit-msg
+// hook installed by `logmind init`.
 func AgentsTemplate() string {
 	return readEmbed("AGENTS.md.template")
 }
