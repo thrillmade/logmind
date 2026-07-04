@@ -108,10 +108,11 @@ func contextPayload(cwd string) string {
 	for _, d := range contextDocs {
 		data, err := os.ReadFile(filepath.Join(cwd, d.rel))
 		if err != nil {
-			// Note a missing doc as a comment (kept out of the <document> set)
-			// so the agent knows it exists + how to regenerate, without an
-			// error and without breaking the envelope.
-			fmt.Fprintf(&b, "<!-- %s absent — regenerate: %s -->\n", d.rel, d.regen)
+			// A missing doc becomes a self-closing element carrying the
+			// regenerate command in an attribute — well-formed (an XML comment
+			// would hit the "--" double-hyphen rule via `--write`) and still
+			// tells the agent what's absent and how to restore it.
+			fmt.Fprintf(&b, "<document type=%q source=%q status=\"absent\" regenerate=%q/>\n", d.typ, d.rel, d.regen)
 			continue
 		}
 		fmt.Fprintf(&b, "<document type=%q>\n<source>%s</source>\n<document_content>\n", d.typ, d.rel)

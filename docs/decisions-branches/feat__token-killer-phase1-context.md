@@ -11,3 +11,12 @@
 
 ---
 
+## 2026-07-03 22:43 - context: make the missing-doc note strict-XML-safe (self-closing element, review fix)
+
+**Reasoning:** The clud-bug review noted the missing-doc XML comment held a '--' double-hyphen (from '--write'), which strict XML forbids inside <!-- -->. Since the PR's pitch is unambiguous parsing, replaced the comment with a self-closing <document ... status="absent" regenerate="..."/> element — well-formed (the command lives in an attribute value) and still carries what's absent + how to restore it.
+
+**Implications:**
+- Only the degraded doc-absent path changes; the present-doc envelope is unchanged; test updated to assert the self-closing form.
+
+---
+

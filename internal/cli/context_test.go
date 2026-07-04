@@ -64,11 +64,11 @@ func TestContext_MissingDocNoted_NotError(t *testing.T) {
 		mustWriteUnder(t, d, "docs/timeline.md", "why\n")
 		// docs/file-structure.md intentionally absent.
 		s := runContextCapture(t)
-		if !strings.Contains(s, "docs/file-structure.md absent") || !strings.Contains(s, "regenerate:") {
-			t.Errorf("missing doc not noted as a comment:\n%s", s)
+		if !strings.Contains(s, `source="docs/file-structure.md" status="absent"`) || !strings.Contains(s, "regenerate=") {
+			t.Errorf("absent file-structure not noted as a self-closing element:\n%s", s)
 		}
-		if strings.Contains(s, `<document type="file-structure">`) {
-			t.Errorf("an absent doc must not emit a <document> block:\n%s", s)
+		if strings.Contains(s, "<source>docs/file-structure.md</source>") {
+			t.Errorf("an absent doc must not emit a full <document>…<source>…</document> block:\n%s", s)
 		}
 	})
 }
