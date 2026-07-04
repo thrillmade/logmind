@@ -22,3 +22,14 @@
 
 ---
 
+## 2026-07-04 00:07 - repomap review fixes: valid inline-composite rendering + walk robustness
+
+**Reasoning:** Dual review (adversarial + clud-bug-lens) of #183: adversarial found a BLOCKER — strings.Fields flattening dropped the semicolon inline anonymous struct/interface fields need when put on one line (func WithAnon(x struct { A int B string }) is invalid Go), and made multi-line-formatted func signatures render with ugly, source-layout-dependent ', )' artifacts. clud-bug found a Medium — an unreadable directory aborted the whole walk, violating the 'never a gate' contract and diverging from internal/tree.
+
+**Alternatives considered:** Tokenize + ASI-reconstruct (heavy); or accept invalid output (rejected). Chosen: print with a FRESH empty FileSet so the printer emits canonical single-line layout, then an ASI-aware join turns the only surviving newlines (inline struct/interface fields) into ';' — valid, canonical, layout-independent. Robustness: mirror tree's os.IsPermission/os.IsNotExist swallow; also skip testdata/ dirs and symlinked .go (both minor review notes).
+
+**Implications:**
+- All emitted func signatures are now valid Go (gofmt-verified); output is source-layout-independent (stronger caching guarantee); unreadable dirs, testdata/, and symlinks handled. Known limitations (const/var, constraint type-sets, build-tags, non-Go) documented for later slices.
+
+---
+

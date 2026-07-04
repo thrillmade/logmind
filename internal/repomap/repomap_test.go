@@ -1,8 +1,11 @@
 package repomap
 
 import (
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -104,8 +107,9 @@ func TestExtractGo_Signatures(t *testing.T) {
 		{"Ifc", "type", "type Ifc interface"},
 		{"ID", "type", "type ID = string"},
 		{"Count", "type", "type Count int"},
-		// A multi-line signature is collapsed to a single row.
-		{"MultiLine", "func", "func MultiLine( a int, b int, ) ( int, error, )"},
+		// A multi-line source signature renders in canonical one-line form
+		// (source layout does not leak — the caching invariant).
+		{"MultiLine", "func", "func MultiLine(a int, b int) (int, error)"},
 		// Generics: type params are preserved on both types and funcs.
 		{"Stack", "type", "type Stack[T any] struct"},
 		{"Map", "func", "func Map[T, U any](s []T, f func(T) U) []U"},
@@ -201,6 +205,55 @@ func TestExtractGo_FilesSortedDeterministic(t *testing.T) {
 	}
 }
 
+// TestExtractGo_InlineCompositesAreValidGo: an inline anonymous struct or
+// interface in a param/result must flatten to VALID Go (fields separated by
+// `;`, not silently concatenated). Regression for the flatten BLOCKER.
+func TestExtractGo_InlineCompositesAreValidGo(t *testing.T) {
+	src := `package p
+func WithAnon(x struct {
+	A int
+	B string
+}) bool { return false }
+func WithIface(h interface {
+	Foo() error
+	Bar(n int) string
+}) {}
+`
+	syms := extractOne(t, src)
+	want := map[string]string{
+		"WithAnon":  "func WithAnon(x struct { A int; B string }) bool",
+		"WithIface": "func WithIface(h interface { Foo() error; Bar(n int) string })",
+	}
+	for name, wantSig := range want {
+		s, ok := sigOf(syms, name)
+		if !ok {
+			t.Errorf("%s not extracted", name)
+			continue
+		}
+		if s.Signature != wantSig {
+			t.Errorf("%s: sig = %q; want %q", name, s.Signature, wantSig)
+		}
+		// It must parse as legal Go.
+		if _, err := parser.ParseFile(token.NewFileSet(), "", "package p\n"+s.Signature+" {}\n", 0); err != nil {
+			t.Errorf("%s: emitted signature is not valid Go: %q (%v)", name, s.Signature, err)
+		}
+	}
+}
+
+// TestExtractGo_FuncLayoutIndependent: the same function renders identically
+// whether its params are on one source line or many — source formatting must
+// not leak into the (cacheable) skeleton.
+func TestExtractGo_FuncLayoutIndependent(t *testing.T) {
+	one := extractOne(t, "package p\nfunc F(a int, b string) (int, error) { return 0, nil }\n")
+	many := extractOne(t, "package p\nfunc F(\n\ta int,\n\tb string,\n) (\n\tint,\n\terror,\n) {\n\treturn 0, nil\n}\n")
+	if one[0].Signature != many[0].Signature {
+		t.Errorf("func layout leaked: %q vs %q", one[0].Signature, many[0].Signature)
+	}
+	if one[0].Signature != "func F(a int, b string) (int, error)" {
+		t.Errorf("unexpected canonical form: %q", one[0].Signature)
+	}
+}
+
 func TestExtractGo_UnparseableSkipped(t *testing.T) {
 	dir := t.TempDir()
 	writeGo(t, dir, "good.go", "package p\nfunc Good() {}\n")
@@ -212,6 +265,69 @@ func TestExtractGo_UnparseableSkipped(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].Path != "good.go" {
 		t.Fatalf("want only good.go, got %+v", files)
+	}
+}
+
+// TestExtractGo_UnreadableDirSkipped: an unreadable subdir is skipped, not
+// fatal — the repomap is a convenience, never a gate. Regression for the walk
+// error-propagation finding.
+func TestExtractGo_UnreadableDirSkipped(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permission bits not enforced here")
+	}
+	dir := t.TempDir()
+	writeGo(t, dir, "good/a.go", "package p\nfunc A() {}\n")
+	locked := filepath.Join(dir, "locked")
+	writeGo(t, dir, "locked/secret.go", "package p\nfunc Secret() {}\n")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) }) // let TempDir cleanup remove it
+
+	rules, _ := tree.ResolveRules(dir, nil)
+	files, err := ExtractGo(dir, rules)
+	if err != nil {
+		t.Fatalf("unreadable dir must not fail the walk: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "good/a.go" {
+		t.Fatalf("want only good/a.go, got %+v", files)
+	}
+}
+
+// TestExtractGo_SkipsTestdata: testdata/ .go fixtures are not part of the API
+// surface (Go tooling ignores testdata) and must not pollute the map.
+func TestExtractGo_SkipsTestdata(t *testing.T) {
+	dir := t.TempDir()
+	writeGo(t, dir, "real.go", "package p\nfunc Real() {}\n")
+	writeGo(t, dir, "testdata/fixture.go", "package p\nfunc FixtureSymbol() {}\n")
+	rules, _ := tree.ResolveRules(dir, nil)
+	files, err := ExtractGo(dir, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "real.go" {
+		t.Fatalf("testdata leaked into the map: %+v", files)
+	}
+}
+
+// TestExtractGo_SkipsSymlinkedGo: a symlinked .go file must not be counted a
+// second time under its link path.
+func TestExtractGo_SkipsSymlinkedGo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks unreliable on windows CI")
+	}
+	dir := t.TempDir()
+	writeGo(t, dir, "real.go", "package p\nfunc Real() {}\n")
+	if err := os.Symlink(filepath.Join(dir, "real.go"), filepath.Join(dir, "link.go")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	rules, _ := tree.ResolveRules(dir, nil)
+	files, err := ExtractGo(dir, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "real.go" {
+		t.Fatalf("symlinked .go double-counted: %+v", files)
 	}
 }
 

@@ -15,6 +15,16 @@
 // zero external dependency, and no CGo, so logmind stays a single static
 // binary. Other languages get regex-based extraction in a later slice; this
 // slice ships the Go path (logmind's own dogfood case is exact).
+//
+// Known limitations, deferred to later slices (all intentional for this slice):
+//   - Go only. Non-Go files are not yet mapped.
+//   - Only funcs, methods, and types. Exported const/var (including sentinel
+//     errors) are omitted; a later slice may add ranked, budget-bounded ones.
+//   - Composite type bodies collapse to the bare keyword (`type T struct`), so a
+//     constraint interface loses its type set (`interface { ~int | ~string }` →
+//     `interface`). Method/field detail is a ranking-driven, budgeted follow-up.
+//   - Build-constrained (`//go:build ignore`) and generated files still
+//     contribute symbols — they parse fine even when no build includes them.
 package repomap
 
 import (
@@ -25,6 +35,7 @@ import (
 	"go/printer"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,6 +66,13 @@ func ExtractGo(repoRoot string, rules tree.IgnoreRules) ([]FileSymbols, error) {
 	var goFiles []string
 	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// A permission-denied or vanished path is a recoverable I/O
+			// condition, not a reason to abort the whole map — the repomap is a
+			// convenience, never a gate (mirrors internal/tree's own guard).
+			// Skip it; propagate only genuinely unexpected walk errors.
+			if os.IsPermission(err) || os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		rel, relErr := filepath.Rel(repoRoot, path)
@@ -67,9 +85,17 @@ func ExtractGo(repoRoot string, rules tree.IgnoreRules) ([]FileSymbols, error) {
 		rel = filepath.ToSlash(rel)
 		base := d.Name()
 		if d.IsDir() {
-			if rules.Matches(rel, base) {
+			// Skip ignored dirs AND testdata/ — Go tooling ignores testdata,
+			// and its .go fixtures are not part of the repo's API surface.
+			if base == "testdata" || rules.Matches(rel, base) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		// Regular files only: a symlinked .go would otherwise be counted twice
+		// (under both its own path and the target's); other irregular entries
+		// aren't real source.
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		if rules.Matches(rel, base) {
@@ -109,12 +135,12 @@ func extractGoFile(absPath string) []Symbol {
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			syms = append(syms, funcSignature(fset, d))
+			syms = append(syms, funcSignature(d))
 		case *ast.GenDecl:
 			if d.Tok == token.TYPE {
 				for _, spec := range d.Specs {
 					if ts, ok := spec.(*ast.TypeSpec); ok {
-						syms = append(syms, typeSignature(fset, ts))
+						syms = append(syms, typeSignature(ts))
 					}
 				}
 			}
@@ -127,7 +153,7 @@ func extractGoFile(absPath string) []Symbol {
 // stdlib-printed `func Name(params) results`, or `func (recv) Name(...)` for a
 // method. Printing the mutated node is how we get a byte-accurate signature
 // without hand-assembling parameter text.
-func funcSignature(fset *token.FileSet, fn *ast.FuncDecl) Symbol {
+func funcSignature(fn *ast.FuncDecl) Symbol {
 	shallow := *fn
 	shallow.Body = nil
 	shallow.Doc = nil
@@ -135,7 +161,7 @@ func funcSignature(fset *token.FileSet, fn *ast.FuncDecl) Symbol {
 	if fn.Recv != nil && len(fn.Recv.List) > 0 {
 		kind = "method"
 	}
-	return Symbol{Kind: kind, Name: fn.Name.Name, Signature: printNode(fset, &shallow)}
+	return Symbol{Kind: kind, Name: fn.Name.Name, Signature: printNode(&shallow)}
 }
 
 // typeSignature renders a type as a COLLAPSED signature. Composite types keep
@@ -148,7 +174,7 @@ func funcSignature(fset *token.FileSet, fn *ast.FuncDecl) Symbol {
 // It prints the TypeSpec node itself (printer renders `Name[TypeParams] …`
 // correctly, which hand-assembly from ts.Name would drop) with any struct/
 // interface body emptied.
-func typeSignature(fset *token.FileSet, ts *ast.TypeSpec) Symbol {
+func typeSignature(ts *ast.TypeSpec) Symbol {
 	spec := *ts
 	spec.Doc = nil
 	spec.Comment = nil
@@ -172,22 +198,55 @@ func typeSignature(fset *token.FileSet, ts *ast.TypeSpec) Symbol {
 	// reads as "Rec is a struct" rather than falsely implying an EMPTY struct,
 	// and type params survive ahead of the keyword. Non-composite types (no
 	// trailing empty braces) are unaffected.
-	sig := "type " + printNode(fset, &spec)
+	sig := "type " + printNode(&spec)
 	sig = strings.TrimSuffix(sig, " { }")
 	sig = strings.TrimSuffix(sig, " {}")
 	return Symbol{Kind: "type", Name: ts.Name.Name, Signature: sig}
 }
 
-// printNode pretty-prints an AST node to a single logical line using the
-// standard printer, collapsing any internal newlines a multi-line result type
-// might introduce so every symbol stays one row.
-func printNode(fset *token.FileSet, node ast.Node) string {
+// printNode pretty-prints an AST node to a single canonical line.
+//
+// It prints with a FRESH (empty) FileSet, not the one the node was parsed from:
+// with no source positions to honor, the printer falls back to its own
+// canonical layout, so `func F(\n a,\n b,\n)` and `func F(a, b)` render
+// IDENTICALLY (source-layout independence — the caching invariant) and without
+// the stray ` , )` artifacts a source-faithful print would leave. The only
+// newlines the fresh printer emits are between the fields of an inline
+// struct/interface; flattenOneLine turns those into Go's `;` separator so the
+// one-line result stays valid Go.
+func printNode(node ast.Node) string {
 	var buf bytes.Buffer
 	cfg := printer.Config{Mode: printer.UseSpaces, Tabwidth: 4}
-	if err := cfg.Fprint(&buf, fset, node); err != nil {
+	if err := cfg.Fprint(&buf, token.NewFileSet(), node); err != nil {
 		return ""
 	}
-	return strings.Join(strings.Fields(buf.String()), " ")
+	return flattenOneLine(buf.String())
+}
+
+// flattenOneLine collapses a fresh-FileSet printer rendering to a single line.
+// Newlines survive only between inline struct/interface members, where Go's
+// automatic-semicolon rule requires a `;` when they share a line — but never
+// adjacent to a brace. Intra-line alignment padding collapses to single spaces.
+func flattenOneLine(s string) string {
+	var lines []string
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.Join(strings.Fields(ln), " "); ln != "" {
+			lines = append(lines, ln)
+		}
+	}
+	var b strings.Builder
+	for i, ln := range lines {
+		if i > 0 {
+			switch {
+			case strings.HasPrefix(ln, "}"), strings.HasSuffix(lines[i-1], "{"):
+				b.WriteByte(' ') // no semicolon adjacent to a brace
+			default:
+				b.WriteString("; ")
+			}
+		}
+		b.WriteString(ln)
+	}
+	return b.String()
 }
 
 // Render assembles the deterministic skeleton text: each file's path as a
