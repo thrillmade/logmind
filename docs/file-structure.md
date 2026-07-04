@@ -16,7 +16,6 @@ logmind
 ├── .logmind
 │   └── config.yml
 ├── cmd
-│   └── logmind
 ├── docs
 │   ├── decisions-branches
 │   ├── ai-agent-files.md
@@ -76,7 +75,6 @@ logmind
 ├── go.mod
 ├── go.sum
 ├── LICENSE
-├── logmind
 ├── Makefile
 ├── README.md
 ├── SECURITY.md

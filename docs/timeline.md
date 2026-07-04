@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (20 decisions)
+## 2026-07 (22 decisions)
 
-- **2026-07-04** — R3 review fixes: §14.5 never-worse passthrough + ranking-signal robustness *(feat/repomap-rank-budget)* — [decisions-branches/feat__repomap-rank-budget.md](decisions-branches/feat__repomap-rank-budget.md)
-- *... 18 more decisions ...*
+- **2026-07-04** — repomap: TypeScript/JavaScript extractor (R4) via a zero-dep regex+brace scanner *(feat/repomap-multilang)* — [decisions-branches/feat__repomap-multilang.md](decisions-branches/feat__repomap-multilang.md)
+- *... 20 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)
