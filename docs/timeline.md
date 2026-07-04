@@ -30,6 +30,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-04** — context.repomap: fold the Go signature skeleton into logmind context (default off) → [detail](decisions-branches/feat__context-repomap.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-04-bumps-the-full-agents-md-template-to-v7-carrying-the-branch- -->
+- **2026-07-04** — Bumps the full AGENTS.md template to v7 carrying the branch-summary (headline) convention, and makes doctor --fix / init-refresh flavour-preserving so legacy full-block repos refresh to full v7 instead of flipping to slim. → [detail](decisions-branches/feat__agents-v7-headline-convention.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-03-token-killer-phase-1b-logmind-quiet-output-discipline-across -->
 - **2026-07-03** — token-killer Phase 1b: LOGMIND_QUIET output discipline across log/timeline/file-structure/doctor/headline → [detail](decisions-branches/feat__token-killer-1b-quiet.md)
 <!-- logmind-entry-end -->

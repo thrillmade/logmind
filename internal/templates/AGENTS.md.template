@@ -7,7 +7,7 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v6 -->
+<!-- logmind-block-version: v7 -->
 ## Decision Logging (logmind) — REQUIRED for substantive commits
 
 > **DO NOT run `git add` / `git commit` / `git push` for substantive code changes.**
@@ -87,6 +87,16 @@ On a feature branch, the entry lands in
 it lands in `docs/decisions.md`. On PR merge, a workflow appends a
 one-line summary to `docs/decisions.md` linking the PR and the
 per-branch file. You don't manage this — `logmind log` does.
+
+### Branch summary (headline)
+
+On a feature branch, set a one-sentence, plain-English summary of what
+the WHOLE branch does — `logmind headline "<one sentence>"`, or bundle it
+into a decision with `logmind log "..." -H "<one sentence>"`. It's stored
+at the top of the branch's decision file and copied verbatim into
+`docs/timeline.md`, so it's the FIRST thing the next agent reads. Refine
+it as the branch grows (the entry key stays stable). It's a no-op on the
+default branch, which logs to `docs/decisions.md` directly.
 
 ### Required reading at task start
 

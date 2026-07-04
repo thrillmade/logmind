@@ -19,9 +19,11 @@
 //     quotes — matches the Python v0.6.11+ widened pattern.
 //
 //   - Template version markers gate "is the installed block stale".
-//     `<!-- logmind-block-version: v6 -->` for the full template,
-//     `<!-- logmind-block-version: v8-pointer -->` for slim (v0.6.16
-//     bumped both from v5 / v7-pointer respectively). Drift is
+//     `<!-- logmind-block-version: v7 -->` for the full template,
+//     `<!-- logmind-block-version: v8-pointer -->` for slim (the
+//     Slice-2 branch-summary wave bumped the full template v6→v7;
+//     v0.6.16 bumped it v5→v6 and the slim variant v7-pointer→v8-pointer).
+//     Drift is
 //     detected by comparing the marker bodies stripped (the Python
 //     code uses .strip() to be whitespace-tolerant; we mirror that).
 //     The matchingTemplate helper accepts both old and new markers
@@ -333,9 +335,12 @@ func jsonAgentBody() string {
 // current canonical logmind block. Behaviour mirror of
 // ensure_agents_md(root_path):
 //
-//   - Missing → write the canonical template.
+//   - Missing → write the canonical (slim) template.
 //   - Exists without markers → insert the logmind block in-place.
-//   - Exists with markers but stale body → silently refresh the body.
+//   - Exists with markers but stale body → refresh the body IN PLACE,
+//     preserving the installed flavour (a repo that shipped the full
+//     block refreshes into the current full body, a slim repo into the
+//     current slim body — never a silent full↔slim flip).
 //   - Exists with markers and matching body → no-op (return "").
 //
 // Returns a status string when a write happened, or "" for no-op.
@@ -363,9 +368,23 @@ func EnsureAgentsMD(repoRoot string) (string, error) {
 		return "Added logmind section to existing AGENTS.md", nil
 	}
 
-	templateBlock, tok := ExtractMarkerBlock(template)
 	installedBlock, iok := ExtractMarkerBlock(content)
-	if tok && iok && strings.TrimSpace(installedBlock) != strings.TrimSpace(templateBlock) {
+	if !iok {
+		return "", nil
+	}
+	// Refresh AGAINST THE INSTALLED FLAVOUR, not an unconditional slim
+	// default: a repo that shipped the full block must refresh into the
+	// current full body, never silently flip full↔slim (that migration is
+	// an explicit init/migrate decision). This mirrors the version-guard
+	// in matchingTemplate / FindOutdatedMarkerBlocks and honours invariant
+	// #3 documented on agentsMDTemplate. When the installed marker is
+	// unrecognized, fall back to the slim default (pre-existing behaviour).
+	refreshTemplate := template
+	if mt := matchingTemplate(installedBlock); mt != "" {
+		refreshTemplate = mt
+	}
+	templateBlock, tok := ExtractMarkerBlock(refreshTemplate)
+	if tok && strings.TrimSpace(installedBlock) != strings.TrimSpace(templateBlock) {
 		refreshed := ReplaceMarkerBlock(content, templateBlock)
 		if err := os.WriteFile(agentsPath, []byte(refreshed), 0o644); err != nil {
 			return "", err
@@ -384,12 +403,12 @@ func EnsureAgentsMD(repoRoot string) (string, error) {
 //  1. SPEC §1.1 makes slim the default for new repos since v0.6.8+.
 //  2. Detecting `skills.sh` from inside the binary would require
 //     spawning npx — defer that to a later wave if needed.
-//  3. Repos that already shipped the full template stay on full
-//     (a v5 / v6 full-template marker won't match v7-pointer /
-//     v8-pointer slim, so the stale-block detection will read
-//     DIFFERENT but the byte-for-byte compare in ExtractMarkerBlock
-//     will reject the refresh because we never auto-migrate
-//     full → slim). See OutdatedMarkerBlocks for the explicit guard.
+//  3. Repos that already shipped the full template stay on full: the
+//     refresh paths (EnsureAgentsMD and FindOutdatedMarkerBlocks) both
+//     select the template flavour matching the installed block-version
+//     marker via matchingTemplate, so a v5 / v6 / v7 full block refreshes
+//     into the current full body rather than silently flipping to slim.
+//     See matchingTemplate for the explicit flavour guard.
 //
 // Callers that need the full variant (e.g., during `init --no-slim`)
 // can call templates.AgentsTemplate() directly.
@@ -470,13 +489,20 @@ func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, error) {
 // FLAVOUR (full vs slim) so existing repos with the older marker
 // get refreshed to the new body, while the explicit guard against
 // silent full↔slim flips (the substring of "-pointer") is preserved.
+//
+// The Slice-2 branch-summary wave bumped the full template v6→v7,
+// carrying the branch-summary (headline) convention into the inline
+// procedure. v5 / v6 / v7 all map to the full flavour, so a repo that
+// shipped an older full block refreshes forward into the v7 body while
+// the full↔slim guard still holds.
 func matchingTemplate(installedBody string) string {
 	if strings.Contains(installedBody, "logmind-block-version: v7-pointer") ||
 		strings.Contains(installedBody, "logmind-block-version: v8-pointer") {
 		return templates.AgentsSlimTemplate()
 	}
 	if strings.Contains(installedBody, "logmind-block-version: v5") ||
-		strings.Contains(installedBody, "logmind-block-version: v6") {
+		strings.Contains(installedBody, "logmind-block-version: v6") ||
+		strings.Contains(installedBody, "logmind-block-version: v7") {
 		return templates.AgentsTemplate()
 	}
 	return ""

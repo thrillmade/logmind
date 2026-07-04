@@ -46,29 +46,43 @@ func TestTemplates_ByteIdenticalToPython(t *testing.T) {
 	}
 }
 
-// TestAgentsTemplate_HasV6Marker pins the protocol-version marker. The
+// TestAgentsTemplate_HasV7Marker pins the protocol-version marker. The
 // `agents update --apply` workflow keys on this marker to decide
 // whether an installed block is stale.
 //
-// v0.6.16 bumped v5→v6: heading reframed as "REQUIRED for substantive
-// commits" with an explicit DO-NOT-git-commit blockquote that pairs
-// with the commit-msg hook installed by `logmind init`.
-func TestAgentsTemplate_HasV6Marker(t *testing.T) {
+// The Slice-2 branch-summary wave bumped v6→v7: the full inline procedure
+// now carries the branch-summary (headline) convention. The v0.6.16
+// REQUIRED framing + DO-NOT-git-commit blockquote are retained.
+func TestAgentsTemplate_HasV7Marker(t *testing.T) {
 	body := AgentsTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v6 -->") {
-		t.Fatalf("full template missing v6 marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v7 -->") {
+		t.Fatalf("full template missing v7 marker")
 	}
 	if !strings.Contains(body, "<!-- logmind-start -->") || !strings.Contains(body, "<!-- logmind-end -->") {
 		t.Fatalf("full template missing start/end markers")
 	}
-	// v0.6.16: the REQUIRED framing + DO-NOT blockquote are the
-	// user-visible delta over v5. Pin both so a future inadvertent
-	// revert to the v5 prose trips this test.
+	// The REQUIRED framing + DO-NOT blockquote are retained from v6. Pin
+	// both so a future inadvertent revert to the v5 prose trips this test.
 	if !strings.Contains(body, "REQUIRED for substantive commits") {
-		t.Fatalf("v6 template missing REQUIRED framing in heading")
+		t.Fatalf("v7 template missing REQUIRED framing in heading")
 	}
 	if !strings.Contains(body, "DO NOT run `git add` / `git commit` / `git push`") {
-		t.Fatalf("v6 template missing DO-NOT-git-commit blockquote")
+		t.Fatalf("v7 template missing DO-NOT-git-commit blockquote")
+	}
+	// v7 delta: the branch-summary (headline) convention. Pin the heading,
+	// both authoring forms, and the verbatim-into-timeline promise so a
+	// future revert that drops the convention trips this test.
+	if !strings.Contains(body, "Branch summary (headline)") {
+		t.Fatalf("v7 template missing the branch-summary (headline) subsection")
+	}
+	if !strings.Contains(body, `logmind headline "<one sentence>"`) {
+		t.Fatalf("v7 template missing the `logmind headline` authoring form")
+	}
+	if !strings.Contains(body, `logmind log "..." -H "<one sentence>"`) {
+		t.Fatalf("v7 template missing the bundled `logmind log -H` authoring form")
+	}
+	if !strings.Contains(body, "copied verbatim into") {
+		t.Fatalf("v7 template missing the verbatim-into-timeline promise")
 	}
 }
 
