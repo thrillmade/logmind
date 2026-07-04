@@ -24,6 +24,7 @@ import (
 )
 
 func newRepomapCmd() *cobra.Command {
+	var mapTokens int
 	cmd := &cobra.Command{
 		Use:   "repomap",
 		Short: "Print a deterministic Go signature skeleton of the repo (experimental; token-killer Phase 2)",
@@ -39,34 +40,40 @@ Deterministic (files sorted, stdlib pretty-printing, no timestamps / absolute
 paths / filesystem order) so it caches as a stable prefix, exactly like
 ` + "`logmind context`" + `.
 
+--map-tokens N ranks files by importance (files the team logged decisions
+about, then intra-repo import fan-in, then path) and keeps as many whole files
+as fit an estimated N-token budget, marking the rest omitted. Without it, every
+file is emitted in path order (unchanged, byte-stable).
+
 Experimental: currently Go-only (uses the go/parser standard library — zero
-external dependency). Other languages, importance ranking, and a token budget
-land in later slices; the default derived docs are unchanged.`,
+external dependency). Other languages land in a later slice.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			return runRepomap(cwd, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runRepomap(cwd, mapTokens, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.Flags().IntVar(&mapTokens, "map-tokens", 0,
+		"Rank by importance and pack the skeleton to an estimated N-token budget (est. ~4 chars/token), omitting the least-important files. 0 = no budget (all files, path order).")
 	return cmd
 }
 
-func runRepomap(cwd string, quiet bool, stdout, stderr io.Writer) error {
+func runRepomap(cwd string, mapTokens int, quiet bool, stdout, stderr io.Writer) error {
 	q := newQout(quiet, stdout, stderr)
 	cfg, _ := config.Load(cwd)
-	text, files, err := repomap.Generate(cwd, cfg.FileStructure.IgnorePatterns)
+	text, kept, omitted, err := repomap.GenerateBudget(cwd, cfg.FileStructure.IgnorePatterns, mapTokens)
 	if err != nil {
 		return err
 	}
-	nSyms := repomap.CountSymbols(files)
+	nSyms := repomap.CountSymbols(kept)
 	if quiet {
-		q.ok("repomap files=%d symbols=%d bytes=%d sink=stdout", len(files), nSyms, len(text))
+		q.ok("repomap files=%d symbols=%d omitted=%d bytes=%d sink=stdout", len(kept), nSyms, omitted, len(text))
 		return nil
 	}
 	fmt.Fprint(stdout, text)
-	fmt.Fprintf(stdout, "ok repomap: %d files, %d symbols, %d bytes (stdout)\n", len(files), nSyms, len(text))
+	fmt.Fprintf(stdout, "ok repomap: %d files, %d symbols, %d omitted, %d bytes (stdout)\n", len(kept), nSyms, omitted, len(text))
 	return nil
 }

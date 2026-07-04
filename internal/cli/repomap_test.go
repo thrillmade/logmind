@@ -62,6 +62,43 @@ func TestRepomap_Quiet(t *testing.T) {
 	})
 }
 
+// TestRepomap_MapTokensBudget: --map-tokens packs to a budget and marks the
+// omitted files; the receipt reports the omitted count. Uses several
+// substantial files so omitting some genuinely shrinks the output (past the
+// never-worse passthrough).
+func TestRepomap_MapTokensBudget(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, "go.mod", "module x\n")
+		for _, name := range []string{"a", "b", "c", "d", "e"} {
+			mustWriteUnder(t, d, name+".go",
+				"package p\nfunc "+name+"1(x int) error { return nil }\nfunc "+name+"2(y string) bool { return false }\nfunc "+name+"3() {}\n")
+		}
+		s := runRepomapCapture(t, "--map-tokens", "60")
+		if !strings.Contains(s, "omitted to fit the token budget") {
+			t.Errorf("budget marker missing:\n%s", s)
+		}
+		if strings.Contains(s, "0 omitted,") {
+			t.Errorf("expected some files omitted at a tight budget:\n%s", s)
+		}
+	})
+}
+
+// TestRepomap_NoBudgetNoOmittedMarker: without --map-tokens, all files emit and
+// no truncation marker appears (the byte-stable default).
+func TestRepomap_NoBudgetNoOmittedMarker(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, "go.mod", "module x\n")
+		mustWriteUnder(t, d, "a.go", "package p\nfunc A() {}\n")
+		s := runRepomapCapture(t)
+		if strings.Contains(s, "omitted to fit") {
+			t.Errorf("no-budget run must not emit a truncation marker:\n%s", s)
+		}
+		if !strings.Contains(s, "0 omitted") {
+			t.Errorf("receipt should report 0 omitted:\n%s", s)
+		}
+	})
+}
+
 // TestRepomap_Deterministic: byte-identical across runs (caching invariant).
 func TestRepomap_Deterministic(t *testing.T) {
 	withTempCwd(t, func(d string) {
