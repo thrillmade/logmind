@@ -45,8 +45,9 @@ func Rank(repoRoot string, files []FileSymbols) []FileSymbols {
 // Pack greedily keeps whole files from the (already Rank-ordered) slice while
 // the rendered skeleton stays within maxTokens (the §14.2 ceil(len/4) estimate),
 // and reports how many trailing files were dropped. maxTokens <= 0 means "no
-// budget" — keep everything. Never-worse (§14.5): the packed render is a subset
-// of the full render, never larger.
+// budget" — keep everything. (The §14.5 never-worse guarantee is enforced by
+// GenerateBudget, which passes through the full map when the truncation
+// marker's overhead would make the packed output larger than the full one.)
 func Pack(ranked []FileSymbols, maxTokens int) (kept []FileSymbols, omitted int) {
 	if maxTokens <= 0 {
 		return ranked, 0
@@ -89,11 +90,46 @@ func decisionLinkedPaths(repoRoot string, files []FileSymbols) map[string]bool {
 	text := corpus.String()
 	linked := make(map[string]bool)
 	for _, f := range files {
-		if strings.Contains(text, f.Path) {
+		if mentionsPath(text, f.Path) {
 			linked[f.Path] = true
 		}
 	}
 	return linked
+}
+
+// mentionsPath reports whether path appears in text as a whole path token, not
+// as the tail/head of a longer word — so a short root path like `a.go` is NOT
+// matched inside `data.go`. A match is valid when the char before it is not a
+// path-continuation char and the char after it is not alphanumeric.
+func mentionsPath(text, path string) bool {
+	for from := 0; ; {
+		i := strings.Index(text[from:], path)
+		if i < 0 {
+			return false
+		}
+		i += from
+		var before, after byte = ' ', ' '
+		if i > 0 {
+			before = text[i-1]
+		}
+		if end := i + len(path); end < len(text) {
+			after = text[end]
+		}
+		if !isPathContByte(before) && !isAlnumByte(after) {
+			return true
+		}
+		from = i + 1
+	}
+}
+
+func isAlnumByte(b byte) bool {
+	return b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9'
+}
+
+// isPathContByte reports whether b could be part of a filename/path token, so a
+// preceding one means the match is only the TAIL of a longer path/word.
+func isPathContByte(b byte) bool {
+	return isAlnumByte(b) || b == '.' || b == '_' || b == '-' || b == '/'
 }
 
 // importFanIn counts, per file, how many OTHER files in the repo import that
@@ -140,7 +176,13 @@ func moduleImportPath(repoRoot string) string {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if line = strings.TrimSpace(line); strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			// Fields drops surrounding whitespace AND any trailing `// comment`
+			// (e.g. `module example.com/m // vanity import`), whose bytes would
+			// otherwise be glued onto the module path and break every prefix
+			// match, silently zeroing all fan-in.
+			if f := strings.Fields(strings.TrimPrefix(line, "module ")); len(f) > 0 {
+				return f[0]
+			}
 		}
 	}
 	return ""

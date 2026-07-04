@@ -344,9 +344,18 @@ func GenerateBudget(repoRoot string, defaults []string, maxTokens int) (text str
 	if maxTokens <= 0 {
 		return Render(files), files, 0, nil
 	}
+	full := Render(files)
 	ranked := Rank(repoRoot, files)
 	kept, omitted = Pack(ranked, maxTokens)
-	return RenderWithOmitted(kept, omitted), kept, omitted, nil
+	packed := RenderWithOmitted(kept, omitted)
+	// Never-worse (§14.5): the truncation marker's fixed overhead can exceed a
+	// few small omitted blocks, making the packed render LARGER than the full
+	// one — worse AND lossy. When budgeting fails to actually shrink the output,
+	// passthrough the full map; a budget must never make the output bigger.
+	if len(packed) >= len(full) {
+		return full, files, 0, nil
+	}
+	return packed, kept, omitted, nil
 }
 
 // CountSymbols totals the symbols across all files — the denominator for the

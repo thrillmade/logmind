@@ -11,3 +11,14 @@
 
 ---
 
+## 2026-07-04 01:06 - R3 review fixes: §14.5 never-worse passthrough + ranking-signal robustness
+
+**Reasoning:** Dual review (adversarial + clud-bug-lens) found a BLOCKER: the ~47-byte truncation marker can exceed a few small omitted blocks, making the packed render LARGER than the full one (worse AND lossy) — a §14.5 violation. Fixed via passthrough in GenerateBudget (emit the full map when packing fails to shrink it). Plus 2 ranking MINORs: decision-link used strings.Contains so 'a.go' matched inside 'data.go' (false boost); go.mod 'module x // comment' glued the comment onto the module path, zeroing all fan-in.
+
+**Alternatives considered:** Account for the marker size inside Pack (rejected — passthrough IS the §14.5 'on doubt, passthrough' rule, cleaner). Require decision-link paths to contain '/' (rejected — misses root-level files; the boundary-aware match is correct). 
+
+**Implications:**
+- Budgeting never enlarges the output (verified empirically: tiny repo passes through at every sub-full budget). Ranking is robust to substring false-positives (new mentionsPath boundary check) and vanity-import go.mod (strings.Fields). Regression tests for all three; the never-worse guarantee doc moved from Pack to GenerateBudget.
+
+---
+
