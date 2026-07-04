@@ -53,6 +53,12 @@ func MultiLine(
 ) {
 	return a + b, nil
 }
+
+type Stack[T any] struct {
+	items []T
+}
+
+func Map[T, U any](s []T, f func(T) U) []U { return nil }
 `
 
 func extractOne(t *testing.T, src string) []Symbol {
@@ -100,6 +106,9 @@ func TestExtractGo_Signatures(t *testing.T) {
 		{"Count", "type", "type Count int"},
 		// A multi-line signature is collapsed to a single row.
 		{"MultiLine", "func", "func MultiLine( a int, b int, ) ( int, error, )"},
+		// Generics: type params are preserved on both types and funcs.
+		{"Stack", "type", "type Stack[T any] struct"},
+		{"Map", "func", "func Map[T, U any](s []T, f func(T) U) []U"},
 	}
 	for _, c := range cases {
 		s, ok := sigOf(syms, c.name)
@@ -118,9 +127,14 @@ func TestExtractGo_Signatures(t *testing.T) {
 
 func TestExtractGo_BodyDropped(t *testing.T) {
 	syms := extractOne(t, sampleGo)
+	// What must NOT leak is real body/member content — statements and
+	// struct/interface fields (composites collapse to the bare keyword).
+	leaks := []string{"body dropped", "println", "return", "Field", "other", "items"}
 	for _, s := range syms {
-		if strings.Contains(s.Signature, "{") || strings.Contains(s.Signature, "body dropped") {
-			t.Errorf("body leaked into signature: %q", s.Signature)
+		for _, bad := range leaks {
+			if strings.Contains(s.Signature, bad) {
+				t.Errorf("member/body token %q leaked into signature: %q", bad, s.Signature)
+			}
 		}
 	}
 }
@@ -132,7 +146,7 @@ func TestExtractGo_SourceOrderPreserved(t *testing.T) {
 		names = append(names, s.Name)
 	}
 	got := strings.Join(names, ",")
-	want := "Exported,unexported,Rec,Method,ValueMethod,Ifc,ID,Count,MultiLine"
+	want := "Exported,unexported,Rec,Method,ValueMethod,Ifc,ID,Count,MultiLine,Stack,Map"
 	if got != want {
 		t.Errorf("symbol order = %q; want %q", got, want)
 	}

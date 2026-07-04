@@ -138,26 +138,44 @@ func funcSignature(fset *token.FileSet, fn *ast.FuncDecl) Symbol {
 	return Symbol{Kind: kind, Name: fn.Name.Name, Signature: printNode(fset, &shallow)}
 }
 
-// typeSignature renders a type as a COLLAPSED signature: `type Name struct` /
-// `type Name interface` for composite types (fields/methods omitted to keep the
-// skeleton dense), and the full `type Name <underlying>` for aliases and named
-// scalar/func/map/etc. types (where the underlying IS the signal).
+// typeSignature renders a type as a COLLAPSED signature. Composite types keep
+// their generic type parameters but drop their members — `type List[T any]
+// struct{}` / `type Ifc interface{}` — so the skeleton stays dense without
+// losing the generic surface. Aliases and named scalar/func/map/etc. types keep
+// their full underlying (`type ID = string`, `type Count int`), where the
+// underlying IS the signal.
+//
+// It prints the TypeSpec node itself (printer renders `Name[TypeParams] …`
+// correctly, which hand-assembly from ts.Name would drop) with any struct/
+// interface body emptied.
 func typeSignature(fset *token.FileSet, ts *ast.TypeSpec) Symbol {
-	name := ts.Name.Name
-	var sig string
-	switch ts.Type.(type) {
+	spec := *ts
+	spec.Doc = nil
+	spec.Comment = nil
+	// Empty the composite body AND zero the brace positions: preserving the
+	// original Opening/Closing token positions makes the printer render
+	// `struct { }` for a multi-line source but `struct{}` for a single-line
+	// one — source-layout-dependent output that would break the caching
+	// invariant. A zero-position empty FieldList always renders canonically.
+	switch t := ts.Type.(type) {
 	case *ast.StructType:
-		sig = "type " + name + " struct"
+		empty := *t
+		empty.Fields = &ast.FieldList{}
+		spec.Type = &empty
 	case *ast.InterfaceType:
-		sig = "type " + name + " interface"
-	default:
-		eq := ""
-		if ts.Assign.IsValid() {
-			eq = "= "
-		}
-		sig = "type " + name + " " + eq + printNode(fset, ts.Type)
+		empty := *t
+		empty.Methods = &ast.FieldList{}
+		spec.Type = &empty
 	}
-	return Symbol{Kind: "type", Name: name, Signature: sig}
+	// The emptied composite prints as `... struct { }` / `... interface { }`.
+	// Trim the empty braces to the dense keyword form (`type Rec struct`) — it
+	// reads as "Rec is a struct" rather than falsely implying an EMPTY struct,
+	// and type params survive ahead of the keyword. Non-composite types (no
+	// trailing empty braces) are unaffected.
+	sig := "type " + printNode(fset, &spec)
+	sig = strings.TrimSuffix(sig, " { }")
+	sig = strings.TrimSuffix(sig, " {}")
+	return Symbol{Kind: "type", Name: ts.Name.Name, Signature: sig}
 }
 
 // printNode pretty-prints an AST node to a single logical line using the

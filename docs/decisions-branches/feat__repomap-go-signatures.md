@@ -11,3 +11,14 @@
 
 ---
 
+## 2026-07-03 23:51 - repomap: preserve generic type params + make composite type rendering layout-independent
+
+**Reasoning:** Self-review of the first commit found two correctness bugs: (1) typeSignature hand-built the string from ts.Name, DROPPING generic type params (type List[T any] struct rendered as 'type List struct'); (2) preserving the original brace token positions made an emptied composite render 'struct { }' for multi-line source but 'struct{}' for single-line — source-layout-dependent output that breaks the caching-determinism invariant.
+
+**Alternatives considered:** Leave generics unhandled (logmind itself uses none) — rejected: the repomap must be correct for consumer repos too. Post-process the string — rejected in favor of printing the TypeSpec node (printer renders type params correctly) with a zero-position emptied body, then trimming the empty-brace suffix to the dense 'type Name struct' form.
+
+**Implications:**
+- Composite types now render as the dense keyword form WITH type params (type Stack[T any] struct), identically regardless of source brace layout. Added generics + layout-independence test coverage.
+
+---
+
