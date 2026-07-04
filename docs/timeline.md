@@ -13,10 +13,10 @@ PR's CI run, so this file is always coherent with current `main`.
 ---
 
 
-## 2026-07 (13 decisions)
+## 2026-07 (14 decisions)
 
-- **2026-07-03** — token-killer Phase 1b: LOGMIND_QUIET output discipline across log/timeline/file-structure/doctor/headline *(feat/token-killer-1b-quiet)* — [decisions-branches/feat__token-killer-1b-quiet.md](decisions-branches/feat__token-killer-1b-quiet.md)
-- *... 11 more decisions ...*
+- **2026-07-03** — 1b review-fixes: --help flag placeholder, --quiet=false precedence, headline default-receipt test *(feat/token-killer-1b-quiet)* — [decisions-branches/feat__token-killer-1b-quiet.md](decisions-branches/feat__token-killer-1b-quiet.md)
+- *... 12 more decisions ...*
 - **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6) *(fix/check-doc-links-advisory-no-strand)* — [decisions-branches/fix__check-doc-links-advisory-no-strand.md](decisions-branches/fix__check-doc-links-advisory-no-strand.md)
 
 ## 2026-06 (102 decisions)
