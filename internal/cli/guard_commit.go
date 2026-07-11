@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/guardcommit"
 )
 
@@ -106,9 +107,10 @@ manually, e.g. for testing:
 	return cmd
 }
 
-// runGuardCommit is the testable core shared by both layers. It resolves
-// config (git.enforce_commits, git.commit_line_threshold) once against
-// repoRootFlag-or-cwd, then dispatches to the layer-specific evaluation.
+// runGuardCommit is the testable core shared by both layers. It dispatches
+// to the layer-specific evaluation, which is where the git toplevel is
+// resolved from the EVALUATED cwd (see resolveRepoAndConfig) and used for
+// BOTH config loading AND the guardcommit.Evaluate call.
 //
 // Return shape: (exitCode, err). exitCode != 0 tells the RunE wrapper to
 // call os.Exit(exitCode) directly (see the LOUD COMMENT above) — used ONLY
@@ -127,41 +129,68 @@ func runGuardCommit(
 	quiet bool,
 	stdin io.Reader, stdout, stderr io.Writer,
 ) (exitCode int, err error) {
-	repoRootForConfig := repoRootFlag
-	if repoRootForConfig == "" {
-		cwd, wdErr := os.Getwd()
-		if wdErr != nil {
-			return 0, wdErr
-		}
-		repoRootForConfig = cwd
-	}
-
-	// config.Load degrades to defaults on a missing/unparseable
-	// .logmind/config.yml (see internal/config's documented "broken
-	// config is user-fixing-it-later" stance) — guard-commit inherits
-	// that same best-effort posture rather than treating a config
-	// problem as a reason to block commits.
-	cfg, _ := config.Load(repoRootForConfig)
-	threshold := resolveThreshold(cfg, thresholdFlag, thresholdExplicit)
-
 	switch layer {
 	case "harness":
-		if !cfg.Git.EnforceCommits {
-			// The repo off-ramp: exit 0, no output, for both layers.
-			return 0, nil
-		}
-		return guardCommitHarness(stdin, stderr, repoRootFlag, threshold), nil
+		return guardCommitHarness(stdin, stderr, repoRootFlag, thresholdFlag, thresholdExplicit), nil
 	case "git-hook":
-		if !cfg.Git.EnforceCommits {
-			return 0, nil
-		}
 		if msgFile == "" {
+			// Pure CLI-usage error, independent of any repo/config state.
 			return 0, fmt.Errorf("--msg-file is required for --layer git-hook")
 		}
-		return 0, guardCommitGitHook(repoRootForConfig, msgFile, threshold, quiet, stdout, stderr)
+		return 0, guardCommitGitHook(repoRootFlag, msgFile, thresholdFlag, thresholdExplicit, quiet, stdout, stderr)
 	default:
 		return 0, fmt.Errorf("--layer must be %q or %q (got %q)", "harness", "git-hook", layer)
 	}
+}
+
+// resolveRepoAndConfig is the single choke point that fixes the
+// "evaluate/config against the wrong directory" family of silent bypasses.
+// Given the EVALUATED cwd (which, for the harness layer, may be a
+// SUBDIRECTORY of the repo — PreToolUse payloads carry the tool call's
+// cwd), it resolves the git toplevel ONCE and returns:
+//
+//   - repoRoot: the directory to hand guardcommit.Evaluate. When evalCwd
+//     is inside a repo this is the TOPLEVEL, so every git diff/status op
+//     Evaluate runs (whose --porcelain paths are root-relative) resolves
+//     correctly AND config is read from the repo root's
+//     .logmind/config.yml. When evalCwd isn't in a repo, we hand back
+//     evalCwd unchanged so Evaluate's own IsRepo(evalCwd) check fails and
+//     it takes its not-a-repo Allow path (handing back "" instead would
+//     make IsRepo inspect the PROCESS cwd, which could wrongly BE a repo).
+//   - enforce: git.enforce_commits from the toplevel's config (default
+//     true). The full repo off-ramp.
+//   - threshold: the effective substantive-line threshold.
+//
+// config.Load degrades to defaults on a missing/unparseable
+// .logmind/config.yml (internal/config's documented "broken config is
+// user-fixing-it-later" stance), so a config problem never becomes a
+// reason to block — or to wrongly allow — a commit.
+func resolveRepoAndConfig(evalCwd string, thresholdFlag int, thresholdExplicit bool) (repoRoot string, enforce bool, threshold int) {
+	toplevel, ok := gitcli.TopLevel(evalCwd)
+	if !ok {
+		// Not in a repo: config falls back to defaults, and we hand
+		// Evaluate the original evalCwd so its IsRepo check fails cleanly.
+		cfg := config.DefaultConfig()
+		return evalCwd, cfg.Git.EnforceCommits, resolveThreshold(cfg, thresholdFlag, thresholdExplicit)
+	}
+	cfg, _ := config.Load(toplevel)
+	return toplevel, cfg.Git.EnforceCommits, resolveThreshold(cfg, thresholdFlag, thresholdExplicit)
+}
+
+// evalCwdOr returns the first of preferred / repoRootFlag / the process
+// working directory that is non-empty. Used to pick the directory the
+// git toplevel is resolved from.
+func evalCwdOr(preferred, repoRootFlag string) string {
+	if preferred != "" {
+		return preferred
+	}
+	if repoRootFlag != "" {
+		return repoRootFlag
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return cwd
+	}
+	return ""
 }
 
 // resolveThreshold implements the documented precedence: an explicit
@@ -192,9 +221,15 @@ type harnessPayload struct {
 // guardCommitHarness implements the --layer harness evaluation. Returns
 // the process exit code the caller should use: 0 to allow (INCLUDING every
 // fail-open case — bad/foreign JSON, a non-Bash tool call, a Bash command
-// that isn't a git-commit invocation), or 2 to block (with the reason
-// already written to stderr).
-func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, threshold int) int {
+// that isn't a git-commit invocation, and the enforce_commits:false
+// off-ramp), or 2 to block (with the reason already written to stderr).
+//
+// The evaluated cwd is the payload's own cwd when present (a PreToolUse
+// payload carries the Bash tool call's working directory, which may be a
+// SUBDIRECTORY of the repo), falling back to --repo-root then the process
+// cwd. resolveRepoAndConfig then resolves that to the git toplevel so both
+// config AND every git op use the correct base directory.
+func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, thresholdFlag int, thresholdExplicit bool) int {
 	data, err := io.ReadAll(stdin)
 	if err != nil {
 		return 0 // fail open: couldn't even read the payload
@@ -211,14 +246,10 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 		return 0 // not a git-commit shape at all — nothing to evaluate
 	}
 
-	repoRoot := payload.Cwd
-	if repoRoot == "" {
-		repoRoot = repoRootFlag
-	}
-	if repoRoot == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			repoRoot = cwd
-		}
+	evalCwd := evalCwdOr(payload.Cwd, repoRootFlag)
+	repoRoot, enforce, threshold := resolveRepoAndConfig(evalCwd, thresholdFlag, thresholdExplicit)
+	if !enforce {
+		return 0 // the repo off-ramp: git.enforce_commits: false
 	}
 
 	subject := extractSubjectHint(payload.ToolInput.Command)
@@ -230,11 +261,18 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 	return 2
 }
 
-// guardCommitGitHook implements the --layer git-hook evaluation: read the
-// commit subject from msgFile's first line, evaluate under StagedOnly (the
-// index is final by the time a commit-msg hook runs), and translate the
-// result into the standard nil / ErrSilent convention.
-func guardCommitGitHook(repoRoot, msgFile string, threshold int, quiet bool, stdout, stderr io.Writer) error {
+// guardCommitGitHook implements the --layer git-hook evaluation: resolve
+// the git toplevel from --repo-root (or the process cwd), read config +
+// the commit subject, evaluate under StagedOnly (the index is final by the
+// time a commit-msg hook runs), and translate the result into the standard
+// nil / ErrSilent convention.
+func guardCommitGitHook(repoRootFlag, msgFile string, thresholdFlag int, thresholdExplicit bool, quiet bool, stdout, stderr io.Writer) error {
+	evalCwd := evalCwdOr("", repoRootFlag)
+	repoRoot, enforce, threshold := resolveRepoAndConfig(evalCwd, thresholdFlag, thresholdExplicit)
+	if !enforce {
+		return nil // the repo off-ramp: git.enforce_commits: false
+	}
+
 	subject, err := firstLineOfFile(msgFile)
 	if err != nil {
 		return err
@@ -269,32 +307,45 @@ func firstLineOfFile(path string) (string, error) {
 	return line, nil
 }
 
-// extractSubjectHint does a best-effort, quote-aware scan for a
-// `-m <value>` / `-m<value>` / `--message <value>` / `--message=<value>`
-// flag in a raw shell command string. It exists solely so the harness
-// layer's [skip-logmind] carve-out can see the intended commit message
-// BEFORE git has recorded anything (the harness runs at PreToolUse, ahead
-// of the actual `git commit` invocation). This is not a shell parser: a
-// message that comes from $EDITOR, a template, or is buried inside a
-// substitution simply yields "" here, which just means the
-// [skip-logmind] carve-out won't apply — every other carve-out (env var,
-// decision-file-staged, under-threshold) still works normally.
+// extractSubjectHint does a best-effort, quote-aware scan for git's commit
+// message flags — `-m <value>` / `-m<value>` / `--message <value>` /
+// `--message=<value>` — in a raw shell command string, and joins EVERY
+// occurrence (newline-separated) into one hint string. It exists solely so
+// the harness layer's [skip-logmind] carve-out can see the intended commit
+// message BEFORE git has recorded anything (the harness runs at PreToolUse,
+// ahead of the actual `git commit` invocation).
+//
+// ALL -m/--message values are collected, not just the first: git
+// concatenates multiple -m arguments into the message body, so a
+// `[skip-logmind]` marker placed in a SECOND -m (e.g.
+// `git commit -m "subject" -m "[skip-logmind]"`) must still be seen —
+// reading only the first -m would ignore the marker and OVER-block a
+// commit the agent explicitly opted out of.
+//
+// This is not a shell parser: a message that comes from $EDITOR, a
+// template, or is buried inside a substitution simply contributes nothing
+// here, which just means the [skip-logmind] carve-out won't apply — every
+// other carve-out (env var, decision-file-staged, under-threshold) still
+// works normally.
 func extractSubjectHint(command string) string {
 	words := splitCommandWords(command)
-	for i, w := range words {
+	var messages []string
+	for i := 0; i < len(words); i++ {
+		w := words[i]
 		switch {
 		case w == "-m" || w == "--message":
 			if i+1 < len(words) {
-				return words[i+1]
+				messages = append(messages, words[i+1])
+				i++ // skip the consumed value
 			}
 		case strings.HasPrefix(w, "--message="):
-			return strings.TrimPrefix(w, "--message=")
+			messages = append(messages, strings.TrimPrefix(w, "--message="))
 		case strings.HasPrefix(w, "-m") && w != "-m":
 			// git's short-flag-with-attached-value form, e.g. `-mSubject`.
-			return strings.TrimPrefix(w, "-m")
+			messages = append(messages, strings.TrimPrefix(w, "-m"))
 		}
 	}
-	return ""
+	return strings.Join(messages, "\n")
 }
 
 // splitCommandWords is a small, self-contained quote-aware whitespace

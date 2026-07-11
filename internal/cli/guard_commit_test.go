@@ -130,6 +130,46 @@ func TestRunGuardCommit_Harness_SkipLogmindMarkerAllows(t *testing.T) {
 	}
 }
 
+// TestRunGuardCommit_Harness_SkipLogmindInSecondMessageArg is the MINOR B
+// regression: git concatenates multiple -m args, so a [skip-logmind]
+// marker in a SECOND -m must be honored (reading only the first -m would
+// over-block a commit the agent explicitly opted out of).
+func TestRunGuardCommit_Harness_SkipLogmindInSecondMessageArg(t *testing.T) {
+	repo := initRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "big.go"), []byte(bigLines(50)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	payload := harnessJSON(t, "Bash", `git commit -m "subject line" -m "body [skip-logmind]"`, repo)
+	exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
+		strings.NewReader(payload), &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil ([skip-logmind] in the SECOND -m must be honored)", exitCode, err)
+	}
+}
+
+func TestExtractSubjectHint_CollectsAllMessageForms(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want string // the joined hint must contain this marker
+	}{
+		{`git commit -m "a" -m "b [skip-logmind]"`, "[skip-logmind]"},
+		{`git commit --message="[skip-logmind]"`, "[skip-logmind]"},
+		{`git commit --message "[skip-logmind]"`, "[skip-logmind]"},
+		{`git commit -m"[skip-logmind]"`, "[skip-logmind]"},
+	}
+	for _, c := range cases {
+		got := extractSubjectHint(c.cmd)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("extractSubjectHint(%q) = %q; want it to contain %q", c.cmd, got, c.want)
+		}
+	}
+	// No message flag → empty hint (the [skip-logmind] carve-out just
+	// won't apply; other carve-outs still work).
+	if got := extractSubjectHint(`git commit`); got != "" {
+		t.Errorf("extractSubjectHint(`git commit`) = %q; want empty", got)
+	}
+}
+
 func TestRunGuardCommit_Harness_UsesPayloadCwdOverRepoRootFlag(t *testing.T) {
 	repo := initRepo(t)
 	other := t.TempDir() // not a git repo at all
@@ -146,6 +186,86 @@ func TestRunGuardCommit_Harness_UsesPayloadCwdOverRepoRootFlag(t *testing.T) {
 	}
 	if exitCode != 2 {
 		t.Fatalf("exitCode = %d; want 2 (payload cwd should have been used, not the --repo-root fallback)", exitCode)
+	}
+}
+
+// TestRunGuardCommit_Harness_UntrackedFromSubdir_Blocks is the MAJOR 2
+// regression: an untracked-only ~40-line file, with the harness payload's
+// cwd pointing at a SUBDIRECTORY of the repo. Before the toplevel-resolve
+// fix, the git status/diff ops ran with cmd.Dir = the subdir, so the
+// root-relative untracked paths never resolved and the change was silently
+// allowed. Resolving payload.cwd → repo toplevel makes it Block.
+func TestRunGuardCommit_Harness_UntrackedFromSubdir_Blocks(t *testing.T) {
+	repo := initRepo(t)
+	sub := filepath.Join(repo, "pkg", "deep")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	// Untracked (never `git add`ed) ~40-line file at the repo root.
+	if err := os.WriteFile(filepath.Join(repo, "brand_new.go"), []byte(bigLines(40)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Payload cwd = the SUBDIR, not the repo root.
+	payload := harnessJSON(t, "Bash", `git add -A && git commit -m x`, sub)
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit("", "harness", "", 20, true, false,
+		strings.NewReader(payload), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("runGuardCommit: %v", err)
+	}
+	if exitCode != 2 {
+		t.Fatalf("exitCode = %d; want 2 (untracked file must be caught even when evaluated from a subdir)", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "logmind log") {
+		t.Fatalf("stderr = %q; want it to mention `logmind log`", stderr.String())
+	}
+}
+
+// TestRunGuardCommit_Harness_UnicodeUntrackedFromSubdir_Blocks combines
+// MINOR A (unicode untracked filename via -z) with MAJOR 2 (subdir cwd):
+// an untracked ~40-line file named "é.go" must still be counted and block.
+func TestRunGuardCommit_Harness_UnicodeUntrackedFromSubdir_Blocks(t *testing.T) {
+	repo := initRepo(t)
+	sub := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "é.go"), []byte(bigLines(40)), 0o644); err != nil {
+		t.Fatalf("write é.go: %v", err)
+	}
+	payload := harnessJSON(t, "Bash", `git add -A && git commit -m x`, sub)
+
+	exitCode, err := runGuardCommit("", "harness", "", 20, true, false,
+		strings.NewReader(payload), &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runGuardCommit: %v", err)
+	}
+	if exitCode != 2 {
+		t.Fatalf("exitCode = %d; want 2 (unicode-named untracked file must be counted)", exitCode)
+	}
+}
+
+// TestRunGuardCommit_Harness_EnforceFalseFromSubdir_Allows is the MAJOR 3
+// regression: git.enforce_commits:false in the repo's config must be
+// honored even when the payload cwd is a SUBDIR (config must load from the
+// resolved toplevel, not the subdir where no .logmind/config.yml exists).
+func TestRunGuardCommit_Harness_EnforceFalseFromSubdir_Allows(t *testing.T) {
+	repo := initRepo(t)
+	writeGuardCommitConfig(t, repo, "git:\n  enforce_commits: false\n")
+	sub := filepath.Join(repo, "pkg", "deep")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "big.go"), []byte(bigLines(100)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	payload := harnessJSON(t, "Bash", `git add -A && git commit -m x`, sub)
+
+	exitCode, err := runGuardCommit("", "harness", "", 20, true, false,
+		strings.NewReader(payload), &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil (enforce_commits:false must load from the toplevel, not the subdir)", exitCode, err)
 	}
 }
 

@@ -16,3 +16,15 @@
 
 ---
 
+## 2026-07-11 16:11 - Close five guard-commit silent-bypass holes found in PR #194 review: env-assignment prefix, subdir cwd for config+diffs, unicode untracked filenames, and second -m skip-marker
+
+**Reasoning:** Rigorous review found a compliant agent could bypass the commit gate three ways. (1) An inline env-var prefix (FOO=1 git commit, GIT_AUTHOR_DATE=x git commit, HUSKY=0 git commit, env git commit) tokenized so words[0] != git and InvokesGitCommit returned false. (2) The harness evaluated Evaluate and loaded config from the payload cwd, which can be a subdirectory of the repo; git status/diff root-relative paths did not resolve from a subdir so untracked files were miscounted to zero, and enforce_commits/threshold were read from the wrong or missing config. (3) git status --porcelain octal-escapes non-ASCII paths so git diff --no-index could not open them, dropping unicode-named untracked files from the count. Plus extractSubjectHint only read the first -m, over-blocking a commit whose skip-marker was in a second -m.
+
+**Alternatives considered:** Leave InvokesGitCommit as-is and rely only on the git-hook layer - rejected, the harness layer is the pre-stage gate and must catch env-prefixed and compound git add -A && git commit shapes before staging., Pass the raw payload cwd to Evaluate - rejected, that is the exact subdir bug; resolving the git toplevel once via gitcli.TopLevel and using it for BOTH config load AND every git op is the single correct fix., Strip quotes from git status --porcelain output for unicode paths - rejected, core.quotepath octal-escapes bytes not just quoting; -z NUL-terminated output is the only robust fix.
+
+**Implications:**
+- Added gitcli.TopLevel(cwd) (string, bool) returning the toplevel from an arbitrary cwd; guard-commit now resolves it once and passes it everywhere. UntrackedFiles switched to git status --porcelain -z. InvokesGitCommit stripWrapperPrefix now skips env assignments and the env command. extractSubjectHint collects all -m/--message values.
+- The same-line staged+unstaged double-count in WorkingTreeUnion is left intentional (over-counts toward Block, the safe direction) with a code comment. Added regression tests for every hole: env-prefix table cases, untracked-only-from-subdir Block, unicode-untracked-from-subdir Block, enforce_commits:false-from-subdir Allow, and skip-marker-in-second-m Allow.
+
+---
+

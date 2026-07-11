@@ -212,6 +212,12 @@ func collectRows(repoRoot string, mode DiffMode) []gitcli.NumstatLine {
 		rows = append(rows, gitcli.DiffCachedNumstat(repoRoot)...)
 		rows = append(rows, gitcli.DiffNumstat(repoRoot)...)
 		rows = append(rows, gitcli.UntrackedNumstat(repoRoot)...)
+		// Note: a file with BOTH staged and unstaged hunks appears in
+		// both DiffCachedNumstat and DiffNumstat, so its changed lines are
+		// counted twice here. That's intentional and left as-is — the
+		// double-count only ever OVER-counts, biasing toward Block, which
+		// is the safe direction for an enforcement gate (it can't cause a
+		// silent bypass).
 		return rows
 	default: // StagedOnly
 		return gitcli.DiffCachedNumstat(repoRoot)

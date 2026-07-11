@@ -238,3 +238,66 @@ func TestUntrackedNumstat_BinaryFileMarkedWithDash(t *testing.T) {
 		t.Fatalf("row counts = (%q, %q); want (\"-\", \"-\") for a binary file", rows[0].Added, rows[0].Removed)
 	}
 }
+
+// TestUntrackedFiles_UnicodeName guards the -z / core.quotepath fix: a
+// non-ASCII untracked filename must be returned RAW (not octal-escaped),
+// so the downstream `git diff --no-index` in UntrackedNumstat can open it
+// and count its lines.
+func TestUntrackedFiles_UnicodeName(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "é.go"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write é.go: %v", err)
+	}
+	files := UntrackedFiles(dir)
+	if len(files) != 1 || files[0] != "é.go" {
+		t.Fatalf("UntrackedFiles = %v; want [é.go] (raw, not octal-escaped)", files)
+	}
+}
+
+func TestUntrackedNumstat_UnicodeNameCounted(t *testing.T) {
+	dir := initRepo(t)
+	var body bytes.Buffer
+	for i := 0; i < 12; i++ {
+		body.WriteString("line\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "é.go"), body.Bytes(), 0o644); err != nil {
+		t.Fatalf("write é.go: %v", err)
+	}
+	rows := UntrackedNumstat(dir)
+	if len(rows) != 1 {
+		t.Fatalf("UntrackedNumstat = %+v; want 1 row for the unicode file", rows)
+	}
+	if rows[0].Path != "é.go" || rows[0].Added != "12" {
+		t.Fatalf("row = %+v; want path=é.go added=12", rows[0])
+	}
+}
+
+func TestTopLevel_ResolvesFromSubdir(t *testing.T) {
+	dir := initRepo(t)
+	sub := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	top, ok := TopLevel(sub)
+	if !ok {
+		t.Fatalf("TopLevel(%q) ok=false; want true", sub)
+	}
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("evalsymlinks(%q): %v", dir, err)
+	}
+	got, err := filepath.EvalSymlinks(top)
+	if err != nil {
+		t.Fatalf("evalsymlinks(%q): %v", top, err)
+	}
+	if got != want {
+		t.Fatalf("TopLevel(subdir) = %q; want repo root %q", got, want)
+	}
+}
+
+func TestTopLevel_FalseOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	if top, ok := TopLevel(dir); ok || top != "" {
+		t.Fatalf("TopLevel(%q) = (%q, %v); want (\"\", false)", dir, top, ok)
+	}
+}

@@ -28,6 +28,18 @@ func TestInvokesGitCommit(t *testing.T) {
 		`npm test && git commit -m x`,
 		`echo $(git commit -m x)`,
 		`timeout 30 git commit -m x`,
+		// Leading env-var assignments must not hide the invocation (a
+		// compliant agent inline-setting a var — date backdating, HUSKY=0,
+		// GIT_EDITOR — would otherwise silently bypass the gate).
+		`FOO=1 git commit -m x`,
+		`GIT_AUTHOR_DATE=2020-01-01 git commit`,
+		`HUSKY=0 git commit -m x`,
+		// The `env` command as a wrapper, with and without its options.
+		`env git commit`,
+		`env FOO=1 git commit -m x`,
+		`env -u HUSKY git commit -m x`,
+		// Env assignment stacked on a process wrapper.
+		`FOO=1 timeout 30 git commit -m x`,
 	}
 	for _, cmd := range mustMatch {
 		if !InvokesGitCommit(cmd) {
@@ -40,6 +52,11 @@ func TestInvokesGitCommit(t *testing.T) {
 		`gh pr merge`,
 		`git rebase --continue`,
 		`git merge --no-edit`,
+		// An env-assignment prefix in front of a NON-git command must not
+		// become a false positive after the assignment is stripped.
+		`FOO=1 npm test`,
+		`GIT_AUTHOR_DATE=x npm run build`,
+		`env npm test`,
 	}
 	for _, cmd := range mustNotMatch {
 		if InvokesGitCommit(cmd) {

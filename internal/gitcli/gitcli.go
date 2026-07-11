@@ -80,6 +80,40 @@ func RevParseTopLevel(repoRoot string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// TopLevel resolves the absolute repository root that contains cwd via
+// `git -C cwd rev-parse --show-toplevel`. Returns (toplevel, true) when
+// cwd is inside a work tree, or ("", false) for every failure path (not a
+// repo, missing git binary, permission error) — the boolean is the single
+// "is this a repo?" signal callers switch on, so they never have to
+// discriminate error kinds.
+//
+// This is the RIGHT resolver for guard-commit: the harness may hand it a
+// SUBDIRECTORY of the repo as the evaluated cwd (PreToolUse payloads carry
+// the tool call's cwd, not the repo root). Resolving to the toplevel means
+// both config loading (`.logmind/config.yml` lives at the repo root) AND
+// every git diff/status op (whose --porcelain paths are root-relative) use
+// the same, correct base directory — otherwise an untracked file staged
+// from a subdir would be miscounted and silently bypass enforcement.
+//
+// RevParseTopLevel (above) is the older error-returning twin kept for
+// install-hook's diagnostics; TopLevel is the boolean-returning form the
+// guard-commit hot path wants.
+func TopLevel(cwd string) (string, bool) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = cwd
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", false
+	}
+	top := strings.TrimSpace(stdout.String())
+	if top == "" {
+		return "", false
+	}
+	return top, true
+}
+
 // CurrentBranch returns the current branch name (e.g. "v1-go-rewrite")
 // or an empty string when HEAD is detached, the repo is unborn without
 // a usable symbolic-ref answer, or any error path. Mirrors
@@ -236,14 +270,22 @@ func DiffNumstat(repoRoot string) []NumstatLine {
 }
 
 // UntrackedFiles returns the repo-relative paths of every untracked
-// file (`git status --porcelain --untracked-files=all`, "??" rows).
+// file (`git status --porcelain -z --untracked-files=all`, "??" rows).
 // `--untracked-files=all` expands untracked directories to their
 // individual files rather than reporting the directory as one row, so
 // every file gets its own numstat below. gitignored files are NOT
 // included (git's default; we don't pass --ignored). Nil on any
 // failure or when there are no untracked files.
+//
+// The `-z` flag is load-bearing, not a nicety: without it, git applies
+// core.quotepath and octal-ESCAPES any non-ASCII path (e.g. "é.go"
+// becomes "\303\251.go" wrapped in double quotes). That escaped string
+// then can't be opened by the downstream `git diff --no-index` call in
+// UntrackedNumstat, so a unicode-named untracked file would be silently
+// dropped from the LOC count — a real enforcement bypass. `-z` emits raw,
+// NUL-terminated, unquoted paths instead, and we split on NUL.
 func UntrackedFiles(repoRoot string) []string {
-	cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+	cmd := exec.Command("git", "status", "--porcelain", "-z", "--untracked-files=all")
 	cmd.Dir = repoRoot
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -252,16 +294,14 @@ func UntrackedFiles(repoRoot string) []string {
 		return nil
 	}
 	var files []string
-	for _, line := range strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n") {
-		if !strings.HasPrefix(line, "?? ") {
+	// -z records are NUL-terminated (not NUL-separated) "XY <path>"
+	// entries, no quoting. Untracked files never carry the rename form's
+	// second path, so each record is exactly one status+path pair.
+	for _, entry := range strings.Split(stdout.String(), "\x00") {
+		if !strings.HasPrefix(entry, "?? ") {
 			continue
 		}
-		path := strings.TrimPrefix(line, "?? ")
-		// git wraps paths containing unusual bytes in double quotes
-		// (core.quotepath); best-effort strip, matching the
-		// "encoding round-trip is invisible for prefix/suffix use"
-		// stance documented on DiffCachedNames above.
-		path = strings.Trim(path, "\"")
+		path := strings.TrimPrefix(entry, "?? ")
 		if path != "" {
 			files = append(files, path)
 		}

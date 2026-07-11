@@ -37,9 +37,11 @@ var wrapperCommands = map[string]bool{
 //     match even though the top-level statement starts with "echo".
 //  3. For each statement (from either source), tokenize it into
 //     whitespace-separated, quote-aware words; optionally strip a leading
-//     process-wrapper command (timeout/time/nice/nohup/stdbuf) and its own
-//     arguments; if the first remaining word isn't literally "git", the
-//     statement doesn't match.
+//     run of shell env-assignments (FOO=1, GIT_AUTHOR_DATE=...), the `env`
+//     command and its options, and process-wrapper commands
+//     (timeout/time/nice/nohup/stdbuf) with their own arguments; if the
+//     first remaining word isn't literally "git", the statement doesn't
+//     match.
 //  4. Walk git's global flags (-C x, -c x, --git-dir[=x], --work-tree[=x],
 //     any other -*) consuming their values as needed; the first non-flag
 //     word is git's subcommand. Match only if it is EXACTLY "commit" (a
@@ -80,27 +82,88 @@ func statementInvokesCommit(statement string) bool {
 	return ok && subcommand == "commit"
 }
 
-// stripWrapperPrefix removes a leading chain of process-wrapper commands
-// (and their own flags/positional args) so the wrapped command underneath
-// can be inspected. Repeats so `nohup timeout 30 git commit` (a wrapper
-// wrapping a wrapper) is also handled.
+// stripWrapperPrefix removes a leading chain of "cruft" tokens that a
+// shell would consume before the real command begins, so the wrapped
+// command underneath can be inspected. It loops so any combination — e.g.
+// `FOO=1 timeout 30 env GIT_AUTHOR_DATE=x git commit` — collapses down to
+// `git commit`. Three kinds of prefix are recognized:
 //
-// Only `timeout` has a REQUIRED bare positional (its duration) ahead of
-// the wrapped command; the others (`time`, `nice`, `nohup`, `stdbuf`) take
-// only flag-style options (if any) before the wrapped command begins, so
-// we special-case the single-positional skip to `timeout` alone.
+//   - Shell env-var assignments (`FOO=1`, `GIT_AUTHOR_DATE=2020-01-01`,
+//     `HUSKY=0`, ...). A compliant agent that inline-sets an env var ahead
+//     of `git commit` (date backdating, HUSKY=0 to skip husky hooks,
+//     GIT_EDITOR, ...) MUST NOT thereby slip past the gate — without this,
+//     `FOO=1 git commit` tokenizes with words[0] == "FOO=1" and fails the
+//     `words[0] == "git"` check.
+//   - The `env` command itself, plus its options (`-i`, `-u NAME`, ...)
+//     and inline `NAME=val` assignments, up to the command it runs
+//     (`env git commit`, `env -u HUSKY git commit`).
+//   - Process-wrapping commands (timeout/time/nice/nohup/stdbuf). Only
+//     `timeout` has a REQUIRED bare positional (its duration) ahead of the
+//     wrapped command; the others take only flag-style options (if any)
+//     before the wrapped command begins, so the single-positional skip is
+//     special-cased to `timeout` alone.
 func stripWrapperPrefix(words []string) []string {
-	for len(words) > 0 && wrapperCommands[words[0]] {
-		isTimeout := words[0] == "timeout"
-		words = words[1:]
-		for len(words) > 0 && strings.HasPrefix(words[0], "-") {
+	for len(words) > 0 {
+		switch {
+		case isEnvAssignment(words[0]):
 			words = words[1:]
-		}
-		if isTimeout && len(words) > 0 {
-			words = words[1:] // the duration positional
+		case words[0] == "env":
+			words = words[1:]
+			for len(words) > 0 {
+				w := words[0]
+				switch {
+				case w == "-u":
+					// `-u NAME` unsets a var: consume the flag + its arg.
+					words = words[1:]
+					if len(words) > 0 {
+						words = words[1:]
+					}
+				case strings.HasPrefix(w, "-") || isEnvAssignment(w):
+					words = words[1:]
+				default:
+					// The command `env` will exec — stop consuming.
+					return stripWrapperPrefix(words)
+				}
+			}
+		case wrapperCommands[words[0]]:
+			isTimeout := words[0] == "timeout"
+			words = words[1:]
+			for len(words) > 0 && strings.HasPrefix(words[0], "-") {
+				words = words[1:]
+			}
+			if isTimeout && len(words) > 0 {
+				words = words[1:] // the duration positional
+			}
+		default:
+			return words
 		}
 	}
 	return words
+}
+
+// isEnvAssignment reports whether word is a shell environment-variable
+// assignment of the form NAME=value, where NAME matches
+// ^[A-Za-z_][A-Za-z0-9_]*. The value part (after the first "=") is
+// unconstrained. A leading "-" (e.g. "--git-dir=x") or a "=" at position 0
+// disqualifies it, so git's own `--flag=value` options are never mistaken
+// for env assignments.
+func isEnvAssignment(word string) bool {
+	eq := strings.IndexByte(word, '=')
+	if eq <= 0 {
+		return false
+	}
+	for i := 0; i < eq; i++ {
+		c := word[i]
+		switch {
+		case c == '_':
+		case c >= 'A' && c <= 'Z':
+		case c >= 'a' && c <= 'z':
+		case i > 0 && c >= '0' && c <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // firstGitSubcommand walks git's global options (which appear BEFORE the
