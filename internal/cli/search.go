@@ -287,6 +287,15 @@ func highlightLiteral(line, query string, caseSensitive bool) string {
 		hayIdx = strings.ToLower(line)
 		needle = strings.ToLower(query)
 	}
+	// Offsets are computed in hayIdx but sliced out of the original `line`.
+	// strings.ToLower can CHANGE byte length for some Unicode (e.g. İ U+0130
+	// lowercases to i̇, ẞ → ß), which would desync those offsets and slice
+	// `line` at the wrong bytes — misaligned markers or an out-of-range panic.
+	// Highlighting is purely cosmetic (match DETECTION via lineMatches is
+	// unaffected), so bail out unhighlighted on the rare length-changing fold.
+	if len(hayIdx) != len(line) {
+		return line
+	}
 	var b strings.Builder
 	for {
 		off := strings.Index(hayIdx, needle)

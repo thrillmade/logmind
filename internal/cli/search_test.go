@@ -180,6 +180,26 @@ func TestSearch_CaseInsensitiveHighlightPreservesOriginalCasing(t *testing.T) {
 	})
 }
 
+// TestSearch_CaseInsensitiveHighlightLengthChangingFold: a line containing a
+// Unicode char whose ToLower changes byte length (İ U+0130 → i̇) must not
+// panic or corrupt output on a case-insensitive match. Highlighting bails out
+// gracefully (line returned intact); DETECTION still works.
+func TestSearch_CaseInsensitiveHighlightLengthChangingFold(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs"))
+		line := "İ uses postgres here"
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - Decision\n"+line+"\n")
+
+		// Must not panic; must still find the match.
+		body := runSearchCmd(t, "postgres")
+		mustContain(t, body, "Found 1 match for: postgres")
+		// The length-changing fold makes highlighting bail out, so the matched
+		// line is emitted intact (no >>> <<< markers), byte-for-byte.
+		mustContain(t, body, "> "+line)
+	})
+}
+
 // TestSearch_EmptyQueryErrors: an empty query must error, not match every line.
 func TestSearch_EmptyQueryErrors(t *testing.T) {
 	withTempCwd(t, func(d string) {
