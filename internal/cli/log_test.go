@@ -83,7 +83,7 @@ func TestLog_DefaultBranch_WritesToDecisionsMd(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "Logged decision to docs/decisions.md")
+			mustContain(t, out.String(), `✓ Logged decision: "Test decision"`)
 		})
 	})
 	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions.md"))
@@ -128,7 +128,7 @@ func TestLog_FeatureBranch_WritesToBranchFile(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "docs/decisions-branches/feat__test.md")
+			mustContain(t, out.String(), `✓ Logged decision: "Branch decision"`)
 		})
 	})
 	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions-branches", "feat__test.md"))
@@ -409,7 +409,10 @@ func TestLog_AutoCommit_OnGitRepo(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "✓ Committed decision")
+			// No remote configured in this test repo, so the push step
+			// fails (no upstream) and line 3 falls back to the SPEC's
+			// "push suppressed/failed" wording.
+			mustContain(t, out.String(), "✓ Committed changes")
 		})
 	})
 	cmd := exec.Command("git", "log", "--oneline", "-1")

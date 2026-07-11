@@ -37,6 +37,25 @@
 //     found AND not interactive → print advisory and exit 0 (CI's
 //     check-doc-links workflow Layer 3 will catch it).
 //
+// SPEC §3.1 stdout contract (reconciled, salvaged from retired #154):
+//
+// On success stdout's first three lines are, byte-exact:
+//
+//	ℹ Staging all changes (use --stage scoped to limit)
+//	✓ Logged decision: "<summary>"
+//	✓ Committed and pushed changes
+//
+// (line 3 reads "✓ Committed changes" when push was suppressed via
+// --no-push / git.auto_push: false, or when the push itself failed —
+// e.g. no upstream configured.) TTY-interactive invocations MAY print
+// additional advisory lines AFTER these three (SPEC §3.1.1); non-TTY
+// and --no-interactive invocations emit exactly the three lines. See
+// runSelfHealLayer1 and nudgeBranchSummary for the TTY-gated extras.
+//
+// --no-push (this port, closing the gap the file docstring used to
+// carry as "out of scope"): suppresses the auto-push step. gitcli.Push
+// wraps the underlying `git push`.
+//
 // Out of scope for v1.2.0 (carried by the Python shim until v1.3.x or
 // folded into a follow-up):
 //
@@ -46,8 +65,6 @@
 //     self-heal feature.
 //   - `--template` flag for pre-filled reasoning/alternatives/impl
 //     (low-traffic; users craft their own entries with -r/-a/-i).
-//   - `--no-push` (push is a follow-up; v1.2.0 commits but does not
-//     push, matching the safer default for the new Go path).
 package cli
 
 import (
@@ -114,6 +131,7 @@ type logFlags struct {
 	alternatives  []string
 	implications  []string
 	noCommit      bool
+	noPush        bool
 	noInteractive bool
 	stage         string
 	// headline, when set, becomes the branch's one-sentence timeline summary
@@ -141,10 +159,11 @@ branch_aware=true). When creating a branch decision file for the first
 time, prepends a backlink header pointing at docs/timeline.md so the
 two files cross-link bidirectionally.
 
-After committing (unless --no-commit), runs linkcheck.Check() against the
-repo. If issues are found, prints an advisory + (when stdin is a TTY)
-enters an interactive retry loop giving you up to 3 attempts to fix and
-re-check. Non-interactive contexts (CI, piped stdin, --no-interactive)
+After committing (unless --no-commit), pushes (unless --no-push or
+git.auto_push: false in .logmind/config.yml), then runs linkcheck.Check()
+against the repo. If issues are found, prints an advisory + (when stdin is
+a TTY) enters an interactive retry loop giving you up to 3 attempts to fix
+and re-check. Non-interactive contexts (CI, piped stdin, --no-interactive)
 print the advisory and exit 0 — the check-doc-links workflow's Layer 3
 self-heal will catch any leftover issues at PR time.
 
@@ -170,6 +189,8 @@ Example:
 		"Implication of this decision (repeatable).")
 	cmd.Flags().BoolVar(&f.noCommit, "no-commit", false,
 		"Don't auto-commit the decision (write the file only).")
+	cmd.Flags().BoolVar(&f.noPush, "no-push", false,
+		"Don't auto-push after committing. Honored alongside .logmind/config.yml's git.auto_push (either suppresses the push).")
 	cmd.Flags().BoolVar(&f.noInteractive, "no-interactive", false,
 		"Skip the Layer 1 interactive retry prompt; print advisory + exit 0 when linkcheck has issues.")
 	cmd.Flags().StringVar(&f.stage, "stage", "all",
@@ -216,6 +237,27 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	}
 
 	cfg, _ := config.Load(cwd)
+
+	// Commit/push gating. Commit keeps its existing --no-commit-only gate
+	// (cfg.Git.AutoCommit is a pre-existing, still-unwired config knob —
+	// out of scope here). Push is the new surface: CLI flag OR config can
+	// suppress it, matching git.auto_push's documented semantics.
+	shouldCommit := !f.noCommit
+	shouldPush := shouldCommit && cfg.Git.AutoPush && !f.noPush
+
+	// SPEC §3.1 line 1 of 3 — stage notice, the first line of the
+	// required stdout contract. The --stage all wording is the SPEC's
+	// own §3.1 example, verbatim; --stage scoped has no SPEC example so
+	// this is this port's extrapolation (flagged in the PR description).
+	// Only emitted when a commit is actually about to be attempted —
+	// --no-commit stages nothing, so there is nothing to announce.
+	if shouldCommit {
+		if f.stage == "all" {
+			q.chat("ℹ Staging all changes (use --stage scoped to limit)\n")
+		} else {
+			q.chat("ℹ Staging decision file only (--stage scoped)\n")
+		}
+	}
 
 	// Resolve target file based on git state + config.branch_aware.
 	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
@@ -291,7 +333,12 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 		relTarget = target
 	}
 	relTarget = filepath.ToSlash(relTarget)
-	q.chat("✓ Logged decision to %s\n", relTarget)
+
+	// SPEC §3.1 line 2 of 3 — byte-exact `✓ Logged decision: "<summary>"`.
+	// %q quotes + escapes the summary the same way Go would for any
+	// embedded control characters; a plain-text summary renders as a
+	// simple double-quoted string, matching the SPEC example exactly.
+	q.chat("✓ Logged decision: %q\n", summary)
 
 	// Branch-summary nudge — steer the author toward a clean one-sentence
 	// summary of the WHOLE branch (the timeline headline the next agent reads).
@@ -299,13 +346,31 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// commit so a TTY edit lands in the same commit. Gated to a branch file.
 	// Best-effort: never fails the log. Suppressed under QUIET — an agent that
 	// opted into terse output doesn't want the multi-line nudge.
+	//
+	// KNOWN SPEC §3.1.1 GAP (pre-existing, not introduced by this change,
+	// left as-is — flagged for the lead): in the TTY-interactive path this
+	// prints prompts to stdout BETWEEN required line 2 and required line 3,
+	// which strictly reads as "additional lines" appearing before the third
+	// required line rather than after it. Deferring the nudge until after
+	// line 3 would break its real-time TTY UX (the prompt has to appear
+	// before the user types a reply) and would also decouple the edit from
+	// landing in the same commit. The non-TTY / --no-interactive path is
+	// unaffected — the nudge there goes to stderr only (§3.1.1's carve-out)
+	// so the 3-line stdout contract holds exactly for the fixture-relevant
+	// case. Needs a product call: either accept this narrow TTY exemption
+	// explicitly in the SPEC, or redesign the nudge to run after commit.
 	if isBranchFile && f.headline == "" && !quiet {
 		nudgeBranchSummary(target, f.noInteractive, stdin, stdout, stderr)
 	}
 
-	// Commit (unless --no-commit OR not in a git repo).
+	// Commit + push (unless --no-commit OR not in a git repo). SPEC §3.1
+	// line 3 of 3 — byte-exact "✓ Committed and pushed changes" when the
+	// push actually lands, else byte-exact "✓ Committed changes" (push
+	// suppressed via --no-push / git.auto_push: false, OR the push
+	// itself failed — e.g. no upstream on a fresh local repo).
 	committed := false
-	if !f.noCommit && gitcli.IsRepo(cwd) {
+	pushed := false
+	if shouldCommit && gitcli.IsRepo(cwd) {
 		if err := commitDecision(cwd, target, relTarget, f.stage, summary, cfg); err != nil {
 			// Commit failure isn't fatal to the decision-logging
 			// surface: the file is on disk; the user can commit
@@ -314,9 +379,24 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 			fmt.Fprintf(stderr, "Warning: auto-commit failed: %v\n", err)
 		} else {
 			committed = true
-			q.chat("✓ Committed decision\n")
+			if shouldPush {
+				if err := gitcli.Push(cwd); err != nil {
+					// Push failure is non-fatal — the commit already
+					// landed locally. Surface to stderr so the user
+					// knows to retry the push manually; stdout still
+					// reports the (accurate) "Committed changes" line.
+					fmt.Fprintf(stderr, "Warning: auto-push failed: %v\n", err)
+				} else {
+					pushed = true
+				}
+			}
+			if pushed {
+				q.chat("✓ Committed and pushed changes\n")
+			} else {
+				q.chat("✓ Committed changes\n")
+			}
 		}
-	} else if !f.noCommit {
+	} else if shouldCommit {
 		fmt.Fprintln(stderr, "Warning: not inside a git repo; skipping auto-commit.")
 	}
 
@@ -336,7 +416,7 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// its historical multi-line ✓ output (no `ok` trailer) for byte parity;
 	// this line is the quiet MODE's sole stdout output.
 	if quiet {
-		q.ok("logged path=%s committed=%t", relTarget, committed)
+		q.ok("logged path=%s committed=%t pushed=%t", relTarget, committed, pushed)
 	}
 	return nil
 }

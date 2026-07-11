@@ -421,6 +421,38 @@ func Commit(repoRoot, message string) error {
 	return nil
 }
 
+// Push runs `git push` against repoRoot. Returns a GitError carrying
+// git's stderr on failure (e.g., no upstream configured, network error,
+// rejected non-fast-forward). Used by `logmind log` per SPEC §3.1: on
+// success the third stdout line reads "✓ Committed and pushed changes";
+// when push is suppressed OR fails (including the common "no upstream"
+// case for a fresh local repo), the caller falls back to
+// "✓ Committed changes".
+//
+// No --force / --force-with-lease here — `logmind log` is an append-only
+// primitive and pushing a regular fast-forward is the right shape. The
+// `logmind rebase` wrapper carries the force-with-lease surface for the
+// rare case a rebase is involved.
+//
+// Args are appended verbatim (e.g., Push(cwd, "origin", "main") runs
+// `git push origin main`). Zero args runs plain `git push` and relies
+// on the branch's upstream tracking.
+func Push(repoRoot string, args ...string) error {
+	gitArgs := append([]string{"push"}, args...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrGitNotFound
+		}
+		return &GitError{Op: "push", Err: err, Stderr: stderr.String()}
+	}
+	return nil
+}
+
 // GitError wraps a git subprocess failure with the captured stderr
 // so callers can present meaningful diagnostics. The Python helpers
 // raise GitError(f"...{e.stderr}") in the same style.
