@@ -96,6 +96,19 @@ type GitConfig struct {
 	AutoPush              bool   `yaml:"auto_push"`
 	AutoRebase            bool   `yaml:"auto_rebase"`
 	CommitMessageTemplate string `yaml:"commit_message_template"`
+	// EnforceCommits gates the v2.0 guard-commit decision engine (see
+	// internal/guardcommit + `logmind guard-commit`). Default true:
+	// substantive commits are steered through `logmind log` unless a
+	// carve-out applies. Set to false as a full repo off-ramp — when
+	// false, guard-commit allows unconditionally (exit 0) regardless
+	// of layer or change size.
+	EnforceCommits bool `yaml:"enforce_commits"`
+	// CommitLineThreshold overrides guard-commit's substantive-change
+	// line threshold (how many changed lines trigger the "log this
+	// decision" gate). A `--threshold` flag passed explicitly to
+	// `logmind guard-commit` wins over this; this value wins over the
+	// hardcoded fallback of 20.
+	CommitLineThreshold int `yaml:"commit_line_threshold"`
 }
 
 // DecisionsConfig mirrors the `decisions:` section.
@@ -135,6 +148,8 @@ func DefaultConfig() Config {
 			AutoPush:              true,
 			AutoRebase:            false,
 			CommitMessageTemplate: "logmind: {decision}",
+			EnforceCommits:        true,
+			CommitLineThreshold:   20,
 		},
 		Decisions: DecisionsConfig{
 			MaxRecent:   20,

@@ -30,6 +30,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-11** — Fix the auto-regen bot commit identity to the canonical github-actions[bot], and bump the two workflow templates so consumer repos pick it up via doctor --fix → [detail](decisions-branches/fix__regen-bot-identity.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-11-add-guard-commit-decision-engine-internal-guardcommit-logmin -->
+- **2026-07-11** — Add guard-commit decision engine (internal/guardcommit) + logmind guard-commit cobra command, PR1/3 of force-logmind-usage enforcement → [detail](decisions-branches/feat__guard-commit-decision-engine.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-04-v2-0-0-breaking-remove-branch-divergent-entirely-main-canoni -->
 - **2026-07-04** — v2.0.0 BREAKING: remove branch-divergent entirely — main-canonical is the sole timeline model → [detail](decisions-branches/feat__v2-remove-branch-divergent.md)
 <!-- logmind-entry-end -->

@@ -80,6 +80,40 @@ func RevParseTopLevel(repoRoot string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// TopLevel resolves the absolute repository root that contains cwd via
+// `git -C cwd rev-parse --show-toplevel`. Returns (toplevel, true) when
+// cwd is inside a work tree, or ("", false) for every failure path (not a
+// repo, missing git binary, permission error) — the boolean is the single
+// "is this a repo?" signal callers switch on, so they never have to
+// discriminate error kinds.
+//
+// This is the RIGHT resolver for guard-commit: the harness may hand it a
+// SUBDIRECTORY of the repo as the evaluated cwd (PreToolUse payloads carry
+// the tool call's cwd, not the repo root). Resolving to the toplevel means
+// both config loading (`.logmind/config.yml` lives at the repo root) AND
+// every git diff/status op (whose --porcelain paths are root-relative) use
+// the same, correct base directory — otherwise an untracked file staged
+// from a subdir would be miscounted and silently bypass enforcement.
+//
+// RevParseTopLevel (above) is the older error-returning twin kept for
+// install-hook's diagnostics; TopLevel is the boolean-returning form the
+// guard-commit hot path wants.
+func TopLevel(cwd string) (string, bool) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = cwd
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", false
+	}
+	top := strings.TrimSpace(stdout.String())
+	if top == "" {
+		return "", false
+	}
+	return top, true
+}
+
 // CurrentBranch returns the current branch name (e.g. "v1-go-rewrite")
 // or an empty string when HEAD is detached, the repo is unborn without
 // a usable symbolic-ref answer, or any error path. Mirrors
@@ -213,8 +247,111 @@ func DiffCachedNumstat(repoRoot string) []NumstatLine {
 	if err := cmd.Run(); err != nil {
 		return nil
 	}
+	return parseNumstat(stdout.String())
+}
+
+// DiffNumstat parses `git diff --numstat` (unstaged changes to
+// TRACKED files — working tree vs. index, no --cached) into typed
+// rows. Same parsing rules as DiffCachedNumstat; returns nil on git
+// failure. Used by guardcommit's WorkingTreeUnion diff mode: the
+// harness PreToolUse hook fires BEFORE a compound `git add -A &&
+// git commit` stages anything, so `--cached` alone would undercount a
+// change that is still sitting unstaged at evaluation time.
+func DiffNumstat(repoRoot string) []NumstatLine {
+	cmd := exec.Command("git", "diff", "--numstat")
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+	return parseNumstat(stdout.String())
+}
+
+// UntrackedFiles returns the repo-relative paths of every untracked
+// file (`git status --porcelain -z --untracked-files=all`, "??" rows).
+// `--untracked-files=all` expands untracked directories to their
+// individual files rather than reporting the directory as one row, so
+// every file gets its own numstat below. gitignored files are NOT
+// included (git's default; we don't pass --ignored). Nil on any
+// failure or when there are no untracked files.
+//
+// The `-z` flag is load-bearing, not a nicety: without it, git applies
+// core.quotepath and octal-ESCAPES any non-ASCII path (e.g. "é.go"
+// becomes "\303\251.go" wrapped in double quotes). That escaped string
+// then can't be opened by the downstream `git diff --no-index` call in
+// UntrackedNumstat, so a unicode-named untracked file would be silently
+// dropped from the LOC count — a real enforcement bypass. `-z` emits raw,
+// NUL-terminated, unquoted paths instead, and we split on NUL.
+func UntrackedFiles(repoRoot string) []string {
+	cmd := exec.Command("git", "status", "--porcelain", "-z", "--untracked-files=all")
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+	var files []string
+	// -z records are NUL-terminated (not NUL-separated) "XY <path>"
+	// entries, no quoting. Untracked files never carry the rename form's
+	// second path, so each record is exactly one status+path pair.
+	for _, entry := range strings.Split(stdout.String(), "\x00") {
+		if !strings.HasPrefix(entry, "?? ") {
+			continue
+		}
+		path := strings.TrimPrefix(entry, "?? ")
+		if path != "" {
+			files = append(files, path)
+		}
+	}
+	return files
+}
+
+// UntrackedNumstat synthesizes numstat-shaped rows for every untracked
+// file, treating each as entirely new content. Computed via
+// `git diff --no-index --numstat -- <devnull> <path>` per file so
+// binary detection and line-counting exactly match git's own numstat
+// semantics instead of reimplementing them by hand.
+//
+// `git diff --no-index` follows plain `diff(1)` exit-status
+// conventions: 0 = no difference, 1 = difference found (the expected
+// case for every untracked file here — /dev/null vs. a real file is
+// always "different"), 2+ = trouble. We accept 0 and 1; anything else
+// (including a missing git binary) silently skips that file, matching
+// the best-effort posture of every other wrapper in this file.
+//
+// The raw numstat output echoes the devnull path (e.g.
+// "3\t0\t/dev/null => new.txt"), so we discard its Path and
+// substitute the real untracked path ourselves.
+func UntrackedNumstat(repoRoot string) []NumstatLine {
 	var rows []NumstatLine
-	for _, line := range strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n") {
+	for _, path := range UntrackedFiles(repoRoot) {
+		cmd := exec.Command("git", "diff", "--no-index", "--numstat", "--", os.DevNull, path)
+		cmd.Dir = repoRoot
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() > 1 {
+				continue
+			}
+		}
+		for _, row := range parseNumstat(stdout.String()) {
+			rows = append(rows, NumstatLine{Added: row.Added, Removed: row.Removed, Path: path})
+		}
+	}
+	return rows
+}
+
+// parseNumstat is the shared tab-split parser behind DiffCachedNumstat
+// and DiffNumstat — kept as one routine so the "3 tab-separated
+// fields or skip the line" rule can't drift between the two callers.
+func parseNumstat(out string) []NumstatLine {
+	var rows []NumstatLine
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -225,6 +362,30 @@ func DiffCachedNumstat(repoRoot string) []NumstatLine {
 		rows = append(rows, NumstatLine{Added: parts[0], Removed: parts[1], Path: parts[2]})
 	}
 	return rows
+}
+
+// GitDir resolves the repository's actual git directory for repoRoot
+// (`git rev-parse --absolute-git-dir`). Callers that need to inspect
+// state files like MERGE_HEAD or rebase-merge/ MUST use this rather
+// than naively joining "<repoRoot>/.git" — inside a linked worktree,
+// ".git" at the worktree root is a FILE (not a directory) whose
+// contents point at "<main-repo>/.git/worktrees/<name>", and the
+// per-worktree state files live under THAT directory, not the main
+// repo's top-level .git/. Empty string + error on any failure (not a
+// repo, no git binary).
+func GitDir(repoRoot string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--absolute-git-dir")
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", ErrGitNotFound
+		}
+		return "", &GitError{Op: "rev-parse --absolute-git-dir", Err: err, Stderr: stderr.String()}
+	}
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // ConfigGet returns the value of `git config --get <key>` for the
