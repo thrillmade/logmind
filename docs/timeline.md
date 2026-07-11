@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-11-implement-logmind-show-and-search-the-documented-decision-re -->
+- **2026-07-11** — Implement logmind show and search — the documented decision-read commands salvaged from retired PR #154 → [detail](decisions-branches/feat__cli-show-search.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-11-fix-auto-regen-bot-identity-to-canonical-github-actions-bot -->
 - **2026-07-11** — Fix the auto-regen bot commit identity to the canonical github-actions[bot], and bump the two workflow templates so consumer repos pick it up via doctor --fix → [detail](decisions-branches/fix__regen-bot-identity.md)
 <!-- logmind-entry-end -->
