@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/gitcli"
+	"github.com/thrillmade/logmind/internal/guardcommit"
 )
 
 // newCheckDecisionsCmd wires `logmind check-decisions [--threshold N] [--no-fail]`.
@@ -76,31 +75,18 @@ func runCheckDecisions(cwd string, threshold int, noFail bool, stdout io.Writer)
 
 	staged := gitcli.DiffCachedNames(cwd)
 	for _, f := range staged {
-		if isDecisionFile(f) {
+		if guardcommit.IsDecisionFile(f) {
 			fmt.Fprintln(stdout, "✓ A decision log file is staged — changes are documented.")
 			return nil
 		}
 	}
 
-	total := 0
-	for _, row := range gitcli.DiffCachedNumstat(cwd) {
-		// Mirror the Python skip rules verbatim (cli.py:2498-2504):
-		//   * filepath.startswith("docs/")  → skipped
-		//   * added == "-"                  → binary, skipped
-		//   * any int parse failure         → swallowed (pass)
-		if strings.HasPrefix(row.Path, "docs/") {
-			continue
-		}
-		if row.Added == "-" {
-			continue
-		}
-		added, errA := strconv.Atoi(row.Added)
-		removed, errR := strconv.Atoi(row.Removed)
-		if errA != nil || errR != nil {
-			continue
-		}
-		total += added + removed
-	}
+	// LOC counting + the docs/-prefix and binary skip rules live in
+	// guardcommit.SubstantiveLines now — shared with `logmind
+	// guard-commit` (internal/guardcommit) so the two enforcement
+	// surfaces can never drift on what counts as "substantive." Mirrors
+	// the Python skip rules verbatim (cli.py:2498-2504).
+	total := guardcommit.SubstantiveLines(gitcli.DiffCachedNumstat(cwd))
 
 	if total >= threshold {
 		// Multi-line warning identical to Python click.secho block.
@@ -118,21 +104,4 @@ func runCheckDecisions(cwd string, threshold int, noFail bool, stdout io.Writer)
 
 	fmt.Fprintf(stdout, "✓ %d lines changed (below %d-line threshold).\n", total, threshold)
 	return nil
-}
-
-// isDecisionFile mirrors the inline _is_decision_file predicate from
-// cli.py:2469-2474. Branch-aware mode routes feature-branch logs
-// to docs/decisions-branches/<branch>.md; both layouts must satisfy
-// "documented".
-func isDecisionFile(path string) bool {
-	if path == "docs/decisions.md" {
-		return true
-	}
-	if strings.HasSuffix(path, "/decisions.md") {
-		return true
-	}
-	if strings.HasPrefix(path, "docs/decisions-branches/") {
-		return true
-	}
-	return false
 }

@@ -64,6 +64,10 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newInstallHookCmd())
 	root.AddCommand(newCheckDecisionsCmd())
 	root.AddCommand(newCheckLinksCmd())
+	// v2.0.0 enforcement PR1/3: the guard-commit decision engine. Hidden —
+	// it's plumbing invoked BY hook layers (built in a follow-up PR), not a
+	// user-facing verb. See internal/cli/guard_commit.go.
+	root.AddCommand(newGuardCommitCmd())
 	// B3: derived doc generators + rebase wrapper.
 	root.AddCommand(newTimelineCmd())
 	root.AddCommand(newFileStructureCmd())
