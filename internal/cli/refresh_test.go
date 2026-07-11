@@ -162,3 +162,38 @@ func TestDoctorFix_NeverTouchesDocs(t *testing.T) {
 func contains(haystack, needle string) bool {
 	return bytes.Contains([]byte(haystack), []byte(needle))
 }
+
+// TestDoctorFix_InstallsClaudePreToolUseGuardByDefault: with no
+// .logmind/config.yml at all (so agents.claude falls back to the
+// default-true behavior), --fix installs the Layer 1 Claude Code
+// PreToolUse guard alongside the rest of the remediation pass, and a
+// second pass reports it as already current (no re-write).
+func TestDoctorFix_InstallsClaudePreToolUseGuardByDefault(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+
+		out1, _ := runDoctorFixCmd(t)
+		mustContain(t, out1, "claude-hook=changed")
+		body := readRel(t, filepath.Join(".claude", "settings.json"))
+		mustContain(t, body, "logmind guard-commit --layer harness")
+
+		out2, _ := runDoctorFixCmd(t)
+		mustContain(t, out2, "claude-hook=current")
+	})
+}
+
+// TestDoctorFix_ClaudeDisabledInConfigSkipsPreToolUseGuard: an explicit
+// `agents.claude: false` in .logmind/config.yml must prevent --fix from
+// installing the Layer 1 guard at all.
+func TestDoctorFix_ClaudeDisabledInConfigSkipsPreToolUseGuard(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		writeRel(t, filepath.Join(".logmind", "config.yml"), "agents:\n  claude: false\n", 0o644)
+
+		out, _ := runDoctorFixCmd(t)
+		mustContain(t, out, "claude-hook=current")
+		if _, err := os.Stat(filepath.Join(".claude", "settings.json")); err == nil {
+			t.Errorf("did NOT expect .claude/settings.json when agents.claude is false")
+		}
+	})
+}

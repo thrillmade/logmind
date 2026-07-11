@@ -29,6 +29,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/doctor"
 	"github.com/thrillmade/logmind/internal/timeline"
@@ -98,7 +99,11 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 	if err != nil {
 		return err
 	}
-	res, refreshErr := applyRefresh(cwd, refreshOpts{githubActions: true, git: true})
+	res, refreshErr := applyRefresh(cwd, refreshOpts{
+		githubActions:      true,
+		git:                true,
+		claudeAgentEnabled: claudeAgentEnabledFromConfig(cwd),
+	})
 	if refreshErr != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "error: doctor --fix:", refreshErr)
 		return ErrSilent
@@ -164,6 +169,29 @@ func residualProbes(r doctor.StatusReport) []string {
 	return out
 }
 
+// claudeAgentEnabledFromConfig resolves whether Layer 1 of commit
+// enforcement (the Claude Code harness's PreToolUse guard; see
+// internal/claudehook) should be installed/refreshed for this repo.
+// Mirrors agents.DefaultEnabled's "claude" default (enabled) — a repo
+// with no `agents.claude` key at all, or an unparseable config, gets the
+// same default-true behavior config.LoadAsMap already applies. Only an
+// EXPLICIT `agents.claude: false` opts a repo out.
+func claudeAgentEnabledFromConfig(cwd string) bool {
+	m, err := config.LoadAsMap(cwd)
+	if err != nil {
+		return true
+	}
+	v, ok := config.GetPath(m, "agents.claude")
+	if !ok {
+		return true
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return true
+	}
+	return b
+}
+
 // formatDoctorFixOK renders the single quiet `ok` summary line.
 func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled int) string {
 	state := func(changed bool, changedWord string) string {
@@ -173,12 +201,13 @@ func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled
 		return "current"
 	}
 	return fmt.Sprintf(
-		"ok doctor-fix workflows=%d agents-md=%s gitattributes=%s merge-driver=%s hooks=%d summaries-backfilled=%d residual=%d",
+		"ok doctor-fix workflows=%d agents-md=%s gitattributes=%s merge-driver=%s hooks=%d claude-hook=%s summaries-backfilled=%d residual=%d",
 		len(res.WorkflowsCreated)+len(res.WorkflowsRefreshed),
 		state(res.AgentsMDMsg != "", "changed"),
 		state(res.GitattrChanged, "written"),
 		state(res.MergeDriverSet, "set"),
 		len(res.HooksRefreshed),
+		state(res.ClaudeHookChanged, "changed"),
 		summariesBackfilled,
 		len(residual),
 	)

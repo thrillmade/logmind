@@ -17,11 +17,19 @@
 //     hook is left alone and surfaces as residual drift instead;
 //   - manage .github/dependabot.yml (doctor does not probe it; init keeps
 //     its own dependabot UX).
+//
+// v2.0.0 addition: the Claude Code harness's PreToolUse guard entry in
+// .claude/settings.json (Layer 1 of commit enforcement; see
+// internal/claudehook). Unlike the git hooks, this write is gated on
+// opts.claudeAgentEnabled rather than opts.git — .claude/settings.json is
+// repo content, not git-clone state, so it should install even under
+// --no-git, and should NOT install when the claude agent is disabled.
 package cli
 
 import (
 	"path/filepath"
 
+	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/inserter"
@@ -36,19 +44,21 @@ type refreshResult struct {
 	GitattrChanged     bool
 	MergeDriverSet     bool     // a merge-driver git config key was (re)written
 	HooksRefreshed     []string // subset of {"post-merge","post-rewrite","commit-msg"}
+	ClaudeHookChanged  bool     // .claude/settings.json PreToolUse guard was created/refreshed
 }
 
 // Changed reports whether applyRefresh wrote anything.
 func (r refreshResult) Changed() bool {
 	return len(r.WorkflowsCreated) > 0 || len(r.WorkflowsRefreshed) > 0 ||
 		r.AgentsMDMsg != "" || r.GitattrChanged || r.MergeDriverSet ||
-		len(r.HooksRefreshed) > 0
+		len(r.HooksRefreshed) > 0 || r.ClaudeHookChanged
 }
 
-// refreshOpts gates the two write surfaces that need a repo/CI context.
+// refreshOpts gates the write surfaces that need a repo/CI context.
 type refreshOpts struct {
-	githubActions bool // install/refresh .github/workflows/*
-	git           bool // configure merge drivers + install hooks (no-op outside a git repo)
+	githubActions      bool // install/refresh .github/workflows/*
+	git                bool // configure merge drivers + install git hooks (no-op outside a git repo)
+	claudeAgentEnabled bool // install/refresh .claude/settings.json PreToolUse guard (Layer 1)
 }
 
 // applyRefresh runs every idempotent installer that brings a drifted repo
@@ -102,6 +112,14 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 		if c, _ := hooks.InstallCommitMsg(cwd); c {
 			res.HooksRefreshed = append(res.HooksRefreshed, "commit-msg")
 		}
+	}
+
+	if opts.claudeAgentEnabled {
+		changed, err := claudehook.EnsurePreToolUseGuard(cwd)
+		if err == nil && changed {
+			res.ClaudeHookChanged = true
+		}
+		note(err)
 	}
 
 	return res, firstErr

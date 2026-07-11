@@ -44,12 +44,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/hooks"
@@ -112,9 +114,16 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	fmt.Fprintln(out, "Initializing logmind...")
 	fmt.Fprintln(out)
 
+	// Parse agents list once, up front — both the refresh path and the
+	// fresh-install path below need it to decide whether the Claude Code
+	// PreToolUse guard (Layer 1 of commit enforcement; internal/claudehook)
+	// gets installed.
+	enabled := enabledAgentList(f.agentsList, f.allAgents)
+	claudeAgentEnabled := slices.Contains(enabled, "claude")
+
 	alreadyInit := pathExists(filepath.Join(docsPath, "decisions.md")) && pathExists(configPath)
 	if alreadyInit {
-		return runInitRefresh(cmd, f, cwd, docsPath)
+		return runInitRefresh(cmd, f, cwd, docsPath, claudeAgentEnabled)
 	}
 
 	// Git repo guard — mirror Python's no-git/--no-git interaction.
@@ -126,9 +135,6 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		// scripted invocations.
 		f.noGit = true
 	}
-
-	// Parse agents list.
-	enabled := enabledAgentList(f.agentsList, f.allAgents)
 
 	// docs/
 	if err := os.MkdirAll(docsPath, 0o755); err != nil {
@@ -241,6 +247,21 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 	}
 
+	// Layer 1 of commit enforcement: the Claude Code harness's PreToolUse
+	// guard entry in .claude/settings.json. Gated on claudeAgentEnabled,
+	// NOT on !f.noGit — .claude/settings.json is repo content, not git
+	// state, so it installs even under --no-git or outside a git repo.
+	claudeHookChanged := false
+	if claudeAgentEnabled {
+		changed, err := claudehook.EnsurePreToolUseGuard(cwd)
+		if err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Warning: Claude Code PreToolUse guard install failed:", err)
+		} else if changed {
+			claudeHookChanged = true
+			fmt.Fprintln(out, "✓ Installed Claude Code guard-commit hook (.claude/settings.json)")
+		}
+	}
+
 	// First decision log entry — append to docs/decisions.md.
 	if err := logFirstDecision(docsPath); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: first decision log failed:", err)
@@ -278,6 +299,9 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 		if dependabotChanged {
 			filesToCommit = append(filesToCommit, ".github/dependabot.yml")
+		}
+		if claudeHookChanged {
+			filesToCommit = append(filesToCommit, ".claude/settings.json")
 		}
 		for _, agent := range enabled {
 			if rel, ok := agents.FilePath(agent, cwd); ok && pathExists(rel) {
@@ -325,12 +349,12 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 // already_initialized branch in cli.init: refresh workflows + AGENTS.md
 // marker + .gitattributes + git config + hooks, leave docs/ and
 // .logmind/ alone.
-func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string) error {
+func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, claudeAgentEnabled bool) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "logmind is already initialized — running in refresh mode.")
 	fmt.Fprintln(out)
 
-	res, err := applyRefresh(cwd, refreshOpts{githubActions: f.githubActions, git: true})
+	res, err := applyRefresh(cwd, refreshOpts{githubActions: f.githubActions, git: true, claudeAgentEnabled: claudeAgentEnabled})
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: refresh failed:", err)
 	}
@@ -359,6 +383,9 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string) erro
 	}
 	for _, h := range res.HooksRefreshed {
 		fmt.Fprintln(out, "✓ Refreshed .git/hooks/"+h)
+	}
+	if res.ClaudeHookChanged {
+		fmt.Fprintln(out, "✓ Refreshed .claude/settings.json (Claude Code guard-commit hook)")
 	}
 
 	fmt.Fprintln(out)

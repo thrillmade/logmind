@@ -58,9 +58,9 @@ const PostMergeMarker = "# logmind post-merge hook"
 const PostRewriteMarker = "# logmind post-rewrite hook"
 
 // CommitMsgMarker identifies a logmind-installed commit-msg hook.
-// v0.6.16 introduced this hook to surface `[skip-logmind]` markers in
-// commit subjects so authors notice when an agent accidentally added
-// the directive (silent application has been a footgun).
+// v0.6.16 introduced this hook as a warn-only surface for
+// `[skip-logmind]` markers in commit subjects; v2.0.0 upgraded the body
+// to Layer 2 of the commit-enforcement design (see BuildCommitMsgBody).
 const CommitMsgMarker = "# logmind commit-msg hook"
 
 // hookVersion returns the version string embedded in each hook body.
@@ -211,39 +211,55 @@ func BuildPostRewriteBody() string {
 		"fi\n"
 }
 
-// BuildCommitMsgBody returns the canonical commit-msg hook body for
-// the v0.6.16+ contract: warn-only on `[skip-logmind]` subjects so
-// authors notice when an agent accidentally added the directive.
-// Read-only — exits 0 unconditionally so the commit still proceeds.
+// BuildCommitMsgBody returns the canonical commit-msg hook body for the
+// v2.0.0+ enforcement contract: Layer 2 of logmind's two-layer
+// commit-enforcement design (see internal/claudehook for Layer 1, the
+// Claude Code harness's PreToolUse guard, and internal/guardcommit for
+// the shared decision engine both layers call). The hook body itself
+// carries no decision logic — it just locates the commit message file
+// and delegates to `logmind guard-commit --layer git-hook`, exiting with
+// whatever code that command returns.
 //
-// Body intentionally kept byte-identical to
-// src/logmind/core/gitattributes._build_commit_msg_hook_body so the
-// existing v0.6.16 Python installs and the Go binary's installs agree
-// on the bytes a re-install should write.
+// v0.6.16 → v2.0.0 change: this hook used to be warn-only (surfaced a
+// `[skip-logmind]` notice to stderr but always exited 0, never blocking
+// the commit). It now BLOCKS a substantive commit that bypasses
+// `logmind log`, unless git.enforce_commits:false or a guardcommit
+// carve-out applies ([skip-logmind], LOGMIND_ALLOW_GIT_COMMIT=1, a
+// staged decision file, under-threshold, or a rebase/merge/cherry-pick
+// in progress — see internal/guardcommit's package doc for the full
+// list). Because the hook-version marker below is embedded via
+// hookVersion(), every repo's existing v0.6.16-era warn-only hook
+// auto-upgrades to this enforcing body the next time `logmind init`
+// (refresh mode) or `logmind doctor --fix` runs — installHook's
+// "ours + body differs → overwrite" path needs no new install wiring to
+// carry out this upgrade.
+//
+// `command -v logmind` (unlike the harness layer's canonical command,
+// which deliberately OMITS that guard for cross-platform reasons — see
+// internal/claudehook.CanonicalCommand) IS correct here: git hooks run
+// under POSIX sh on every platform git itself supports, so `command -v`
+// is always available. A missing binary fails open (exit 0) — logmind
+// not being installed should never block a commit.
 func BuildCommitMsgBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind commit-msg hook\n" +
 		HookVersionPrefix + hookVersion() + "\n" +
-		"# Installed by `logmind init` (v0.6.16+). When the commit subject\n" +
-		"# contains `[skip-logmind]`, surface that as a single-line confirm\n" +
-		"# in stderr so the author notices when an agent accidentally added\n" +
-		"# the marker (the marker disables auto-title regen + decision-log\n" +
-		"# generation for that commit; silent application is a footgun).\n" +
+		"# Installed by `logmind init`. Layer 2 of the v2.0.0+ commit-enforcement\n" +
+		"# design (see internal/claudehook for Layer 1, the Claude Code harness's\n" +
+		"# PreToolUse guard). Delegates the enforce/allow decision entirely to\n" +
+		"# `logmind guard-commit --layer git-hook` — see internal/guardcommit for\n" +
+		"# the carve-outs (git.enforce_commits:false, [skip-logmind],\n" +
+		"# LOGMIND_ALLOW_GIT_COMMIT=1, a staged decision file, under-threshold,\n" +
+		"# rebase/merge/cherry-pick in progress).\n" +
 		"#\n" +
-		"# Read-only: the hook never modifies the commit message file. It\n" +
-		"# echoes a one-line notice to stderr and exits 0 so the commit\n" +
-		"# proceeds.\n" +
+		"# Fails open when logmind isn't on PATH: a missing binary should never\n" +
+		"# block a commit.\n" +
 		"\n" +
-		"MSG_FILE=\"$1\"\n" +
-		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then\n" +
-		"    exit 0\n" +
+		"MSG_FILE=\"$1\"; [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ] && exit 0\n" +
+		"if command -v logmind >/dev/null 2>&1; then\n" +
+		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\"; exit $?\n" +
 		"fi\n" +
-		"\n" +
-		"if grep -q '\\[skip-logmind\\]' \"$MSG_FILE\"; then\n" +
-		"    echo 'logmind: [skip-logmind] detected — decision-log + auto-title regen suppressed for this commit.' >&2\n" +
-		"fi\n" +
-		"\n" +
-		"exit 0\n"
+		"exit 0    # fail-open when logmind not on PATH\n"
 }
 
 // InstallPostMerge writes `.git/hooks/post-merge` to the current
