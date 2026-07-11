@@ -166,159 +166,159 @@ func TestWorkflowTemplates_UseSetupLogmindAction(t *testing.T) {
 	}
 }
 
-// TestRegenTimelineTemplate_V5_Advisory pins the Slice-1 de-friction
+// TestRegenTimelineTemplate_V6_Advisory pins the Slice-1 de-friction
 // contract: the derived-doc gate must NEVER hard-block a PR and must NEVER
 // push with the default GITHUB_TOKEN (a GITHUB_TOKEN push moves the PR head
 // SHA without re-triggering checks, stranding every required check). On
 // stale docs it either pushes via LOGMIND_AUTO_REGEN_PAT (which re-triggers
 // checks) or emits an advisory ::warning:: and exits 0.
-func TestRegenTimelineTemplate_V5_Advisory(t *testing.T) {
+func TestRegenTimelineTemplate_V6_Advisory(t *testing.T) {
 	body := Workflow("regen-timeline.yml.template")
 
 	// Marker bump v4 → v5.
-	if !strings.Contains(body, "# logmind-template-version: v5") {
-		t.Errorf("regen-timeline template missing v5 marker")
+	if !strings.Contains(body, "# logmind-template-version: v6") {
+		t.Errorf("regen-timeline template missing v6 marker")
 	}
 	// Advisory, never fail-fast: no literal `exit 1`. Staleness must not
 	// red-light the PR (a real tool crash still fails the job via `set -e`).
 	if strings.Contains(body, "exit 1") {
-		t.Errorf("regen-timeline v5 must not `exit 1` — the gate is advisory and must never block a PR")
+		t.Errorf("regen-timeline v6 must not `exit 1` — the gate is advisory and must never block a PR")
 	}
 	// The no-PAT / fork path must warn and pass.
 	if !strings.Contains(body, "::warning") || !strings.Contains(body, "exit 0") {
-		t.Errorf("regen-timeline v5 missing the advisory warn + exit 0 path")
+		t.Errorf("regen-timeline v6 missing the advisory warn + exit 0 path")
 	}
 	// The PAT auto-push path is retained (the only path that pushes).
 	if !strings.Contains(body, "LOGMIND_AUTO_REGEN_PAT") {
-		t.Errorf("regen-timeline v5 missing the LOGMIND_AUTO_REGEN_PAT auto-push path")
+		t.Errorf("regen-timeline v6 missing the LOGMIND_AUTO_REGEN_PAT auto-push path")
 	}
 	// Regen commits carry the [skip-logmind] convention (SPEC §5.1/§5.2).
 	if !strings.Contains(body, "[skip-logmind]") {
-		t.Errorf("regen-timeline v5 PAT-push commit missing the [skip-logmind] prefix")
+		t.Errorf("regen-timeline v6 PAT-push commit missing the [skip-logmind] prefix")
 	}
 	// The job must NOT filter itself out by actor: a filtered required check
 	// strands as "Expected — Waiting…". Bots/forks take the advisory path.
 	if strings.Contains(body, "github.actor != ") {
-		t.Errorf("regen-timeline v5 must not filter the job by actor (a filtered required check hangs forever)")
+		t.Errorf("regen-timeline v6 must not filter the job by actor (a filtered required check hangs forever)")
 	}
 	// Fork PRs must reach the advisory path, not die at checkout: the
 	// checkout MUST set `repository:` to the PR head repo (a fork's head_ref
 	// does not exist on the base repo, so checkout would otherwise fail red).
 	if !strings.Contains(body, "repository: ${{ github.event.pull_request.head.repo.full_name") {
-		t.Errorf("regen-timeline v5 checkout must set repository to the PR head repo (else fork PRs fail at checkout)")
+		t.Errorf("regen-timeline v6 checkout must set repository to the PR head repo (else fork PRs fail at checkout)")
 	}
 	// The advisory diff display MUST be SIGPIPE/pipefail-guarded: a large
 	// stale diff piped into `head` exits 141 under `set -euo pipefail` and
 	// would abort the job before `exit 0` — re-blocking on big diffs.
 	if !strings.Contains(body, "| head -80 || true") {
-		t.Errorf("regen-timeline v5 advisory diff must be `|| true`-guarded against SIGPIPE/pipefail")
+		t.Errorf("regen-timeline v6 advisory diff must be `|| true`-guarded against SIGPIPE/pipefail")
 	}
 	// GITHUB_TOKEN must never push: the workflow token stays read-only and
 	// the push (if any) uses the explicit PAT-credentialed URL.
 	if !strings.Contains(body, "contents: read") {
-		t.Errorf("regen-timeline v5 must keep the workflow token read-only (contents: read)")
+		t.Errorf("regen-timeline v6 must keep the workflow token read-only (contents: read)")
 	}
 	if !strings.Contains(body, "x-access-token:${PAT}") {
-		t.Errorf("regen-timeline v5 PAT push must use the explicit PAT URL, not a persisted/GITHUB_TOKEN credential")
+		t.Errorf("regen-timeline v6 PAT push must use the explicit PAT URL, not a persisted/GITHUB_TOKEN credential")
 	}
 	// The PAT/token must not be persisted into .git during regeneration/build.
 	if !strings.Contains(body, "persist-credentials: false") {
-		t.Errorf("regen-timeline v5 checkout must set persist-credentials: false")
+		t.Errorf("regen-timeline v6 checkout must set persist-credentials: false")
 	}
 }
 
-// TestCheckDocLinksTemplate_V6_AdvisoryNoStrand pins the v1.2.0 advisory
+// TestCheckDocLinksTemplate_V7_AdvisoryNoStrand pins the v1.2.0 advisory
 // contract for the doc-link gate: like regen-timeline, it must NEVER
 // hard-block a PR and must NEVER push with the default GITHUB_TOKEN (a
 // GITHUB_TOKEN push moves the PR head SHA without re-triggering checks,
 // stranding every required check). check-links is advisory (warn +
 // exit 0); the dual-mode self-heal either PAT-pushes a Claude fix
 // (mode A) or posts a deterministic PR comment (mode B).
-func TestCheckDocLinksTemplate_V6_AdvisoryNoStrand(t *testing.T) {
+func TestCheckDocLinksTemplate_V7_AdvisoryNoStrand(t *testing.T) {
 	body := Workflow("check-doc-links.yml.template")
 
 	// Marker bump v5 → v6.
-	if !strings.Contains(body, "# logmind-template-version: v6") {
-		t.Errorf("check-doc-links template missing v6 marker")
+	if !strings.Contains(body, "# logmind-template-version: v7") {
+		t.Errorf("check-doc-links template missing v7 marker")
 	}
 
 	// Advisory: the old `exit $rc` (re-raise the linkcheck exit) red-lit
 	// the PR — it must be gone, replaced by an advisory warning + exit 0.
 	if strings.Contains(body, "exit $rc") {
-		t.Errorf("check-doc-links v6 must not `exit $rc` — check-links is advisory and must never block a PR")
+		t.Errorf("check-doc-links v7 must not `exit $rc` — check-links is advisory and must never block a PR")
 	}
 	if !strings.Contains(body, "::warning") {
-		t.Errorf("check-doc-links v6 missing the advisory ::warning:: on broken links")
+		t.Errorf("check-doc-links v7 missing the advisory ::warning:: on broken links")
 	}
 
 	// No GITHUB_TOKEN push: the old `git push origin HEAD:<head-ref>`
 	// (authenticated by GITHUB_TOKEN) stranded the PR. Any push must go
 	// through the explicit PAT-credentialed URL.
 	if strings.Contains(body, "git push origin") {
-		t.Errorf("check-doc-links v6 must not `git push origin` (a GITHUB_TOKEN push strands the PR's required checks)")
+		t.Errorf("check-doc-links v7 must not `git push origin` (a GITHUB_TOKEN push strands the PR's required checks)")
 	}
 	if !strings.Contains(body, "x-access-token:${PAT}") {
-		t.Errorf("check-doc-links v6 mode-A push must use the explicit PAT URL, not a GITHUB_TOKEN credential")
+		t.Errorf("check-doc-links v7 mode-A push must use the explicit PAT URL, not a GITHUB_TOKEN credential")
 	}
 
 	// Mode A is PAT-gated: without LOGMIND_AUTO_REGEN_PAT there is no safe
 	// push, so mode A must require it (and fall through to mode B otherwise).
 	if !strings.Contains(body, "LOGMIND_AUTO_REGEN_PAT") {
-		t.Errorf("check-doc-links v6 missing the LOGMIND_AUTO_REGEN_PAT push gate")
+		t.Errorf("check-doc-links v7 missing the LOGMIND_AUTO_REGEN_PAT push gate")
 	}
 	if !strings.Contains(body, "env.PAT != ''") {
-		t.Errorf("check-doc-links v6 mode-A must be gated on a configured PAT (env.PAT != '')")
+		t.Errorf("check-doc-links v7 mode-A must be gated on a configured PAT (env.PAT != '')")
 	}
 
 	// Workflow token stays read-only; the PAT does any push.
 	if !strings.Contains(body, "contents: read") {
-		t.Errorf("check-doc-links v6 must keep the workflow token read-only (contents: read)")
+		t.Errorf("check-doc-links v7 must keep the workflow token read-only (contents: read)")
 	}
 	if strings.Contains(body, "contents: write") {
-		t.Errorf("check-doc-links v6 must not grant contents: write (the PAT, not GITHUB_TOKEN, pushes)")
+		t.Errorf("check-doc-links v7 must not grant contents: write (the PAT, not GITHUB_TOKEN, pushes)")
 	}
 
 	// No actor filter: a filtered required check strands as "Expected —
 	// Waiting…". Bots/forks take the advisory / mode-B path.
 	if strings.Contains(body, "github.actor != ") {
-		t.Errorf("check-doc-links v6 must not filter a job by actor (a filtered required check hangs forever)")
+		t.Errorf("check-doc-links v7 must not filter a job by actor (a filtered required check hangs forever)")
 	}
 
 	// Fork PRs must reach the advisory path, not die at checkout.
 	if !strings.Contains(body, "repository: ${{ github.event.pull_request.head.repo.full_name") {
-		t.Errorf("check-doc-links v6 checkout must set repository to the PR head repo (else fork PRs fail at checkout)")
+		t.Errorf("check-doc-links v7 checkout must set repository to the PR head repo (else fork PRs fail at checkout)")
 	}
 	// No token persisted into .git; the PAT is injected only at push time.
 	if !strings.Contains(body, "persist-credentials: false") {
-		t.Errorf("check-doc-links v6 checkout must set persist-credentials: false")
+		t.Errorf("check-doc-links v7 checkout must set persist-credentials: false")
 	}
 
 	// Dual-mode self-heal preserved: mode A (Claude auto-fix) + mode B
 	// (deterministic PR comment), both keyed off the check-links report.
 	if !strings.Contains(body, "Mode A") || !strings.Contains(body, "Mode B") {
-		t.Errorf("check-doc-links v6 missing a self-heal mode (both mode A and mode B required)")
+		t.Errorf("check-doc-links v7 missing a self-heal mode (both mode A and mode B required)")
 	}
 	if !strings.Contains(body, "secrets.ANTHROPIC_API_KEY") || !strings.Contains(body, "ANTHROPIC_API_KEY != ''") {
-		t.Errorf("check-doc-links v6 missing the mode-A ANTHROPIC_API_KEY gate")
+		t.Errorf("check-doc-links v7 missing the mode-A ANTHROPIC_API_KEY gate")
 	}
 	if !strings.Contains(body, "gh pr comment") {
-		t.Errorf("check-doc-links v6 missing `gh pr comment` (mode B deterministic path)")
+		t.Errorf("check-doc-links v7 missing `gh pr comment` (mode B deterministic path)")
 	}
 	if !strings.Contains(body, "logmind check-links --json") {
-		t.Errorf("check-doc-links v6 missing `logmind check-links --json` invocation")
+		t.Errorf("check-doc-links v7 missing `logmind check-links --json` invocation")
 	}
 
 	// Self-heal fires on pull_request when check-links reported issues
 	// (keyed off the `failed` output, since check-links now always exits 0).
 	if !strings.Contains(body, "github.event_name == 'pull_request'") {
-		t.Errorf("check-doc-links v6 self-heal must be gated on pull_request events")
+		t.Errorf("check-doc-links v7 self-heal must be gated on pull_request events")
 	}
 	if !strings.Contains(body, "needs.check-links.outputs.failed != '0'") {
-		t.Errorf("check-doc-links v6 self-heal must key off the check-links `failed` output")
+		t.Errorf("check-doc-links v7 self-heal must key off the check-links `failed` output")
 	}
 	// pull-requests:write is still needed for the mode-B comment.
 	if !strings.Contains(body, "pull-requests: write") {
-		t.Errorf("check-doc-links v6 missing pull-requests:write permission (mode B comment)")
+		t.Errorf("check-doc-links v7 missing pull-requests:write permission (mode B comment)")
 	}
 
 	// Both self-heal modes are best-effort advisory: a transient auto-fix
@@ -326,10 +326,10 @@ func TestCheckDocLinksTemplate_V6_AdvisoryNoStrand(t *testing.T) {
 	// to a ::warning:: and never red-light the helper job. Guarding these is
 	// what keeps the header's "forks take the mode-B path" promise honest.
 	if !strings.Contains(body, "if ! python3") {
-		t.Errorf("check-doc-links v6 mode A must guard the Claude auto-fix (a transient failure must not red the self-heal job)")
+		t.Errorf("check-doc-links v7 mode A must guard the Claude auto-fix (a transient failure must not red the self-heal job)")
 	}
 	if !strings.Contains(body, "if ! gh pr comment") {
-		t.Errorf("check-doc-links v6 mode B must guard `gh pr comment` (a fork 403 must not red the self-heal job)")
+		t.Errorf("check-doc-links v7 mode B must guard `gh pr comment` (a fork 403 must not red the self-heal job)")
 	}
 }
 
