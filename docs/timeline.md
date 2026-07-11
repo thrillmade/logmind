@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-11-reconcile-logmind-log-stdout-to-spec-3-1-three-line-contract -->
+- **2026-07-11** — Reconcile logmind log stdout to SPEC §3.1 three-line contract + add --no-push and a real gitcli.Push (salvaged from retired PR #154) → [detail](decisions-branches/feat__log-spec-3-1-no-push.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-11-implement-logmind-show-and-search-the-documented-decision-re -->
 - **2026-07-11** — Implement logmind show and search — the documented decision-read commands salvaged from retired PR #154 → [detail](decisions-branches/feat__cli-show-search.md)
 <!-- logmind-entry-end -->

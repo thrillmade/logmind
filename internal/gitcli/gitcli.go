@@ -32,6 +32,7 @@ package gitcli
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -417,6 +418,56 @@ func Commit(repoRoot, message string) error {
 			return ErrGitNotFound
 		}
 		return &GitError{Op: "commit", Err: err, Stderr: stderr.String()}
+	}
+	return nil
+}
+
+// Push runs `git push` against repoRoot. Returns a GitError carrying
+// git's stderr on failure (e.g., no upstream configured, network error,
+// rejected non-fast-forward). Used by `logmind log` per SPEC §3.1: on
+// success the third stdout line reads "✓ Committed and pushed changes";
+// when push is suppressed OR fails (including the common "no upstream"
+// case for a fresh local repo), the caller falls back to
+// "✓ Committed changes".
+//
+// No --force / --force-with-lease here — `logmind log` is an append-only
+// primitive and pushing a regular fast-forward is the right shape. The
+// `logmind rebase` wrapper carries the force-with-lease surface for the
+// rare case a rebase is involved.
+//
+// Args are appended verbatim (e.g., Push(cwd, "origin", "main") runs
+// `git push origin main`). Zero args runs plain `git push` and relies
+// on the branch's upstream tracking.
+//
+// Fail-fast on auth. Push is the FIRST network git op in this package,
+// and `logmind log` runs it on the hot path (auto_push defaults true).
+// git's credential/passphrase prompts read from the controlling TTY,
+// NOT from cmd.Stdin — so on a box that HAS a controlling terminal and
+// no credential helper, an https/ssh remote needing auth would BLOCK
+// indefinitely, defeating the "push is non-fatal, never blocks the log"
+// guarantee. We force non-interactive auth so any auth-needed case
+// errors out immediately and the caller falls back to the
+// "✓ Committed changes" line:
+//   - GIT_TERMINAL_PROMPT=0 disables git's own username/password and
+//     "authenticity of host" prompts (https + git's ssh prompts).
+//   - GIT_SSH_COMMAND=ssh -oBatchMode=yes tells OpenSSH never to prompt
+//     for a passphrase / password (ssh remotes).
+func Push(repoRoot string, args ...string) error {
+	gitArgs := append([]string{"push"}, args...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_SSH_COMMAND=ssh -oBatchMode=yes",
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrGitNotFound
+		}
+		return &GitError{Op: "push", Err: err, Stderr: stderr.String()}
 	}
 	return nil
 }

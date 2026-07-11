@@ -83,7 +83,7 @@ func TestLog_DefaultBranch_WritesToDecisionsMd(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "Logged decision to docs/decisions.md")
+			mustContain(t, out.String(), `✓ Logged decision: "Test decision"`)
 		})
 	})
 	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions.md"))
@@ -128,7 +128,7 @@ func TestLog_FeatureBranch_WritesToBranchFile(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "docs/decisions-branches/feat__test.md")
+			mustContain(t, out.String(), `✓ Logged decision: "Branch decision"`)
 		})
 	})
 	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions-branches", "feat__test.md"))
@@ -409,7 +409,10 @@ func TestLog_AutoCommit_OnGitRepo(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log: %v\n%s", err, out.String())
 			}
-			mustContain(t, out.String(), "✓ Committed decision")
+			// No remote configured in this test repo, so the push step
+			// fails (no upstream) and line 3 falls back to the SPEC's
+			// "push suppressed/failed" wording.
+			mustContain(t, out.String(), "✓ Committed changes")
 		})
 	})
 	cmd := exec.Command("git", "log", "--oneline", "-1")
@@ -421,6 +424,151 @@ func TestLog_AutoCommit_OnGitRepo(t *testing.T) {
 	if !strings.Contains(string(out), "auto-commit test") {
 		t.Fatalf("commit message missing; got:\n%s", out)
 	}
+}
+
+// TestLog_NoPush_SkipsPush: --no-push must NOT attempt a push. Proof:
+//   - line 3 is the SPEC's "✓ Committed changes" (never "and pushed").
+//   - stderr carries NO "auto-push failed" warning — that warning only
+//     appears when a push is ATTEMPTED and fails, so its absence in a
+//     no-remote repo proves no attempt was made.
+//   - the quiet trailer reports pushed=false.
+func TestLog_NoPush_SkipsPush(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Baseline commit so `git add -A` has a parent (init --no-git
+		// skips the initial commit).
+		commitAll(t, d, "initial")
+
+		// Default (verbose) mode: line 3 + no push-warning on stderr.
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "no-push decision", "-r", "test", "--no-push", "--no-interactive"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log --no-push: %v\n%s", err, errBuf.String())
+			}
+			mustContain(t, out.String(), "✓ Committed changes")
+			if strings.Contains(out.String(), "and pushed") {
+				t.Fatalf("--no-push emitted the pushed line:\n%s", out.String())
+			}
+			if strings.Contains(errBuf.String(), "auto-push failed") {
+				t.Fatalf("--no-push attempted a push (saw auto-push warning):\n%s", errBuf.String())
+			}
+		})
+
+		// Quiet mode: trailer must report pushed=false.
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "no-push quiet", "-r", "test", "--no-push", "--no-interactive", "--quiet"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log --no-push --quiet: %v\n%s", err, errBuf.String())
+			}
+			assertSingleOK(t, out.String(), "logged", "committed=true", "pushed=false")
+		})
+	})
+}
+
+// TestLog_PushesToBareRemote: with an upstream to a local bare repo,
+// `logmind log` pushes for real. Line 3 is "✓ Committed and pushed
+// changes", the quiet trailer reports pushed=true, and the decision
+// commit actually lands on the bare remote.
+func TestLog_PushesToBareRemote(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		commitAll(t, d, "initial")
+
+		// Local bare remote (no network) + upstream tracking so a bare
+		// `git push` inside `logmind log` has a destination.
+		remote := filepath.Join(t.TempDir(), "bare.git")
+		branch := strings.TrimSpace(runGitOut(t, d, "rev-parse", "--abbrev-ref", "HEAD"))
+		for _, args := range [][]string{
+			{"init", "--bare", "-q", remote},
+		} {
+			cmd := exec.Command("git", args...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		runGitIn(t, d, "remote", "add", "origin", remote)
+		runGitIn(t, d, "push", "-u", "-q", "origin", branch)
+
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "pushed decision", "-r", "test", "--no-interactive"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log (push): %v\n%s", err, errBuf.String())
+			}
+			mustContain(t, out.String(), "✓ Committed and pushed changes")
+			if strings.Contains(errBuf.String(), "auto-push failed") {
+				t.Fatalf("push unexpectedly failed:\n%s", errBuf.String())
+			}
+		})
+
+		// The remote's branch tip now equals local HEAD (push landed).
+		localHead := strings.TrimSpace(runGitOut(t, d, "rev-parse", "HEAD"))
+		remoteHead := strings.TrimSpace(runGitOut(t, remote, "rev-parse", branch))
+		if localHead != remoteHead {
+			t.Fatalf("remote %s = %q; want local HEAD %q (push did not land)", branch, remoteHead, localHead)
+		}
+		// And the decision commit is the one that landed.
+		if msg := runGitOut(t, remote, "log", "--oneline", "-1", branch); !strings.Contains(msg, "pushed decision") {
+			t.Fatalf("remote tip commit missing decision summary; got: %s", msg)
+		}
+
+		// Quiet run: trailer reports pushed=true (a second decision, still
+		// a fast-forward, still pushes cleanly).
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "second pushed", "-r", "test", "--no-interactive", "--quiet"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log (push) --quiet: %v\n%s", err, errBuf.String())
+			}
+			assertSingleOK(t, out.String(), "logged", "committed=true", "pushed=true")
+		})
+	})
+}
+
+// commitAll stages everything and commits with the given message. Used
+// to seed a parent commit before the log tests run `git add -A`.
+func commitAll(t *testing.T, dir, msg string) {
+	t.Helper()
+	runGitIn(t, dir, "add", "-A")
+	runGitIn(t, dir, "commit", "-q", "-m", msg)
+}
+
+// runGitIn runs `git <args>` in dir and fails the test on error.
+func runGitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// runGitOut runs `git <args>` in dir and returns combined output.
+func runGitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
 
 // TestLog_EmptySummaryRejected: defends against argparse misuse.
