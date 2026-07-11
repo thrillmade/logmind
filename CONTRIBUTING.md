@@ -119,5 +119,5 @@ vulnerabilities please follow `SECURITY.md` (private disclosure first).
 `main` requires:
 - The `test` workflow to pass (Go matrix aggregator — see
   `.github/workflows/test.yml`)
-- The `doc link integrity` workflow to pass
+- The `logmind / check-links` workflow to pass
 - At least one approving review

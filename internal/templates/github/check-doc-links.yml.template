@@ -1,5 +1,5 @@
 # logmind-template-version: v6
-name: doc link integrity
+name: logmind / check-links
 
 # Flag broken or orphaned markdown links so agents stay in context when
 # they follow [link](path.md) references between docs. Installed by
