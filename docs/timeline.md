@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-11-fix-auto-regen-bot-identity-to-canonical-github-actions-bot -->
+- **2026-07-11** — Fix the auto-regen bot commit identity to the canonical github-actions[bot], and bump the two workflow templates so consumer repos pick it up via doctor --fix → [detail](decisions-branches/fix__regen-bot-identity.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-04-v2-0-0-breaking-remove-branch-divergent-entirely-main-canoni -->
 - **2026-07-04** — v2.0.0 BREAKING: remove branch-divergent entirely — main-canonical is the sole timeline model → [detail](decisions-branches/feat__v2-remove-branch-divergent.md)
 <!-- logmind-entry-end -->
