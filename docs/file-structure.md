@@ -41,6 +41,7 @@ logmind
 │   ├── doctor
 │   ├── gitattr
 │   ├── gitcli
+│   ├── guardcommit
 │   ├── hooks
 │   ├── inserter
 │   ├── linkcheck
