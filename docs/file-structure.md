@@ -34,6 +34,7 @@ logmind
 │   └── install.sh
 ├── internal
 │   ├── agents
+│   ├── claudehook
 │   ├── cli
 │   ├── clierr
 │   ├── config

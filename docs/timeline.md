@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-11-wire-commit-enforcement-live-claude-code-pretooluse-guard-in -->
+- **2026-07-11** — Wire commit enforcement live: Claude Code PreToolUse guard (internal/claudehook) + upgrade commit-msg hook to enforce + init/doctor --fix install wiring (enforcement PR2/3) → [detail](decisions-branches/feat__enforce-hooks-install.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-11-refresh-stale-version-output-examples-and-rewrite-docs-plan- -->
 - **2026-07-11** — Refresh stale version-output examples and rewrite docs/plan.md for v2.0 → [detail](decisions-branches/docs__refresh-version-examples-and-plan.md)
 <!-- logmind-entry-end -->
