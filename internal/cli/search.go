@@ -2,22 +2,32 @@
 //
 // SKILL.md / AGENTS.md / internal/templates/logmind-section.md document
 // `logmind search "keyword"` as "full-text search across recent + archive"
-// with `--case-sensitive` and `--no-archive`, but the v2 Go binary never
-// shipped it. This is the v2 re-implementation, searching the SAME "recent"
-// source `logmind show` prints — resolveDecisionsPath's branch-aware target —
-// plus docs/decisions-archive.md unless --no-archive is passed.
+// with `--case-sensitive` and `--no-archive`. This is the v2 implementation.
 //
-// The query is compiled as a regular expression; on compile failure it falls
-// back to a literal substring match (regexp.QuoteMeta), so a query containing
-// unbalanced regex metacharacters still searches instead of erroring. Matches
-// are case-insensitive by default; --case-sensitive requires an exact-case
-// match.
+// MATCHING IS LITERAL SUBSTRING, not regex. "Full-text search" means the
+// query is matched verbatim: `search "cost($)"` finds a line containing the
+// literal text `cost($)`, `search "v1.0"` does NOT match `v1x0`, and
+// `search "a|b"` matches only the literal `a|b`. Treating the query as a regex
+// would silently drop hits (a valid-but-non-matching pattern) or over-match
+// (metacharacters), both surprising for a keyword search. Case-insensitive by
+// default; --case-sensitive requires an exact-case match.
 //
-// There is no existing decisions-package helper for full-text grep-with-
-// context — decisions.Iter only extracts header metadata (date/title), not
-// line-level content — so the line scan here is new, but file SELECTION
-// reuses resolveDecisionsPath (the same helper `logmind log`/`headline`/
-// `show` use) rather than hardcoding docs/decisions.md.
+// SCOPE (deterministic source order, existence-checked, deduped by path):
+//
+//  1. docs/decisions.md            — main's recent decisions (always)
+//  2. the current feature-branch file from resolveDecisionsPath, IF it
+//     differs from decisions.md (i.e. only when on a feature branch)
+//  3. docs/decisions-archive.md    — unless --no-archive
+//
+// So a feature-branch agent searching finds main's decisions AND its own
+// branch's in-flight decisions AND the archive — the union the docs promise
+// ("across recent + archive"). On the default branch, (1) and (2) collapse to
+// a single decisions.md entry.
+//
+// File SELECTION reuses resolveDecisionsPath (the same helper `logmind log`/
+// `headline`/`show` use). There is no existing decisions-package helper for
+// full-text grep-with-context — decisions.Iter only extracts header metadata
+// (date/title), not line-level content — so the line scan here is new.
 package cli
 
 import (
@@ -25,7 +35,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -62,16 +71,17 @@ func newSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Full-text search across recent decisions and the archive",
-		Long: `Full-text search across the decision log for a term or pattern.
+		Long: `Full-text search across the decision log for a keyword or phrase.
 
-Searches the current branch's decision file — the same file "logmind show"
-prints (docs/decisions.md on the default branch, docs/decisions-branches/
-<branch>.md on a feature branch) — plus docs/decisions-archive.md, unless
---no-archive is passed.
+Searches, in order: docs/decisions.md (main's recent decisions), the current
+feature branch's decision file (docs/decisions-branches/<branch>.md, when on a
+feature branch), and docs/decisions-archive.md — so a feature-branch agent
+finds main's decisions, its own branch's in-flight decisions, and the archive.
+Pass --no-archive to skip the archive.
 
-The query is treated as a regular expression; if it fails to compile, it
-falls back to a literal substring search. Matching is case-insensitive by
-default — pass --case-sensitive to require an exact-case match.
+The query is matched as a LITERAL substring (not a regex): "cost($)" finds the
+literal text "cost($)". Matching is case-insensitive by default — pass
+--case-sensitive to require an exact-case match.
 
 Examples:
     logmind search "postgres"
@@ -89,38 +99,30 @@ Examples:
 	cmd.Flags().BoolVar(&f.caseSensitive, "case-sensitive", false,
 		"Require an exact-case match (default: case-insensitive).")
 	cmd.Flags().BoolVar(&f.noArchive, "no-archive", false,
-		"Search only the current branch's recent decisions; skip docs/decisions-archive.md.")
+		"Skip docs/decisions-archive.md (search only decisions.md + the current branch file).")
 	return cmd
 }
 
 // runSearch implements `logmind search`.
 func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.Writer) error {
 	q := newQout(quiet, stdout, stderr)
+
+	if strings.TrimSpace(query) == "" {
+		q.fail("Error: empty search query.\n")
+		return ErrSilent
+	}
+
 	docsPath := filepath.Join(cwd, "docs")
 	if !pathExists(docsPath) {
 		q.fail("Error: docs/ directory not found. Run 'logmind init' first.\n")
 		return ErrSilent
 	}
 
-	cfg, _ := config.Load(cwd)
-	recentPath, _ := resolveDecisionsPath(cwd, docsPath, cfg)
-	files := []string{recentPath}
-	includeArchive := !f.noArchive
-	if includeArchive {
-		archivePath := filepath.Join(docsPath, "decisions-archive.md")
-		if pathExists(archivePath) {
-			files = append(files, archivePath)
-		}
-	}
-
-	pattern := compileSearchPattern(query, f.caseSensitive)
+	files := searchSources(cwd, docsPath, !f.noArchive)
 
 	var results []searchResult
 	for _, file := range files {
-		if !pathExists(file) {
-			continue
-		}
-		hits, err := searchFile(cwd, file, pattern)
+		hits, err := searchFile(cwd, file, query, f.caseSensitive)
 		if err != nil {
 			return fmt.Errorf("search %s: %w", file, err)
 		}
@@ -128,7 +130,7 @@ func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.
 	}
 
 	if quiet {
-		q.ok("search matches=%d archive=%t case_sensitive=%t", len(results), includeArchive, f.caseSensitive)
+		q.ok("search matches=%d sources=%d archive=%t case_sensitive=%t", len(results), len(files), !f.noArchive, f.caseSensitive)
 		return nil
 	}
 
@@ -143,29 +145,62 @@ func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.
 		matchWord = "match"
 	}
 	fmt.Fprintf(stdout, "Found %d %s for: %s\n\n", len(results), matchWord, query)
-	fmt.Fprintln(stdout, formatSearchResults(results, query))
+	fmt.Fprintln(stdout, formatSearchResults(results, query, f.caseSensitive))
 	fmt.Fprintf(stdout, "ok search: %d %s for %q\n", len(results), matchWord, query)
 	return nil
 }
 
-// compileSearchPattern builds the match regex. A query that fails to compile
-// as a regex (e.g. an unbalanced group) falls back to a literal substring
-// match via regexp.QuoteMeta, which cannot itself fail to compile.
-func compileSearchPattern(query string, caseSensitive bool) *regexp.Regexp {
-	prefix := "(?i)"
-	if caseSensitive {
-		prefix = ""
+// searchSources returns the deterministic, existence-checked, path-deduped
+// list of decision files `search` scans:
+//
+//  1. docs/decisions.md (main's recent decisions)
+//  2. the current feature-branch file (resolveDecisionsPath), if != #1
+//  3. docs/decisions-archive.md, when includeArchive
+//
+// On the default branch #1 and #2 resolve to the same path and collapse to a
+// single entry. Missing files are dropped silently — a repo without an archive
+// (or a brand-new branch with no decisions file yet) still searches whatever
+// exists.
+func searchSources(cwd, docsPath string, includeArchive bool) []string {
+	cfg, _ := config.Load(cwd)
+	branchPath, _ := resolveDecisionsPath(cwd, docsPath, cfg)
+
+	candidates := []string{
+		filepath.Join(docsPath, "decisions.md"),
+		branchPath, // == decisions.md on the default branch (deduped below)
 	}
-	if pattern, err := regexp.Compile(prefix + query); err == nil {
-		return pattern
+	if includeArchive {
+		candidates = append(candidates, filepath.Join(docsPath, "decisions-archive.md"))
 	}
-	return regexp.MustCompile(prefix + regexp.QuoteMeta(query))
+
+	seen := make(map[string]bool, len(candidates))
+	var files []string
+	for _, p := range candidates {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		if pathExists(p) {
+			files = append(files, p)
+		}
+	}
+	return files
 }
 
-// searchFile scans path line-by-line for pattern, returning one searchResult
-// per matching line with ±searchContextLines of surrounding context and the
-// nearest preceding "## ..." decision header as the title label.
-func searchFile(cwd, path string, pattern *regexp.Regexp) ([]searchResult, error) {
+// lineMatches reports whether query occurs as a literal substring of line,
+// honoring case sensitivity. This is the single source of truth for match
+// semantics — the highlighter uses the same case folding.
+func lineMatches(line, query string, caseSensitive bool) bool {
+	if caseSensitive {
+		return strings.Contains(line, query)
+	}
+	return strings.Contains(strings.ToLower(line), strings.ToLower(query))
+}
+
+// searchFile scans path line-by-line for the literal query, returning one
+// searchResult per matching line with ±searchContextLines of surrounding
+// context and the nearest preceding "## ..." decision header as the title.
+func searchFile(cwd, path, query string, caseSensitive bool) ([]searchResult, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -184,7 +219,7 @@ func searchFile(cwd, path string, pattern *regexp.Regexp) ([]searchResult, error
 		if strings.HasPrefix(line, "## ") {
 			currentTitle = strings.TrimSpace(strings.TrimPrefix(line, "##"))
 		}
-		if !pattern.MatchString(line) {
+		if !lineMatches(line, query, caseSensitive) {
 			continue
 		}
 		title := currentTitle
@@ -210,20 +245,15 @@ func searchFile(cwd, path string, pattern *regexp.Regexp) ([]searchResult, error
 //	<file> - <decision-title> (line N)
 //	------------------------------------
 //	  <context line>
-//	> <matched line, with >>> term <<< markers>
+//	> <matched line, with >>> query <<< markers>
 //	  <context line>
 //
-// Results are separated by a blank line. highlightTerm is wrapped in
-// >>> <<< markers wherever it (case-insensitively) appears in the matched
-// line, regardless of whether the search itself was case-sensitive — the
-// marker is a display aid, not a re-assertion of the match semantics.
-func formatSearchResults(results []searchResult, highlightTerm string) string {
+// Results are separated by a blank line. Highlighting wraps the actual matched
+// literal substring in >>> <<< markers using the SAME case folding as the
+// match test — so a query with regex-special characters (e.g. "cost($)")
+// highlights correctly because nothing is ever compiled as a pattern.
+func formatSearchResults(results []searchResult, query string, caseSensitive bool) string {
 	var out []string
-	var highlight *regexp.Regexp
-	if highlightTerm != "" {
-		highlight = regexp.MustCompile("(?i)(" + regexp.QuoteMeta(highlightTerm) + ")")
-	}
-
 	for i, r := range results {
 		if i > 0 {
 			out = append(out, "")
@@ -234,14 +264,42 @@ func formatSearchResults(results []searchResult, highlightTerm string) string {
 		for _, ctx := range r.ContextBefore {
 			out = append(out, "  "+ctx)
 		}
-		matched := r.MatchedLine
-		if highlight != nil {
-			matched = highlight.ReplaceAllString(matched, ">>> $1 <<<")
-		}
-		out = append(out, "> "+matched)
+		out = append(out, "> "+highlightLiteral(r.MatchedLine, query, caseSensitive))
 		for _, ctx := range r.ContextAfter {
 			out = append(out, "  "+ctx)
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// highlightLiteral wraps every literal occurrence of query in line with
+// ">>> " ... " <<<" markers, preserving the ORIGINAL casing of the matched
+// text (not the query's). Case folding matches lineMatches so what gets
+// highlighted is exactly what matched. Purely string-index based — no regex —
+// so regex-special characters in query are treated literally.
+func highlightLiteral(line, query string, caseSensitive bool) string {
+	if query == "" {
+		return line
+	}
+	hayIdx := line
+	needle := query
+	if !caseSensitive {
+		hayIdx = strings.ToLower(line)
+		needle = strings.ToLower(query)
+	}
+	var b strings.Builder
+	for {
+		off := strings.Index(hayIdx, needle)
+		if off < 0 {
+			b.WriteString(line)
+			break
+		}
+		b.WriteString(line[:off])
+		b.WriteString(">>> ")
+		b.WriteString(line[off : off+len(needle)]) // original casing from line
+		b.WriteString(" <<<")
+		line = line[off+len(needle):]
+		hayIdx = hayIdx[off+len(needle):]
+	}
+	return b.String()
 }

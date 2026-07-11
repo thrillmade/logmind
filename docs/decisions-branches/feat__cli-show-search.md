@@ -17,3 +17,16 @@
 
 ---
 
+## 2026-07-11 14:32 - Address PR #191 review: literal substring search + branch-spanning scope
+
+**Reasoning:** Regex matching gave silent false negatives (a valid-but-non-matching pattern like cost dollar-paren drops the hit) and over-matches (dot, pipe as metachars); a keyword search must be literal. And a feature-branch agent needs to find main's decisions, so search must span decisions.md, not just the current-branch file like show does.
+
+**Alternatives considered:** Keep regex with a literal fallback only on compile error (rejected: still wrong for valid-but-non-matching patterns), Add a --regex flag (rejected: undocumented, widens the promised surface)
+
+**Implications:**
+- search now matches via strings.Contains with case folding; highlightLiteral wraps the actual matched substring by index, so regex-special queries highlight correctly with no pattern compiled
+- search source order is decisions.md, then the branch file if different, then archive unless --no-archive, deduped by path; show stays current-branch-only per the docs
+- empty query now errors via q.fail; quiet ok line gained a sources=N field
+
+---
+

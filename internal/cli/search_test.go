@@ -2,10 +2,13 @@
 //
 // Coverage:
 //   - substring match returns a hit with context lines + >>> highlight <<<
-//   - "current branch" scoping: a feature branch's search does NOT see
-//     docs/decisions.md content, only its own branch file + the archive
+//   - LITERAL (not regex) semantics: "cost($)" finds the literal "cost($)";
+//     "v1.0" does NOT match "v1x0"; "a|b" matches only the literal "a|b"
+//   - highlighting works for a query containing regex-special characters
+//   - scope: a term living ONLY in docs/decisions.md IS found while on an
+//     unrelated feature branch; a branch-file-only term is also found there
 //   - --case-sensitive / --no-archive flag matrix (table-driven)
-//   - regex query supported; an invalid regex falls back to a literal match
+//   - empty query → error
 //   - no matches → friendly message, exit 0
 //   - --quiet collapses stdout to exactly one `ok k=v` line
 //   - docs/ missing → friendly error + ErrSilent
@@ -54,26 +57,76 @@ func TestSearch_SubstringMatch_ContextAndHighlight(t *testing.T) {
 	})
 }
 
-// TestSearch_CurrentBranchOnly: search is scoped to the SAME "recent" file
-// `show` prints (resolveDecisionsPath's branch-aware target). A term that
-// only lives in docs/decisions.md (the default branch's file) must NOT be
-// found while on a feature branch that has its own, unrelated decisions
-// file — matching the documented "current branch" contract.
-func TestSearch_CurrentBranchOnly(t *testing.T) {
+// TestSearch_LiteralSemantics: the query is matched as a LITERAL substring,
+// never compiled as a regex. Each sub-case pins one way a regex engine would
+// give the wrong answer.
+func TestSearch_LiteralSemantics(t *testing.T) {
+	cases := []struct {
+		name    string
+		line    string // the sole body line in the fixture
+		query   string
+		wantHit bool
+	}{
+		// A valid regex that as a regex would match ZERO of a plain-text line:
+		// `cost($)` compiles fine (an empty group anchored at end) but a regex
+		// search of the literal text "cost($)" yields nothing. Literal search
+		// must FIND it.
+		{name: "regex-special query finds literal", line: "estimated cost($) is high", query: "cost($)", wantHit: true},
+		// `.` is the regex any-char wildcard: "v1.0" as a regex matches "v1x0".
+		// As a literal it must NOT.
+		{name: "dot is literal not wildcard", line: "shipped v1x0 today", query: "v1.0", wantHit: false},
+		// Same query DOES match the literal "v1.0".
+		{name: "dot matches literal dot", line: "shipped v1.0 today", query: "v1.0", wantHit: true},
+		// `|` is regex alternation: "a|b" as a regex matches a line with just
+		// "a". As a literal it must match ONLY the literal "a|b".
+		{name: "pipe is literal not alternation", line: "just an a here", query: "a|b", wantHit: false},
+		{name: "pipe matches literal pipe", line: "the a|b toggle", query: "a|b", wantHit: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withTempCwd(t, func(d string) {
+				mustMkdir(t, filepath.Join(d, "docs"))
+				mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+					"## 2026-06-01 10:00 - Decision\n"+tc.line+"\n")
+
+				body := runSearchCmd(t, tc.query)
+				gotHit := strings.Contains(body, "Found ")
+				if gotHit != tc.wantHit {
+					t.Errorf("query %q over line %q: hit=%t, want %t; body:\n%s", tc.query, tc.line, gotHit, tc.wantHit, body)
+				}
+				// When we expect a hit, the regex-special query must also
+				// highlight correctly (no regex compiled anywhere).
+				if tc.wantHit {
+					mustContain(t, body, ">>> "+tc.query+" <<<")
+				}
+			})
+		})
+	}
+}
+
+// TestSearch_Scope_SpansMainAndBranch: search must span docs/decisions.md
+// (main's decisions) AND the current branch file even when checked out on an
+// unrelated feature branch — a term living ONLY in decisions.md is found, and
+// a term living ONLY in the branch file is found.
+func TestSearch_Scope_SpansMainAndBranch(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
+		// A decision on main → docs/decisions.md.
 		withFakeTTY(t, false, func() { logOnce(t, "Use PostgreSQL for storage") })
 
+		// Move to an unrelated feature branch and log there.
 		checkoutBranch(t, d, "feat/unrelated")
 		withFakeTTY(t, false, func() { logOnce(t, "Add rate limiting") })
 
+		// Main's decision IS found from the feature branch.
 		body := runSearchCmd(t, "PostgreSQL")
-		mustContain(t, body, "No matches found for: PostgreSQL")
+		mustContain(t, body, "Found 1 match for: PostgreSQL")
+		mustContain(t, body, "docs/decisions.md")
 
-		// Sanity: the branch's own decision IS found. It appears twice on
-		// disk — once in the §1.6.3 branch-summary marker line `logmind log`
-		// writes automatically, once in the "## ..." decision header itself.
+		// The branch's own decision is ALSO found. It appears twice on disk —
+		// once in the §1.6.3 branch-summary marker line, once in the "## ..."
+		// header — so 2 matches.
 		body = runSearchCmd(t, "rate limiting")
 		mustContain(t, body, "Found 2 matches for: rate limiting")
 		mustContain(t, body, "docs/decisions-branches/feat__unrelated.md")
@@ -103,7 +156,6 @@ func TestSearch_FlagMatrix(t *testing.T) {
 					"## 2026-06-01 10:00 - PostgreSQL choice\n")
 				mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 					"## 2025-01-01 09:00 - Old decision mentioning archived-term\n")
-				_ = d
 
 				body := runSearchCmd(t, tc.query, tc.extraArgs...)
 				gotHit := strings.Contains(body, "Found ")
@@ -115,24 +167,35 @@ func TestSearch_FlagMatrix(t *testing.T) {
 	}
 }
 
-// TestSearch_RegexQuery: regex patterns work; an invalid regex falls back
-// to a literal substring match instead of erroring.
-func TestSearch_RegexQuery(t *testing.T) {
+// TestSearch_CaseInsensitiveHighlightPreservesOriginalCasing: a lowercase
+// query highlights the mixed-case text that actually matched, not the query.
+func TestSearch_CaseInsensitiveHighlightPreservesOriginalCasing(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs"))
 		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
-			"## 2026-06-01 10:00 - DB foo\n"+
-				"## 2026-06-02 10:00 - DB bar\n")
+			"## 2026-06-01 10:00 - Use PostgreSQL here\n")
 
-		// Valid regex: matches both "DB foo" and "DB bar" headers.
-		body := runSearchCmd(t, "DB .{3}")
-		mustContain(t, body, "Found 2 matches")
+		body := runSearchCmd(t, "postgresql")
+		mustContain(t, body, ">>> PostgreSQL <<<")
+	})
+}
 
-		// Invalid regex (unbalanced group) falls back to a literal search
-		// for the string "DB (" — no such literal text exists, so 0 hits,
-		// and critically: no error/panic.
-		body = runSearchCmd(t, "DB (")
-		mustContain(t, body, "No matches found for: DB (")
+// TestSearch_EmptyQueryErrors: an empty query must error, not match every line.
+func TestSearch_EmptyQueryErrors(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - Something\n")
+
+		root := NewRootCmd()
+		root.SetArgs([]string{"search", ""})
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		if err := root.Execute(); err == nil {
+			t.Fatalf("expected an error for an empty query; output:\n%s", out.String())
+		}
+		mustContain(t, out.String(), "empty search query")
 	})
 }
 
