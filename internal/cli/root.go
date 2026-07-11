@@ -91,6 +91,12 @@ func NewRootCmd() *cobra.Command {
 	// Slice 2: set the branch's one-sentence timeline headline (the
 	// main-canonical summary line). Companion to `logmind log --headline`.
 	root.AddCommand(newHeadlineCmd())
+	// `show` / `search` are documented (skill/SKILL.md, AGENTS.md,
+	// internal/templates/logmind-section.md) but were dropped in the v1.0
+	// Go rewrite. Restored here as v2 re-implementations — branch-aware via
+	// resolveDecisionsPath, not the old hardcoded docs/decisions.md.
+	root.AddCommand(newShowCmd())
+	root.AddCommand(newSearchCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.
