@@ -521,7 +521,7 @@ func TestLog_PushesToBareRemote(t *testing.T) {
 			t.Fatalf("remote %s = %q; want local HEAD %q (push did not land)", branch, remoteHead, localHead)
 		}
 		// And the decision commit is the one that landed.
-		if msg := runGitOut(t, remote, "log", "--oneline", "-1"); !strings.Contains(msg, "pushed decision") {
+		if msg := runGitOut(t, remote, "log", "--oneline", "-1", branch); !strings.Contains(msg, "pushed decision") {
 			t.Fatalf("remote tip commit missing decision summary; got: %s", msg)
 		}
 
