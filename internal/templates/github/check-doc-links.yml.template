@@ -1,4 +1,4 @@
-# logmind-template-version: v6
+# logmind-template-version: v7
 name: logmind / check-links
 
 # Flag broken or orphaned markdown links so agents stay in context when
@@ -206,8 +206,8 @@ jobs:
           fi
 
           # Commit + push if there's a diff.
-          git config user.name "logmind-auto-regen"
-          git config user.email "logmind-auto-regen@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet || ! git diff --cached --quiet; then
             git add -A
             git commit -m "fix(docs): self-heal markdown links

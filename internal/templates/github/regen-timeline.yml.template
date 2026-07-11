@@ -1,4 +1,4 @@
-# logmind-template-version: v5
+# logmind-template-version: v6
 name: logmind / check-derived-docs
 
 # Self-healing derived-doc gate (v5 — advisory model).
@@ -96,8 +96,8 @@ jobs:
           # PAT push re-triggers downstream required checks.
           if [ -n "${PAT:-}" ] && [ "$is_fork" = "false" ]; then
             echo "::notice title=Auto-fixing derived docs::Regenerating and pushing to ${HEAD_REF}."
-            git config user.name "logmind-auto-regen"
-            git config user.email "logmind-auto-regen@users.noreply.github.com"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add docs/timeline.md docs/file-structure.md
             git commit -m "[skip-logmind] chore: regen derived docs"
             if ! git push "https://x-access-token:${PAT}@github.com/${BASE_REPO}.git" "HEAD:${HEAD_REF}"; then
