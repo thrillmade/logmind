@@ -249,9 +249,11 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// required stdout contract. The --stage all wording is the SPEC's
 	// own §3.1 example, verbatim; --stage scoped has no SPEC example so
 	// this is this port's extrapolation (flagged in the PR description).
-	// Only emitted when a commit is actually about to be attempted —
-	// --no-commit stages nothing, so there is nothing to announce.
-	if shouldCommit {
+	// Gated on BOTH a pending commit AND actually being in a git repo:
+	// --no-commit stages nothing, and outside a git repo the commit is
+	// skipped too (see the AddAll block below), so in neither case does
+	// any staging occur — the notice would be a lie.
+	if shouldCommit && gitcli.IsRepo(cwd) {
 		if f.stage == "all" {
 			q.chat("ℹ Staging all changes (use --stage scoped to limit)\n")
 		} else {
@@ -338,6 +340,13 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// %q quotes + escapes the summary the same way Go would for any
 	// embedded control characters; a plain-text summary renders as a
 	// simple double-quoted string, matching the SPEC example exactly.
+	//
+	// The Go-quoted rendering is a DELIBERATE, unambiguous escape choice:
+	// SPEC §3.1 shows plain surrounding quotes, but a summary that itself
+	// contains a `"` or `\` would make the naive `"%s"` form ambiguous
+	// (unparseable back to the original). %q is the safe superset —
+	// identical to the plain form for ordinary summaries — and no §6.6
+	// fixture pins the naive spelling, so this stays conformant.
 	q.chat("✓ Logged decision: %q\n", summary)
 
 	// Branch-summary nudge — steer the author toward a clean one-sentence

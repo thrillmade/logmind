@@ -32,6 +32,7 @@ package gitcli
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -437,10 +438,28 @@ func Commit(repoRoot, message string) error {
 // Args are appended verbatim (e.g., Push(cwd, "origin", "main") runs
 // `git push origin main`). Zero args runs plain `git push` and relies
 // on the branch's upstream tracking.
+//
+// Fail-fast on auth. Push is the FIRST network git op in this package,
+// and `logmind log` runs it on the hot path (auto_push defaults true).
+// git's credential/passphrase prompts read from the controlling TTY,
+// NOT from cmd.Stdin — so on a box that HAS a controlling terminal and
+// no credential helper, an https/ssh remote needing auth would BLOCK
+// indefinitely, defeating the "push is non-fatal, never blocks the log"
+// guarantee. We force non-interactive auth so any auth-needed case
+// errors out immediately and the caller falls back to the
+// "✓ Committed changes" line:
+//   - GIT_TERMINAL_PROMPT=0 disables git's own username/password and
+//     "authenticity of host" prompts (https + git's ssh prompts).
+//   - GIT_SSH_COMMAND=ssh -oBatchMode=yes tells OpenSSH never to prompt
+//     for a passphrase / password (ssh remotes).
 func Push(repoRoot string, args ...string) error {
 	gitArgs := append([]string{"push"}, args...)
 	cmd := exec.Command("git", gitArgs...)
 	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_SSH_COMMAND=ssh -oBatchMode=yes",
+	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
