@@ -39,7 +39,7 @@ LOGMIND_VERSION=v1.0.0 curl -fsSL https://logmind.dev/install.sh | bash
 Verify the install:
 
 ```bash
-logmind --version  # logmind 1.2.0 (spec 0.8.0)
+logmind --version  # logmind 2.0.0 (spec 1.0.0)
 ```
 
 The curl installer is idempotent — re-running it when the same version
