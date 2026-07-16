@@ -289,8 +289,10 @@ export default function Home() {
               <code className="font-mono text-foreground text-[0.85em]">[skip-logmind]</code> in the subject,{" "}
               <code className="font-mono text-foreground text-[0.85em]">LOGMIND_ALLOW_GIT_COMMIT=1</code> for
               one command, <code className="font-mono text-foreground text-[0.85em]">git.enforce_commits: false</code>{" "}
-              to opt a repo out entirely. Every gate fails open: a stale,
-              missing, or erroring logmind binary never blocks a commit —
+              to opt a repo out entirely. The git hook fails open by
+              design: anything but the guard&apos;s explicit block signal —
+              a stale, missing, or erroring logmind binary included —
+              lets the commit through —
               enforcement can&apos;t become an outage.
             </p>
             <p className="marginalia normal-case tracking-normal text-foreground/55 mt-4 text-xs leading-relaxed">
