@@ -68,6 +68,7 @@ logmind
 ├── skill
 │   └── SKILL.md
 ├── .cursorrules
+├── .gitattributes
 ├── .gitignore
 ├── .goreleaser.yaml
 ├── .pre-commit-config.yaml

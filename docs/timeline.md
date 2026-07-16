@@ -18,6 +18,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-16** — Harden git-hook layer against stale logmind binaries + bump AGENTS enforcement prose to v8/v9-pointer → [detail](decisions-branches/feat__enforce-stale-binary-hardening.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-16-complete-the-enforcement-dogfood-commit-the-doctor-fix-artif -->
+- **2026-07-16** — Complete the enforcement dogfood: commit the doctor --fix artifacts → [detail](decisions.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-11-wire-commit-enforcement-live-claude-code-pretooluse-guard-in -->
 - **2026-07-11** — Wire commit enforcement live: Claude Code PreToolUse guard (internal/claudehook) + upgrade commit-msg hook to enforce + init/doctor --fix install wiring (enforcement PR2/3) → [detail](decisions-branches/feat__enforce-hooks-install.md)
 <!-- logmind-entry-end -->
