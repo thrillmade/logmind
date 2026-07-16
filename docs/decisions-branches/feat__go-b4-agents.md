@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-feat-go-b4-port-agents-list-add-remove-update-migrate-insert -->
+- **2026-06-02** — feat(go-b4): port agents (list/add/remove/update/migrate) + inserter package + embed AGENTS.md templates
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 01:21 - feat(go-b4): port agents (list/add/remove/update/migrate) + inserter package + embed AGENTS.md templates
 
 **Reasoning:** B4 wave is the agent-file templating layer of the Go rewrite. The inserter package's surgical marker-block rewrite is the load-bearing primitive — it lets agents update --apply refresh template bodies WITHOUT touching user content above or below the markers. Templates are embed.FS bytes so the binary stays single-file. The pin updater preserves quote style (single/double/none) to match Python v0.6.11+ for reporulez-convention single-quoted pins.

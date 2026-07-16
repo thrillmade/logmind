@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-15-v0-1-4-optional-logmind-bot-pat-lets-aggregator-prs-satisfy- -->
+- **2026-05-15** — v0.1.4: optional LOGMIND_BOT_PAT lets aggregator PRs satisfy required checks
+<!-- logmind-entry-end -->
+
 ## 2026-05-15 12:22 - v0.1.4: optional LOGMIND_BOT_PAT lets aggregator PRs satisfy required checks
 
 **Reasoning:** v0.1.3's aggregator opens a fallback PR when direct push to a protected base ref is blocked. The PR is opened with GITHUB_TOKEN, but GitHub deliberately blocks GITHUB_TOKEN-opened PRs from triggering downstream workflows (anti-recursion safety). Result: any repo with required status checks on its base ref (clud-bug PR review, check-decisions, check-links) gets a stuck aggregator PR — checks never fire, PR never merges. Same dead-end thrillmade/clud-bug hit in v0.1.1. v0.1.3 fixed 'aggregator crashes' but not 'aggregator PR is mergeable.' Tier 1 fix: env fallback secrets.LOGMIND_BOT_PAT || secrets.GITHUB_TOKEN. Users with required-check rulesets opt in by setting the secret; users without continue to get the v0.1.3 behavior unchanged.

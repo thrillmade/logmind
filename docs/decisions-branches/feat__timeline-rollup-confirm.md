@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-slice-2-pr6-confirm-guard-the-main-canonical-roll-up-no-new- -->
+- **2026-06-29** — Slice 2 PR6: confirm + guard the main-canonical roll-up (no new mechanism, no push-to-default)
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 19:43 - Slice 2 PR6: confirm + guard the main-canonical roll-up (no new mechanism, no push-to-default)
 
 **Reasoning:** Sixth of 7 PRs. The roll-up needs NO new mechanism: the post-merge hook's existing 'logmind timeline --write' dispatches on config (PR3), so a main-canonical repo rebuilds its union on every local merge with no hook-body change and no version bump. The advisory regen-timeline workflow (PR #159) is the server reconciler. This PR documents that and adds an intent guard.

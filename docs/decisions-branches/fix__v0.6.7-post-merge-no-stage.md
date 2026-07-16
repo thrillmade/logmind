@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-01-v0-6-7-post-merge-hook-leaves-derived-docs-unstaged-downstre -->
+- **2026-06-01** — v0.6.7: post-merge hook leaves derived docs unstaged (downstream bug fix)
+<!-- logmind-entry-end -->
+
 ## 2026-06-01 12:08 - v0.6.7: post-merge hook leaves derived docs unstaged (downstream bug fix)
 
 **Reasoning:** Downstream agent reported: post-merge hook auto-stages docs/timeline.md + docs/file-structure.md after merge, blocking git checkout main on every PR cycle. Workaround git reset HEAD + git checkout -- was required every time, hitting every contributor every PR. Root cause: _POST_MERGE_HOOK_BODY had a git add line that's correct inside logmind log (regens bundle into decision commit) but wrong from post-merge (no commit being constructed). Removing the line fixes the bug. Auto-propagates via v0.5.12+ self-install on every logmind log.

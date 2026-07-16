@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "logmind guard-commit --layer harness # logmind-hook-version: 2.0.0-dev",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

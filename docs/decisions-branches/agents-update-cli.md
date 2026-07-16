@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-15-dogfood-check-decisions-workflow-fix-branch-aware-bug-always -->
+- **2026-05-15** — Dogfood check-decisions workflow + fix branch-aware bug + always-run check-doc-links
+<!-- logmind-entry-end -->
+
 ## 2026-05-15 02:32 - Dogfood check-decisions workflow + fix branch-aware bug + always-run check-doc-links
 
 **Reasoning:** v0.1.1 polish: install check-decisions.yml in logmind's own .github/workflows/ (we ship it as a template via init but never installed it for ourselves); fix the actual logmind check-decisions CLI command to accept docs/decisions-branches/<branch>.md as a documented change (the pre-commit hook + CLI command were hardcoded to docs/decisions.md, breaking branch-aware mode); drop the paths filter on check-doc-links so it always runs (interacts badly with required_status_checks rule on the reporulez ruleset)

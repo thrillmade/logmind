@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-hygiene-gofmt-sweep-gofmt-vet-ci-gate-surface-doctor-fix-bac -->
+- **2026-07-03** — hygiene: gofmt sweep + gofmt/vet CI gate + surface doctor --fix backfill write errors
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 12:21 - hygiene: gofmt sweep + gofmt/vet CI gate + surface doctor --fix backfill write errors
 
 **Reasoning:** CI had no gofmt/vet gate, so 8 Go files silently accumulated formatting drift. Separately, doctor --fix backfill dropped writeAtomic errors, making a partial --fix indistinguishable from a clean no-op.

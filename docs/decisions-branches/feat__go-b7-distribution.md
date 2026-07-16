@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-b7-choose-goreleaser-for-cross-platform-go-binary-distributi -->
+- **2026-06-02** — B7: choose GoReleaser for cross-platform Go binary distribution
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 17:34 - B7: choose GoReleaser for cross-platform Go binary distribution
 
 **Reasoning:** GoReleaser handles the full release pipeline declaratively in one .goreleaser.yaml: cross-compile (darwin amd64+arm64, linux amd64+arm64, windows amd64), archive .tar.gz/.zip, SHA256SUMS, GitHub Release publication, and Homebrew tap auto-bump. Hand-rolled cross-compile scripts would re-implement all of this poorly. GoReleaser also gracefully handles the snapshot-vs-release modes we need for PR-validation CI.

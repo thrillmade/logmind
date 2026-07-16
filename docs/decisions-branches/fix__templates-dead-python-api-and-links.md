@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-templates-drop-dead-python-api-blocks-fix-wrong-org-urls-dea -->
+- **2026-07-03** — templates: drop dead Python-API blocks, fix wrong-org URLs + dead required-reading
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 12:03 - templates: drop dead Python-API blocks, fix wrong-org URLs + dead required-reading
 
 **Reasoning:** The consumer-facing templates shipped by 'logmind init' contained a 'from logmind import log' Python-API block (the Go binary has no importable module), a wrong-org github.com/logmind/logmind URL (dead), and CLAUDE.md.template listed a nonexistent docs/logmind-readme.md as REQUIRED reading — which, post-#172, actively trips consumers' check-links. Audit finding.

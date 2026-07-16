@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-bisect-b7-1-add-codesign-import-step-on-top-of-minimal-relea -->
+- **2026-06-02** — bisect(B7-1): add codesign import step on top of minimal release.yml
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 21:43 - bisect(B7-1): add codesign import step on top of minimal release.yml
 
 **Reasoning:** Test if Apple-Actions/import-codesign-certs@v3 step + its if: condition is the GitHub-rejected element. Minimal version succeeded at run 26858506229; this adds ONLY the codesign step (with full if: expression and ${{ secrets.MACOS_* }} refs) to isolate startup_failure cause.

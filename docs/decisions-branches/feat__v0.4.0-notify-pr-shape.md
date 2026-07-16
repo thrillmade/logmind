@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-27-feat-v0-4-0-notify-agent-skills-yml-opens-a-claude-proposed- -->
+- **2026-05-27** — feat(v0.4.0): notify-agent-skills.yml opens a Claude-proposed SKILL.md PR (not an issue)
+<!-- logmind-entry-end -->
+
 ## 2026-05-27 15:27 - feat(v0.4.0): notify-agent-skills.yml opens a Claude-proposed SKILL.md PR (not an issue)
 
 **Reasoning:** Sentinel NO_SKILL_UPDATE_NEEDED for internal releases (CI tweaks, refactors). Always writes .skill-update-todo/vX.Y.Z.md with full context. Failure-mode fallback to v0.3.x issue notification preserves shipping discipline

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-27-fix-v0-3-3-drop-wall-clock-timestamp-from-docs-file-structur -->
+- **2026-05-27** — fix(v0.3.3): drop wall-clock timestamp from docs/file-structure.md
+<!-- logmind-entry-end -->
+
 ## 2026-05-27 06:19 - fix(v0.3.3): drop wall-clock timestamp from docs/file-structure.md
 
 **Reasoning:** Downstream: write_file_structure already early-returns False when content matches. With determinism it now triggers on unchanged trees, the file isn't rewritten, and the hook's git add is a no-op. No hook change needed

@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-07-v1-2-0-port-logmind-log-to-go-and-add-3-layer-markdown-self- -->
+- **2026-06-07** — v1.2.0: Port logmind log to Go and add 3-layer markdown self-healing
+<!-- logmind-entry-end -->
+
 ## 2026-06-07 15:07 - v1.2.0: Port logmind log to Go and add 3-layer markdown self-healing
 
 **Reasoning:** Closes Phase B3 catch-up + plan §8.7. The Python shim has carried the log surface through v1.0 and v1.1 — this PR finally lands the native Go port AND folds in Layer 1 of self-heal (linkcheck-driven interactive retry loop) so the heuristic is built in from day one rather than bolted on later. Layer 3 (CI workflow template v4→v5) lands in the same PR for the same reason — dual-mode (Anthropic auto-fix when ANTHROPIC_API_KEY is set; deterministic PR comment otherwise) means EVERY logmind user gets actionable feedback on link issues, with or without API tokens. Bidirectional linking (branch decision files now carry a back-link header to docs/timeline.md) closes the round-trip the timeline already had one direction of.

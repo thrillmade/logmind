@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-01-v0-6-4-skill-audit-author-s-side-staleness-read-stream-6-fol -->
+- **2026-06-01** — v0.6.4: skill audit — author's-side staleness read (Stream 6 follow-on)
+<!-- logmind-entry-end -->
+
 ## 2026-06-01 00:41 - v0.6.4: skill audit — author's-side staleness read (Stream 6 follow-on)
 
 **Reasoning:** Pairs with clud-bug usage --health for complete skill-lifecycle visibility. audit reports what's HERE (filesystem + git side); usage reports what's USED (load + cite side). Together they show whether each skill earns its place: ghost (loaded but never iterated AND not cited), aging (untouched + uncited), active (touched + cited).

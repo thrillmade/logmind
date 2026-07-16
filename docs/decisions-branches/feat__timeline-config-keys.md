@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-slice-2-pr2-timeline-canonical-file-structure-root-label-con -->
+- **2026-06-29** — Slice 2 PR2: timeline.canonical + file_structure.root_label config keys (typed-only)
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 18:41 - Slice 2 PR2: timeline.canonical + file_structure.root_label config keys (typed-only)
 
 **Reasoning:** Second of 7 PRs for the main-canonical timeline. Adds the two config gates PR3/PR4/PR5 dispatch on. Typed-only (set in DefaultConfig) — deliberately NOT in DefaultMap, so 'logmind config list' output stays byte-identical to the Python reference (the silent serialized-output change the plan forbids). Surfacing them in config-list rides the v1.0 bump.

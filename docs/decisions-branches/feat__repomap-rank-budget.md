@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-04-repomap-ranking-map-tokens-budget-packing-token-killer-r3 -->
+- **2026-07-04** — repomap ranking + --map-tokens budget packing (token-killer R3)
+<!-- logmind-entry-end -->
+
 ## 2026-07-04 00:53 - repomap ranking + --map-tokens budget packing (token-killer R3)
 
 **Reasoning:** With a token budget the map can't carry every file, so it must carry the MOST IMPORTANT first. Deterministic ranking (the caching invariant): decision-linked files (logmind-native — the file's path is named in a decision doc/timeline) rank above unlinked; then intra-repo import fan-in (centrality — the repomap's core signal, Aider's insight); then path. --map-tokens N greedily keeps whole files within an est. ceil(len/4) budget, appends a §14.4 truncation marker for the rest, and honors §14.5 never-worse (packed is a subset). Default (no budget) stays byte-stable (0 = Generate).

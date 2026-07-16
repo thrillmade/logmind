@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-29-feat-v0-5-8-quality-batch-issue-57-dry-run-output-issue-66-f -->
+- **2026-05-29** — feat(v0.5.8): quality batch — issue #57 dry-run output + issue #66 file-structure on feature branches
+<!-- logmind-entry-end -->
+
 ## 2026-05-29 23:41 - feat(v0.5.8): quality batch — issue #57 dry-run output + issue #66 file-structure on feature branches
 
 **Reasoning:** Two of the five open quality issues filed 2026-05-27. (#57) Pre-fix 'All agent files are current' message conflated three distinct cases — no AGENTS.md, AGENTS.md without marker, AGENTS.md with current marker — and misled users into thinking everything was installed when really logmind hadn't been initialized. Split into three case-specific messages, plus refined the dry-run prefix from 'Found' to 'Would update' so the language is prospective. (#66) Pre-fix logmind log on a feature branch regenerated timeline.md but skipped docs/file-structure.md. The skip self-perpetuated a 1-entry-stale cycle on main hit live on agent-skills PRs #37→#38→would-be-#39. Original rationale (rebase conflicts) made obsolete by v0.3.0's merge driver. Feature branches now regen on every logmind log — same as timeline.md.

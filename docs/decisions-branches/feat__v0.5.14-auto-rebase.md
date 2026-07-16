@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-feat-v0-6-1-deterministic-auto-rebase-on-timeline-md-gap-opt -->
+- **2026-05-30** — feat(v0.6.1): deterministic auto-rebase on timeline.md gap (opt-in)
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 14:30 - feat(v0.6.1): deterministic auto-rebase on timeline.md gap (opt-in)
 
 **Reasoning:** User-coined direction (2026-05-30): 'auto rebase must must be very deterministic and safe, only the timeline md file'. Closes the tokenomics-Phase-D pain by automating the rebase + regen + force-with-lease push when conditions hold. Saves ~5-8 agent turns per DIRTY incident. 6 hard safety gates: opt-in via config (default OFF), not default branch, fetch succeeds, upstream ref exists, branch behind, gap is EXACTLY {docs/timeline.md} and nothing else. Always --force-with-lease (never --force, tested explicitly). Abort safely on any unexpected conflict.

@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-check-doc-links-workflow-template-advisory-no-github-token-p -->
+- **2026-07-03** — check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6)
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 11:01 - check-doc-links workflow template: advisory + no GITHUB_TOKEN push (v6)
 
 **Reasoning:** The v5 template stranded consumer PRs three ways, all the class #159 fixed for regen-timeline: (1) the mode-A self-heal pushed a Claude fix to the PR head over GITHUB_TOKEN, moving the head SHA without re-triggering checks, stranding every required check; (2) check-links re-raised the linkcheck exit code, red-blocking the merge on any broken link; (3) it filtered dependabot by actor, and a filtered required check hangs forever.

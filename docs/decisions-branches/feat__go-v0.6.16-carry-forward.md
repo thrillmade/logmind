@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-b2-carry-forward-go-post-merge-hook-body-absorbs-v0-6-16-hea -->
+- **2026-06-02** — B2 carry-forward: Go post-merge hook body absorbs v0.6.16 HEAD-vs-origin skip
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 17:51 - B2 carry-forward: Go post-merge hook body absorbs v0.6.16 HEAD-vs-origin skip
 
 **Reasoning:** Python v0.6.16 replaced v0.6.15's blanket default-branch skip with a HEAD-vs-origin check (skip only on fast-forward pull-up). Local merges that introduce new commits MUST regen for the multi-branch self-heal case. Go body kept byte-identical via the existing TestPostMergeBody_ByteIdenticalToPython parity contract — drop in the same nine-line shell block verbatim. Updated testdata/post-merge.golden via go test -update.

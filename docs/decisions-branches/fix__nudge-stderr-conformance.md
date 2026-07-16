@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-route-the-main-canonical-non-tty-headline-nudge-to-stderr-3- -->
+- **2026-07-03** — Route the main-canonical non-TTY headline nudge to stderr (§3.1.1 conformance)
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 11:25 - Route the main-canonical non-TTY headline nudge to stderr (§3.1.1 conformance)
 
 **Reasoning:** nudgeBranchSummary wrote its non-TTY advisory to stdout, appending a 4th line after the three required logmind log lines under main-canonical — violating the §3.1.1 contract that non-TTY stdout is EXACTLY the three lines, byte-identical to the §6.6 fixtures. The adversarial red-team of the SPEC 0.8.0 pass caught it; latent today (main-canonical isn't the default, no fixture covers it) but it blocks the 0.8.0 conformance claim.

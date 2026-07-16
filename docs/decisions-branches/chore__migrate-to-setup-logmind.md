@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-05-migrate-logmind-templates-to-setup-logmind-v1-0-1-dependabot -->
+- **2026-06-05** — Migrate logmind templates to setup-logmind@v1.0.1 + dependabot group
+<!-- logmind-entry-end -->
+
 ## 2026-06-05 23:50 - Migrate logmind templates to setup-logmind@v1.0.1 + dependabot group
 
 **Reasoning:** Closes out the v1.1.0 distribution-lock wave by bumping the workflow-template setup-logmind pin from v1.0.0 → v1.0.1 (final immutable ref) and adding the `thrillmade` group to this repo's existing dependabot github-actions ecosystem entry. Future `logmind init` runs scaffold v1.0.1, and Dependabot now bundles all `thrillmade/*` action bumps into one PR per release — same shape we're rolling out to the 6 consumer repos in this same cleanup wave. Last manual setup-logmind version touch on the logmind side; from here Dependabot owns it.

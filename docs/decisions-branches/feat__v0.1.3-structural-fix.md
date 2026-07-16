@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-15-v0-1-3-kill-file-structure-conflicts-fix-agents-md-drift-aft -->
+- **2026-05-15** — v0.1.3: kill file-structure conflicts + fix AGENTS.md drift after logmind log
+<!-- logmind-entry-end -->
+
 ## 2026-05-15 10:56 - v0.1.3: kill file-structure conflicts + fix AGENTS.md drift after logmind log
 
 **Reasoning:** Two structural bugs surfaced from PR #24's CI: (1) docs/file-structure.md regeneration during 'logmind log' on a feature branch guarantees a merge conflict against main — PR #24 hit this against PR #23; (2) sync_agent_files_from_config ran AFTER log's commit, leaving refreshed AGENTS.md as dirty working-tree changes (the v0.1.2 PR commit, the AGENTS.md refresh commit, and a chore commit all hit this in sequence). Fix: skip file-structure regen on non-default branches and let the aggregator workflow regen on main after PR merge; move sync to BEFORE the commit and pass modified agent files into log's scoped staging.

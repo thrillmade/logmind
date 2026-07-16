@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-26-feat-v0-3-0-custom-git-merge-driver-for-derived-files-post-m -->
+- **2026-05-26** — feat: v0.3.0 — custom git merge driver for derived files + post-merge hook
+<!-- logmind-entry-end -->
+
 ## 2026-05-26 17:46 - feat: v0.3.0 — custom git merge driver for derived files + post-merge hook
 
 **Reasoning:** Parallel-PR conflict class: two PRs both running logmind log → textual merge conflict on docs/timeline.md when one rebases onto the other (hit twice in 30 minutes earlier today). v0.3.0 ships a custom git merge driver that delegates conflict resolution to logmind, which regenerates from the per-branch decision files (which never collide). Three install-time pieces: (1) .gitattributes block (committed) registers merge=logmind-timeline for the two derived files, (2) per-clone git config defines the drivers (lives in .git/config, not committed, security guard), (3) .git/hooks/post-merge sweeps the regen after merge completes (the driver fires per-file during conflict resolution, before other merged-in files are checked out — hook ensures the final state reflects the FULL post-merge tree). Smoke-tested end-to-end: two branches both run logmind log, merge succeeds without conflict, resulting timeline shows both decisions.

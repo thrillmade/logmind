@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-05-check-links-exclude-docs-reviews-pr-md-spec-6-2-review-write -->
+- **2026-06-05** — check-links: exclude docs/reviews/PR-*.md (SPEC §6.2 review-writeback path)
+<!-- logmind-entry-end -->
+
 ## 2026-06-05 14:50 - check-links: exclude docs/reviews/PR-*.md (SPEC §6.2 review-writeback path)
 
 **Reasoning:** clud-bug-app writes docs/reviews/PR-<n>.md per SPEC §6.2 as append-only review telemetry; these files are never cross-linked by design, so logmind check-links flags them as orphan markdown and fails CI on every PR that picks up a review. Ship the fix structurally in logmind (per-repo .logmindignore would tax every consumer; we already encode this path convention via internal/skill/sync.go ParseReview).

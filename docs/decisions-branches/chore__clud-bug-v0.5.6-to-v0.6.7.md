@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-27-phase-a-b-propagation-clud-bug-v0-5-6-v0-6-7-in-logmind -->
+- **2026-05-27** — Phase A → B propagation: clud-bug v0.5.6 → v0.6.7 in logmind
+<!-- logmind-entry-end -->
+
 ## 2026-05-27 23:08 - Phase A → B propagation: clud-bug v0.5.6 → v0.6.7 in logmind
 
 **Reasoning:** First consuming repo to pick up the full Phase A token-frugality stack: prompt caching (10% input cost on hits), per-section budgets (80KB diff cap), comment compression (severity emoji + collapsible reasoning), AGENTS.md block dedupe (44→10 lines), CLI quiet mode. Workflow rewrites from old v0.5.x format → v0.6.7 template; agent-instruction files trim ~49 lines each. Next PRs in logmind will be the first concrete data point on whether caching is actually hitting.

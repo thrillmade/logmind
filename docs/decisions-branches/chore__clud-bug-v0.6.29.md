@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-31-chore-propagate-clud-bug-v0-6-29-to-logmind-skill-usage-work -->
+- **2026-05-31** — chore: propagate clud-bug v0.6.29 to logmind (skill-usage workflow integration)
+<!-- logmind-entry-end -->
+
 ## 2026-05-31 14:21 - chore: propagate clud-bug v0.6.29 to logmind (skill-usage workflow integration)
 
 **Reasoning:** Self-propagation cycle — logmind eats clud-bug's templates. v0.6.29 adds workflow post-step + artifact upload

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-01-feat-v0-6-11-single-quoted-pin-regex-self-update-template-us -->
+- **2026-06-01** — feat(v0.6.11): single-quoted pin regex + self-update template uses PAT for workflow refreshes
+<!-- logmind-entry-end -->
+
 ## 2026-06-01 19:15 - feat(v0.6.11): single-quoted pin regex + self-update template uses PAT for workflow refreshes
 
 **Reasoning:** Two follow-on fixes to v0.6.9 propagation issues hit today. (1) inserter.py + doctor.py pin regex didn't match reporulez-style single-quoted pins; widened to all three quote styles AND preserve exact style on rewrite. (2) logmind-self-update.yml.template v5 now uses LOGMIND_AUTO_REGEN_PAT for checkout + push (mirror of regen-timeline.yml v3) so workflow-file refreshes can propagate; falls back to GITHUB_TOKEN with clear error if PAT missing AND workflows changed.

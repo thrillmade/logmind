@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-slice-2-pr4-logmind-log-writes-the-1-6-3-timeline-marker-uni -->
+- **2026-06-29** — Slice 2 PR4: logmind log writes the §1.6.3 timeline marker; union computes the detail link
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 19:20 - Slice 2 PR4: logmind log writes the §1.6.3 timeline marker; union computes the detail link
 
 **Reasoning:** Fourth of 7 PRs. logmind log opens a main-canonical branch file with its entry-block headline (written once, preserved on append, inserted if absent for pre-opt-in files). The marker body is LINK-FREE; the union (renderCanonical) computes the detail link from the source path — because check-links resolves links relative to the source file's dir, a docs/-relative link baked into a branch file would be broken there.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-01-v0-6-3-skill-bench-per-call-token-cost-measurement-stream-6- -->
+- **2026-06-01** — v0.6.3: skill bench — per-call token-cost measurement (Stream 6 follow-on)
+<!-- logmind-entry-end -->
+
 ## 2026-06-01 00:12 - v0.6.3: skill bench — per-call token-cost measurement (Stream 6 follow-on)
 
 **Reasoning:** Closes the measure arrow of the SkDD loop. Every SKILL.md load enters the agent's context window verbatim; bench reports exactly what that costs (bytes + est_tokens + status bucket + section breakdown + trim suggestions). Pairs with clud-bug usage --health (the enforcement read) for cost-vs-earning visibility per skill.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-site-4th-principle-always-in-sync-measured-section-v0-5-12-p -->
+- **2026-05-30** — site: 4th principle 'always in sync' + measured. section + v0.5.12 pin
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 10:29 - site: 4th principle 'always in sync' + measured. section + v0.5.12 pin
 
 **Reasoning:** Logmind.dev was 12 releases stale (v0.1.4 in footer; v0.1 in hero) and didn't surface the v0.5.10-v0.5.12 self-healing-derived-docs story or the 4-angle bench validation. User directive (2026-05-30): 'prio some cludbyg and logmind website updates too'. Per user feedback: clear user-visible benefits only — describe outcomes not mechanisms (no merge-driver / .gitattributes jargon), keep editorial brand (principles motif, display font, marginalia).

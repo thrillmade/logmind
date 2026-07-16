@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-feat-v0-5-10-warn-loudly-when-stage-scoped-leaves-tracked-mo -->
+- **2026-05-30** — feat(v0.5.10): warn loudly when --stage scoped leaves tracked modifications unstaged (#59)
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 08:43 - feat(v0.5.10): warn loudly when --stage scoped leaves tracked modifications unstaged (#59)
 
 **Reasoning:** Pre-fix silent-failure: logmind log "<title>" --stage scoped stages only logmind-owned files (decisions.md, file-structure.md, etc.); when a user forgot git add before running it, the commit shipped ONLY the decision-log entry. The intended file change stayed unstaged; PR diff did not match its description; CI reviewed unchanged code; reviewer flagged "PR does not match description"; user had to push a follow-up commit. Hit live in clud-bug PR #87 and reporulez PR #20 in the 2026-05-27 wrap-up session — repeating pattern flagged as a real bug.

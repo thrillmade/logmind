@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-add-repomap-deterministic-go-signature-skeleton-token-killer -->
+- **2026-07-03** — Add repomap: deterministic Go signature skeleton (token-killer Phase 2, first slice)
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 23:46 - Add repomap: deterministic Go signature skeleton (token-killer Phase 2, first slice)
 
 **Reasoning:** The biggest structural token-saving win: file-structure.md gives an agent the name-tree (WHERE); the repomap gives the API surface it reasons over (WHAT) at a fraction of the tokens — 21.5x denser than raw source on logmind itself (550KB→25.5KB). Go extraction uses go/parser+go/printer (stdlib) for byte-accurate signatures with bodies dropped. Additive + experimental: new internal/repomap package + a standalone 'logmind repomap' command; touches NO golden-locked surface (file-structure/timeline unchanged), changes no config default.

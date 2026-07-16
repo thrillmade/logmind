@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-add-logmind-doctor-fix-one-command-idempotent-repo-refresh-s -->
+- **2026-06-29** — Add `logmind doctor --fix`: one-command idempotent repo refresh (Slice 1)
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 15:28 - Add `logmind doctor --fix`: one-command idempotent repo refresh (Slice 1)
 
 **Reasoning:** Consumers whose hooks/workflows/AGENTS.md/merge-driver config drift had no self-service fix — doctor only REPORTED drift. --fix completes the de-friction story (handoff deliverable c): one command brings a drifted repo back to spec. The idempotent installers already existed and init's refresh mode already orchestrated them; doctor just never called them.

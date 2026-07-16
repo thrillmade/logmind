@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-templates-drop-the-last-dead-python-api-block-from-agents-md -->
+- **2026-07-03** — templates: drop the last dead Python-API block from AGENTS.md.template (completes the off-Python template purge)
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 13:00 - templates: drop the last dead Python-API block from AGENTS.md.template (completes the off-Python template purge)
 
 **Reasoning:** AGENTS.md.template — the canonical agent-instruction file init writes to every consumer — still showed a 'from logmind import log' Python-API block, dead and misleading for the Go binary (there is no importable module). This was the LAST logmind-is-Python cruft in the shipped templates; the 'logmind log' CLI form directly above it is the real interface.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-b5-wave-1-5-skill-core-package-scaffold-validate-bench-audit -->
+- **2026-06-02** — B5 wave 1/5: skill core package — scaffold, validate, bench, audit, suggest (heuristic)
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 16:27 - B5 wave 1/5: skill core package — scaffold, validate, bench, audit, suggest (heuristic)
 
 **Reasoning:** Mirror src/logmind/core/skill_cli.py at v0.6.16 in a dedicated Go package (internal/skill/). Each function has a 1:1 Python counterpart so the byte-identical parity snapshot tests can pin them. Splitting CLI wiring (internal/cli/skill.go) from logic (internal/skill/) keeps cobra-isolated layers thin.

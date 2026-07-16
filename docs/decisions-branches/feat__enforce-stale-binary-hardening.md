@@ -17,3 +17,17 @@
 
 ---
 
+## 2026-07-16 16:30 - Dogfood: refresh AGENTS.md to v9-pointer + install Claude Code PreToolUse guard in this repo
+
+**Reasoning:** Verify the branch binary's doctor --fix end to end in the repo that ships it: AGENTS.md was still on the pre-migration v3-slim block and .claude/settings.json did not exist yet, so this repo itself was not exercising the enforcement it ships
+
+**Alternatives considered:** skip dogfooding and rely on the automated test suite alone
+
+**Implications:**
+- AGENTS.md logmind block refreshed v3-slim to v9-pointer (matchingTemplate's unrecognized-marker fallback to the slim default, since v3-slim predates the marker scheme this PR's ordering guard covers)
+- .claude/settings.json created fresh with the PreToolUse guard-commit entry (Bash(git *) matcher, timeout 10)
+- doctor --fix also backfilled the deterministic first-decision-title marker into 133 pre-existing markerless docs/decisions-branches/*.md files (unconditional per backfillBranchSummaries doc comment); included here as part of the dogfood rather than reverted
+- deliberately did NOT commit .gitattributes or .github/workflows/logmind-self-update.yml that the same doctor --fix run also created; both are genuine pre-existing repo gaps but unrelated to this PR's stale-binary-hardening/AGENTS-bump scope, left as local untracked artifacts for a separate change
+
+---
+

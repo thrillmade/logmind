@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-26-fix-v0-2-8-replace-pyyaml-python-pinversion-detection-with-g -->
+- **2026-05-26** — fix: v0.2.8 — replace PyYAML+Python pinVersion detection with grep
+<!-- logmind-entry-end -->
+
 ## 2026-05-26 16:24 - fix: v0.2.8 — replace PyYAML+Python pinVersion detection with grep
 
 **Reasoning:** Bug caught by clud-bug-review across multiple repos: logmind-self-update.yml.template's pinVersion block called python3 -c 'import yaml, sys' with the import OUTSIDE the try block. If the runner lacked PyYAML, the import raised, the surrounding 2>/dev/null || echo '' swallowed the failure into empty pin, and opt-out via pinVersion silently broke. Fix uses grep+sed on the flat top-level scalar — no Python, no YAML lib, works on every runner. Tested against 8 input variants (quoted/unquoted/indented/trailing-ws/absent/substring-only/etc.). Template marker bumped v1→v2 so refresh fires on next logmind init.

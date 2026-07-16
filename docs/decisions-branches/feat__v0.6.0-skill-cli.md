@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-feat-v0-6-0-logmind-skill-new-test-cli-first-step-of-the-skd -->
+- **2026-05-30** — feat(v0.6.0): logmind skill new/test CLI — first step of the SkDD auto-dev loop
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 12:53 - feat(v0.6.0): logmind skill new/test CLI — first step of the SkDD auto-dev loop
 
 **Reasoning:** User-coined positioning (2026-05-30): 'end-to-end agentic auto dev' loop = development with skills + logging changes + logmind runnerbot forging skills + clud-bug reviewing against them. v0.6.0 ships the first two arrows of that loop: scaffold (logmind skill new) + validate (logmind skill test) SKILL.md files against the agentskills.io/v1 spec. Per explore-agent strategic analysis: compose with Zak Elfassi's @zakelfassi/skdd when on PATH, layer logmind-specific value (decision-log on create, size cap + frontmatter checks on test). Minor version bump because new CLI subgroup = new user-visible surface; no breaking changes.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-15-v0-1-2-upstream-bug-fixes-from-clud-bug-pr-21-skill-repo-res -->
+- **2026-05-15** — v0.1.2: upstream bug fixes from clud-bug PR #21 + skill repo restructure to thrillmade/agent-skills collection
+<!-- logmind-entry-end -->
+
 ## 2026-05-15 10:28 - v0.1.2: upstream bug fixes from clud-bug PR #21 + skill repo restructure to thrillmade/agent-skills collection
 
 **Reasoning:** Six bugs surfaced when clud-bug installed logmind v0.1.1: (1) Python-only ignore_patterns flooded Node/Next.js trees with 280+ lines of build cache; (2) check-decisions.yml advertised [skip-logmind] PR-title override but if: never checked title; (3) THRESHOLD env var was dead — gate hardcoded 20; (4) logmind-aggregate.yml's git push fails under branch protection; (5) git diff --numstat without --no-renames miscounts src→docs renames; (6) auto_push: true + git_add_all in logger silently published unrelated working-tree changes alongside the decision. Plus skills.sh page was bare because we used the two-level user/skill URL form instead of three-level collection layout.

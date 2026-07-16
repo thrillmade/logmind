@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-docs-repo-version-consistency-specversion-0-1-1-0-8-0-readme -->
+- **2026-07-03** — docs: repo version consistency — SpecVersion 0.1.1→0.8.0, README badges/version, AGENTS.md Python-era dedup
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 12:27 - docs: repo version consistency — SpecVersion 0.1.1→0.8.0, README badges/version, AGENTS.md Python-era dedup
 
 **Reasoning:** Version-consistency audit: version.go SpecVersion lagged at 0.1.1 while protocol is now 0.8.0 (merged in #26) and logmind implements the surface; README headlined PyPI/pyversions badges + a stale '1.1.0 (spec 0.1.1)' --version example; the repo's own AGENTS.md carried a Python-era concat tail (empty stubs + an embedded CLAUDE.md with pip/pytest/python -m build commands + a 'Phase 2 Complete' roadmap + an empty Cursor Rules section).

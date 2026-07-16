@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-feat-v0-5-11-post-rewrite-hook-so-multi-commit-rebases-don-t -->
+- **2026-05-30** — feat(v0.5.11): post-rewrite hook so multi-commit rebases don't leave timeline.md stale (#58)
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 09:19 - feat(v0.5.11): post-rewrite hook so multi-commit rebases don't leave timeline.md stale (#58)
 
 **Reasoning:** Pre-fix: merge driver in .gitattributes only fires when a merge produces conflicts on derived files; post-merge hook only fires on merges. Neither covers git rebase or git commit --amend. Multi-commit rebase replayed all commits but only the FIRST commit's regen survived — subsequent commits left docs/timeline.md stale relative to the replayed docs/decisions-branches/<branch>.md entries. check-derived-docs failed. Hit live on agent-skills PRs #21 + #22 in the 2026-05-27 merge cascade.

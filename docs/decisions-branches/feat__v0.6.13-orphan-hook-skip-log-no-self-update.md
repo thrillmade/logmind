@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-01-feat-v0-6-13-4-consumer-product-ux-fixes-issues-112-113-prop -->
+- **2026-06-01** — feat(v0.6.13): 4 consumer-product UX fixes (issues #112 + #113 + propagation friction)
+<!-- logmind-entry-end -->
+
 ## 2026-06-01 22:12 - feat(v0.6.13): 4 consumer-product UX fixes (issues #112 + #113 + propagation friction)
 
 **Reasoning:** Four related fixes accumulated from today's propagation cycle. (a) post-merge hook detects orphan-branch state via @{u} upstream tracking + refs/remotes test; skips regen entirely when branch was just merged-and-deleted — closes issue #112 chronic recurrence regardless of stale local CLI binary. (b) logmind log no longer triggers self-update — new read-only detect_template_drift() function reports drift as a warning; new logmind self-update command applies refresh explicitly — closes issue #113 piggy-back commits + race conditions. (c) self-update template v6 smart workflow-skip: pin-bump-only releases propagate without PAT; workflow-touching releases politely defer until PAT configured. (d) gh pr create uses PAT too — eliminates the 'Allow Actions to create PRs' per-repo setting that blocked 2/5 thrillmade repos during v0.6.12 self-heal validation.
