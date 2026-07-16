@@ -1,0 +1,5 @@
+logmind context — token receipt (est. ~4 chars/token, deterministic)
+
+  payload total:     133 tok  (file-structure 2 + timeline 2 + framing)
+  reading this pre-baked payload replaces a git log / ls -R / grep cold-start.
+  cache it as a stable prefix -> every re-read costs ~0.1x (about 90% off).

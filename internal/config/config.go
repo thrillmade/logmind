@@ -26,6 +26,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -137,6 +138,50 @@ type ContextConfig struct {
 	// file tree, before the volatile timeline). Default false preserves the
 	// current two-doc payload byte-for-byte; the v1.0 flip turns it on.
 	Repomap bool `yaml:"repomap"`
+
+	// SpecFile designates a repo-relative path to the project's canonical,
+	// forward-looking spec — a hand-authored doc distinct from the derived
+	// file-structure ("what") and timeline ("why"): it's the "where this is
+	// headed" doc, edited via normal PRs and never regenerated. When set (and
+	// the resolved file exists and is non-empty), `logmind context` folds it
+	// in as a <document type="spec">, first in the payload — it's the most
+	// stable doc, so it makes the best cache prefix. Default "" preserves the
+	// existing payload byte-for-byte. See ResolveSpecFile for the path-safety
+	// rule: an absolute path, or one that escapes the repo root, is UNSET.
+	SpecFile string `yaml:"spec_file"`
+}
+
+// ResolveSpecFile resolves cfg.Context.SpecFile against repoRoot per the
+// canonical-spec-file path rule (NORMATIVE):
+//
+//   - "" (unset) → ("", false).
+//   - An absolute path → treated as UNSET. We never honor an absolute
+//     spec_file, even one that happens to live inside repoRoot — the config
+//     value is documented as repo-relative, and accepting an absolute path
+//     would invite a config that "looks relative" on one machine and points
+//     somewhere else entirely on another.
+//   - A relative path that, after filepath.Join(repoRoot, rel) + Clean,
+//     resolves OUTSIDE repoRoot (e.g. "../evil.md") → treated as UNSET.
+//
+// Both "unset" reasons collapse to the same ("", false) result: a
+// misconfigured or hostile spec_file must never cause a read outside
+// repoRoot, and must degrade silently (no error, no partial read) rather
+// than surface as a gate failure — `logmind context` is a convenience.
+func ResolveSpecFile(repoRoot string, cfg Config) (path string, ok bool) {
+	rel := cfg.Context.SpecFile
+	if rel == "" {
+		return "", false
+	}
+	if filepath.IsAbs(rel) {
+		return "", false
+	}
+	root := filepath.Clean(repoRoot)
+	joined := filepath.Join(root, rel) // filepath.Join already Cleans the result.
+	relToRoot, err := filepath.Rel(root, joined)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return joined, true
 }
 
 // DefaultConfig returns a fresh Config populated with the same values
@@ -177,8 +222,12 @@ func DefaultConfig() Config {
 		// Context.Repomap default false → `logmind context` emits today's
 		// two-doc payload byte-for-byte. NOT added to DefaultMap (below); the
 		// v1.0 flip turns it on and surfaces it in `config list`.
+		// Context.SpecFile default "" → the spec fold-in stays disabled and
+		// the payload byte-for-byte unchanged. Also NOT added to DefaultMap —
+		// `logmind init --spec` sets it explicitly via SetPath/SaveMap.
 		Context: ContextConfig{
-			Repomap: false,
+			Repomap:  false,
+			SpecFile: "",
 		},
 		Agents: map[string]bool{
 			"claude":   true,

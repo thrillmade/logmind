@@ -379,6 +379,31 @@ func TestDecisionsBranchHeader_Shape(t *testing.T) {
 	}
 }
 
+// TestSpecTemplate_HasExpectedSections pins the docs/spec.md skeleton
+// (`logmind init --spec`): the explanatory HTML comment plus the four
+// required sections. Any of these drifting would silently change what
+// every newly-scaffolded spec.md looks like.
+func TestSpecTemplate_HasExpectedSections(t *testing.T) {
+	body := SpecTemplate()
+	if !strings.HasPrefix(body, "<!--") {
+		t.Fatalf("spec template should open with an explanatory HTML comment")
+	}
+	for _, want := range []string{
+		"context.spec_file",
+		"never regenerated",
+		"# <Project> — Spec",
+		"**Status:** Draft",
+		"## What this project is building toward",
+		"## Current contract",
+		"## Open questions / not yet decided",
+		"## Non-goals",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("spec template missing %q", want)
+		}
+	}
+}
+
 // pythonTemplatesDir walks up from the running test file's location
 // to find the repo root, then returns src/logmind/templates/. Returns
 // "" when the Python tree is absent.

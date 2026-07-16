@@ -159,6 +159,45 @@ func TestDoctorFix_NeverTouchesDocs(t *testing.T) {
 	})
 }
 
+// TestDoctorFix_NeverCreatesSpecFile: context.spec_file configured but the
+// file is missing (doctor's advisory condition (a)) — --fix must NOT
+// materialize docs/spec.md. There is no honest mechanical fallback for
+// "what should a missing spec say" (see runDoctorFix's comment); the
+// deliberate remediation path is `logmind init --spec`, a human/agent
+// decision, never a --fix side effect.
+func TestDoctorFix_NeverCreatesSpecFile(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		writeRel(t, filepath.Join(".logmind", "config.yml"), "context:\n  spec_file: docs/spec.md\n", 0o644)
+
+		runDoctorFixCmd(t)
+
+		if _, err := os.Stat(filepath.Join("docs", "spec.md")); err == nil {
+			t.Errorf("--fix must not create docs/spec.md")
+		}
+	})
+}
+
+// TestDoctorFix_NeverSetsSpecFileFromNudge: the doctor NUDGE (unset
+// context.spec_file but a conventional spec file already exists on disk)
+// must not be auto-applied by --fix — setting context.spec_file is an
+// explicit user/agent choice (`logmind init --spec` or a manual config
+// edit), never a --fix side effect.
+func TestDoctorFix_NeverSetsSpecFileFromNudge(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		writeRel(t, filepath.Join("docs", "spec.md"), "# Spec\n\nHand-written.\n", 0o644)
+		configBefore := "git:\n  auto_commit: false\n"
+		writeRel(t, filepath.Join(".logmind", "config.yml"), configBefore, 0o644)
+
+		runDoctorFixCmd(t)
+
+		if got := readRel(t, filepath.Join(".logmind", "config.yml")); got != configBefore {
+			t.Errorf("--fix modified .logmind/config.yml off the spec nudge:\n got: %q\nwant: %q", got, configBefore)
+		}
+	})
+}
+
 func contains(haystack, needle string) bool {
 	return bytes.Contains([]byte(haystack), []byte(needle))
 }

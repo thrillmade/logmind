@@ -98,3 +98,42 @@ func firstLineForTest(s string) string {
 	}
 	return s
 }
+
+// TestDoctor_SpecAdvisory_HumanTableAndJSON: the `logmind doctor` cobra
+// wiring surfaces the H2 spec advisory in BOTH the human table and --json,
+// and Overall stays OK (advisory, not drift) end-to-end through the command.
+func TestDoctor_SpecAdvisory_HumanTableAndJSON(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: docs/spec.md\n")
+
+		root := NewRootCmd()
+		root.SetArgs([]string{"doctor", "--offline", "--exit-zero"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("doctor: %v\n%s", err, errOut.String())
+		}
+		body := out.String()
+		mustContain(t, body, "Canonical spec file")
+		mustContain(t, body, "missing")
+		mustContain(t, body, "Stack status: OK")
+	})
+
+	withTempCwd(t, func(d string) {
+		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: docs/spec.md\n")
+
+		root := NewRootCmd()
+		root.SetArgs([]string{"doctor", "--offline", "--exit-zero", "--json"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("doctor --json: %v\n%s", err, errOut.String())
+		}
+		body := out.String()
+		mustContain(t, body, `"spec_advisories"`)
+		mustContain(t, body, "missing")
+		mustContain(t, body, `"overall": "OK"`)
+	})
+}

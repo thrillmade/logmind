@@ -1,0 +1,33 @@
+<!--
+  This is the project's canonical, forward-looking spec. It complements the
+  two derived docs `logmind` already keeps in sync:
+
+    docs/file-structure.md   the WHAT — the repo tree (derived, regenerated)
+    docs/timeline.md         the WHY  — decision history (derived, regenerated)
+    docs/spec.md (this file) the WHERE THIS IS HEADED — hand-authored, never regenerated
+
+  Set `context.spec_file: docs/spec.md` in .logmind/config.yml (done
+  automatically by `logmind init --spec`, unless already set) to fold this
+  file into `logmind context`'s cold-start payload — first in the payload,
+  since it's the most stable of the three and makes the best prompt-cache
+  prefix.
+
+  Edit this file via normal PRs as the project's direction firms up. Nothing
+  in logmind writes to it automatically.
+-->
+
+# <Project> — Spec
+
+**Status:** Draft
+
+## What this project is building toward
+(the north star — what "done" looks like, even if it's still far off)
+
+## Current contract
+(what's true and load-bearing right now — the interfaces/behavior other code already depends on)
+
+## Open questions / not yet decided
+(known unknowns — name them instead of quietly guessing)
+
+## Non-goals
+(what this project deliberately will not do — the scope boundary)

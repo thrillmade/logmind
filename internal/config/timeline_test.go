@@ -59,6 +59,16 @@ func TestDefaultMap_OmitsNewKeys_PreservesConfigListByteParity(t *testing.T) {
 	if _, ok := m.Get("context"); ok {
 		t.Errorf("DefaultMap contains `context` — breaks `config list` byte-parity")
 	}
+	// Explicit dotted-path checks (in addition to the whole-section check
+	// above) so a future PR that adds a `context:` section for one reason
+	// (e.g. surfacing `repomap`) can't silently smuggle `spec_file` in
+	// alongside it without tripping this test.
+	if _, ok := GetPath(m, "context.repomap"); ok {
+		t.Errorf("DefaultMap exposes `context.repomap` — breaks `config list` byte-parity")
+	}
+	if _, ok := GetPath(m, "context.spec_file"); ok {
+		t.Errorf("DefaultMap exposes `context.spec_file` — breaks `config list` byte-parity")
+	}
 	fs, ok := m.Get("file_structure")
 	if !ok {
 		t.Fatal("file_structure missing from DefaultMap")

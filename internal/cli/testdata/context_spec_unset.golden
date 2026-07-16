@@ -1,0 +1,16 @@
+Pre-baked repo cold-start context: the file map (what) + the decision timeline (why). Read this to orient instead of running git log / ls / grep; open a linked source file for detail. Byte-stable — cache it as a prefix ABOVE your task.
+
+<repo_context>
+<document type="file-structure">
+<source>docs/file-structure.md</source>
+<document_content>
+FSTREE
+</document_content>
+</document>
+<document type="decision-timeline">
+<source>docs/timeline.md</source>
+<document_content>
+TLBODY
+</document_content>
+</document>
+</repo_context>
