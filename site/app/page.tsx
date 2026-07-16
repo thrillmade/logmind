@@ -13,8 +13,10 @@ $ git checkout -b feat/auth
 $ logmind log "JWT for stateless API auth" \\
     -r "horizontal scaling without session store" \\
     -a "server sessions in Redis" \\
-    -i "rotate signing keys quarterly"
-✓ wrote docs/decisions-branches/feat__auth.md`;
+    -i "rotate signing keys quarterly" \\
+    -H "Added JWT session auth with refresh-token rotation"
+✓ wrote docs/decisions-branches/feat__auth.md
+✓ headline set — surfaces at the top of docs/timeline.md`;
 
 function CommandBlock({
   cmd,
@@ -77,7 +79,7 @@ export default function Home() {
       <section className="px-6 sm:px-10 lg:px-16 pt-12 sm:pt-24 pb-20">
         <div className="max-w-6xl mx-auto w-full">
           <div className="rise marginalia mb-6">
-            v1.0.0 ⁄ released 2026-06-03 ⁄ MIT ⁄ <a href="https://zakelfassi.com/skdd-skills-driven-development" className="hover:text-accent transition-colors">a substrate for SkDD</a>
+            v2.0.0 ⁄ released 2026-07 ⁄ MIT ⁄ <a href="https://zakelfassi.com/skdd-skills-driven-development" className="hover:text-accent transition-colors">a substrate for SkDD</a>
           </div>
           <h1 className="rise display text-[12vw] sm:text-[8.5vw] leading-[0.92] font-light max-w-[16ch]" style={{ animationDelay: "0.05s" }}>
             Infinite context
@@ -183,9 +185,12 @@ export default function Home() {
                 body: (
                   <>
                     Decisions, timeline, project tree —{" "}
-                    <em>they update together</em>. Rebase against main? Fresh
-                    clone? Multi-commit amend? They stay synced. CI never
-                    catches you with a stale derived doc.
+                    <em>they update together</em>. Every branch also carries
+                    a one-sentence, agent-authored headline that surfaces at
+                    the top of the main-canonical timeline the moment a PR
+                    opens. Rebase against main? Fresh clone? Multi-commit
+                    amend? They stay synced. CI never catches you with a
+                    stale derived doc.
                   </>
                 ),
               },
@@ -199,8 +204,14 @@ export default function Home() {
                       AGENTS.md
                     </code>{" "}
                     inherits the decision history, the tree, the
-                    why-behind-the-code. Onboarding a new agent takes{" "}
-                    <em>one read</em>.
+                    why-behind-the-code — one{" "}
+                    <code className="font-mono text-foreground text-[0.85em]">
+                      logmind context
+                    </code>{" "}
+                    call away. Add the repomap (Go + TS/JS signature
+                    skeletons, ranked and token-budgeted) and an agent sees
+                    the whole codebase&apos;s shape before opening a single
+                    file. Onboarding a new agent takes <em>one read</em>.
                   </>
                 ),
               },
@@ -255,6 +266,51 @@ export default function Home() {
         </div>
       </section>
 
+      {/* enforced — the two-layer commit guard */}
+      <section className="px-6 sm:px-10 lg:px-16 py-20 border-t border-rule">
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 sm:grid-cols-12 gap-8">
+          <div className="sm:col-span-4">
+            <h2 className="display text-4xl sm:text-5xl font-light leading-tight">
+              enforced<span className="text-accent">.</span>
+            </h2>
+            <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
+              A convention only holds if the tooling holds the door. v2 adds
+              a guard in front of every substantive commit.
+            </p>
+          </div>
+          <div className="sm:col-span-8">
+            <p className="text-[15px] leading-[1.65] text-foreground/85 mb-6">
+              A <code className="font-mono text-foreground text-[0.85em]">commit-msg</code> hook and a Claude
+              Code <code className="font-mono text-foreground text-[0.85em]">PreToolUse</code> hook check the
+              same rule: a substantive change with no matching{" "}
+              <code className="font-mono text-foreground text-[0.85em]">logmind log</code> entry gets blocked,
+              not just flagged after the fact. Escape hatches exist for the
+              commits that genuinely aren&apos;t decisions —{" "}
+              <code className="font-mono text-foreground text-[0.85em]">[skip-logmind]</code> in the subject,{" "}
+              <code className="font-mono text-foreground text-[0.85em]">LOGMIND_ALLOW_GIT_COMMIT=1</code> for
+              one command, <code className="font-mono text-foreground text-[0.85em]">git.enforce_commits: false</code>{" "}
+              to opt a repo out entirely. Every gate fails open: a stale,
+              missing, or erroring logmind binary never blocks a commit —
+              enforcement can&apos;t become an outage.
+            </p>
+            <p className="marginalia normal-case tracking-normal text-foreground/55 mt-4 text-xs leading-relaxed">
+              The same orientation-first discipline covers the spec:{" "}
+              <code className="font-mono">docs/spec.md</code> (or any path
+              via <code className="font-mono">context.spec_file</code>) is a
+              hand-authored, forward-looking <strong>WHERE-TO</strong> —
+              alongside the derived <strong>WHY</strong> (
+              <code className="font-mono">docs/timeline.md</code>) and{" "}
+              <strong>WHAT</strong> (
+              <code className="font-mono">docs/file-structure.md</code> /{" "}
+              <code className="font-mono">logmind repomap</code>). Configured,
+              it folds into <code className="font-mono">logmind context</code>{" "}
+              as the first document — the most stable, so the best cache
+              prefix.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* measured */}
       <section className="px-6 sm:px-10 lg:px-16 py-20 border-t border-rule">
         <div className="max-w-6xl mx-auto w-full grid grid-cols-1 sm:grid-cols-12 gap-8">
@@ -263,31 +319,39 @@ export default function Home() {
               measured<span className="text-accent">.</span>
             </h2>
             <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
-              Logmind costs fewer tokens than the git workflow it replaces.
-              Anyone can run the benchmarks. Every release.
+              <code className="font-mono text-foreground text-[0.85em]">logmind context</code> is the one-read
+              cold-start: spec → file-structure → repomap → timeline, in
+              cache-prefix order. It prints a receipt for its own density.
             </p>
           </div>
           <div className="sm:col-span-8">
             <p className="text-[15px] leading-[1.65] text-foreground/85 mb-6">
-              Decision logging only matters if it stays cheaper than the
-              alternative. We measure four ways every release:
-              <em> per call</em>,{" "}
-              <em>worst case</em>, <em>per session</em>,{" "}
-              <em>org cumulative</em>. CI gates on net-saver across all four.
+              Four documents, one read, ordered most-stable-first so an
+              agent&apos;s prompt cache actually hits: the{" "}
+              <strong>spec</strong> (hand-authored, rarely changes), the{" "}
+              <strong>file-structure</strong> (the tree), the{" "}
+              <strong>repomap</strong> (signature skeletons, bodies dropped),
+              and the <strong>timeline</strong> (newest-first decisions).
+              Byte-stable across re-reads — the same task re-reading it pays
+              cache rates, not input rates.
             </p>
             <pre className="border border-rule bg-code-bg px-4 py-4 text-[12px] sm:text-sm leading-[1.7] font-mono text-foreground/90 overflow-x-auto">
-{`$ python -m bench
-  per-call       -18% bytes vs git equivalent      ✅ saver
-  worst-case     -58% even on never-read           ✅ saver
-  per-session     informational (4-angle frame)    ℹ info
-  org-cumulative  informational (rollup)            ℹ info
-ok: 4-angle Q7-logmind compliance`}
+{`$ logmind context --stats
+logmind context — token receipt (est. ~4 chars/token, deterministic)
+
+  payload total:   20486 tok  (spec 167 + file-structure 593 + repomap 7980 + timeline 11564 + framing)
+  the repomap distills 179096 tok of Go source -> 22.4x denser.
+  the timeline distills 82862 tok of raw decision logs -> 7.2x denser.
+  reading this pre-baked payload replaces a git log / ls -R / grep cold-start.
+  cache it as a stable prefix -> every re-read costs ~0.1x (about 90% off).`}
             </pre>
             <p className="marginalia normal-case tracking-normal text-foreground/55 mt-4 text-xs leading-relaxed">
-              The two informational angles share a thin baseline (read-event
-              accounting needs aggregation); the two gating angles are the
-              load-bearing checks. <code className="font-mono">python -m bench</code> ships in the repo —
-              no setup, no API keys.
+              Measured on this repo, this release, with{" "}
+              <code className="font-mono">context.repomap: true</code> enabled
+              (off by default — leaving it off keeps the payload
+              byte-identical for repos that don&apos;t need the Go/TS/JS
+              signature skeleton). <code className="font-mono">logmind context --stats</code> ships in the
+              binary — no setup, no API keys, no synthetic benchmark.
             </p>
           </div>
         </div>
@@ -304,7 +368,7 @@ ok: 4-angle Q7-logmind compliance`}
               install<span className="text-accent">.</span>
             </h2>
             <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
-              v1.0 ships as a single signed + notarized Go binary. Brew or curl,
+              v2.0 ships as a single signed + notarized Go binary. Brew or curl,
               pick whichever lives closest to your other dev tools.
             </p>
           </div>
@@ -316,7 +380,7 @@ ok: 4-angle Q7-logmind compliance`}
             <div className="border-t border-rule" />
             <p className="marginalia normal-case tracking-normal text-foreground/55 mt-6 text-xs leading-relaxed">
               <code className="font-mono">logmind --version</code> should print{" "}
-              <code className="font-mono">logmind 1.0.0 (spec 0.1.0)</code>.
+              <code className="font-mono">logmind 2.0.0 (spec 1.4.0)</code>.
               The agent skill (03) is optional but recommended — it teaches
               Claude Code, Cursor, Codex et al. when and how to call{" "}
               <code className="font-mono">logmind log</code> in any project
@@ -342,7 +406,7 @@ ok: 4-angle Q7-logmind compliance`}
                 Python release. New installs should use the Go binary
                 above. The PyPI package is kept on PyPI only to honour
                 old pinning; it receives no further updates, no security
-                backports, and no feature parity with v1.0+. Migrating?
+                backports, and no feature parity with v2.0+. Migrating?
                 See the{" "}
                 <a
                   href="https://github.com/thrillmade/logmind/blob/main/docs/install.md#deprecated-python-install"
@@ -368,7 +432,9 @@ ok: 4-angle Q7-logmind compliance`}
               </h2>
               <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
                 Init once per repo. Then log every meaningful choice. Branch
-                routing happens automatically.
+                routing happens automatically; <code className="font-mono text-foreground text-[0.85em]">-H</code>{" "}
+                sets the one-line headline the timeline shows for this
+                branch.
               </p>
             </div>
             <div className="sm:col-span-8">
@@ -418,7 +484,7 @@ ok: 4-angle Q7-logmind compliance`}
             </a>
             <div className="marginalia normal-case tracking-normal mt-2 text-xs text-foreground/55 flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* keep version in sync with cmd/logmind/version */}
-              <span>v1.0.0</span>
+              <span>v2.0.0</span>
               <span>·</span>
               <span>MIT licensed</span>
               <span>·</span>
@@ -464,7 +530,7 @@ ok: 4-angle Q7-logmind compliance`}
               boundaries instead of overflowing the viewport.
             */}
             <nav className="text-sm flex flex-wrap items-center gap-y-1 sm:block sm:whitespace-nowrap sm:text-right">
-              <NavLink href="https://github.com/thrillmade/logmind/blob/main/CHANGELOG.md">
+              <NavLink href="https://github.com/thrillmade/logmind/releases">
                 changelog
               </NavLink>
               <span aria-hidden className="mx-2 text-foreground/30">·</span>

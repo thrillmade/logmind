@@ -38,7 +38,7 @@ export default async function OG() {
           }}
         >
           <span>logmind.dev</span>
-          <span>v0.1 ⁄ MIT</span>
+          <span>v2.0 ⁄ MIT</span>
         </div>
 
         {/* Main composition */}
@@ -90,9 +90,9 @@ export default async function OG() {
             letterSpacing: "0.08em",
           }}
         >
-          <span>$ pip install logmind</span>
-          <span style={{ color: "#c44536" }}>●</span>
           <span>$ brew install logmind</span>
+          <span style={{ color: "#c44536" }}>●</span>
+          <span>$ curl logmind.dev/install.sh | sh</span>
         </div>
       </div>
     ),
