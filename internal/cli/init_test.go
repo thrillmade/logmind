@@ -297,6 +297,85 @@ func TestInit_AgentsFlagOverridesDefault(t *testing.T) {
 	}
 }
 
+// TestInit_InstallsClaudePreToolUseGuardByDefault: `init --no-git` still
+// installs the Layer 1 Claude Code PreToolUse guard (.claude/settings.json)
+// because claude is in agents.DefaultEnabled() — and the install happens
+// even though --no-git skips the git-hook installers, since
+// .claude/settings.json is repo content, not git-clone state.
+func TestInit_InstallsClaudePreToolUseGuardByDefault(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		root := NewRootCmd()
+		root.SetArgs([]string{"init", "--no-git"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("init: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+		}
+		mustContain(t, out.String(), "✓ Installed Claude Code guard-commit hook (.claude/settings.json)")
+	})
+	body, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected .claude/settings.json after init: %v", err)
+	}
+	mustContain(t, string(body), "logmind guard-commit --layer harness")
+	mustContain(t, string(body), "logmind-hook-version")
+}
+
+// TestInit_AgentsFlagExcludingClaudeSkipsPreToolUseGuard: when --agents
+// excludes claude, Layer 1 must NOT be installed — the gate is
+// slices.Contains(enabled, "claude"), not "always on".
+func TestInit_AgentsFlagExcludingClaudeSkipsPreToolUseGuard(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		root := NewRootCmd()
+		root.SetArgs([]string{"init", "--no-git", "--agents", "cursor"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("init: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+		}
+		if strings.Contains(out.String(), "Claude Code guard-commit hook") {
+			t.Errorf("did NOT expect the Claude Code guard-commit hook line when --agents excludes claude:\n%s", out.String())
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err == nil {
+		t.Errorf("did NOT expect .claude/settings.json when --agents excludes claude")
+	}
+}
+
+// TestInit_RefreshMode_InstallsMissingClaudeHook: refresh mode (re-running
+// `init` on an already-initialised repo) recomputes claudeAgentEnabled
+// from the same --agents/--all-agents flags every time (it's not read
+// back from a persisted config), so a repo whose .claude/settings.json
+// was deleted (or never created, e.g. by an old logmind version) gets it
+// installed on the next refresh pass.
+func TestInit_RefreshMode_InstallsMissingClaudeHook(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		// First init WITHOUT claude enabled, so no guard gets installed.
+		runQuiet(t, []string{"init", "--no-git", "--agents", "cursor"})
+		if _, err := os.Stat(".claude/settings.json"); err == nil {
+			t.Fatalf("did not expect .claude/settings.json after the first (cursor-only) init")
+		}
+
+		// Second call is refresh mode; defaulting the agents list this time
+		// (no --agents flag) re-enables claude, which should backfill the
+		// hook that was never installed.
+		root := NewRootCmd()
+		root.SetArgs([]string{"init", "--no-git"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("refresh init: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+		}
+		mustContain(t, out.String(), "✓ Refreshed .claude/settings.json (Claude Code guard-commit hook)")
+	})
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err != nil {
+		t.Errorf("expected .claude/settings.json after refresh re-enabled claude: %v", err)
+	}
+}
+
 // runQuiet runs a root command silencing stdout/stderr; used to drive
 // setup steps in multi-stage tests without polluting test logs.
 func runQuiet(t *testing.T, args []string) {

@@ -64,3 +64,59 @@ func TestSelfUpdate_RefreshesStaleHook(t *testing.T) {
 		t.Errorf("stale body not replaced; got\n%s", string(body))
 	}
 }
+
+// TestSelfUpdate_InstallsClaudePreToolUseGuard: self-update is a refresh
+// path of its own (separate from init/doctor --fix), so it must also
+// install Layer 1 — otherwise a repo that only ever runs self-update
+// gets its commit-msg hook auto-upgraded to enforcing while the
+// PreToolUse guard stays missing forever (and doctor never nudges,
+// because "missing" is benign).
+func TestSelfUpdate_InstallsClaudePreToolUseGuard(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		root := NewRootCmd()
+		root.SetArgs([]string{"self-update"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("self-update: %v\n%s\n%s", err, out.String(), errOut.String())
+		}
+		if !strings.Contains(out.String(), "✓ Refreshed .claude/settings.json (Claude Code guard-commit hook)") {
+			t.Errorf("expected the Claude guard refresh notice; got\n%s", out.String())
+		}
+	})
+	body, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected .claude/settings.json after self-update: %v", err)
+	}
+	if !strings.Contains(string(body), "logmind guard-commit --layer harness") {
+		t.Errorf("settings.json missing the guard-commit entry:\n%s", body)
+	}
+}
+
+// TestSelfUpdate_ClaudeDisabledInConfigSkipsGuard: agents.claude:false is
+// the same opt-out doctor --fix honors — self-update must respect it too.
+func TestSelfUpdate_ClaudeDisabledInConfigSkipsGuard(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		if err := os.MkdirAll(".logmind", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(".logmind", "config.yml"), []byte("agents:\n  claude: false\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		root := NewRootCmd()
+		root.SetArgs([]string{"self-update"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("self-update: %v\n%s\n%s", err, out.String(), errOut.String())
+		}
+		if strings.Contains(out.String(), "Claude Code guard-commit hook") {
+			t.Errorf("did NOT expect the Claude guard notice with agents.claude:false; got\n%s", out.String())
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err == nil {
+		t.Errorf("did NOT expect .claude/settings.json when agents.claude is false")
+	}
+}

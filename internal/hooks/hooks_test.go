@@ -33,6 +33,41 @@ func TestPostRewriteBody_MatchesGolden(t *testing.T) {
 	checkGolden(t, "post-rewrite.golden", BuildPostRewriteBody())
 }
 
+// TestCommitMsgBody_MatchesGolden pins the v2.0.0 enforcing commit-msg
+// hook body. Unlike post-merge/post-rewrite this one has no Python
+// ancestor to stay byte-identical with (the warn-only v0.6.16 body it
+// replaces was Go-only already) — the golden here exists purely so a
+// future refactor that reflows the shell script trips CI loudly instead
+// of silently drifting every consumer's next `doctor --fix` upgrade.
+func TestCommitMsgBody_MatchesGolden(t *testing.T) {
+	checkGolden(t, "commit-msg.golden", BuildCommitMsgBody())
+}
+
+// TestCommitMsgBody_DelegatesToGuardCommit pins the enforcement contract
+// as INTENT, distinct from the byte-golden above: the body must locate
+// the message file, delegate the actual decision to
+// `logmind guard-commit --layer git-hook`, forward guard-commit's exit
+// code as its own, and fail OPEN (exit 0) when logmind isn't on PATH —
+// never fail closed on a missing binary.
+func TestCommitMsgBody_DelegatesToGuardCommit(t *testing.T) {
+	body := BuildCommitMsgBody()
+	for _, must := range []string{
+		"logmind guard-commit --layer git-hook",
+		"--msg-file \"$MSG_FILE\"",
+		"command -v logmind",
+		"exit $?",
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("commit-msg body missing %q", must)
+		}
+	}
+	// The fail-open path: outside the `command -v logmind` branch, the
+	// script must still exit 0 (never fail closed on a missing binary).
+	if !regexp.MustCompile(`(?m)^exit 0\s*(#.*)?$`).MatchString(body) {
+		t.Errorf("commit-msg body has no top-level `exit 0` fail-open fallback")
+	}
+}
+
 // TestPostMergeBody_RollupInvariants pins the Slice 2 roll-up contract as
 // INTENT (distinct from the byte-golden): the post-merge hook MUST regenerate
 // the timeline + file-structure (so a main-canonical repo rebuilds its §1.6.4
@@ -158,6 +193,100 @@ func TestInstallPostMerge_MissingHooksDir(t *testing.T) {
 	}
 	if changed {
 		t.Fatalf("changed=true with no .git/hooks/; want false")
+	}
+}
+
+func TestInstallCommitMsg_FreshInstall(t *testing.T) {
+	repo := tempRepoWithHooks(t)
+	changed, err := InstallCommitMsg(repo)
+	if err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	if !changed {
+		t.Fatalf("InstallCommitMsg returned changed=false on a fresh repo; want true")
+	}
+	body, err := os.ReadFile(filepath.Join(repo, ".git", "hooks", "commit-msg"))
+	if err != nil {
+		t.Fatalf("read commit-msg: %v", err)
+	}
+	if string(body) != BuildCommitMsgBody() {
+		t.Fatalf("installed body drifts from BuildCommitMsgBody()")
+	}
+}
+
+func TestInstallCommitMsg_Idempotent(t *testing.T) {
+	repo := tempRepoWithHooks(t)
+	if _, err := InstallCommitMsg(repo); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	changed, err := InstallCommitMsg(repo)
+	if err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	if changed {
+		t.Fatalf("InstallCommitMsg changed=true on identical second install; want false")
+	}
+}
+
+// TestInstallCommitMsg_UpgradesWarnOnlyV0616Body pins the "no new install
+// wiring needed" contract from the PR spec: an existing repo's v0.6.16
+// warn-only commit-msg hook (same CommitMsgMarker, different body) MUST
+// be recognized as OURS and overwritten with the current enforcing body
+// — installHook's existing "ours + body differs → overwrite" path is
+// what carries out this upgrade on the next init/doctor --fix, with zero
+// new code.
+func TestInstallCommitMsg_UpgradesWarnOnlyV0616Body(t *testing.T) {
+	repo := tempRepoWithHooks(t)
+	hookPath := filepath.Join(repo, ".git", "hooks", "commit-msg")
+	legacyWarnOnly := "#!/bin/sh\n" +
+		"# logmind commit-msg hook\n" +
+		HookVersionPrefix + "0.6.16\n" +
+		"MSG_FILE=\"$1\"\n" +
+		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then exit 0; fi\n" +
+		"if grep -q '\\[skip-logmind\\]' \"$MSG_FILE\"; then\n" +
+		"    echo 'logmind: [skip-logmind] detected' >&2\n" +
+		"fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(hookPath, []byte(legacyWarnOnly), 0o755); err != nil {
+		t.Fatalf("seed legacy warn-only hook: %v", err)
+	}
+
+	changed, err := InstallCommitMsg(repo)
+	if err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	if !changed {
+		t.Fatalf("InstallCommitMsg changed=false over a legacy warn-only body; want true (upgrade)")
+	}
+	got, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("re-read hook: %v", err)
+	}
+	if string(got) != BuildCommitMsgBody() {
+		t.Fatalf("hook was not upgraded to the current enforcing body")
+	}
+}
+
+func TestInstallCommitMsg_LeavesForeignHook(t *testing.T) {
+	repo := tempRepoWithHooks(t)
+	hookPath := filepath.Join(repo, ".git", "hooks", "commit-msg")
+	custom := "#!/bin/sh\n# user's custom commit-msg hook\necho hi\n"
+	if err := os.WriteFile(hookPath, []byte(custom), 0o755); err != nil {
+		t.Fatalf("seed custom hook: %v", err)
+	}
+	changed, err := InstallCommitMsg(repo)
+	if err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	if changed {
+		t.Fatalf("InstallCommitMsg changed=true on foreign hook; want false (leave alone)")
+	}
+	got, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("re-read hook: %v", err)
+	}
+	if string(got) != custom {
+		t.Fatalf("foreign hook was modified:\n%s", got)
 	}
 }
 

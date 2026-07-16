@@ -162,3 +162,69 @@ func TestDoctorFix_NeverTouchesDocs(t *testing.T) {
 func contains(haystack, needle string) bool {
 	return bytes.Contains([]byte(haystack), []byte(needle))
 }
+
+// TestDoctorFix_InstallsClaudePreToolUseGuardByDefault: with no
+// .logmind/config.yml at all (so agents.claude falls back to the
+// default-true behavior), --fix installs the Layer 1 Claude Code
+// PreToolUse guard alongside the rest of the remediation pass, and a
+// second pass reports it as already current (no re-write).
+func TestDoctorFix_InstallsClaudePreToolUseGuardByDefault(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+
+		out1, _ := runDoctorFixCmd(t)
+		mustContain(t, out1, "claude-hook=changed")
+		body := readRel(t, filepath.Join(".claude", "settings.json"))
+		mustContain(t, body, "logmind guard-commit --layer harness")
+
+		out2, _ := runDoctorFixCmd(t)
+		mustContain(t, out2, "claude-hook=current")
+	})
+}
+
+// TestDoctorFix_ClaudeDisabledInConfigSkipsPreToolUseGuard: an explicit
+// `agents.claude: false` in .logmind/config.yml must prevent --fix from
+// installing the Layer 1 guard at all.
+func TestDoctorFix_ClaudeDisabledInConfigSkipsPreToolUseGuard(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		writeRel(t, filepath.Join(".logmind", "config.yml"), "agents:\n  claude: false\n", 0o644)
+
+		out, _ := runDoctorFixCmd(t)
+		mustContain(t, out, "claude-hook=current")
+		if _, err := os.Stat(filepath.Join(".claude", "settings.json")); err == nil {
+			t.Errorf("did NOT expect .claude/settings.json when agents.claude is false")
+		}
+	})
+}
+
+// TestDoctorFix_MalformedClaudeSettingsDegradesGracefully: a user's
+// malformed (e.g. JSONC-style trailing-comma) .claude/settings.json must
+// NOT hard-fail `doctor --fix` — EnsurePreToolUseGuard's refusal is
+// swallowed like a foreign git hook's, so --fix still exits 0, still
+// prints the `ok doctor-fix` summary, still applies the rest of the
+// remediation pass (hooks etc.), and leaves the malformed file untouched.
+func TestDoctorFix_MalformedClaudeSettingsDegradesGracefully(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		malformed := "{\n  \"hooks\": {\n    \"PreToolUse\": [],\n  },\n}\n" // trailing commas — JSONC, not JSON
+		writeRel(t, filepath.Join(".claude", "settings.json"), malformed, 0o644)
+
+		// runDoctorFixCmd fails the test on a non-nil Execute() error, so
+		// reaching the assertions below already proves exit 0.
+		out, _ := runDoctorFixCmd(t)
+		mustContain(t, out, "ok doctor-fix")
+		mustContain(t, out, "claude-hook=current") // no write happened
+
+		// The rest of the remediation still ran: the git hooks were
+		// installed on this fresh repo.
+		if _, err := os.Stat(filepath.Join(".git", "hooks", "commit-msg")); err != nil {
+			t.Errorf("expected commit-msg hook installed despite malformed settings.json: %v", err)
+		}
+
+		// The malformed file is user content --fix can't repair — byte-untouched.
+		if got := readRel(t, filepath.Join(".claude", "settings.json")); got != malformed {
+			t.Errorf("malformed settings.json was modified:\n got: %q\nwant: %q", got, malformed)
+		}
+	})
+}

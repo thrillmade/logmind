@@ -17,6 +17,12 @@ git:
   # Available variables: {decision}
   commit_message_template: "logmind: {decision}"
 
+  # Block substantive commits that bypass `logmind log` (commit-msg + Claude
+  # Code PreToolUse hooks). Set false to fall back to warn-only for this repo.
+  enforce_commits: true
+  # Lines-changed threshold shared with `logmind check-decisions --threshold`.
+  commit_line_threshold: 20
+
 # Decision management
 decisions:
   # Maximum number of recent decisions to keep in decisions.md

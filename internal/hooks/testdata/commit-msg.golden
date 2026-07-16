@@ -1,0 +1,22 @@
+#!/bin/sh
+# logmind commit-msg hook
+# logmind-hook-version: 2.0.0-dev
+# Installed by `logmind init`. Layer 2 of the v2.0.0+ commit-enforcement
+# design (see internal/claudehook for Layer 1, the Claude Code harness's
+# PreToolUse guard). Delegates the enforce/allow decision entirely to
+# `logmind guard-commit --layer git-hook` — see internal/guardcommit for
+# the carve-outs (git.enforce_commits:false, [skip-logmind],
+# LOGMIND_ALLOW_GIT_COMMIT=1, a staged decision file, under-threshold,
+# rebase/merge/cherry-pick in progress).
+#
+# Fails open when logmind isn't on PATH: a missing binary should never
+# block a commit.
+
+MSG_FILE="$1"
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+    exit 0
+fi
+if command -v logmind >/dev/null 2>&1; then
+    logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"; exit $?
+fi
+exit 0    # fail-open when logmind not on PATH

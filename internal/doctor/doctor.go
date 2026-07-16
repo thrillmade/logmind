@@ -55,6 +55,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
@@ -252,6 +253,10 @@ func collectLogmindStatus(projectRoot string) ToolStatus {
 	workflows = append(workflows, probePostMergeHook(projectRoot))
 	workflows = append(workflows, probePostRewriteHook(projectRoot))
 	workflows = append(workflows, probeCommitMsgHook(projectRoot))
+	// v2.0.0 Layer 1 probe — the Claude Code harness's PreToolUse guard
+	// entry in .claude/settings.json. Sits right after the commit-msg row
+	// (Layer 2) since the two are the enforcement feature's matched pair.
+	workflows = append(workflows, probeClaudePreToolUseHook(projectRoot))
 	// v0.6.16 PATH-resolution probe — always appended; the probe itself
 	// decides whether to report stale/current/missing.
 	workflows = append(workflows, probePathResolution())
@@ -505,6 +510,47 @@ func probePostRewriteHook(projectRoot string) WorkflowStatus {
 // will install it.
 func probeCommitMsgHook(projectRoot string) WorkflowStatus {
 	return probeHook(projectRoot, "commit-msg hook", "commit-msg", hooks.BuildCommitMsgBody())
+}
+
+// probeClaudePreToolUseHook reports drift for Layer 1 of the v2.0.0
+// commit-enforcement design — the Claude Code harness's PreToolUse guard
+// entry in .claude/settings.json (installed/refreshed by
+// internal/claudehook.EnsurePreToolUseGuard). Mirrors probeHook's shape
+// and drift vocabulary exactly (missing / markerless / stale / current)
+// so it participates in classifyLogmindDrift identically to the git-hook
+// probes: only "stale" flips the tool (and therefore Overall) to DRIFT.
+// "missing" stays benign here for the same reason it's benign for the
+// git hooks — a repo that simply hasn't run `logmind init` yet (or has
+// the claude agent disabled) isn't "drifted," it's "not installed," and
+// `doctor --fix` / `logmind init` remain the remediation either way.
+func probeClaudePreToolUseHook(projectRoot string) WorkflowStatus {
+	current := version.Version
+	const displayName = "Claude Code PreToolUse guard"
+	state := claudehook.Inspect(projectRoot)
+	if !state.SettingsPresent || !state.EntryPresent {
+		return WorkflowStatus{
+			Name: displayName, Installed: false,
+			Marker: nil, BundledMarker: &current, Drift: "missing",
+		}
+	}
+	if !state.HasMarker {
+		marker := "markerless (pre-v2.0.0)"
+		return WorkflowStatus{
+			Name: displayName, Installed: true,
+			Marker: &marker, BundledMarker: &current, Drift: "markerless",
+		}
+	}
+	installed := state.Version
+	if installed != current {
+		return WorkflowStatus{
+			Name: displayName, Installed: true,
+			Marker: &installed, BundledMarker: &current, Drift: "stale",
+		}
+	}
+	return WorkflowStatus{
+		Name: displayName, Installed: true,
+		Marker: &installed, BundledMarker: &current, Drift: "current",
+	}
 }
 
 // probePathResolution implements the v0.6.16 PATH-resolution check.

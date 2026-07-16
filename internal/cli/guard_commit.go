@@ -1,20 +1,25 @@
 // guard_commit.go — `logmind guard-commit`, the cobra surface over the
 // internal/guardcommit decision engine.
 //
-// This is PR1/3 of the "force-logmind-usage enforcement" feature (plan.md
-// §v2.0.0). guard-commit is deliberately Hidden (plumbing, not a
+// guard-commit itself is deliberately Hidden (plumbing, not a
 // user-facing verb) and does NOT install itself anywhere — no hook
 // registration, no .git/hooks writes, no harness settings.json edits. It
-// exists purely so the two hook layers built in a follow-up PR have a
-// single binary entry point to shell out to:
+// exists purely so the two hook layers have a single binary entry point
+// to shell out to:
 //
-//   - `logmind guard-commit --layer git-hook --msg-file <path>` from a git
-//     commit-msg hook.
+//   - `logmind guard-commit --layer git-hook --msg-file <path>` from the
+//     commit-msg hook body (internal/hooks.BuildCommitMsgBody).
 //   - `logmind guard-commit --layer harness` (JSON payload on stdin) from
-//     the Claude Code harness's PreToolUse hook.
+//     the Claude Code harness's PreToolUse hook entry
+//     (internal/claudehook.CanonicalCommand).
 //
-// Both layers are manually invocable today (this PR); wiring either one up
-// automatically is out of scope here.
+// Both layers ARE wired up automatically as of v2.0.0's enforcement
+// PR2/3: `logmind init` and `logmind doctor --fix` install/refresh the
+// commit-msg hook and the .claude/settings.json PreToolUse entry
+// alongside the rest of the idempotent remediation pass (see
+// internal/cli/refresh.go). guard-commit remains directly invocable too
+// (e.g. for testing, or a hand-rolled hook setup) — this command doesn't
+// care who calls it.
 package cli
 
 import (
@@ -56,9 +61,10 @@ allowed to proceed.
                       nonzero-exit convention (git only needs a nonzero
                       status to abort the commit).
 
-This command does not install anything. The hooks that call it
-automatically are wired up in a separate PR — today it is invoked
-manually, e.g. for testing:
+This command does not install anything itself — see 'logmind init' /
+'logmind doctor --fix' for the commit-msg hook + Claude Code
+PreToolUse guard installers that call it automatically. It's also
+directly invocable, e.g. for testing:
 
     echo '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"."}' \
       | logmind guard-commit --layer harness`,

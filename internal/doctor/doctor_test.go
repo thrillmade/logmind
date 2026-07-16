@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/version"
 )
 
@@ -68,6 +69,7 @@ func TestCollectStatus_FreshRepoListsAllProbes(t *testing.T) {
 		"AGENTS.md", ".gitattributes (merge driver)",
 		"git config (merge driver)", "post-merge hook",
 		"post-rewrite hook", "commit-msg hook",
+		"Claude Code PreToolUse guard",
 		"logmind on PATH",
 	} {
 		if !contains(names, want) {
@@ -346,5 +348,80 @@ func TestCollectStatus_SummariesNeeded(t *testing.T) {
 	}
 	if strings.Contains(joined, "feat__api.md") {
 		t.Errorf("enriched branch must NOT be listed: %v", r.SummariesNeeded)
+	}
+}
+
+// --- probeClaudePreToolUseHook (Layer 1 / v2.0.0 enforcement) ------------
+
+func TestProbeClaudePreToolUseHook_MissingOnFreshRepo(t *testing.T) {
+	dir := freshRepo(t)
+	row := probeClaudePreToolUseHook(dir)
+	if row.Drift != "missing" {
+		t.Errorf("Drift = %q; want missing", row.Drift)
+	}
+	if row.BundledMarker == nil || *row.BundledMarker != version.Version {
+		t.Errorf("BundledMarker = %v; want %v", row.BundledMarker, version.Version)
+	}
+}
+
+func TestProbeClaudePreToolUseHook_CurrentAfterInstall(t *testing.T) {
+	dir := freshRepo(t)
+	if _, err := claudehook.EnsurePreToolUseGuard(dir); err != nil {
+		t.Fatalf("EnsurePreToolUseGuard: %v", err)
+	}
+	row := probeClaudePreToolUseHook(dir)
+	if row.Drift != "current" {
+		t.Errorf("Drift = %q; want current", row.Drift)
+	}
+	if row.Marker == nil || *row.Marker != version.Version {
+		t.Errorf("Marker = %v; want %v", row.Marker, version.Version)
+	}
+}
+
+func TestProbeClaudePreToolUseHook_StaleOnRevertedMarker(t *testing.T) {
+	dir := freshRepo(t)
+	if _, err := claudehook.EnsurePreToolUseGuard(dir); err != nil {
+		t.Fatalf("EnsurePreToolUseGuard: %v", err)
+	}
+	revertClaudeHookMarker(t, dir)
+
+	row := probeClaudePreToolUseHook(dir)
+	if row.Drift != "stale" {
+		t.Errorf("Drift = %q; want stale", row.Drift)
+	}
+}
+
+// TestCollectStatus_StaleClaudeHookFlipsToDrift mirrors
+// TestCollectStatus_StaleWorkflowFlipsToDrift for the new Layer 1 probe:
+// a stale marker must flip Overall to DRIFT exactly like every other
+// hook/workflow probe (classifyLogmindDrift treats them uniformly).
+func TestCollectStatus_StaleClaudeHookFlipsToDrift(t *testing.T) {
+	dir := freshRepo(t)
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", t.TempDir())
+	if _, err := claudehook.EnsurePreToolUseGuard(dir); err != nil {
+		t.Fatalf("EnsurePreToolUseGuard: %v", err)
+	}
+	revertClaudeHookMarker(t, dir)
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "DRIFT" {
+		t.Errorf("Overall = %q; want DRIFT with stale Claude Code PreToolUse marker", r.Overall)
+	}
+}
+
+// revertClaudeHookMarker rewrites the installed hook-version marker in
+// dir/.claude/settings.json to a known-stale value.
+func revertClaudeHookMarker(t *testing.T, dir string) {
+	t.Helper()
+	path := claudehook.SettingsPath(dir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	reverted := strings.ReplaceAll(string(data), version.Version, "0.1.0-FAKE")
+	if err := os.WriteFile(path, []byte(reverted), 0o644); err != nil {
+		t.Fatalf("write reverted settings.json: %v", err)
 	}
 }
