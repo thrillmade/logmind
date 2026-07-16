@@ -33,7 +33,7 @@ brew install thrillmade/tap/logmind
 curl -fsSL https://logmind.dev/install.sh | bash
 
 # Pin to a specific version on either path:
-LOGMIND_VERSION=v1.0.0 curl -fsSL https://logmind.dev/install.sh | bash
+LOGMIND_VERSION=v2.0.0 curl -fsSL https://logmind.dev/install.sh | bash
 ```
 
 Verify the install:

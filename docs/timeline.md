@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-16-release-prep-specversion-1-4-0-goreleaser-check-filter-moved -->
+- **2026-07-16** — Release prep: SpecVersion 1.4.0, goreleaser-check filter moved to main, install pins and stale narrative updated to v2.0.0 → [detail](decisions-branches/chore__release-prep-v2.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-16-harden-git-hook-layer-against-stale-logmind-binaries-bump-ag -->
 - **2026-07-16** — Harden git-hook layer against stale logmind binaries + bump AGENTS enforcement prose to v8/v9-pointer → [detail](decisions-branches/feat__enforce-stale-binary-hardening.md)
 <!-- logmind-entry-end -->

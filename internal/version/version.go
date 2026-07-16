@@ -55,4 +55,4 @@ var Version = "2.0.0-dev"
 // this binary implements. Reported via `logmind --version` so downstream
 // tools can detect protocol skew without parsing the binary version.
 // Overridable via -ldflags at build time; see package docstring.
-var SpecVersion = "1.0.0"
+var SpecVersion = "1.4.0"
