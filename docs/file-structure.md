@@ -29,6 +29,7 @@ logmind
 │   ├── install.md
 │   ├── orchestrator-app.md
 │   ├── plan.md
+│   ├── spec.md
 │   └── timeline.md
 ├── installer
 │   ├── cask-template.rb

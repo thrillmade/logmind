@@ -2,24 +2,26 @@ git:
   auto_commit: true
   auto_push: true
   commit_message_template: 'logmind: {decision}'
+  auto_rebase: false
 decisions:
   max_recent: 20
+  branch_aware: true
 file_structure:
   auto_update: true
   ignore_patterns:
-  - __pycache__
-  - .git
-  - node_modules
-  - venv
-  - .venv
-  - env
-  - .env
-  - '*.pyc'
-  - .pytest_cache
-  - .mypy_cache
-  - dist
-  - build
-  - '*.egg-info'
+    - __pycache__
+    - .git
+    - node_modules
+    - venv
+    - .venv
+    - env
+    - .env
+    - '*.pyc'
+    - .pytest_cache
+    - .mypy_cache
+    - dist
+    - build
+    - '*.egg-info'
 agents:
   claude: true
   cursor: true
@@ -32,3 +34,11 @@ agents:
   amazonq: false
   cline: false
   codex: false
+catalog_target: thrillmade/agent-skills
+privacy_scanner:
+  keywords: []
+  org_domains: []
+  severity_overrides: {}
+allow_promote_from_private: false
+context:
+  spec_file: docs/spec.md
