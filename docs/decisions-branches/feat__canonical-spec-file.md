@@ -1,7 +1,7 @@
 ← back to [docs/timeline.md](../timeline.md)
 
 <!-- logmind-entry-start: 2026-07-16-add-canonical-spec-file-support-context-spec-file-fold-in-lo -->
-- **2026-07-16** — Add canonical spec file support: context.spec_file fold-in, logmind init --spec scaffolding, and doctor advisories
+- **2026-07-16** — Added the canonical spec-file contract: context.spec_file folds a repo-relative forward-looking spec doc first into logmind context, with init --spec scaffolding and doctor advisories
 <!-- logmind-entry-end -->
 
 ## 2026-07-16 16:32 - Add canonical spec file support: context.spec_file fold-in, logmind init --spec scaffolding, and doctor advisories

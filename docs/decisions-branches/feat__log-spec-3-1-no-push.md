@@ -1,7 +1,7 @@
 ← back to [docs/timeline.md](../timeline.md)
 
 <!-- logmind-entry-start: 2026-07-11-reconcile-logmind-log-stdout-to-spec-3-1-three-line-contract -->
-- **2026-07-11** — Reconcile logmind log stdout to SPEC §3.1 three-line contract + add --no-push and a real gitcli.Push (salvaged from retired PR #154)
+- **2026-07-11** — Reconciled logmind log stdout to the SPEC §3.1 three-line contract and wired push-by-default with a --no-push opt-out and fail-fast credential hardening
 <!-- logmind-entry-end -->
 
 ## 2026-07-11 14:27 - Reconcile logmind log stdout to SPEC §3.1 three-line contract + add --no-push and a real gitcli.Push (salvaged from retired PR #154)
