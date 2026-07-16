@@ -46,63 +46,94 @@ func TestTemplates_ByteIdenticalToPython(t *testing.T) {
 	}
 }
 
-// TestAgentsTemplate_HasV7Marker pins the protocol-version marker. The
+// TestAgentsTemplate_HasV8Marker pins the protocol-version marker. The
 // `agents update --apply` workflow keys on this marker to decide
 // whether an installed block is stale.
 //
-// The Slice-2 branch-summary wave bumped v6→v7: the full inline procedure
-// now carries the branch-summary (headline) convention. The v0.6.16
-// REQUIRED framing + DO-NOT-git-commit blockquote are retained.
-func TestAgentsTemplate_HasV7Marker(t *testing.T) {
+// The stale-binary-hardening / enforcement wave bumped v7→v8: the
+// DO-NOT-git-commit blockquote now reflects BLOCKING enforcement (the
+// commit-msg + Claude Code PreToolUse hooks), not a warn-only hook, and
+// documents the `[skip-logmind]` / `LOGMIND_ALLOW_GIT_COMMIT=1` /
+// `git.enforce_commits: false` carve-outs. The Slice-2 branch-summary
+// wave bumped v6→v7: the full inline procedure carries the
+// branch-summary (headline) convention.
+func TestAgentsTemplate_HasV8Marker(t *testing.T) {
 	body := AgentsTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v7 -->") {
-		t.Fatalf("full template missing v7 marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v8 -->") {
+		t.Fatalf("full template missing v8 marker")
 	}
 	if !strings.Contains(body, "<!-- logmind-start -->") || !strings.Contains(body, "<!-- logmind-end -->") {
 		t.Fatalf("full template missing start/end markers")
 	}
-	// The REQUIRED framing + DO-NOT blockquote are retained from v6. Pin
-	// both so a future inadvertent revert to the v5 prose trips this test.
 	if !strings.Contains(body, "REQUIRED for substantive commits") {
-		t.Fatalf("v7 template missing REQUIRED framing in heading")
+		t.Fatalf("v8 template missing REQUIRED framing in heading")
 	}
 	if !strings.Contains(body, "DO NOT run `git add` / `git commit` / `git push`") {
-		t.Fatalf("v7 template missing DO-NOT-git-commit blockquote")
+		t.Fatalf("v8 template missing DO-NOT-git-commit blockquote")
 	}
-	// v7 delta: the branch-summary (headline) convention. Pin the heading,
-	// both authoring forms, and the verbatim-into-timeline promise so a
-	// future revert that drops the convention trips this test.
+	// v8 delta: enforcement prose. BLOCK, not warn; the carve-outs.
+	if !strings.Contains(body, "BLOCK") {
+		t.Fatalf("v8 template missing BLOCK framing (must not just say the hook warns)")
+	}
+	if !strings.Contains(body, "[skip-logmind]") {
+		t.Fatalf("v8 template missing the [skip-logmind] carve-out")
+	}
+	if !strings.Contains(body, "LOGMIND_ALLOW_GIT_COMMIT=1") {
+		t.Fatalf("v8 template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
+	}
+	if !strings.Contains(body, "git.enforce_commits: false") {
+		t.Fatalf("v8 template missing the git.enforce_commits: false per-repo off-ramp")
+	}
+	// v7 delta (retained): the branch-summary (headline) convention. Pin
+	// the heading, both authoring forms, and the verbatim-into-timeline
+	// promise so a future revert that drops the convention trips this test.
 	if !strings.Contains(body, "Branch summary (headline)") {
-		t.Fatalf("v7 template missing the branch-summary (headline) subsection")
+		t.Fatalf("v8 template missing the branch-summary (headline) subsection")
 	}
 	if !strings.Contains(body, `logmind headline "<one sentence>"`) {
-		t.Fatalf("v7 template missing the `logmind headline` authoring form")
+		t.Fatalf("v8 template missing the `logmind headline` authoring form")
 	}
 	if !strings.Contains(body, `logmind log "..." -H "<one sentence>"`) {
-		t.Fatalf("v7 template missing the bundled `logmind log -H` authoring form")
+		t.Fatalf("v8 template missing the bundled `logmind log -H` authoring form")
 	}
 	if !strings.Contains(body, "copied verbatim into") {
-		t.Fatalf("v7 template missing the verbatim-into-timeline promise")
+		t.Fatalf("v8 template missing the verbatim-into-timeline promise")
 	}
 }
 
-// TestAgentsSlimTemplate_HasV8PointerMarker pins the slim variant
+// TestAgentsSlimTemplate_HasV9PointerMarker pins the slim variant
 // marker so the byte-identical-rewrite path can never confuse the two
 // templates' marker versions.
 //
-// v0.6.16 bumped v7-pointer→v8-pointer: heading reframed as
+// The stale-binary-hardening / enforcement wave bumped v8-pointer→v9-pointer:
+// same enforcement-prose delta as the full template's v7→v8 bump (BLOCKS,
+// not warns; documents the carve-outs), condensed to the slim flavour's
+// tone/length. v0.6.16 bumped v7-pointer→v8-pointer: heading reframed as
 // "REQUIRED for substantive commits" + DO-NOT-git-commit blockquote
 // paired with the commit-msg hook.
-func TestAgentsSlimTemplate_HasV8PointerMarker(t *testing.T) {
+func TestAgentsSlimTemplate_HasV9PointerMarker(t *testing.T) {
 	body := AgentsSlimTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v8-pointer -->") {
-		t.Fatalf("slim template missing v8-pointer marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v9-pointer -->") {
+		t.Fatalf("slim template missing v9-pointer marker")
 	}
 	if !strings.Contains(body, "REQUIRED for substantive commits") {
-		t.Fatalf("v8-pointer template missing REQUIRED framing in heading")
+		t.Fatalf("v9-pointer template missing REQUIRED framing in heading")
 	}
 	if !strings.Contains(body, "DO NOT run raw `git add` / `git commit` / `git push`") {
-		t.Fatalf("v8-pointer template missing DO-NOT-git-commit blockquote")
+		t.Fatalf("v9-pointer template missing DO-NOT-git-commit blockquote")
+	}
+	// v9-pointer delta: enforcement prose. BLOCK, not warn; the carve-outs.
+	if !strings.Contains(body, "BLOCK") {
+		t.Fatalf("v9-pointer template missing BLOCK framing (must not just say the hook warns)")
+	}
+	if !strings.Contains(body, "[skip-logmind]") {
+		t.Fatalf("v9-pointer template missing the [skip-logmind] carve-out")
+	}
+	if !strings.Contains(body, "LOGMIND_ALLOW_GIT_COMMIT=1") {
+		t.Fatalf("v9-pointer template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
+	}
+	if !strings.Contains(body, "git.enforce_commits: false") {
+		t.Fatalf("v9-pointer template missing the git.enforce_commits: false per-repo off-ramp")
 	}
 }
 

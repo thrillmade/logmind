@@ -81,25 +81,65 @@ directly invocable, e.g. for testing:
 				// exit 1 (including cli.ErrSilent — that's the whole point
 				// of the ErrSilent convention: "exit non-zero, message
 				// already printed"). That convention is correct for every
-				// other command in this CLI, but it is WRONG here: the
-				// Claude Code harness's PreToolUse hook protocol only
-				// treats exit code 2 as "BLOCK this tool call" — exit 1 is
-				// non-blocking (the tool call proceeds as if nothing
-				// happened). If this branch returned an error instead of
-				// calling os.Exit directly, guard-commit's harness layer
-				// would silently degrade into a no-op the moment it tried
-				// to block anything, while still LOOKING like it worked
-				// (main.go would print "Error: ..." and exit 1, easy to
-				// miss in hook output). So: this is the one place in this
-				// command — and, as of this PR, the only place in the
-				// whole CLI — that deliberately bypasses the
-				// ErrSilent/exit-1 convention and calls os.Exit directly
-				// from inside RunE. Do not "fix" this to `return
-				// ErrSilent`; that would reintroduce the silent-bypass bug
-				// this comment exists to prevent. runGuardCommit itself
-				// never calls os.Exit — only this RunE wrapper does, which
-				// is what keeps the harness layer unit-testable (see
-				// guard_commit_test.go) without killing the test binary.
+				// other command in this CLI, but it is WRONG here — for
+				// BOTH hook layers, as of the stale-binary hardening PR:
+				//
+				//   - harness layer: the Claude Code PreToolUse hook
+				//     protocol only treats exit code 2 as "BLOCK this tool
+				//     call" — exit 1 is non-blocking (the tool call
+				//     proceeds as if nothing happened).
+				//   - git-hook layer: the commit-msg hook body
+				//     (internal/hooks.BuildCommitMsgBody) maps ONLY exit
+				//     code 65 (EX_DATAERR) to its own `exit 1` abort. Any
+				//     OTHER nonzero code — a stale-but-present logmind on
+				//     PATH that doesn't know the `guard-commit` subcommand
+				//     (an old 1.x Cobra binary's "unknown command" exit 1,
+				//     or the frozen Python v0.6.16 argparse CLI's exit 2),
+				//     a crash, a usage error — is deliberately treated as
+				//     "not our block signal" and falls through to the
+				//     hook's fail-open `exit 0`. Before this hardening the
+				//     git-hook layer returned `cli.ErrSilent` here, which
+				//     main.go turns into the SAME generic exit 1 a stale
+				//     binary's "unknown command" error already produces —
+				//     making the two indistinguishable and bricking every
+				//     commit on any machine with a stale logmind ahead of
+				//     the current one on PATH (including `logmind log`'s
+				//     own internal commit). 65 was picked specifically
+				//     because it is vanishingly unlikely to collide with
+				//     any stale binary's own generic/crash exit code.
+				//
+				// If this branch returned an error instead of calling
+				// os.Exit directly, guard-commit would silently degrade
+				// into a no-op (harness) or an over-broad block (git-hook)
+				// the moment main.go's blanket exit-1 mapping swallowed the
+				// distinction, while still LOOKING like it worked (main.go
+				// would print "Error: ..." and exit 1, easy to miss in hook
+				// output). So: this is the one place in this command that
+				// deliberately bypasses the ErrSilent/exit-1 convention and
+				// calls os.Exit directly from inside RunE. Do not "fix"
+				// this to `return ErrSilent`; that would reintroduce the
+				// silent-bypass bug this comment exists to prevent.
+				// runGuardCommit itself never calls os.Exit — only this
+				// RunE wrapper does, which is what keeps both layers
+				// unit-testable (see guard_commit_test.go) without killing
+				// the test binary.
+				//
+				// Known accepted gap, NOT fixed by this PR: a stale
+				// PYTHON logmind (the deprecated pre-Go pathway) on PATH
+				// argparse-errors on the unrecognized `guard-commit`
+				// subcommand with exit code 2 — the SAME code the harness
+				// layer's PreToolUse contract treats as "block." Layer 1's
+				// exit code is fixed by the external Claude Code harness
+				// protocol, so it can't be made as distinctive as the
+				// git-hook layer's 65 without breaking that contract. This
+				// is accepted: the frozen Python CLI is a deprecated
+				// pathway repos are expected to have moved off of, and an
+				// escape hatch still exists (disable/edit the PreToolUse
+				// entry in .claude/settings.json, or fix PATH so the
+				// current binary resolves first) — unlike the git-hook
+				// layer's pre-hardening bug, this doesn't brick EVERY
+				// commit unconditionally, only Bash tool calls routed
+				// through the harness.
 				os.Exit(exitCode)
 			}
 			return err
@@ -119,13 +159,16 @@ directly invocable, e.g. for testing:
 // BOTH config loading AND the guardcommit.Evaluate call.
 //
 // Return shape: (exitCode, err). exitCode != 0 tells the RunE wrapper to
-// call os.Exit(exitCode) directly (see the LOUD COMMENT above) — used ONLY
-// by the harness layer's block path (exit 2). Every other path returns
-// exitCode 0 and lets `err` carry the result through the normal
-// nil / ErrSilent / plain-error convention: nil on allow, ErrSilent on a
-// git-hook block (git just needs nonzero to abort the commit — no special
-// exit code required there), or a plain error for genuine misuse (bad
-// --layer, missing --msg-file).
+// call os.Exit(exitCode) directly (see the LOUD COMMENT above) — now used
+// by BOTH layers' block paths: harness blocks via exit 2 (the Claude Code
+// PreToolUse contract), git-hook blocks via exit 65 / EX_DATAERR (the
+// commit-msg hook's distinctive block signal — see the stale-binary
+// hardening note in the LOUD COMMENT and in internal/hooks.BuildCommitMsgBody).
+// Every other path returns exitCode 0 and lets `err` carry the result
+// through the normal nil / plain-error convention: nil on allow (including
+// every carve-out and the enforce_commits:false off-ramp), or a plain
+// error for genuine misuse (bad --layer, missing --msg-file, an unreadable
+// msg file).
 //
 // This function never calls os.Exit itself, which is what makes it safe to
 // call directly from unit tests.
@@ -143,7 +186,7 @@ func runGuardCommit(
 			// Pure CLI-usage error, independent of any repo/config state.
 			return 0, fmt.Errorf("--msg-file is required for --layer git-hook")
 		}
-		return 0, guardCommitGitHook(repoRootFlag, msgFile, thresholdFlag, thresholdExplicit, quiet, stdout, stderr)
+		return guardCommitGitHook(repoRootFlag, msgFile, thresholdFlag, thresholdExplicit, quiet, stdout, stderr)
 	default:
 		return 0, fmt.Errorf("--layer must be %q or %q (got %q)", "harness", "git-hook", layer)
 	}
@@ -270,18 +313,40 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 // guardCommitGitHook implements the --layer git-hook evaluation: resolve
 // the git toplevel from --repo-root (or the process cwd), read config +
 // the commit subject, evaluate under StagedOnly (the index is final by the
-// time a commit-msg hook runs), and translate the result into the standard
-// nil / ErrSilent convention.
-func guardCommitGitHook(repoRootFlag, msgFile string, thresholdFlag int, thresholdExplicit bool, quiet bool, stdout, stderr io.Writer) error {
+// time a commit-msg hook runs), and translate the result into an
+// (exitCode, err) pair.
+//
+// CTO design amendment (stale-binary hardening): the BLOCK path returns
+// exit code 65 (EX_DATAERR — sysexits.h's "input data was incorrect",
+// chosen here purely because it is a fixed, deliberately unusual code no
+// well-behaved command uses for anything else) instead of the generic
+// `cli.ErrSilent` (which main.go turns into exit 1 — indistinguishable
+// from an old Cobra binary's "unknown command" exit, or a dozen other
+// mundane failures). The commit-msg hook body
+// (internal/hooks.BuildCommitMsgBody) checks for EXACTLY 65 before
+// aborting the commit; every other nonzero code — including a STALE
+// logmind on PATH that doesn't know the `guard-commit` subcommand at all
+// — falls through to the hook's fail-open `exit 0`. Do not repurpose 65
+// for anything else in this CLI; its entire value is being a signal nothing
+// else produces by accident.
+//
+// Return shape: (0, nil) on allow — including every carve-out and the
+// enforce_commits:false off-ramp; (65, nil) on block (the reason is
+// already written to stderr); (0, plain error) for genuine misuse (an
+// unreadable msg file) — the 0 here is deliberate: it keeps "we couldn't
+// even evaluate this" distinct from "we evaluated it and it's blocked,"
+// and main.go's normal plain-error-prints-and-exit-1 path handles it fine
+// since exit 1 was never claimed as a git-hook signal.
+func guardCommitGitHook(repoRootFlag, msgFile string, thresholdFlag int, thresholdExplicit bool, quiet bool, stdout, stderr io.Writer) (int, error) {
 	evalCwd := evalCwdOr("", repoRootFlag)
 	repoRoot, enforce, threshold := resolveRepoAndConfig(evalCwd, thresholdFlag, thresholdExplicit)
 	if !enforce {
-		return nil // the repo off-ramp: git.enforce_commits: false
+		return 0, nil // the repo off-ramp: git.enforce_commits: false
 	}
 
 	subject, err := firstLineOfFile(msgFile)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	d := guardcommit.Evaluate(repoRoot, subject, threshold, guardcommit.StagedOnly)
@@ -292,11 +357,17 @@ func guardCommitGitHook(repoRootFlag, msgFile string, thresholdFlag int, thresho
 			reason = "not a git repository"
 		}
 		q.chat("✓ guard-commit: allowed (%s)\n", reason)
-		return nil
+		return 0, nil
 	}
 	fmt.Fprintln(stderr, d.Reason)
-	return ErrSilent
+	return exGitHookBlock, nil
 }
+
+// exGitHookBlock is the git-hook layer's distinctive block exit code —
+// EX_DATAERR from BSD's sysexits.h. See guardCommitGitHook's doc comment
+// for why a fixed, unusual code (not the generic ErrSilent/exit-1) is
+// required here.
+const exGitHookBlock = 65
 
 // firstLineOfFile reads path and returns its first line (without the
 // trailing newline). Used to pull the commit subject out of the file git

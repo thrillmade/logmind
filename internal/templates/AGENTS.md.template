@@ -7,14 +7,19 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v7 -->
+<!-- logmind-block-version: v8 -->
 ## Decision Logging (logmind) — REQUIRED for substantive commits
 
 > **DO NOT run `git add` / `git commit` / `git push` for substantive code changes.**
 > `logmind log` is the commit primitive. Raw git commands for non-trivial changes
 > bypass the decision tree, leaving future agents (and humans) without context.
-> The commit-msg hook installed by `logmind init` warns when this happens; the
-> intent here is to prevent the warning, not bypass it via `--no-verify`.
+> The commit-msg hook and the Claude Code PreToolUse hook installed by
+> `logmind init` / `logmind doctor --fix` **BLOCK** a substantive commit that
+> skips `logmind log` — they don't just warn. If a raw commit is genuinely
+> correct (mechanical, no decision to record), add `[skip-logmind]` to the
+> commit subject, or set `LOGMIND_ALLOW_GIT_COMMIT=1` for one command.
+> `git.enforce_commits: false` in `.logmind/config.yml` disables enforcement
+> for the whole repo.
 
 **This project uses [logmind](https://logmind.dev). `logmind log` is the commit primitive — it replaces `git add`, `git commit`, and `git push` for any change that carries a decision. Do not run those git commands directly when logging a decision.**
 
