@@ -18,12 +18,16 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-16** — Harden git-hook layer against stale logmind binaries + bump AGENTS enforcement prose to v8/v9-pointer → [detail](decisions-branches/feat__enforce-stale-binary-hardening.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-16-dogfoods-the-canonical-spec-file-pointer-doc-context-spec-fi -->
+- **2026-07-16** — Dogfoods the canonical spec file (pointer doc + context.spec_file) and refreshes the clud-bug reviewContext to the v2 invariants → [detail](decisions-branches/chore__spec-dogfood-and-reviewcontext.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-16-complete-the-enforcement-dogfood-commit-the-doctor-fix-artif -->
 - **2026-07-16** — Complete the enforcement dogfood: commit the doctor --fix artifacts → [detail](decisions.md)
 <!-- logmind-entry-end -->
 
 <!-- logmind-entry-start: 2026-07-16-add-canonical-spec-file-support-context-spec-file-fold-in-lo -->
-- **2026-07-16** — Add canonical spec file support: context.spec_file fold-in, logmind init --spec scaffolding, and doctor advisories → [detail](decisions-branches/feat__canonical-spec-file.md)
+- **2026-07-16** — Added the canonical spec-file contract: context.spec_file folds a repo-relative forward-looking spec doc first into logmind context, with init --spec scaffolding and doctor advisories → [detail](decisions-branches/feat__canonical-spec-file.md)
 <!-- logmind-entry-end -->
 
 <!-- logmind-entry-start: 2026-07-11-wire-commit-enforcement-live-claude-code-pretooluse-guard-in -->
@@ -35,7 +39,7 @@ PR's CI run, so this file is always coherent with current `main`.
 <!-- logmind-entry-end -->
 
 <!-- logmind-entry-start: 2026-07-11-reconcile-logmind-log-stdout-to-spec-3-1-three-line-contract -->
-- **2026-07-11** — Reconcile logmind log stdout to SPEC §3.1 three-line contract + add --no-push and a real gitcli.Push (salvaged from retired PR #154) → [detail](decisions-branches/feat__log-spec-3-1-no-push.md)
+- **2026-07-11** — Reconciled logmind log stdout to the SPEC §3.1 three-line contract and wired push-by-default with a --no-push opt-out and fail-fast credential hardening → [detail](decisions-branches/feat__log-spec-3-1-no-push.md)
 <!-- logmind-entry-end -->
 
 <!-- logmind-entry-start: 2026-07-11-implement-logmind-show-and-search-the-documented-decision-re -->
