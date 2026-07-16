@@ -5,7 +5,7 @@ name: goreleaser-check
 # misconfigured GoReleaser block BEFORE the first real tag push, where
 # a config bug would burn an irreversible version number.
 #
-# Runs on PRs targeting v1-go-rewrite (and later main, post-cutover)
+# Runs on PRs targeting main (and later main, post-cutover)
 # whose diff touches the release-pipeline surface area. Doesn't run on
 # every PR — the snapshot build takes ~30s of runner time, no need to
 # pay it on doc-only / unrelated PRs.
@@ -16,7 +16,7 @@ name: goreleaser-check
 on:
   push:
     branches:
-      - v1-go-rewrite
+      - main
     paths:
       - '.goreleaser.yaml'
       - '.github/workflows/goreleaser-check.yml'
@@ -27,7 +27,7 @@ on:
       - 'internal/version/**'
   pull_request:
     branches:
-      - v1-go-rewrite
+      - main
     paths:
       - '.goreleaser.yaml'
       - '.github/workflows/goreleaser-check.yml'

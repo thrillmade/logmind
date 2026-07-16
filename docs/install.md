@@ -3,12 +3,9 @@
 logmind ships as a single self-contained binary. Pick the install method
 that matches your platform and preferences.
 
-> **Heads up:** the v1.0 binary release lives on the `v1-go-rewrite`
-> branch and ships when the cutover PR merges to `main`. Until then the
-> `brew install thrillmade/tap/logmind` and `curl logmind.dev/install.sh`
-> paths described below are wired up but the v1.0 tag hasn't been pushed
-> yet. v0.6.x users — see the [Deprecated: Python install](#deprecated-python-install)
-> section.
+> **Heads up:** v2.0.0 is the current release line (Go binary, main
+> branch). v0.6.x Python users — see the
+> [Deprecated: Python install](#deprecated-python-install) section.
 
 ## Homebrew (recommended on macOS and Linux)
 
@@ -54,10 +51,10 @@ Override defaults:
 curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=/usr/local
 
 # Pin to a specific version (flag form)
-curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
+curl -fsSL logmind.dev/install.sh | bash -s -- --version=v2.0.0
 
 # Pin to a specific version (env form — equivalent, lower precedence than --version)
-LOGMIND_VERSION=v1.0.0 curl -fsSL logmind.dev/install.sh | bash
+LOGMIND_VERSION=v2.0.0 curl -fsSL logmind.dev/install.sh | bash
 ```
 
 Re-running the installer when the same version is already installed
@@ -112,7 +109,7 @@ Builds the latest tagged release into `$(go env GOPATH)/bin/logmind`.
 For a specific tag:
 
 ```bash
-go install github.com/thrillmade/logmind/cmd/logmind@v1.0.0
+go install github.com/thrillmade/logmind/cmd/logmind@v2.0.0
 ```
 
 Or clone + build:
