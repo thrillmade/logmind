@@ -19,14 +19,16 @@
 //     quotes — matches the Python v0.6.11+ widened pattern.
 //
 //   - Template version markers gate "is the installed block stale".
-//     `<!-- logmind-block-version: v7 -->` for the full template,
-//     `<!-- logmind-block-version: v8-pointer -->` for slim (the
-//     Slice-2 branch-summary wave bumped the full template v6→v7;
-//     v0.6.16 bumped it v5→v6 and the slim variant v7-pointer→v8-pointer).
+//     `<!-- logmind-block-version: v8 -->` for the full template,
+//     `<!-- logmind-block-version: v9-pointer -->` for slim (the
+//     stale-binary-hardening / enforcement wave bumped full v7→v8 and
+//     slim v8-pointer→v9-pointer; the Slice-2 branch-summary wave bumped
+//     the full template v6→v7; v0.6.16 bumped it v5→v6 and the slim
+//     variant v7-pointer→v8-pointer).
 //     Drift is
 //     detected by comparing the marker bodies stripped (the Python
 //     code uses .strip() to be whitespace-tolerant; we mirror that).
-//     The matchingTemplate helper accepts both old and new markers
+//     The matchingTemplate helper accepts every old and new marker
 //     so existing repos refresh into the new body without manual
 //     intervention.
 //
@@ -395,8 +397,9 @@ func EnsureAgentsMD(repoRoot string) (string, error) {
 }
 
 // agentsMDTemplate returns the canonical AGENTS.md body. Defaults to
-// slim per SPEC §1.1 (the v8-pointer variant — defers to skills.sh;
-// v0.6.16 bumped this from v7-pointer).
+// slim per SPEC §1.1 (the v9-pointer variant — defers to skills.sh;
+// the stale-binary-hardening / enforcement wave bumped this from
+// v8-pointer, which itself bumped it from v7-pointer).
 // The Python implementation auto-detects skills availability; the Go
 // binary defaults to slim because:
 //
@@ -406,8 +409,9 @@ func EnsureAgentsMD(repoRoot string) (string, error) {
 //  3. Repos that already shipped the full template stay on full: the
 //     refresh paths (EnsureAgentsMD and FindOutdatedMarkerBlocks) both
 //     select the template flavour matching the installed block-version
-//     marker via matchingTemplate, so a v5 / v6 / v7 full block refreshes
-//     into the current full body rather than silently flipping to slim.
+//     marker via matchingTemplate, so a v5 / v6 / v7 / v8 full block
+//     refreshes into the current full body rather than silently
+//     flipping to slim.
 //     See matchingTemplate for the explicit flavour guard.
 //
 // Callers that need the full variant (e.g., during `init --no-slim`)
@@ -495,14 +499,30 @@ func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, error) {
 // procedure. v5 / v6 / v7 all map to the full flavour, so a repo that
 // shipped an older full block refreshes forward into the v7 body while
 // the full↔slim guard still holds.
+//
+// The stale-binary-hardening / enforcement wave bumped the full template
+// v7→v8 and the slim variant v8-pointer→v9-pointer (enforcement prose:
+// the commit-msg + Claude Code PreToolUse hooks BLOCK, not warn). ORDERING
+// IS LOAD-BEARING here: every "-pointer" (slim) check MUST run before every
+// bare-version (full) check. "logmind-block-version: v8-pointer" contains
+// "logmind-block-version: v8" as a literal substring — the bare "v8"
+// marker is a PREFIX of "v8-pointer" — so if the bare-"v8" full-flavour
+// check ran first, a slim v8-pointer body would ALSO match it and get
+// mis-classified as full. That is exactly the full↔slim collision this
+// function's marker ordering exists to prevent; keeping every "-pointer"
+// variant checked first (regardless of how many marker generations pile
+// up) keeps the collision impossible by construction. v8-pointer /
+// v9-pointer map to slim; v5 / v6 / v7 / v8 map to full.
 func matchingTemplate(installedBody string) string {
 	if strings.Contains(installedBody, "logmind-block-version: v7-pointer") ||
-		strings.Contains(installedBody, "logmind-block-version: v8-pointer") {
+		strings.Contains(installedBody, "logmind-block-version: v8-pointer") ||
+		strings.Contains(installedBody, "logmind-block-version: v9-pointer") {
 		return templates.AgentsSlimTemplate()
 	}
 	if strings.Contains(installedBody, "logmind-block-version: v5") ||
 		strings.Contains(installedBody, "logmind-block-version: v6") ||
-		strings.Contains(installedBody, "logmind-block-version: v7") {
+		strings.Contains(installedBody, "logmind-block-version: v7") ||
+		strings.Contains(installedBody, "logmind-block-version: v8") {
 		return templates.AgentsTemplate()
 	}
 	return ""

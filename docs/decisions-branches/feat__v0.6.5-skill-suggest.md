@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-01-v0-6-5-skill-suggest-human-gated-pattern-detection-closes-st -->
+- **2026-06-01** — v0.6.5: skill suggest — human-gated pattern detection (closes Stream 6 follow-ons)
+<!-- logmind-entry-end -->
+
 ## 2026-06-01 00:55 - v0.6.5: skill suggest — human-gated pattern detection (closes Stream 6 follow-ons)
 
 **Reasoning:** Replaces the KILLED Stream 9 autonomous skill-lifecycle bot. CLI scans recent decision-log entries for kebab-case/PascalCase/acronym/snake_case identifiers appearing across many distinct decisions (heuristic 'we keep talking about X' signal), filters stopwords + existing skills, and emits pre-filled GH-issue drafts matching agent-skills's new-skill.yml template. Human reads, decides, opens (or discards). Never auto-PR. The whole point of the pragmatic SkDD pivot is that humans gate skill lifecycle.

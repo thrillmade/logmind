@@ -44,6 +44,18 @@ func TestCommitMsgHook_RealGitCommit_EnforcesAndCarveOuts(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected the commit to be BLOCKED; it succeeded:\n%s", out)
 		}
+		// Stale-binary hardening: the hook now maps guard-commit's
+		// distinctive exit 65 (EX_DATAERR) to its own `exit 1` — git
+		// relays that as the commit's own exit code. Pin the concrete
+		// exit code so a regression back to a blind `exit $?` relay (or
+		// to some other code) is caught here, not just "err != nil".
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if got := exitErr.ExitCode(); got != 1 {
+				t.Errorf("git commit exit code = %d; want 1 (the hook's block exit, driven by guard-commit's 65)", got)
+			}
+		} else {
+			t.Errorf("expected a *exec.ExitError from the blocked commit; got %T (%v)", err, err)
+		}
 		if !strings.Contains(out, "logmind log") {
 			t.Errorf("blocked-commit output should mention `logmind log`; got:\n%s", out)
 		}
@@ -93,6 +105,78 @@ func TestCommitMsgHook_RealGitCommit_EnforcesAndCarveOuts(t *testing.T) {
 	})
 }
 
+// TestCommitMsgHook_StaleBinaryOnPath_FailsOpen is the load-bearing
+// regression test for the stale-binary hardening (CTO design amendment):
+// a STALE-but-present `logmind` shadowing the real binary earlier on
+// PATH — simulating an old 1.x Cobra build that doesn't know
+// `guard-commit` (exit 1 on an unrecognized subcommand) or the frozen
+// Python v0.6.16 CLI (argparse's exit 2 on the same) — must NOT block a
+// substantive, no-decision-log commit. Before this hardening the hook did
+// a blind `exit $?` relay of whatever `logmind` printed, so EITHER stale
+// exit code would abort the commit exactly like a genuine block —
+// bricking every commit on that machine, including `logmind log`'s own
+// internal commit. After the hardening, only exit 65 (guard-commit's own
+// distinctive EX_DATAERR signal) aborts; anything else falls open.
+func TestCommitMsgHook_StaleBinaryOnPath_FailsOpen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping subprocess test in -short mode")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not on PATH; skipping subprocess test")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping subprocess test")
+	}
+
+	binPath := buildLogmindBinaryForHookTest(t, goBin)
+	binDir := filepath.Dir(binPath)
+
+	for _, staleExitCode := range []int{1, 2} {
+		t.Run(fmt.Sprintf("stale logmind exiting %d fails open", staleExitCode), func(t *testing.T) {
+			// The real (current) binary installs the hook and handles the
+			// fixture's initial commit, same as every other subtest.
+			dir := newEnforcingRepo(t, binDir)
+
+			// A fake `logmind` that mimics a stale binary's unknown-command
+			// error, placed on a PATH entry BEFORE binDir, so `command -v
+			// logmind` resolves to it — not the real, current binary.
+			staleDir := writeFakeStaleLogmind(t, staleExitCode)
+
+			writeBigFile(t, dir, "app.go")
+			runGitInPath(t, dir, []string{staleDir, binDir}, nil, "add", "app.go")
+
+			out, err := attemptGitCommitPath(t, dir, []string{staleDir, binDir}, nil,
+				"substantive change, stale logmind shadowing the real binary")
+			if err != nil {
+				t.Fatalf("expected the commit to SUCCEED (fail OPEN on a stale logmind exiting %d); got error: %v\n%s",
+					staleExitCode, err, out)
+			}
+			assertCommitCount(t, dir, binDir, 2)
+		})
+	}
+}
+
+// writeFakeStaleLogmind creates a directory containing a `logmind` shell
+// script that unconditionally prints an "unknown command" style message
+// and exits with staleExitCode — standing in for a stale binary (an old
+// Cobra build that predates `guard-commit`, or the frozen Python v0.6.16
+// argparse CLI) that happens to still be resolvable on PATH ahead of the
+// current one. Returns the directory to prepend to PATH.
+func writeFakeStaleLogmind(t *testing.T, staleExitCode int) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\necho \"logmind: unknown command 'guard-commit'\" >&2\nexit %d\n", staleExitCode)
+	path := filepath.Join(dir, "logmind")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake stale logmind: %v", err)
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatalf("chmod fake stale logmind: %v", err)
+	}
+	return dir
+}
+
 // newEnforcingRepo creates a fresh git repo with this package's
 // commit-msg hook installed and one initial commit — so commit COUNTING
 // (not merely "does HEAD exist"), is what distinguishes blocked vs.
@@ -132,8 +216,20 @@ func newEnforcingRepo(t *testing.T, binDir string) string {
 // core.hooksPath would make this flaky, or hang on a signing prompt).
 func isolatedGitEnv(t *testing.T, binDir string) []string {
 	t.Helper()
+	return pathEnv(t, binDir)
+}
+
+// pathEnv is isolatedGitEnv's generalisation: it accepts an ORDERED list
+// of directories to prepend to PATH (ahead of the host's real PATH) rather
+// than a single binDir. Used by the stale-binary simulation to make a fake
+// `logmind` resolve via `command -v logmind` BEFORE the real one — the
+// same shape a stray pyenv shim or an old release earlier in a real
+// developer's PATH would produce.
+func pathEnv(t *testing.T, pathDirs ...string) []string {
+	t.Helper()
 	fakeHome := t.TempDir()
-	path := binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	parts := append(append([]string{}, pathDirs...), os.Getenv("PATH"))
+	path := strings.Join(parts, string(os.PathListSeparator))
 	return []string{
 		"HOME=" + fakeHome,
 		"USERPROFILE=" + fakeHome, // Windows' HOME equivalent
@@ -181,6 +277,33 @@ func attemptGitCommit(t *testing.T, dir, binDir string, extraEnv []string, messa
 	cmd := exec.Command("git", "commit", "-q", "-m", message)
 	cmd.Dir = dir
 	env := append(os.Environ(), isolatedGitEnv(t, binDir)...)
+	cmd.Env = append(env, extraEnv...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// runGitInPath and attemptGitCommitPath are runGitIn/attemptGitCommit's
+// generalisation to an ORDERED list of PATH directories (via pathEnv)
+// instead of a single binDir — used by the stale-binary simulation to put
+// a fake `logmind` ahead of the real one on PATH.
+func runGitInPath(t *testing.T, dir string, pathDirs []string, extraEnv []string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	env := append(os.Environ(), pathEnv(t, pathDirs...)...)
+	cmd.Env = append(env, extraEnv...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+func attemptGitCommitPath(t *testing.T, dir string, pathDirs []string, extraEnv []string, message string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("git", "commit", "-q", "-m", message)
+	cmd.Dir = dir
+	env := append(os.Environ(), pathEnv(t, pathDirs...)...)
 	cmd.Env = append(env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err

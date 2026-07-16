@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-04-context-repomap-fold-the-go-signature-skeleton-into-logmind- -->
+- **2026-07-04** — context.repomap: fold the Go signature skeleton into logmind context (default off)
+<!-- logmind-entry-end -->
+
 ## 2026-07-04 00:30 - context.repomap: fold the Go signature skeleton into logmind context (default off)
 
 **Reasoning:** Makes the repomap AUTOMATIC — an agent's cold-start context carries the repo's API surface with zero extra action (the built-in-token-saving thesis). Folded stable-first (file-structure -> repomap -> timeline) so the cache prefix stays byte-identical longest. Additive config key context.repomap via the file_structure.root_label recipe: default false -> payload byte-identical, OMITTED from DefaultMap (config-list byte-parity); the v1.0 flip turns it on.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-15-v0-2-0-derived-file-architecture-replaces-per-merge-aggregat -->
+- **2026-05-15** — v0.2.0: derived-file architecture replaces per-merge aggregator
+<!-- logmind-entry-end -->
+
 ## 2026-05-15 15:08 - v0.2.0: derived-file architecture replaces per-merge aggregator
 
 **Reasoning:** User flagged the per-merge aggregator (one bookkeeping PR per feature merge) as unsustainable. The whole class of v0.1.4 LOGMIND_BOT_PAT/GH_TOKEN-trigger-downstream/protected-branch friction stems from that design. Replaced with derived-file architecture: docs/timeline.md (and docs/file-structure.md) are now auto-regenerated from sources (per-branch logs + decisions.md + git log) on every PR commit by the new regen-timeline.yml workflow. Two PRs in flight regenerate to byte-identical output (deterministic, same inputs → same output), so the derived files cannot merge-conflict. Pushes go to the PR's own feature branch (unprotected) via GITHUB_TOKEN — no PAT needed, no branch-protection bypass.

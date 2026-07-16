@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-26-feat-v0-2-4-new-logmind-doctor-stack-status-command -->
+- **2026-05-26** — feat: v0.2.4 — new logmind doctor stack-status command
+<!-- logmind-entry-end -->
+
 ## 2026-05-26 11:28 - feat: v0.2.4 — new logmind doctor stack-status command
 
 **Reasoning:** No way today to ask a logmind+clud-bug repo 'what versions are you on and is anything drifted?' without manual greps across config files. logmind doctor reads .github/workflows/*.yml pin lines + template-version markers, optionally probes PyPI + npm for the latest releases, then prints a status table. Read-only by design — prints the suggested fix but never runs it. Markerless workflows (dogfood / customized) explicitly never count as drift, preserving v0.2.1's no-marker-leave-alone heuristic. Exits non-zero on drift so it's CI-pluggable.

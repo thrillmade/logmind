@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-feat-context-cache-optimal-cold-start-payload-stats-token-re -->
+- **2026-07-03** — feat(context): cache-optimal cold-start payload + --stats token receipt (token-killer Phase 1a/1c)
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 22:37 - feat(context): cache-optimal cold-start payload + --stats token receipt (token-killer Phase 1a/1c)
 
 **Reasoning:** Research: the ~10x token lever is prompt caching, and logmind's byte-stable re-read context is the ideal cache target. Re-architected 'logmind context': cut the human-facing boilerplate to one machine preface; wrapped the two docs in Anthropic's <document><source><document_content> envelope; reordered file-structure-first (stable) / timeline-last (volatile) so the cache prefix stays byte-identical longest; guaranteed byte-determinism (the property caching depends on). Added --stats: a deterministic ceil(len/4) token receipt (payload size + how much denser the timeline is than the raw decision logs — 115.8x on this repo).

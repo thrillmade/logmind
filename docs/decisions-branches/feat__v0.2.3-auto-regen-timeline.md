@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-26-feat-v0-2-3-logmind-log-auto-regenerates-docs-timeline-md -->
+- **2026-05-26** — feat: v0.2.3 — logmind log auto-regenerates docs/timeline.md
+<!-- logmind-entry-end -->
+
 ## 2026-05-26 11:21 - feat: v0.2.3 — logmind log auto-regenerates docs/timeline.md
 
 **Reasoning:** PR #42 (v0.2.2 paths-filter fix) stalled because docs/timeline.md was stale. logmind log writes a new decision file but didn't regen the derived timeline.md index, so every decision PR needed an extra 'logmind timeline --write' + push before check-derived-docs would pass. The fix calls write_timeline() in logger.py's log() function after archival and adds timeline.md to the scoped-staging list — mirroring the existing companion-file pattern for file-structure.md and decisions-archive.md. Regen runs on every branch (not just default) because the CI gate runs on PR branches and timeline merges three-way trivially.

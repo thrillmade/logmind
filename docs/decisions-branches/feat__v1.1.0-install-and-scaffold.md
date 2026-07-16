@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-05-ship-v1-1-0-install-sh-fetch-latest-setup-logmind-scaffold -->
+- **2026-06-05** — Ship v1.1.0: install.sh fetch-latest + setup-logmind scaffold
+<!-- logmind-entry-end -->
+
 ## 2026-06-05 22:00 - Ship v1.1.0: install.sh fetch-latest + setup-logmind scaffold
 
 **Reasoning:** Locks the 2026-06-05 evening distribution decision so the "install once, stays current forever" UX has matching laptop + CI sides. Consumer repos need (a) a curl installer that auto-fetches the latest GitHub Release (no more hardcoded version sweeps every release) and (b) workflow templates that use the dedicated `thrillmade/setup-logmind@v1.0.0` action paired with `.github/dependabot.yml` bumping the action ref. Principal + director eng both confirmed this approach in the evening review. Half-A of the wave; the `thrillmade/setup-logmind` action repo is the other half (built in parallel by another agent) and must ship before this v1.1.0 release tag is pushed.

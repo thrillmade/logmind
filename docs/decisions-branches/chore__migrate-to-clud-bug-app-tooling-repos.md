@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-05-remove-clud-bug-review-yml-workflow-g3-b-extension-app-cover -->
+- **2026-06-05** — Remove clud-bug-review.yml workflow (G3.b extension — App covers logmind now)
+<!-- logmind-entry-end -->
+
 ## 2026-06-05 12:50 - Remove clud-bug-review.yml workflow (G3.b extension — App covers logmind now)
 
 **Reasoning:** clud-bug[bot] GitHub App is installed at thrillmade org scope=all, which means it fires on every PR in this repo IN ADDITION to the per-repo workflow — creating duplicate reviews. G3.b's original 5-consumer sweep (tokenomics #70, agent-skills #117, clud-bug #147, reporulez #50, rezgen #26) excluded logmind + clud-bug-app as 'tooling repos', but App scope=all means tooling repos are not actually excluded from review. Removing the workflow eliminates the duplicate.

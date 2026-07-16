@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-04-repomap-generalize-extraction-into-a-language-dispatch-regis -->
+- **2026-07-04** — repomap: generalize extraction into a language-dispatch registry (R4 framework)
+<!-- logmind-entry-end -->
+
 ## 2026-07-04 01:31 - repomap: generalize extraction into a language-dispatch registry (R4 framework)
 
 **Reasoning:** R4 needs multi-language support. Generalize the .go-hard-filtered walk into an extension-keyed  registry (langExtractor{extract, isTest}); Extract (renamed from ExtractGo) dispatches by extension. Go keeps the exact go/parser path (extractGoFile → extractGoSource, parse from src) — byte-identical output. Additive: a new language is a new registry entry, no other change. Regex extractors (Python/TS-JS/Rust) land on top via the workflow.

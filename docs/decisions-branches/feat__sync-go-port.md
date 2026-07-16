@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-03-port-logmind-sync-to-go-provenance-md-writeback-driven-by-do -->
+- **2026-06-03** — Port logmind sync to Go: PROVENANCE.md writeback driven by docs/reviews/PR-*.md
+<!-- logmind-entry-end -->
+
 ## 2026-06-03 13:19 - Port logmind sync to Go: PROVENANCE.md writeback driven by docs/reviews/PR-*.md
 
 **Reasoning:** B5b loop-closer per SPEC §3.9 + §6. clud-bug review files land in docs/reviews/PR-<n>.md (NORMATIVE template §1.8.1). logmind sync parses those files locally (no GitHub API), aggregates citations per skill, and rewrites PROVENANCE.md per §1.11.1. No existing Python sync.py — implementation is greenfield Go using fixtures-derived spec semantics. Place parsing in internal/skill/sync.go (importable by future tooling), CLI wiring in internal/cli/sync.go (cobra cmd). Idempotency: parse current PROVENANCE.md for last-applied review-sha set; re-running with no new PR-*.md SHAs is a no-op.

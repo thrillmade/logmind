@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-31-v0-6-2-notify-agent-skills-skips-pr-creation-when-skill-md-d -->
+- **2026-05-31** — v0.6.2: notify-agent-skills skips PR creation when SKILL.md diff is no-op
+<!-- logmind-entry-end -->
+
 ## 2026-05-31 13:56 - v0.6.2: notify-agent-skills skips PR creation when SKILL.md diff is no-op
 
 **Reasoning:** User flagged churn: 5 of 10 recent notify-bot PRs were +0/-0 for skills/logmind/SKILL.md (TODO context file only). Pre-v0.6.2 logic unconditionally opened a PR even when Claude judged the release skill-irrelevant or proposed byte-identical content.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-03-site-lead-install-with-brew-curl-go-binary-mark-pip-wheel-de -->
+- **2026-06-03** — Site: lead install with brew/curl Go binary; mark pip wheel deprecated (frozen v0.6.16)
+<!-- logmind-entry-end -->
+
 ## 2026-06-03 13:23 - Site: lead install with brew/curl Go binary; mark pip wheel deprecated (frozen v0.6.16)
 
 **Reasoning:** Public-facing logmind.dev still pitched pip install as command 01 — exactly the surface that sends new users to the obsolete v0.6.16 Python wheel post-v1.0. Mirrors the README rewrite shipped in #133.

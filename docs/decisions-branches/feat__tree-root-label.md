@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-slice-2-pr5-deterministic-file-structure-root-label-renderwi -->
+- **2026-06-29** — Slice 2 PR5: deterministic file-structure root label (RenderWithLabel + file_structure.root_label)
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 19:34 - Slice 2 PR5: deterministic file-structure root label (RenderWithLabel + file_structure.root_label)
 
 **Reasoning:** Fifth of 7 PRs. tree.Render hardcoded the root line to the checkout-dir basename, so the same repo in two different checkout paths produced a different first line and a perpetually-stale file-structure.md. RenderWithLabel takes an explicit label; an empty label reproduces today's basename behavior byte-for-byte (the default), a set label is checkout-independent.

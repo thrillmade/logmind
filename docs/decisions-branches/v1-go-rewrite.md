@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-03-wire-thrillmade-orchestrator-bot-app-for-cask-bump-g1-e-2 -->
+- **2026-06-03** — Wire thrillmade-orchestrator[bot] App for cask-bump (G1.e.2)
+<!-- logmind-entry-end -->
+
 ## 2026-06-03 10:13 - Wire thrillmade-orchestrator[bot] App for cask-bump (G1.e.2)
 
 **Reasoning:** rc2 cask-bump failed because PUT /contents on protected main was blocked by ruleset 17128312 (PR-only, empty bypass_actors). Personal HOMEBREW_TAP_PAT cannot bypass the ruleset and ties release infra to one human account (rotation cost + key-person risk + audit blur). Orchestrator App as ruleset bypass actor solves access + identity together; 1-hour installation tokens minted via actions/create-github-app-token@v2 (allowlist-compatible — tibdex would have been rejected by allowed_actions selected). See docs/orchestrator-app.md for App spec + rotation procedure.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-27-v0-3-2-homebrew-bump-auto-merge-nothing-to-commit-guard-site -->
+- **2026-05-27** — v0.3.2: homebrew-bump auto-merge + nothing-to-commit guard + site/app/page.tsx URL fix
+<!-- logmind-entry-end -->
+
 ## 2026-05-27 00:43 - v0.3.2: homebrew-bump auto-merge + nothing-to-commit guard + site/app/page.tsx URL fix
 
 **Reasoning:** (3) Nothing-to-commit guard added to handle workflow re-runs idempotently — exits 0 when formula already at target version instead of erroring on empty commit

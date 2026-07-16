@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-feat-go-b2-port-install-hook-check-decisions-check-links-git -->
+- **2026-06-02** — feat(go-b2): port install-hook, check-decisions, check-links + git/hook helpers
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 00:41 - feat(go-b2): port install-hook, check-decisions, check-links + git/hook helpers
 
 **Reasoning:** B2 is the foundation layer for B3 (derived doc generators) — they call into hook bodies + .gitattributes block management. Splitting it across four narrow packages (gitcli, hooks, gitattr, linkcheck) keeps the dependency graph DAG-shaped: cli depends on the leaf packages, leaf packages depend on each other only via gitcli. This shape mirrors the Python module split (core/git_handler.py, core/gitattributes.py, actions/link_check.py) and makes byte-identical-vs-Python parity tests focused: each Go package has a parity gate against its Python counterpart, independent of the others.

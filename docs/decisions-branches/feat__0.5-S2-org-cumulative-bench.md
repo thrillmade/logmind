@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-29-implement-bench-org-cumulative-real-impl-phase-0-5-2-v0-5-7 -->
+- **2026-05-29** — Implement bench/org_cumulative real impl (Phase 0.5 §2, v0.5.7)
+<!-- logmind-entry-end -->
+
 ## 2026-05-29 16:31 - Implement bench/org_cumulative real impl (Phase 0.5 §2, v0.5.7)
 
 **Reasoning:** Closes the last Q7-logmind bench stub. The 4-angle frame is now fully populated (per-call ✅, worst-case ✅, per-session ✅ [v0.5.6], org-cumulative ✅ [this]). Walks the same session JSONLs as per_session.py via shared helpers (_session_paths, _session_cwd, _is_logmind_repo, _walk_reads, _bucket, _git_equivalent_bytes), then aggregates DIFFERENTLY — sums bytes across sessions+repos for one global net_pct + per_repo_share, instead of per-session avg. Same informational-only treatment as per-session (shared thin git baseline; sign isn't a quality signal). Load-bearing data is per_repo_share, used by Step 4 validation to spot per-consumer cache-key regressions (>2× median share).

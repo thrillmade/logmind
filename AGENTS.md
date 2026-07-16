@@ -7,41 +7,24 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v3-slim -->
-## Decision logging — see the `logmind` skill
+<!-- logmind-block-version: v9-pointer -->
+## Decision logging — `logmind log` is REQUIRED for substantive commits
 
-This project uses [logmind](https://logmind.dev). The full procedure
-(when to log, how to log, what counts as a decision, branch routing) lives
-in the **`logmind` agent skill** which your runtime should auto-load.
+**`logmind log` replaces `git add` + `git commit` + `git push` for any change that carries a decision** — do not run those git commands directly.
 
-If the skill isn't loaded for some reason, install it once:
-
-```bash
-npx skills add https://github.com/thrillmot/agent-skills --skill logmind
-```
-
-### Project-specific paths
-
-- **[docs/timeline.md](docs/timeline.md)** — auto-generated chronological overview across all branches; start here.
-- Recent decisions on the default branch: **[docs/decisions.md](docs/decisions.md)**
-- Per-branch decisions (in-flight feature work): **docs/decisions-branches/**
-- Archived decisions: **[docs/decisions-archive.md](docs/decisions-archive.md)**
-- Project tree (regenerated on main-branch logs + post-PR-merge): **[docs/file-structure.md](docs/file-structure.md)**
-
-### Quick reference
+> **DO NOT run raw `git add` / `git commit` / `git push` for substantive code changes.**
+> The commit-msg hook and the Claude Code PreToolUse hook installed by
+> `logmind init` / `logmind doctor --fix` **BLOCK** a substantive commit that
+> skips `logmind log`. Genuinely no-decision commit? Add `[skip-logmind]` to
+> the subject, or set `LOGMIND_ALLOW_GIT_COMMIT=1` for one command.
+> `git.enforce_commits: false` disables enforcement per-repo. Typo / whitespace
+> / dep-bump-only commits MAY use raw git.
 
 ```bash
-logmind log "decision summary" -r "why" -a "alternative" -i "implication"
-logmind show               # recent decisions on the current branch
-logmind search "keyword"   # full-text across recent + archive
+logmind log "summary" -r "why" -a "alternative" -i "implication"
 ```
 
-**Use `logmind log` for the commit, not `git add` + `git commit`.** The
-`log` command writes the decision file, stages the decision log + its
-companion files, and creates the commit in one step. Use
-`--stage all` to also stage the rest of the working tree.
-
-**Read `docs/decisions.md` and the matching `docs/decisions-branches/<branch>.md` (if any) before starting any non-trivial task.** The team has likely already decided things you'd otherwise re-litigate.
+This project uses [logmind](https://logmind.dev). What counts as a decision, branch routing, `--stage scoped` for unrelated WIP, `logmind doctor`, and the required-reading list ([`docs/timeline.md`](docs/timeline.md), [`docs/decisions.md`](docs/decisions.md), [`docs/file-structure.md`](docs/file-structure.md), `docs/decisions-branches/<branch>.md`) all live in the **`logmind` agent skill** at https://github.com/thrillmade/agent-skills/tree/main/skills/logmind.
 <!-- logmind-end -->
 
 ## Release infrastructure

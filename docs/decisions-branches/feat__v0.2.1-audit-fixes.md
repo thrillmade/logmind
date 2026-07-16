@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-18-v0-2-1-audit-driven-fixes-version-pinning-idempotent-init-at -->
+- **2026-05-18** — v0.2.1: audit-driven fixes — version pinning, idempotent init, atomic writes, hardened git helpers
+<!-- logmind-entry-end -->
+
 ## 2026-05-18 13:04 - v0.2.1: audit-driven fixes — version pinning, idempotent init, atomic writes, hardened git helpers
 
 **Reasoning:** External audit surfaced 8 findings; verified 5 real + 3 false-positives against the actual code. Shipping the 4 that matter: P0 (workflow templates now pin logmind version via __LOGMIND_VERSION__ substitution at install time — kills the silent-downstream-breakage class), P1 (logmind init is now idempotent on already-init'd repos: refresh-mode rewrites stale workflows by # logmind-template-version marker, leaves docs/ + agent files alone — eliminates the mv docs /tmp dance), P3a (is_git_repo + current_branch in git_handler.py now safely swallow OSError/PermissionError; the bare except in logger.py is now unreachable dead code and was removed), P3b (new core/atomic_io.py with temp-file + os.replace pattern wired into all 5 state-file write sites — kills the truncate-on-concurrent-log footgun).

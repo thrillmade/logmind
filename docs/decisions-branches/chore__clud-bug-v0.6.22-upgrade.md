@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-29-upgrade-logmind-to-clud-bug-v0-6-22-picks-up-phase-0-5-effic -->
+- **2026-05-29** — Upgrade logmind to clud-bug v0.6.22 — picks up Phase 0.5 efficiency + quality improvements
+<!-- logmind-entry-end -->
+
 ## 2026-05-29 12:44 - Upgrade logmind to clud-bug v0.6.22 — picks up Phase 0.5 efficiency + quality improvements
 
 **Reasoning:** PR #78's review hit max-turns 15 because logmind was pinned at clud-bug v0.6.12 (pre-Phase-0.5). The old prompt forces sequential tool calls (multiple gh pr comment posts, walk threads + walk comments redundantly, etc.) — for an 11-file PR with prior threads, that exceeds the turn budget. clud-bug v0.6.22 fixes this structurally via 0.0.O --json-schema (single structured-output emission instead of N tool calls), 0.0.P prompt trim (-29.6% bytes without losing must-contain phrases — gated by 0.0.E golden test), 0.0.W workflow-only-skip (paths-check pre-flight detects workflow-only PRs → no LLM call), 0.0.R Haiku routing for dep bumps, 0.0.X output brevity directive, 0.0.K applies_to skill filter. clud-bug update produced 5-file change: workflow rerendered with v0.6.22 prompt + post-step + bot-login: github-actions[bot] override, AGENTS.md version marker bumped, CLAUDE.md clud-bug-block removed (0.0.I.1 skip-when-@AGENTS.md-import behavior since logmind has @AGENTS.md), .cursorrules + .clud-bug.json minor sync.

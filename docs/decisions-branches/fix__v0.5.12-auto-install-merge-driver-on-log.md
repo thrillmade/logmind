@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-feat-v0-5-12-logmind-log-auto-installs-merge-driver-hooks-on -->
+- **2026-05-30** — feat(v0.5.12): `logmind log` auto-installs merge driver + hooks on every invocation (fresh-clone auto-resolve)
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 10:12 - feat(v0.5.12): `logmind log` auto-installs merge driver + hooks on every invocation (fresh-clone auto-resolve)
 
 **Reasoning:** Pre-v0.5.12: logmind init was the only path that installed the per-clone git config + hooks for timeline.md / file-structure.md to merge cleanly. Fresh clones / CI runners / agents in throwaway worktrees had the committed .gitattributes reference to merge=logmind-timeline but no driver definition registered locally — git refused to invoke the unconfigured driver (security guard) and silently fell back to ort 3-way merge → text-valid but semantically incomplete timeline.md → check-derived-docs failed downstream. Hit live on tokenomics #21. User stance (memory project_timeline_conflict_should_auto_resolve): 'conflicts bugs like this shouldn't happen on our own timeline file and logmind should auto resolve.'

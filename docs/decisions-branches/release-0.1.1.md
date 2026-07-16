@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-15-release-v0-1-1-phase-13-polish -->
+- **2026-05-15** — Release v0.1.1 (Phase 13 polish)
+<!-- logmind-entry-end -->
+
 ## 2026-05-15 02:39 - Release v0.1.1 (Phase 13 polish)
 
 **Reasoning:** Bundles agents update CLI, prominent init prompt, check-decisions workflow + branch-aware bug fix, skills.sh badge, clud-bug swap, reporulez ruleset, adaptive AGENTS.md slim/full template, and check-doc-links always-run fix. Version bump 0.1.0 → 0.1.1 in pyproject.toml; CHANGELOG section rotated.

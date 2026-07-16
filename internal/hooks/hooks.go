@@ -240,6 +240,26 @@ func BuildPostRewriteBody() string {
 // under POSIX sh on every platform git itself supports, so `command -v`
 // is always available. A missing binary fails open (exit 0) — logmind
 // not being installed should never block a commit.
+//
+// Stale-binary hardening (CTO design amendment, post-PR2): this body used
+// to do `logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"; exit $?`
+// — i.e. relay ANY nonzero exit from `logmind` straight into the hook's own
+// exit code. That's a footgun: a STALE-but-present logmind on PATH (an old
+// 1.x Cobra build that doesn't know `guard-commit` yet, or the frozen
+// Python v0.6.16 CLI) exits nonzero — 1 for an unrecognized Cobra
+// subcommand, 2 for argparse's unknown-subcommand error — for a reason that
+// has NOTHING to do with guard-commit's actual allow/block decision. Under
+// the old `exit $?` relay, that stale exit code would abort EVERY commit on
+// that machine, including `logmind log`'s own internal commit — bricking
+// the very tool meant to unblock you. Now the hook checks for EXACTLY 65
+// (guardcommit's distinctive EX_DATAERR block signal — see
+// internal/cli/guard_commit.go's guardCommitGitHook) before aborting; any
+// other nonzero rc — stale binary, crash, usage error, anything we didn't
+// anticipate — is NOT our block signal and falls through to the fail-open
+// `exit 0` at the bottom. The corresponding `logmind guard-commit` process
+// itself never calls os.Exit with anything else meaningful here, so this is
+// safe: a current binary's block is ALWAYS exactly 65, never some other
+// nonzero value that would now be silently ignored.
 func BuildCommitMsgBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind commit-msg hook\n" +
@@ -254,15 +274,27 @@ func BuildCommitMsgBody() string {
 		"#\n" +
 		"# Fails open when logmind isn't on PATH: a missing binary should never\n" +
 		"# block a commit.\n" +
+		"#\n" +
+		"# Stale-binary hardening: 65 is guard-commit's OWN distinctive block\n" +
+		"# signal (EX_DATAERR). Any other nonzero exit — including a STALE\n" +
+		"# logmind on PATH that doesn't know `guard-commit` at all (an old\n" +
+		"# Cobra build's unknown-command exit 1, or the frozen Python CLI's\n" +
+		"# argparse exit 2) — must NOT abort the commit, or a stale binary\n" +
+		"# would brick every commit on this machine, including `logmind log`'s\n" +
+		"# own internal one.\n" +
 		"\n" +
 		"MSG_FILE=\"$1\"\n" +
 		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then\n" +
 		"    exit 0\n" +
 		"fi\n" +
 		"if command -v logmind >/dev/null 2>&1; then\n" +
-		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\"; exit $?\n" +
+		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\"\n" +
+		"    rc=$?\n" +
+		"    if [ \"$rc\" -eq 65 ]; then\n" +
+		"        exit 1\n" +
+		"    fi\n" +
 		"fi\n" +
-		"exit 0    # fail-open when logmind not on PATH\n"
+		"exit 0\n"
 }
 
 // InstallPostMerge writes `.git/hooks/post-merge` to the current

@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-slice-2-pr8-add-clud-bug-reviewcontext-byte-parity-marker-in -->
+- **2026-06-29** — Slice 2 PR8: add clud-bug reviewContext (byte-parity / marker-injection / GITHUB_TOKEN / determinism); defer branch-summary convention wiring
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 20:46 - Slice 2 PR8: add clud-bug reviewContext (byte-parity / marker-injection / GITHUB_TOKEN / determinism); defer branch-summary convention wiring
 
 **Reasoning:** The PR7 review caught a MAJOR marker-injection the clud-bug pass had only flagged as a watch-item. Encoding logmind's 4 load-bearing invariants as a trusted reviewContext (read from the base ref, injected into every hosted + local review) bakes the lessons in so every future PR checks them. The branch-summary AGENTS.md-template + canonical-skill wiring is DEFERRED: the convention is dormant until the v1.0 main-canonical default flip; changing the AGENTS.md template would bump the block-version and churn every repo's regenerated block for a dormant instruction; and the load-bearing canonical surface (the agent-skills logmind skill) is another agent's repo.

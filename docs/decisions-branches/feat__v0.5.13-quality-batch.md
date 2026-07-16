@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-feat-v0-5-13-5-item-quality-batch-4b-2-workflow-pin-auto-upd -->
+- **2026-05-30** — feat(v0.5.13): 5-item quality batch — §4b.2 + workflow pin auto-update + doctor non-zero + doctor stale-derived-docs warning + logmind rebase
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 12:11 - feat(v0.5.13): 5-item quality batch — §4b.2 + workflow pin auto-update + doctor non-zero + doctor stale-derived-docs warning + logmind rebase
 
 **Reasoning:** Closes recurring gotcha #1 (workflow pin staleness across clud-bug update cycles) + addresses the tokenomics agent's 2026-05-30 Phase D merge-order pain (3-PR batch went DIRTY when middle PR merged first). Five items shipped in one batch since they share a logical theme (logmind quality + merge-resilience) and consumers prefer one workflow-re-render PR over five.

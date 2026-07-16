@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-26-feat-v0-2-6-notify-agent-skills-workflow-closes-the-release- -->
+- **2026-05-26** — feat: v0.2.6 — notify-agent-skills workflow closes the release→skill update gap
+<!-- logmind-entry-end -->
+
 ## 2026-05-26 15:43 - feat: v0.2.6 — notify-agent-skills workflow closes the release→skill update gap
 
 **Reasoning:** Until today, every logmind release left the canonical skill on agent-skills out of date until someone manually noticed and opened a PR. Mirror the agent-skills→clud-bug notify pattern: on every tag push, open an issue on thrillmade/agent-skills prompting a SKILL.md review. Closes the structural gap that produced today's batch update covering v0.2.3→v0.2.5.

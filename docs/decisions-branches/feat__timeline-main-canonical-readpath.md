@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-slice-2-pr3-main-canonical-timeline-read-path-generatemainca -->
+- **2026-06-29** — Slice 2 PR3: main-canonical timeline read path (GenerateMainCanonical) + single-point config dispatch
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 18:55 - Slice 2 PR3: main-canonical timeline read path (GenerateMainCanonical) + single-point config dispatch
 
 **Reasoning:** Third of 7 PRs. The deterministic-union assembler + ONE dispatch point (GenerateFor) wired into all 5 in-process sites (runTimeline x3 + the two init.go re-renders). Merge driver + hooks shell out so they inherit it. Default stays branch-divergent — existing timeline goldens + a new GenerateFor(canonical=false)==Generate test prove byte-parity.

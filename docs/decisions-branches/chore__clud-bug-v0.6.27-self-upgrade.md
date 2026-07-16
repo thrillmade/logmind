@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-30-chore-propagate-clud-bug-v0-6-22-v0-6-27-to-logmind-smart-bu -->
+- **2026-05-30** — chore: propagate clud-bug v0.6.22 → v0.6.27 to logmind (Smart Budget self-upgrade)
+<!-- logmind-entry-end -->
+
 ## 2026-05-30 09:10 - chore: propagate clud-bug v0.6.22 → v0.6.27 to logmind (Smart Budget self-upgrade)
 
 **Reasoning:** logmind's own .github/workflows/clud-bug-review.yml was at template v10 (clud-bug v0.6.22-era), missing Smart Budget Phases 1/2a/3: Layer 1 line-based estimator + Layer 1.5 calibration outputs (turns_estimated/files/+A/-D/threads) + Layer 2 in-prompt budget awareness + Layer 3 mid-review check-in + Layer 6 fallback render-from-inlines + 0.0.W² widened skip allowlist + concurrency-group cancel-in-progress. All 4 consumers (agent-skills/reporulez/rezgen/tokenomics) already on v0.6.27. User directive (2026-05-30): 'i do want clud bug propagated so bugs are better caught more efficiently — efficiency gainer.'

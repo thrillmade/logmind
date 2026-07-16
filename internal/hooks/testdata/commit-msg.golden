@@ -11,12 +11,24 @@
 #
 # Fails open when logmind isn't on PATH: a missing binary should never
 # block a commit.
+#
+# Stale-binary hardening: 65 is guard-commit's OWN distinctive block
+# signal (EX_DATAERR). Any other nonzero exit — including a STALE
+# logmind on PATH that doesn't know `guard-commit` at all (an old
+# Cobra build's unknown-command exit 1, or the frozen Python CLI's
+# argparse exit 2) — must NOT abort the commit, or a stale binary
+# would brick every commit on this machine, including `logmind log`'s
+# own internal one.
 
 MSG_FILE="$1"
 if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
     exit 0
 fi
 if command -v logmind >/dev/null 2>&1; then
-    logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"; exit $?
+    logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"
+    rc=$?
+    if [ "$rc" -eq 65 ]; then
+        exit 1
+    fi
 fi
-exit 0    # fail-open when logmind not on PATH
+exit 0

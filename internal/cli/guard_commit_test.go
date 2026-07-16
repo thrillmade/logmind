@@ -287,6 +287,13 @@ func TestRunGuardCommit_GitHook_AllowsSmallStagedChange(t *testing.T) {
 	}
 }
 
+// TestRunGuardCommit_GitHook_BlocksOverThresholdStagedChange pins the
+// stale-binary-hardening exit-code contract: the git-hook layer now
+// blocks via a distinctive exit code (65, EX_DATAERR) rather than the
+// generic cli.ErrSilent (which main.go turns into the same exit 1 a
+// stale, unrelated logmind failure would also produce — see
+// guardCommitGitHook's doc comment for why that collision is exactly the
+// bug this hardening fixes).
 func TestRunGuardCommit_GitHook_BlocksOverThresholdStagedChange(t *testing.T) {
 	repo := initRepo(t)
 	stageLines(t, repo, "big.go", 25)
@@ -295,11 +302,11 @@ func TestRunGuardCommit_GitHook_BlocksOverThresholdStagedChange(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
 		nil, &stdout, &stderr)
-	if exitCode != 0 {
-		t.Fatalf("exitCode = %d; want 0 (git-hook blocks via ErrSilent, not a special exit code)", exitCode)
+	if exitCode != 65 {
+		t.Fatalf("exitCode = %d; want 65 (the git-hook layer's distinctive EX_DATAERR block signal)", exitCode)
 	}
-	if err == nil || err != ErrSilent {
-		t.Fatalf("err = %v; want ErrSilent", err)
+	if err != nil {
+		t.Fatalf("err = %v; want nil (the block is signalled via exitCode, not an error)", err)
 	}
 	if !strings.Contains(stderr.String(), "logmind log") {
 		t.Fatalf("stderr = %q; want it to mention `logmind log`", stderr.String())
@@ -404,14 +411,17 @@ func TestRunGuardCommit_ThresholdPrecedence(t *testing.T) {
 
 	// Config threshold (5) is below 10 changed lines → block, with no
 	// --threshold flag override (flagExplicit=false, flagValue ignored).
-	_, err := runGuardCommit(repo, "git-hook", msgFile, 999, false, false,
+	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 999, false, false,
 		nil, &bytes.Buffer{}, &bytes.Buffer{})
-	if err != ErrSilent {
-		t.Fatalf("err = %v; want ErrSilent (config threshold of 5 should have applied)", err)
+	if err != nil {
+		t.Fatalf("err = %v; want nil (block is signalled via exitCode)", err)
+	}
+	if exitCode != 65 {
+		t.Fatalf("exitCode = %d; want 65 (config threshold of 5 should have applied and blocked)", exitCode)
 	}
 
 	// Explicit --threshold flag (50) wins over the config's 5.
-	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 50, true, false,
+	exitCode, err = runGuardCommit(repo, "git-hook", msgFile, 50, true, false,
 		nil, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil || exitCode != 0 {
 		t.Fatalf("exitCode=%d err=%v; want 0,nil (explicit --threshold=50 should have won over config's 5)", exitCode, err)
@@ -486,6 +496,74 @@ func TestGuardCommitBinary_Harness_ExitCode2NotJust1(t *testing.T) {
 		}
 		if stdout.Len() != 0 {
 			t.Fatalf("stdout = %q; want empty on allow", stdout.String())
+		}
+	})
+}
+
+// --- black-box subprocess test: exit code 65, the git-hook block signal --
+
+// TestGuardCommitBinary_GitHook_ExitCode65 builds the real binary and runs
+// `guard-commit --layer git-hook --msg-file <path>` directly against a
+// staged over-threshold change, pinning the process's exit code at 65
+// (EX_DATAERR) — the git-hook layer's distinctive block signal introduced
+// by the stale-binary hardening (see guard_commit.go's guardCommitGitHook
+// and its LOUD COMMENT). 65 must stay a code no ordinary failure produces
+// by accident: internal/hooks.BuildCommitMsgBody's commit-msg hook body
+// checks for EXACTLY 65 before aborting a commit, so a stale-but-present
+// logmind's unrelated nonzero exit (1 for an old Cobra build's
+// unknown-command error, 2 for the frozen Python CLI's argparse error)
+// must never collide with it.
+func TestGuardCommitBinary_GitHook_ExitCode65(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping subprocess test in -short mode")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not on PATH; skipping subprocess test")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping subprocess test")
+	}
+
+	binPath := buildGuardCommitBinary(t, goBin)
+
+	t.Run("blocks with exit code 65", func(t *testing.T) {
+		repo := initRepo(t) // fresh repo per subtest — no cross-subtest state bleed
+		stageLines(t, repo, "big.go", 25)
+		msgFile := writeMsgFile(t, repo, "a big change")
+
+		cmd := exec.Command(binPath, "guard-commit", "--layer", "git-hook", "--msg-file", msgFile, "--repo-root", repo)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		runErr := cmd.Run()
+
+		exitErr, ok := runErr.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("expected *exec.ExitError, got %T (%v); stdout=%q stderr=%q", runErr, runErr, stdout.String(), stderr.String())
+		}
+		if got := exitErr.ExitCode(); got != 65 {
+			t.Fatalf("ExitCode() = %d; want 65 (EX_DATAERR, the git-hook layer's distinctive block signal)", got)
+		}
+		if stdout.Len() != 0 {
+			t.Fatalf("stdout = %q; want empty on block", stdout.String())
+		}
+		if !strings.Contains(stderr.String(), "logmind log") {
+			t.Fatalf("stderr = %q; want it to mention `logmind log`", stderr.String())
+		}
+	})
+
+	t.Run("allows with exit code 0", func(t *testing.T) {
+		repo := initRepo(t) // fresh repo per subtest — no cross-subtest state bleed
+		stageLines(t, repo, "small.go", 5)
+		msgFile := writeMsgFile(t, repo, "a small change")
+
+		cmd := exec.Command(binPath, "guard-commit", "--layer", "git-hook", "--msg-file", msgFile, "--repo-root", repo)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("logmind guard-commit --layer git-hook (allow case) failed: %v\nstdout=%q stderr=%q", err, stdout.String(), stderr.String())
 		}
 	})
 }

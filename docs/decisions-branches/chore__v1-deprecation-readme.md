@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-03-lead-readme-install-with-go-binary-mark-python-wheel-frozen- -->
+- **2026-06-03** — Lead README install with Go binary; mark Python wheel frozen at v0.6.16
+<!-- logmind-entry-end -->
+
 ## 2026-06-03 13:18 - Lead README install with Go binary; mark Python wheel frozen at v0.6.16
 
 **Reasoning:** v1.0.0 ships as Go binary via brew/curl; new installs should land on the Go path, not silently get the obsolete v0.6.16 pip wheel that PyPI still serves. The previous README still treated brew/curl + pip as parallel channels and described v1.0 as in-progress.

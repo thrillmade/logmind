@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-31-feat-stream-1-path-a-historical-clud-bug-review-scrape-layer -->
+- **2026-05-31** — feat: Stream 1 Path A — historical clud-bug-review scrape + Layer 1 formula in Python
+<!-- logmind-entry-end -->
+
 ## 2026-05-31 11:20 - feat: Stream 1 Path A — historical clud-bug-review scrape + Layer 1 formula in Python
 
 **Reasoning:** User-approved (2026-05-31). Goal: get a magnitude check on the v0.6.25 Layer 1 estimator NOW by scraping historical clud-bug-review runs across all 6 thrillmade repos. Result: 138 runs scraped, p50 actual/predicted = 0.60, p90 = 1.22, p99 = 1.66. ZERO cap-hits across 138 PRs. Estimator is sound + ~30% over-conservative at p50 — L5 auto-retry can ship with high confidence in v0.6.29, and v0.6.30+ could tighten the 1.2x safety margin without risking cap-hits.

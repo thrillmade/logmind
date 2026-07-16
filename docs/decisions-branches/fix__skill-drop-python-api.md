@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-skill-drop-the-dead-python-api-section-from-the-logmind-skil -->
+- **2026-07-03** — skill: drop the dead Python-API section from the logmind skill (off-Python completeness)
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 13:22 - skill: drop the dead Python-API section from the logmind skill (off-Python completeness)
 
 **Reasoning:** skill/SKILL.md — the canonical logmind agent skill (source-of-truth for the agent-skills catalog, auto-loaded by agents) — still showed a 'from logmind import log' Python section: the same Go-binary-misleading cruft #177 removed from the templates, flagged by the #177 review. The CLI is the real interface.

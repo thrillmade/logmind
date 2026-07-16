@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-07-03-feat-logmind-context-one-read-agent-cold-start-payload-timel -->
+- **2026-07-03** — feat: logmind context — one-read agent cold-start payload (timeline + file-structure)
+<!-- logmind-entry-end -->
+
 ## 2026-07-03 14:42 - feat: logmind context — one-read agent cold-start payload (timeline + file-structure)
 
 **Reasoning:** The thesis is a repo self-describing on the edge of inference: an agent should orient in ONE read, not by reconstructing context from git log / ls / grep. 'logmind context' concatenates the two pre-baked derived docs (timeline = the why, file-structure = the what) with headings. v1.0 thesis-extra (plan item 3).

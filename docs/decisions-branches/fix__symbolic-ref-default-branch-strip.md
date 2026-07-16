@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-fix-strip-origin-prefix-from-symbolic-ref-short-output-in-po -->
+- **2026-06-02** — fix: strip 'origin/' prefix from symbolic-ref --short output in post-merge hook
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 19:14 - fix: strip 'origin/' prefix from symbolic-ref --short output in post-merge hook
 
 **Reasoning:** clud-bug review on #128 caught the pre-existing v0.6.16 bug: git symbolic-ref --short refs/remotes/origin/HEAD returns 'origin/main' (the prefix is NOT stripped by --short for remote refs), so the comparison ["$current" = "$default"] was always false in repos with a remote — the default-branch pull-up skip never fired. Then origin/$default expanded to 'origin/origin/main' which fails. Safe failure mode (always regen, no data loss) but a real UX bug carried byte-identically to Go

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-26-feat-v0-2-7-stage-all-becomes-the-default-logmind-log-is-the -->
+- **2026-05-26** — feat: v0.2.7 — --stage all becomes the default; logmind log is the commit primitive
+<!-- logmind-entry-end -->
+
 ## 2026-05-26 16:06 - feat: v0.2.7 — --stage all becomes the default; logmind log is the commit primitive
 
 **Reasoning:** logmind exists to be ONE command that handles add+commit+push for automated agents. The previous default (--stage scoped) forced agents into a manual two-step git workflow that defeated the design intent — users (correctly) kept asking 'why isn't logmind log doing this already?'. Default flip closes that gap; explicit --stage scoped remains as escape hatch for users with unrelated WIP.

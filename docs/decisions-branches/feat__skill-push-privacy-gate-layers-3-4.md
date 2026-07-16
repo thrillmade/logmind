@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-05-feat-skill-push-privacy-gate-layers-3-4-content-scanner-repo -->
+- **2026-06-05** — feat(skill push): privacy gate layers 3+4 — content scanner + repo-visibility (§8.2 wave-2)
+<!-- logmind-entry-end -->
+
 ## 2026-06-05 12:57 - feat(skill push): privacy gate layers 3+4 — content scanner + repo-visibility (§8.2 wave-2)
 
 **Reasoning:** Belt-and-braces privacy model needs the content-scanner heuristic + visibility check on top of layers 1+2 so unmarked SKILL.md bodies + private→public catalog leaks both fail closed by default. Hardcoded baseline (credential prefixes, NDA-class keywords) is never bypassable from config; user config can only WIDEN the deny set. Test fixtures embed a 'DUMMYFIXTURE' sentinel infix in every credential-shaped test string so the scanner regexes still match while commercial secret detectors (GitHub push-protection, etc.) don't flag the test files.

@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-08-rename-4-logmind-workflows-with-logmind-display-name-prefix -->
+- **2026-06-08** — rename 4 logmind workflows with 'logmind /' display-name prefix
+<!-- logmind-entry-end -->
+
 ## 2026-06-08 11:46 - rename 4 logmind workflows with 'logmind /' display-name prefix
 
 **Reasoning:** CTO flagged PR check names (decision-log check, doc link integrity, check derived docs, logmind self-update) as ambiguous about owner — PR check listings make it impossible to scan at a glance which checks are logmind vs project vs clud-bug. Branded prefix unifies the workflow set under a recognisable namespace, matching GitHub's own 'CodeQL / Analyze' style.

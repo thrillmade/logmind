@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-slice-2-pr7-agent-authored-branch-summary-logmind-headline-l -->
+- **2026-06-29** — Slice 2 PR7: agent-authored branch summary — logmind headline + log -H + per-log nudge
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 20:28 - Slice 2 PR7: agent-authored branch summary — logmind headline + log -H + per-log nudge
 
 **Reasoning:** The timeline headline becomes a one-sentence summary of the WHOLE branch, authored by the agent (the LLM with full context; logmind makes no LLM call). New 'logmind headline' command + bundled 'logmind log -H' flag set it; the per-log nudge steers toward keeping it current (interactive at a TTY; a printed advisory for a non-TTY agent, which it acts on via logmind headline). First-decision title stays the deterministic fallback. Gated to main-canonical, so the default path is byte-stable.

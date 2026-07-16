@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-03-remove-python-source-tree-post-cutover-g3-a-consumers-migrat -->
+- **2026-06-03** — Remove Python source tree post-cutover (G3.a consumers migrated)
+<!-- logmind-entry-end -->
+
 ## 2026-06-03 14:55 - Remove Python source tree post-cutover (G3.a consumers migrated)
 
 **Reasoning:** All 5 G3.a consumer-repo migration PRs are merged (#110, #68, #143, #48, #24); no consumer pulls from src/logmind/ anymore. The Python v0.6.16 wheel stays frozen on PyPI but is never republished from this repo. Keeping the Python tree in main is dead-code that confuses the active codebase (Go) story and bloats every clone — removing it makes "main = Go" obvious, shrinks the working tree by ~26K lines, and removes the maintenance ambiguity created by the cutover #132 leaving both trees in place. Master-plan task #149.

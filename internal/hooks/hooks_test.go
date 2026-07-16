@@ -46,23 +46,38 @@ func TestCommitMsgBody_MatchesGolden(t *testing.T) {
 // TestCommitMsgBody_DelegatesToGuardCommit pins the enforcement contract
 // as INTENT, distinct from the byte-golden above: the body must locate
 // the message file, delegate the actual decision to
-// `logmind guard-commit --layer git-hook`, forward guard-commit's exit
-// code as its own, and fail OPEN (exit 0) when logmind isn't on PATH —
-// never fail closed on a missing binary.
+// `logmind guard-commit --layer git-hook`, and fail OPEN (exit 0) when
+// logmind isn't on PATH — never fail closed on a missing binary.
+//
+// Stale-binary hardening: the body no longer does a blind `exit $?` relay
+// of guard-commit's exit code (see BuildCommitMsgBody's doc comment) — it
+// checks the captured `$rc` against EXACTLY 65 (guard-commit's distinctive
+// EX_DATAERR block signal) before aborting, and falls through to fail-open
+// otherwise. Pin both the capture and the specific comparison so a future
+// edit can't silently regress back to relaying an arbitrary exit code.
 func TestCommitMsgBody_DelegatesToGuardCommit(t *testing.T) {
 	body := BuildCommitMsgBody()
 	for _, must := range []string{
 		"logmind guard-commit --layer git-hook",
 		"--msg-file \"$MSG_FILE\"",
 		"command -v logmind",
-		"exit $?",
+		"rc=$?",
+		`"$rc" -eq 65`,
 	} {
 		if !strings.Contains(body, must) {
 			t.Errorf("commit-msg body missing %q", must)
 		}
 	}
-	// The fail-open path: outside the `command -v logmind` branch, the
-	// script must still exit 0 (never fail closed on a missing binary).
+	// The old blind relay must be gone: `exit $?` right after the
+	// guard-commit invocation would abort on ANY nonzero code, including a
+	// stale binary's unrelated error — exactly the bug this hardening
+	// fixes.
+	if strings.Contains(body, "exit $?") {
+		t.Errorf("commit-msg body still does a blind `exit $?` relay; want an explicit rc==65 check")
+	}
+	// The fail-open path: outside the `command -v logmind` branch (and
+	// outside the rc==65 block), the script must still exit 0 (never fail
+	// closed on a missing binary or a non-65 rc from a stale logmind).
 	if !regexp.MustCompile(`(?m)^exit 0\s*(#.*)?$`).MatchString(body) {
 		t.Errorf("commit-msg body has no top-level `exit 0` fail-open fallback")
 	}

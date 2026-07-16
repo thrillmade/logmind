@@ -1,5 +1,9 @@
 ← back to [docs/timeline.md](../timeline.md)
 
+<!-- logmind-entry-start: 2026-06-29-drop-vestigial-pip-pypi-machinery-from-doctor-init-slice-4-c -->
+- **2026-06-29** — Drop vestigial pip/PyPI machinery from doctor + init (Slice 4 cleanup)
+<!-- logmind-entry-end -->
+
 ## 2026-06-29 17:17 - Drop vestigial pip/PyPI machinery from doctor + init (Slice 4 cleanup)
 
 **Reasoning:** Go-era logmind ships via brew/curl + thrillmade/setup-logmind, not pip. But 'logmind doctor' still made a live 2s PyPI network call for a 'latest' version and parsed 'pip install logmind==X' pins that no longer exist in the workflows (→ nil → misleading '(dev install)'); init's refreshPin rewrote those non-existent pins. Dead code producing wrong/slow output.

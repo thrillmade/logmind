@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-14-branch-aware-logging-agents-md-consolidation-link-integrity- -->
+- **2026-05-14** — Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1
+<!-- logmind-entry-end -->
+
 ## 2026-05-14 22:54 - Branch-aware logging, AGENTS.md consolidation, link-integrity CI, logmind agent skill, OSS readiness for v0.1
 
 **Reasoning:** Open-source publication required (1) preventing decisions.md merge-conflict churn across feature branches, (2) collapsing 11 duplicated agent-instruction files into a single canonical AGENTS.md + 2-line stubs, (3) automated CI for the link integrity that agent context depends on, (4) a skills.sh distribution channel so any agent in any project picks up logmind instructions globally, and (5) the contribution / release / CI scaffolding GitHub and PyPI readers expect

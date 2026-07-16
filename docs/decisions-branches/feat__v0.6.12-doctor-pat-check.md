@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-01-feat-v0-6-12-doctor-surfaces-logmind-auto-regen-pat-status-p -->
+- **2026-06-01** — feat(v0.6.12): doctor surfaces LOGMIND_AUTO_REGEN_PAT status proactively
+<!-- logmind-entry-end -->
+
 ## 2026-06-01 21:07 - feat(v0.6.12): doctor surfaces LOGMIND_AUTO_REGEN_PAT status proactively
 
 **Reasoning:** Today's v0.6.11 propagation cycle exposed a second-order PAT failure mode: the secret existed at the org level but had insufficient scopes (missing Workflows: write after fine-grained-token migration). Manifested as cryptic 'refusing to allow workflow' 403s at push step. Doctor now proactively detects PAT-dependent workflow bodies and queries gh secret list when possible — surfaces 'missing' / 'present' / 'cannot-verify' status with the required scopes documented inline.

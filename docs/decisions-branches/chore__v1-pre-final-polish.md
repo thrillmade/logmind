@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-06-02-lock-specversion-to-0-1-0-drop-draft-suffix -->
+- **2026-06-02** — Lock SpecVersion to 0.1.0 (drop -draft suffix)
+<!-- logmind-entry-end -->
+
 ## 2026-06-02 22:54 - Lock SpecVersion to 0.1.0 (drop -draft suffix)
 
 **Reasoning:** thrillmade/protocol SPEC.md tagged v0.1.0 FINAL (commit 86c2212). Binary's --version was still advertising spec 0.1.0-draft, which would mislead downstream tools and any binary the v1.0.0 final tag ships.

@@ -1,3 +1,7 @@
+<!-- logmind-entry-start: 2026-05-27-feat-v0-3-4-check-derived-docs-auto-fixes-when-logmind-auto- -->
+- **2026-05-27** — feat(v0.3.4): check-derived-docs auto-fixes when LOGMIND_AUTO_REGEN_PAT configured
+<!-- logmind-entry-end -->
+
 ## 2026-05-27 07:52 - feat(v0.3.4): check-derived-docs auto-fixes when LOGMIND_AUTO_REGEN_PAT configured
 
 **Reasoning:** Forked PRs ALWAYS run in fail-fast mode — can't push to a fork's head ref. Three-way branching: internal+PAT → auto-fix; internal+no-PAT → fail-fast with opt-in hint; fork → fail-fast
