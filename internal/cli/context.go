@@ -66,6 +66,12 @@ signature skeleton (see 'logmind repomap') as a third, stable document — the
 repo's API surface, placed between the file map and the timeline. Default off
 keeps the payload byte-identical.
 
+Set 'context.spec_file: docs/spec.md' (repo-relative; see 'logmind init
+--spec') to fold in the project's canonical, forward-looking spec as the
+FIRST document — it's the most stable doc, so it makes the best cache
+prefix. Missing, empty, or a path outside the repo root is silently omitted
+(never an error). Default "" keeps the payload byte-identical.
+
 --stats prints a deterministic token receipt (est. ~4 chars/token) instead of
 the payload.`,
 		Args: cobra.NoArgs,
@@ -101,13 +107,39 @@ type contextDoc struct {
 }
 
 // contextDocs is the ordered payload, most-stable first so the cacheable
-// prefix stays byte-identical for as long as possible: the file map (what) →
-// the repomap API surface (also stable; opt-in) → the volatile newest-first
-// timeline (why).
+// prefix stays byte-identical for as long as possible: the hand-authored spec
+// (opt-in; most stable of all — it's never regenerated) → the file map
+// (what) → the repomap API surface (also stable; opt-in) → the volatile
+// newest-first timeline (why).
 var contextDocs = []contextDoc{
+	{typ: "spec", gen: specDoc, enabled: func(c config.Config) bool { return c.Context.SpecFile != "" }},
 	{rel: "docs/file-structure.md", typ: "file-structure", regen: "logmind file-structure --write docs/file-structure.md"},
 	{typ: "repomap", gen: repomapDoc, enabled: func(c config.Config) bool { return c.Context.Repomap }},
 	{rel: "docs/timeline.md", typ: "decision-timeline", regen: "logmind timeline --write docs/timeline.md"},
+}
+
+// specDoc renders the canonical spec file (context.spec_file) for the
+// context payload. config.ResolveSpecFile already enforces the path-safety
+// rule (unset/absolute/out-of-root all collapse to "not resolved"); this
+// function additionally treats a missing or all-whitespace file as nothing
+// to contribute. Every one of those cases is a silent, error-free omission —
+// mirroring repomapDoc's gen-returning-empty convention, NOT the file-backed
+// doc's absent-element branch below (a spec is a nice-to-have fold-in, never
+// a gate, and its absence carries no actionable "regenerate" command since
+// it's hand-authored). The body is never truncated.
+func specDoc(cwd string, cfg config.Config) (body, source string) {
+	path, ok := config.ResolveSpecFile(cwd, cfg)
+	if !ok {
+		return "", ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return "", ""
+	}
+	return string(data), cfg.Context.SpecFile
 }
 
 // repomapDoc renders the Go signature skeleton for the context payload. An
@@ -189,6 +221,16 @@ func runContextStats(cwd string, stdout io.Writer) error {
 
 	fmt.Fprint(stdout, "logmind context — token receipt (est. ~4 chars/token, deterministic)\n\n")
 
+	// The spec term appears only when spec_file actually contributed to the
+	// payload (configured, resolved in-root, present, non-whitespace) —
+	// matching what contextPayload/specDoc emits. Unlike repomap/timeline, a
+	// spec distills nothing (it's hand-authored, not derived from a larger
+	// source) so there is deliberately no density claim for it below.
+	specTok := 0
+	if body, _ := specDoc(cwd, cfg); body != "" {
+		specTok = tokens.Estimate(body)
+	}
+
 	// The repomap term appears only when it is enabled AND has symbols to
 	// contribute (matching what contextPayload actually emits).
 	mapTok, rawGo := 0, 0
@@ -200,13 +242,19 @@ func runContextStats(cwd string, stdout io.Writer) error {
 			}
 		}
 	}
-	if mapTok > 0 {
-		fmt.Fprintf(stdout, "  payload total:  %6d tok  (file-structure %d + repomap %d + timeline %d + framing)\n",
-			tokens.Estimate(payload), fsTok, mapTok, tlTok)
-	} else {
-		fmt.Fprintf(stdout, "  payload total:  %6d tok  (file-structure %d + timeline %d + framing)\n",
-			tokens.Estimate(payload), fsTok, tlTok)
+
+	var parts []string
+	if specTok > 0 {
+		parts = append(parts, fmt.Sprintf("spec %d", specTok))
 	}
+	parts = append(parts, fmt.Sprintf("file-structure %d", fsTok))
+	if mapTok > 0 {
+		parts = append(parts, fmt.Sprintf("repomap %d", mapTok))
+	}
+	parts = append(parts, fmt.Sprintf("timeline %d", tlTok))
+	parts = append(parts, "framing")
+	fmt.Fprintf(stdout, "  payload total:  %6d tok  (%s)\n", tokens.Estimate(payload), strings.Join(parts, " + "))
+
 	// Only claim density when the skeleton is genuinely smaller than the source
 	// it summarizes — on a trivial repo the `# Repomap` framing can exceed a
 	// one-file source, and "0.6x denser" reads worse than saying nothing.

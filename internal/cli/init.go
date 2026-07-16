@@ -30,6 +30,9 @@
 //	--install-hook        Also install the local pre-commit hook
 //	--with-skdd           Subprocess to `npx clud-bug init` after logmind setup
 //	--configure-github    Apply the canonical-v1 ruleset via the GitHub API
+//	--spec                Scaffold docs/spec.md (if absent) and point
+//	                       context.spec_file at it (if unset). Idempotent;
+//	                       works in both fresh-install and refresh mode.
 //
 // SCOPE NOTE: this implementation lands the core scaffolding paths
 // (file writes, hook installs, workflow templates, AGENTS.md). The
@@ -52,6 +55,7 @@ import (
 
 	"github.com/thrillmade/logmind/internal/agents"
 	"github.com/thrillmade/logmind/internal/claudehook"
+	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/hooks"
@@ -71,6 +75,7 @@ type initFlags struct {
 	installHook      bool
 	withSkdd         bool
 	configureGithub  bool
+	spec             bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -98,6 +103,8 @@ func newInitCmd() *cobra.Command {
 	// String flag accepts "" | "yes" | "no" to mirror Python's tri-state
 	// --skill-install / --no-skill-install / default-unset semantics.
 	cmd.Flags().StringVar(&f.skillInstallFlag, "skill-install", "", "Install (yes) or skip (no) the logmind agent skill. Default: skip when non-interactive.")
+	cmd.Flags().BoolVar(&f.spec, "spec", false,
+		"Scaffold docs/spec.md (only if absent) and set context.spec_file: docs/spec.md in .logmind/config.yml (only if unset). Idempotent; works in both fresh-install and refresh mode.")
 	return cmd
 }
 
@@ -177,6 +184,13 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		return err
 	}
 	fmt.Fprintln(out, "✓ Created .logmind/config.yml")
+
+	// docs/spec.md + context.spec_file — opt-in (H2 of the canonical-spec-file
+	// feature). specCreated gates whether it joins the commit-file list below.
+	var specCreated bool
+	if f.spec {
+		specCreated = applyInitSpec(cmd, cwd)
+	}
 
 	// Agent files — for now, ensure AGENTS.md slim block + per-agent stubs.
 	// The Python init runs insert_into_all_ai_files; we delegate to the
@@ -303,6 +317,9 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		if claudeHookChanged {
 			filesToCommit = append(filesToCommit, ".claude/settings.json")
 		}
+		if specCreated {
+			filesToCommit = append(filesToCommit, "docs/spec.md")
+		}
 		for _, agent := range enabled {
 			if rel, ok := agents.FilePath(agent, cwd); ok && pathExists(rel) {
 				if relPath, err := filepath.Rel(cwd, rel); err == nil {
@@ -353,6 +370,13 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "logmind is already initialized — running in refresh mode.")
 	fmt.Fprintln(out)
+
+	// docs/spec.md + context.spec_file — --spec works in refresh mode too
+	// (H2 design point): a repo that ran `logmind init` before this feature
+	// existed can still opt in later without a fresh install.
+	if f.spec {
+		applyInitSpec(cmd, cwd)
+	}
 
 	res, err := applyRefresh(cwd, refreshOpts{githubActions: f.githubActions, git: true, claudeAgentEnabled: claudeAgentEnabled})
 	if err != nil {
@@ -585,6 +609,47 @@ func buildFirstDecisionEntry() string {
 			"---",
 		now,
 	)
+}
+
+// applyInitSpec implements `logmind init --spec` (H2 of the canonical-spec-
+// file feature): scaffolds docs/spec.md from the embedded template ONLY if
+// it's absent (never overwrites hand-edited content), and points
+// context.spec_file at it in .logmind/config.yml ONLY if that key isn't
+// already set (never overrides an explicit user choice — including a user
+// who deliberately configured a DIFFERENT spec path). Both halves are
+// independently idempotent, and both run the same way whether called from
+// the fresh-install path or runInitRefresh — --spec is designed to work in
+// either mode. Returns whether docs/spec.md was freshly created (the
+// fresh-install caller uses this to decide whether to stage it for commit;
+// refresh mode does not commit anything itself, so its caller ignores the
+// return value).
+func applyInitSpec(cmd *cobra.Command, cwd string) (specCreated bool) {
+	out := cmd.OutOrStdout()
+	specPath := filepath.Join(cwd, "docs", "spec.md")
+	if pathExists(specPath) {
+		// Present already — never overwrite (it may be hand-edited).
+	} else if err := writeFile(specPath, templates.SpecTemplate()); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: create docs/spec.md failed:", err)
+	} else {
+		specCreated = true
+		fmt.Fprintln(out, "✓ Created docs/spec.md")
+	}
+
+	merged, err := config.LoadAsMap(cwd)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: load config for --spec failed:", err)
+		return specCreated
+	}
+	if _, alreadySet := config.GetPath(merged, "context.spec_file"); alreadySet {
+		return specCreated // key already present (any value) — leave it alone
+	}
+	config.SetPath(merged, "context.spec_file", "docs/spec.md")
+	if err := config.SaveMap(configPath(cwd), merged); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: set context.spec_file failed:", err)
+		return specCreated
+	}
+	fmt.Fprintln(out, "✓ Set context.spec_file: docs/spec.md in .logmind/config.yml")
+	return specCreated
 }
 
 // applyDependabotInit calls into inserter.EnsureDependabot and prints

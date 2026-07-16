@@ -115,6 +115,16 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 	// agent's job (doctor's advisory lists the placeholders to enrich).
 	summariesBackfilled := backfillBranchSummaries(cwd, cmd.ErrOrStderr())
 
+	// Deliberate scope boundary: --fix does NOT create or modify docs/spec.md
+	// content, and does NOT write context.spec_file to .logmind/config.yml.
+	// Unlike the branch-summary backfill above (a deterministic marker) or
+	// the workflow/hook refresh (bytes we bundle and own), there is no
+	// honest mechanical fallback here — "which of SPEC.md / spec.md /
+	// docs/spec.md did the user mean" and "what should a missing spec say"
+	// are both judgment calls only a human or an authoring agent can make.
+	// doctor's advisory (collectSpecAdvisories) surfaces the nudge;
+	// `logmind init --spec` is the deliberate, explicit opt-in that acts on it.
+
 	// Re-probe to compute the residual drift that --fix cannot address.
 	after := doctor.CollectStatus(cwd, offline)
 	residual := residualProbes(after)

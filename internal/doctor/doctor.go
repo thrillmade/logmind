@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/thrillmade/logmind/internal/claudehook"
+	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
@@ -117,6 +118,14 @@ type StatusReport struct {
 	// headline (== the first decision's title). It is a graceful best-practice
 	// nudge for the agent to enrich — it NEVER affects Overall (not drift).
 	SummariesNeeded []string `json:"summaries_needed"`
+
+	// SpecAdvisories is an ADVISORY list (H2 of the canonical-spec-file
+	// feature) of context.spec_file hygiene notes: configured-but-missing,
+	// configured-but-empty, configured-with-an-unsafe-path, or a nudge to
+	// configure it when a conventional spec file already exists on disk but
+	// spec_file is unset. Like SummariesNeeded, this NEVER affects Overall —
+	// the spec fold-in is a nice-to-have, not a gate.
+	SpecAdvisories []string `json:"spec_advisories"`
 }
 
 // ToJSON serialises the report with 2-space indent, matching Python's
@@ -188,6 +197,7 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 		NetworkUsed:     false,
 		Suggestions:     suggestions,
 		SummariesNeeded: collectSummariesNeeded(projectRoot),
+		SpecAdvisories:  collectSpecAdvisories(projectRoot),
 	}
 }
 
@@ -225,6 +235,73 @@ func collectSummariesNeeded(projectRoot string) []string {
 		}
 	}
 	return needed
+}
+
+// specNudgeCandidates lists the conventional spec-file names probed for the
+// unset-but-a-file-exists nudge, in priority order.
+var specNudgeCandidates = []string{"SPEC.md", "spec.md", "docs/spec.md"}
+
+// collectSpecAdvisories returns the ADVISORY list of context.spec_file
+// hygiene notes (H2 of the canonical-spec-file feature):
+//
+//   - configured but the resolved file is missing
+//   - configured but the file is empty/whitespace-only
+//   - configured with an absolute or out-of-root path (the same path-safety
+//     rule config.ResolveSpecFile enforces for the actual fold-in — this
+//     advisory and the real behavior can never disagree)
+//   - NUDGE: unset, but a conventional spec file (SPEC.md, spec.md, then
+//     docs/spec.md) already exists on disk
+//
+// At most one condition can apply at a time (spec_file is a single scalar),
+// but the return stays a slice for shape-parity with collectSummariesNeeded
+// and room to grow. Purely informational — like SummariesNeeded, this NEVER
+// affects Overall (a spec fold-in is a nice-to-have, not a gate).
+//
+// `doctor --fix` deliberately does NOT act on any of these: there is no
+// honest mechanical fallback for "which candidate file did the user mean"
+// or "what should the missing spec say" — see runDoctorFix's scope-boundary
+// comment in the cli package. This function only reports; it never writes.
+func collectSpecAdvisories(projectRoot string) []string {
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		return nil
+	}
+	rel := cfg.Context.SpecFile
+	if rel == "" {
+		for _, candidate := range specNudgeCandidates {
+			if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(candidate))); err == nil {
+				return []string{
+					candidate + " exists but context.spec_file is unset — set `context.spec_file: " + candidate +
+						"` in .logmind/config.yml (or run `logmind init --spec`) to fold it into `logmind context`.",
+				}
+			}
+		}
+		return nil
+	}
+
+	if _, ok := config.ResolveSpecFile(projectRoot, cfg); !ok {
+		reason := "an absolute path"
+		if !filepath.IsAbs(rel) {
+			reason = "a path that escapes the repo root"
+		}
+		return []string{
+			fmt.Sprintf("context.spec_file (%s) is %s — logmind treats this as UNSET; use a repo-relative path that stays inside the repo.", rel, reason),
+		}
+	}
+
+	path := filepath.Join(projectRoot, filepath.FromSlash(rel))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []string{
+			"context.spec_file is configured (" + rel + ") but the file is missing — create it (e.g. `logmind init --spec`) or unset context.spec_file.",
+		}
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return []string{
+			"context.spec_file (" + rel + ") is empty — add content, or unset context.spec_file.",
+		}
+	}
+	return nil
 }
 
 var prSuffixRe = regexp.MustCompile(` \(#\d+\)$`)
@@ -712,6 +789,13 @@ func RenderStatus(r StatusReport) string {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("Branch summaries needing attention (%d) — enrich the important ones:", len(r.SummariesNeeded)))
 		for _, s := range r.SummariesNeeded {
+			lines = append(lines, fmt.Sprintf("  • %s", s))
+		}
+	}
+	if len(r.SpecAdvisories) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Canonical spec file (%d):", len(r.SpecAdvisories)))
+		for _, s := range r.SpecAdvisories {
 			lines = append(lines, fmt.Sprintf("  • %s", s))
 		}
 	}

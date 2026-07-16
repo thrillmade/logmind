@@ -38,6 +38,7 @@ import (
 //go:embed config.yml.template decisions.md.template decisions-archive.md.template file-structure.md.template
 //go:embed decisions-branch-header.md.template
 //go:embed dependabot.yml.template
+//go:embed spec.md.template
 //go:embed github/*.yml.template
 var embedFS embed.FS
 
@@ -191,6 +192,15 @@ func DecisionsBranchHeader() string {
 // semantics when the consumer repo already has a dependabot.yml.
 func DependabotTemplate() string {
 	return readEmbed("dependabot.yml.template")
+}
+
+// SpecTemplate returns the bundled docs/spec.md seed — the skeleton for the
+// project's canonical, forward-looking spec (see `logmind init --spec`).
+// Unlike every other file this package seeds, the spec is never
+// regenerated: `logmind init --spec` writes this template ONLY when
+// docs/spec.md is absent, then the file is edited by hand via normal PRs.
+func SpecTemplate() string {
+	return readEmbed("spec.md.template")
 }
 
 // Workflow returns the embedded body of a single .github/workflows/<name>.yml
