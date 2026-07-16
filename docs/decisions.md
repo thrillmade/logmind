@@ -103,3 +103,14 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 - next tag (rc2 or v1.0.0) auto-opens a cask-bump PR on thrillmade/homebrew-tap
 
 ---
+## 2026-07-16 16:41 - Complete the enforcement dogfood: commit the doctor --fix artifacts
+
+**Reasoning:** PR3 deliberately deferred the gitattributes merge-driver file and the self-update workflow that the same doctor --fix run surfaced; committing them finishes the self-heal so doctor reports current with zero uncommitted drift
+
+**Alternatives considered:** Leave them untracked, which would resurface as drift on every doctor run
+
+**Implications:**
+- The repo now carries the v9 self-update workflow and the union merge driver; local hooks and the Claude guard are current at 2.0.0-dev
+
+---
+

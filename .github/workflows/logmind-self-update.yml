@@ -1,0 +1,207 @@
+# logmind-template-version: v9
+name: logmind / self-update
+
+# Weekly check that the bundled logmind workflow templates are still on
+# the current template-version marker. When `logmind init` ships a new
+# template body (marker bump v3→v4 etc.), this workflow runs `logmind
+# init` in refresh mode and opens a PR with the marker-driven changes.
+#
+# v8 / logmind v1.1.0 (2026-06-05) — distribution lock changed how
+# version pinning works for consumer repos:
+#
+#   - logmind itself is installed in CI via the
+#     `thrillmade/setup-logmind@vX.Y.Z` action, NOT
+#     `pip install logmind==X.Y.Z`.
+#   - The action ref is bumped by Dependabot's `github-actions`
+#     ecosystem entry (also shipped by `logmind init` via
+#     `.github/dependabot.yml`). Dependabot's job: keep the action pin
+#     current. This workflow's job: keep the template BODY current.
+#   - Pure version-pin bumps no longer flow through this workflow —
+#     Dependabot handles them, no PAT required, no smart-skip needed.
+#     We only run when a template body (marker line + content) shifts.
+#
+# To pin to a specific logmind version and stop self-updates, add a
+# `pinVersion: "X.Y.Z"` field to `.logmind/config.yml`. The cron will
+# skip when that field is present.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 12 * * 1'   # Mondays 12:00 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+  # NOTE: there is NO `permissions:` knob that lets GITHUB_TOKEN push
+  # to .github/workflows/*.yml — GitHub blocks that at the git layer
+  # for security. When a logmind refresh would touch a workflow file
+  # (e.g. an updated `check-doc-links.yml` template body), the only
+  # path that works is to push via a PAT with the `workflow` scope.
+  # We use the SAME `LOGMIND_AUTO_REGEN_PAT` secret that
+  # `regen-timeline.yml` v3+ uses for the same reason (single secret
+  # to configure, both workflows benefit).
+  # Without the PAT: this workflow falls back to non-workflow-only
+  # refreshes (AGENTS.md, .cursorrules, etc.) and prints a one-line
+  # `::warning::` directing the user to configure the PAT to unlock
+  # workflow refreshes. See the "Push step" below.
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Use the regen PAT when available so we can push refreshed
+          # workflow files. Falls through to GITHUB_TOKEN when absent —
+          # push works for non-workflow files but will reject any
+          # workflow-file changes (handled in the push step below).
+          token: ${{ secrets.LOGMIND_AUTO_REGEN_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Compare installed vs released
+        id: compare
+        run: |
+          set -euo pipefail
+          # Installed action ref: parsed from any workflow file's
+          # `uses: thrillmade/setup-logmind@vX.Y.Z` line. Since v1.1.0
+          # all logmind-installed workflows use the action; pre-v1.1.0
+          # installs still pin via `pip install logmind==X.Y.Z`.
+          INSTALLED=""
+          for f in .github/workflows/check-doc-links.yml .github/workflows/regen-timeline.yml; do
+            if [ -f "$f" ]; then
+              INSTALLED=$(grep -oE 'thrillmade/setup-logmind@v[0-9]+\.[0-9]+\.[0-9]+' "$f" | head -1 | sed 's/thrillmade\/setup-logmind@v//') || true
+              if [ -n "$INSTALLED" ]; then break; fi
+              # Fall back to legacy pip pin so pre-v1.1.0 installs upgrade once.
+              INSTALLED=$(grep -oE 'logmind==[0-9]+\.[0-9]+\.[0-9]+' "$f" | head -1 | sed 's/logmind==//') || true
+              if [ -n "$INSTALLED" ]; then break; fi
+            fi
+          done
+          if [ -z "$INSTALLED" ]; then
+            echo "::notice::Installed logmind version not detected in workflow files. Re-run \`logmind init\` once locally to land the current install style, then self-update will work from then on."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Optional pin override from .logmind/config.yml. Flat grep
+          # because the runner can't be relied on to have a third-party
+          # YAML lib importable.
+          PIN=""
+          if [ -f ".logmind/config.yml" ]; then
+            PIN=$(grep -E '^[[:space:]]*pinVersion:[[:space:]]*' .logmind/config.yml \
+              | head -1 \
+              | sed -E 's/^[[:space:]]*pinVersion:[[:space:]]*//; s/^["'\''](.*)["'\'']$/\1/; s/[[:space:]]*$//' \
+              || echo "")
+          fi
+
+          # Latest release: fetched from the GitHub /releases/latest
+          # JSON. CDN-aware retry (3 attempts: 0s / 30s / 60s) covers
+          # the ~30-60s lag between a release publish and the JSON
+          # endpoint reflecting the new tag_name. Lifted from the v7
+          # PyPI-side retry — same logic, different endpoint.
+          fetch_latest() {
+            local v
+            v=$(curl -fsSL https://api.github.com/repos/thrillmade/logmind/releases/latest 2>/dev/null \
+              | sed -n 's/.*"tag_name": "\(.*\)".*/\1/p' \
+              | head -1 \
+              | sed 's/^v//') || true
+            echo "$v"
+          }
+          LATEST=$(fetch_latest)
+          for delay in 30 60; do
+            if [ -n "$LATEST" ] && [ "$LATEST" != "$INSTALLED" ]; then
+              break  # found a newer version on attempt 1 or 2
+            fi
+            sleep "$delay"
+            CANDIDATE=$(fetch_latest)
+            if [ -n "$CANDIDATE" ]; then
+              LATEST="$CANDIDATE"
+            fi
+          done
+
+          echo "installed=$INSTALLED" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST"       >> "$GITHUB_OUTPUT"
+          echo "pin=$PIN"              >> "$GITHUB_OUTPUT"
+          echo "Installed: $INSTALLED  Latest: $LATEST  Pin: ${PIN:-(none)}"
+
+          if [ -n "$PIN" ]; then
+            echo "::notice::Pinned to $PIN via .logmind/config.yml — skipping update check."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$INSTALLED" = "$LATEST" ]; then
+            echo "Already on latest ($INSTALLED). Nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # v1.1.0+ installs logmind itself via the setup-logmind action so
+      # `logmind init` (the refresh) runs against the same binary
+      # version consumer repos will see after this workflow lands its
+      # PR. The action's version tracks the LATEST step output.
+      - uses: thrillmade/setup-logmind@v1.0.0
+        if: steps.compare.outputs.skip == 'false'
+        with:
+          version: ${{ steps.compare.outputs.latest }}
+
+      - name: Run logmind init + open PR
+        if: steps.compare.outputs.skip == 'false'
+        env:
+          INSTALLED: ${{ steps.compare.outputs.installed }}
+          LATEST:    ${{ steps.compare.outputs.latest }}
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          PAT:       ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}
+        run: |
+          set -euo pipefail
+          BRANCH="logmind/self-update-${LATEST}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          # Refresh mode rewrites stale workflow templates by the
+          # `# logmind-template-version:` marker, leaves docs/ +
+          # .logmind/ + agent files untouched. Idempotent.
+          logmind init --no-git --no-skill-install || logmind init
+
+          # SMART WORKFLOW-SKIP. Decouples action-pin bumps (now
+          # handled by Dependabot, no PAT needed) from template-body
+          # releases (PAT needed for workflow-file push). If the
+          # refresh touched a workflow file AND no PAT is configured
+          # → skip the release with a clear `::notice::` instead of
+          # failing. Pure pin-bump-only diffs never appear on this
+          # branch in v1.1.0+ because Dependabot owns the pins.
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::notice::No file changes after logmind init — nothing to PR."
+            exit 0
+          fi
+          WORKFLOW_CHANGES=$(git diff --cached --name-only -- '.github/workflows/*.yml' '.github/workflows/*.yaml' || true)
+          if [ -n "$WORKFLOW_CHANGES" ] && [ -z "${PAT:-}" ]; then
+            echo "::notice title=Skipping workflow-touching release::This release would update workflow file(s):"
+            echo "::notice::$WORKFLOW_CHANGES"
+            echo "::notice::No \`LOGMIND_AUTO_REGEN_PAT\` is configured, so this run will skip."
+            echo "::notice::To enable: configure a fine-grained PAT with Contents:write + Workflows:write + Pull-requests:write as the \`LOGMIND_AUTO_REGEN_PAT\` repo or org secret (same secret used by regen-timeline.yml)."
+            echo "::notice::OR: skip this release by running \`logmind init\` locally and opening a PR manually."
+            exit 0
+          fi
+          # `[skip-logmind]` title prefix — these are bot-generated
+          # propagation PRs (template-body refresh) owned by the
+          # workflow itself; they're NOT decision commits. Without the
+          # prefix, consumer-repo `check-decisions.yml` fails because
+          # the diff exceeds the threshold AND no decision file is
+          # present. The prefix lets consumer-repo check-decisions
+          # skip via its existing maintainer-override path.
+          git commit -m "[skip-logmind] logmind self-update: ${INSTALLED} → ${LATEST}"
+          git push -u origin "$BRANCH"
+          # `gh pr create` uses PAT too when available. Per-repo "Allow
+          # GitHub Actions to create and approve pull requests" setting
+          # blocks GITHUB_TOKEN from opening PRs on some org/repo
+          # configs. Using the PAT for this step too eliminates the
+          # second per-repo setup checkbox.
+          PR_TOKEN="${PAT:-${GH_TOKEN}}"
+          GH_TOKEN="$PR_TOKEN" gh pr create \
+            --title "[skip-logmind] logmind self-update: ${INSTALLED} → ${LATEST}" \
+            --body "Automated upgrade from logmind ${INSTALLED} → ${LATEST}.
+
+          Refresh mode only touched workflow templates whose \`# logmind-template-version:\` marker is stale; \`docs/\`, \`.logmind/config.yml\`, and agent files were left alone.
+
+          Review the diff. To stop self-updates after this, add \`pinVersion: \"${LATEST}\"\` to \`.logmind/config.yml\` before merging."
