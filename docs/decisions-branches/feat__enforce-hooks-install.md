@@ -17,3 +17,14 @@
 
 ---
 
+## 2026-07-16 16:02 - Review fixes for PR 195: doctor --fix degrades gracefully on malformed .claude/settings.json, self-update installs the PreToolUse guard, commit-msg guard uses an explicit if
+
+**Reasoning:** Review verdict was SHIP-after-one-fix. M1: applyRefresh fed claudehook's error into firstErr, and runDoctorFix converts any refreshErr into ErrSilent/exit-1 with the ok summary suppressed - so a consumer with a JSONC-style trailing-comma settings.json got a persistently failing doctor --fix that also skipped the branch-summary backfill and residual re-probe over a file --fix cannot repair anyway. The sibling git-hook installers deliberately swallow their errors so a bad hook degrades to residual drift; the claudehook install now does the same, and the doctor probe already classifies an unparseable settings.json as missing (benign). m1: self-update refreshed the three git hooks but never installed Layer 1, so a repo whose only refresh path is self-update would get an enforcing commit-msg hook while the PreToolUse guard stayed missing forever with no doctor nudge. m2: the one-liner msg-file guard relied on shell operator precedence; replaced with an explicit if block per review.
+
+**Alternatives considered:** Have runDoctorFix special-case claudehook errors instead of swallowing in applyRefresh - rejected: applyRefresh is the shared choke point (init refresh-mode hits the same path), and the established convention there is per-installer error swallowing for user-content surfaces., Surface the malformed-settings condition as a stderr warning from applyRefresh - rejected for now: the doctor probe reports the state and keeping the swallow symmetric with the git-hook installers is the smaller, convention-matching change.
+
+**Implications:**
+- New tests: doctor --fix with malformed settings.json exits 0, prints ok doctor-fix with claude-hook=current, still installs the git hooks, and leaves the file byte-untouched; self-update installs the guard by default and skips it under agents.claude:false. commit-msg.golden regenerated for the explicit-if body; the hookVersion marker means consumers auto-upgrade on their next refresh as before.
+
+---
+

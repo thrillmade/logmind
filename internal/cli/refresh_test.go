@@ -197,3 +197,34 @@ func TestDoctorFix_ClaudeDisabledInConfigSkipsPreToolUseGuard(t *testing.T) {
 		}
 	})
 }
+
+// TestDoctorFix_MalformedClaudeSettingsDegradesGracefully: a user's
+// malformed (e.g. JSONC-style trailing-comma) .claude/settings.json must
+// NOT hard-fail `doctor --fix` — EnsurePreToolUseGuard's refusal is
+// swallowed like a foreign git hook's, so --fix still exits 0, still
+// prints the `ok doctor-fix` summary, still applies the rest of the
+// remediation pass (hooks etc.), and leaves the malformed file untouched.
+func TestDoctorFix_MalformedClaudeSettingsDegradesGracefully(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		malformed := "{\n  \"hooks\": {\n    \"PreToolUse\": [],\n  },\n}\n" // trailing commas — JSONC, not JSON
+		writeRel(t, filepath.Join(".claude", "settings.json"), malformed, 0o644)
+
+		// runDoctorFixCmd fails the test on a non-nil Execute() error, so
+		// reaching the assertions below already proves exit 0.
+		out, _ := runDoctorFixCmd(t)
+		mustContain(t, out, "ok doctor-fix")
+		mustContain(t, out, "claude-hook=current") // no write happened
+
+		// The rest of the remediation still ran: the git hooks were
+		// installed on this fresh repo.
+		if _, err := os.Stat(filepath.Join(".git", "hooks", "commit-msg")); err != nil {
+			t.Errorf("expected commit-msg hook installed despite malformed settings.json: %v", err)
+		}
+
+		// The malformed file is user content --fix can't repair — byte-untouched.
+		if got := readRel(t, filepath.Join(".claude", "settings.json")); got != malformed {
+			t.Errorf("malformed settings.json was modified:\n got: %q\nwant: %q", got, malformed)
+		}
+	})
+}

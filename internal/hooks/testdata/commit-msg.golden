@@ -12,7 +12,10 @@
 # Fails open when logmind isn't on PATH: a missing binary should never
 # block a commit.
 
-MSG_FILE="$1"; [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ] && exit 0
+MSG_FILE="$1"
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+    exit 0
+fi
 if command -v logmind >/dev/null 2>&1; then
     logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"; exit $?
 fi

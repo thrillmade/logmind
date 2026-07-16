@@ -115,11 +115,19 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 	}
 
 	if opts.claudeAgentEnabled {
-		changed, err := claudehook.EnsurePreToolUseGuard(cwd)
-		if err == nil && changed {
+		// Error deliberately swallowed, matching the git-hook installers
+		// above: a malformed (e.g. JSONC-style / trailing-comma)
+		// .claude/settings.json is user content EnsurePreToolUseGuard
+		// refuses to touch — feeding that refusal into firstErr would turn
+		// `doctor --fix` into a persistent exit-1 (suppressing the summary
+		// line, the branch-summary backfill, and the residual re-probe)
+		// over a file --fix can't repair anyway. Instead it degrades like
+		// a foreign git hook does: the doctor probe classifies an
+		// unparseable settings.json as "missing" (benign), and the guard
+		// installs the moment the user fixes their JSON.
+		if changed, _ := claudehook.EnsurePreToolUseGuard(cwd); changed {
 			res.ClaudeHookChanged = true
 		}
-		note(err)
 	}
 
 	return res, firstErr

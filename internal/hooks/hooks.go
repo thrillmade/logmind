@@ -255,7 +255,10 @@ func BuildCommitMsgBody() string {
 		"# Fails open when logmind isn't on PATH: a missing binary should never\n" +
 		"# block a commit.\n" +
 		"\n" +
-		"MSG_FILE=\"$1\"; [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ] && exit 0\n" +
+		"MSG_FILE=\"$1\"\n" +
+		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then\n" +
+		"    exit 0\n" +
+		"fi\n" +
 		"if command -v logmind >/dev/null 2>&1; then\n" +
 		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\"; exit $?\n" +
 		"fi\n" +

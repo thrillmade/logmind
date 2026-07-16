@@ -12,6 +12,13 @@
 //     enabled-agent config requires
 //   - Hooks (post-merge + post-rewrite + commit-msg) — re-installed
 //     from the current binary's body (closes the v0.6.10 drift loop)
+//   - The Claude Code PreToolUse guard in .claude/settings.json (Layer 1
+//     of v2.0.0 commit enforcement; internal/claudehook), gated on the
+//     same agents.claude config check doctor --fix uses (default true).
+//     Without this, a repo whose only refresh path is self-update would
+//     get its commit-msg hook auto-upgraded to enforcing (Layer 2) while
+//     Layer 1 stays missing forever — and doctor would never nudge,
+//     because "missing" is benign.
 package cli
 
 import (
@@ -21,6 +28,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/inserter"
 )
@@ -80,6 +88,19 @@ func runSelfUpdate(cmd *cobra.Command) error {
 		}
 		if changed, _ := hooks.InstallCommitMsg(cwd); changed {
 			fmt.Fprintln(out, "✓ Refreshed .git/hooks/commit-msg")
+			updated = true
+		}
+	}
+
+	// Layer 1 of commit enforcement (Claude Code PreToolUse guard) —
+	// same agents.claude config gate as doctor --fix (default true), and
+	// error-swallowed like the hook refreshes above (a malformed
+	// settings.json degrades to residual state, never a failed
+	// self-update). Not gated on .git presence: .claude/settings.json is
+	// repo content, not git-clone state.
+	if claudeAgentEnabledFromConfig(cwd) {
+		if changed, _ := claudehook.EnsurePreToolUseGuard(cwd); changed {
+			fmt.Fprintln(out, "✓ Refreshed .claude/settings.json (Claude Code guard-commit hook)")
 			updated = true
 		}
 	}
