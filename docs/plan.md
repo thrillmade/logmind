@@ -157,7 +157,8 @@ auto-fix in the `check-doc-links` workflow).
   2. **Canonical spec-file contract** — an optional, forward-looking spec
      document surfaced via `logmind context`, defined SkDD-wide (shared
      across logmind, clud-bug, and agent-skills) rather than
-     logmind-specific.
+     logmind-specific. logmind's own spec is the pointer doc
+     [docs/spec.md](spec.md) (`context.spec_file: docs/spec.md`).
 - Once both land, the release is tagged `v2.0.0`.
 
 ## Technical Decisions
