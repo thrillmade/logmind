@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-17-fix-ci-check-decisions-honors-skip-logmind-on-rerun-fetch-th -->
+- **2026-07-17** — fix(ci): check-decisions honors [skip-logmind] on rerun — fetch the live PR title (#212) → [detail](decisions-branches/fix__check-decisions-live-pr-title-212.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-16-v2-0-0-truth-sweep-retired-python-era-doc-examples-taught-th -->
 - **2026-07-16** — v2.0.0 truth sweep: retired Python-era doc examples, taught the real v2 CLI surface (context/repomap/doctor --fix/headline/enforcement/the pulse) across README, SECURITY, ai-agent-files, plan, skill, and release tooling docs → [detail](decisions-branches/docs__v2-truth-sweep.md)
 <!-- logmind-entry-end -->
