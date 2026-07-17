@@ -134,6 +134,27 @@ func TestCollectStatus_StaleWorkflowFlipsToDrift(t *testing.T) {
 	}
 }
 
+// TestStaleCount_MatchesDriftClassification: StaleCount must count exactly
+// the "stale"-classified rows and nothing else (missing rows on a fresh
+// repo — e.g. every git hook, every workflow — must NOT be counted).
+func TestStaleCount_MatchesDriftClassification(t *testing.T) {
+	dir := freshRepo(t)
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", t.TempDir())
+
+	if n := StaleCount(dir); n != 0 {
+		t.Errorf("StaleCount(fresh repo) = %d; want 0 (missing != stale)", n)
+	}
+
+	body := "# logmind-template-version: v0-FAKE\n# rest of file\n"
+	mustWrite(t, filepath.Join(dir, ".github", "workflows", "regen-timeline.yml"), body)
+
+	if n := StaleCount(dir); n != 1 {
+		t.Errorf("StaleCount(one stale workflow) = %d; want 1", n)
+	}
+}
+
 func TestCollectStatus_InstalledWorkflowMarkerMatchesBundled(t *testing.T) {
 	dir := freshRepo(t)
 	// Write an installed workflow whose marker matches what we ship.

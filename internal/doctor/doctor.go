@@ -349,6 +349,30 @@ func collectLogmindStatus(projectRoot string) ToolStatus {
 	}
 }
 
+// StaleCount runs the same probe set collectLogmindStatus uses (workflow /
+// hook / marker drift classification) and returns how many components are
+// classified STALE — the one drift class that flips Overall to DRIFT.
+// "missing" (never installed) and "markerless" (hand-edited, pre-marker)
+// are deliberately excluded: both are benign by design elsewhere in this
+// package (see classifyLogmindDrift), so a caller that only cares about
+// "does this repo need `doctor --fix`" should only count the same signal
+// doctor itself gates on.
+//
+// Exported for `logmind log`'s pulse advisory (internal/cli/pulse.go),
+// which wants doctor's exact stale-count without paying for
+// CollectStatus's extra SummariesNeeded / SpecAdvisories walks — this
+// calls collectLogmindStatus directly, the same probe set, nothing more.
+func StaleCount(projectRoot string) int {
+	status := collectLogmindStatus(projectRoot)
+	count := 0
+	for _, wf := range status.Workflows {
+		if wf.Drift == "stale" {
+			count++
+		}
+	}
+	return count
+}
+
 // classifyLogmindDrift aggregates per-workflow drift into the tool-level
 // drift. ANY stale workflow/hook/probe row flips the tool to "stale";
 // remaining unknowns flip to "unknown"; otherwise "ok". (The version
