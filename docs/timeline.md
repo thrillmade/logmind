@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-16-v2-0-0-truth-sweep-retired-python-era-doc-examples-taught-th -->
+- **2026-07-16** — v2.0.0 truth sweep: retired Python-era doc examples, taught the real v2 CLI surface (context/repomap/doctor --fix/headline/enforcement/the pulse) across README, SECURITY, ai-agent-files, plan, skill, and release tooling docs → [detail](decisions-branches/docs__v2-truth-sweep.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-16-routes-the-non-interactive-link-advisory-to-stderr-closing-t -->
 - **2026-07-16** — Routes the non-interactive link advisory to stderr, closing the 206a section 3.1.1 stdout-exactness gap before the v2.0.0 tag → [detail](decisions-branches/fix__selfheal-advisory-stderr.md)
 <!-- logmind-entry-end -->
