@@ -13,21 +13,21 @@
 //     have used (5s) — comfortably inside 3s — because the pulse's
 //     drift-count call (doctor.StaleCountFast) never invokes that probe.
 //
-//   - item 2 (TZ skew): the spec pulse compares decisions.Iter-parsed
-//     entry dates against gitcli.LastCommitTime's real instant.
-//     decisions.Iter parses `## YYYY-MM-DD HH:MM` headers with a zoneless
-//     time.Parse (Go labels these UTC by default), but those headers are
-//     LOCAL wall-clock time by construction — log.go's buildDecisionEntry
-//     writes time.Now().Format("2006-01-02 15:04"). Comparing the
-//     UTC-mislabeled value directly against a real instant skews the
-//     comparison by the full local UTC offset: a false fire in
-//     positive-offset zones, a missed fire in negative-offset zones.
-//     Reproducing this needs a process whose time.Local actually reflects
-//     a target zone — Go resolves time.Local once, at process
-//     initialization, from the TZ environment variable, and setting
-//     TZ inside an already-running test process does NOT reload it. Hence
-//     real `go build` + subprocess invocations with TZ set on the
-//     child's environment, not t.Setenv in-process.
+//   - item 2 (TZ stability, issue #222): the spec pulse compares a decision
+//     header's `## YYYY-MM-DD HH:MM` date against the spec file's last commit
+//     at CALENDAR-DAY granularity, so its verdict must NOT depend on the
+//     running machine's timezone. (The superseded #211 fix relabeled the
+//     header's zoneless wall clock as time.Local and compared instants, which
+//     flipped the verdict by the full local UTC offset — a false fire in
+//     positive-offset zones, a missed fire in negative-offset zones.) We pin a
+//     FIXED on-disk repo state and run the REAL built binary under both a large
+//     positive-offset zone and a large negative-offset zone, asserting the SAME
+//     verdict each time. This needs a process whose time.Local actually
+//     reflects the target zone — Go resolves time.Local once, at process
+//     initialization, from the TZ environment variable, and setting TZ inside
+//     an already-running test process does NOT reload it. Hence a real built
+//     binary invoked as a subprocess with TZ set on the child's environment,
+//     not t.Setenv in-process.
 package cli
 
 import (
@@ -155,28 +155,37 @@ func TestLogBinary_HangProof_HostilePathBinary(t *testing.T) {
 	}
 }
 
-// TestLogBinary_TZSkew_SpecPulse is the release-bar proof for item 2: the
-// spec pulse's local-time comparison, exercised through the REAL built
-// binary with TZ set on the subprocess environment (see file docstring for
-// why this can't be an in-process t.Setenv test).
+// TestLogBinary_TZSkew_SpecPulse is the release-bar proof for item 2 (#222):
+// the spec pulse's calendar-day comparison, exercised through the REAL built
+// binary with TZ set on the subprocess environment (see file docstring for why
+// this can't be an in-process t.Setenv test). For a FIXED on-disk repo state
+// the verdict must be identical under a large positive-offset zone and a large
+// negative-offset zone — the pre-#222 time.Local compare flipped it across the
+// two, so the same-day case below fails against that code (it fired under the
+// negative-offset zone while staying silent under the positive-offset one).
 func TestLogBinary_TZSkew_SpecPulse(t *testing.T) {
 	goBin := requireHotpathSubprocessTools(t)
 	binPath := buildGuardCommitBinary(t, goBin)
 
-	t.Run("UTC+12: decisions 2h BEFORE the spec commit must stay silent", func(t *testing.T) {
-		loc := mustLoadTZLocation(t, "Pacific/Auckland")
-		// NZ winter (June): NZST, a fixed UTC+12 — no DST straddling.
-		specInstant := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
-		decisionInstant := specInstant.Add(-2 * time.Hour) // genuinely BEFORE the commit
-		runTZSkewSpecPulseCase(t, binPath, "Pacific/Auckland", loc, specInstant, decisionInstant, false)
+	// Spec commit day = 2024-07-15 (UTC). ~UTC+12 and ~UTC-7, no DST straddle
+	// at these dates — the two zones whose offsets bracket the boundary.
+	const specCommit = "2024-07-15T00:00:00Z"
+	zones := []string{"Pacific/Auckland", "America/Los_Angeles"}
+
+	t.Run("decision day AFTER the spec commit day fires in every zone", func(t *testing.T) {
+		for _, tz := range zones {
+			mustLoadTZLocation(t, tz) // skip if this host lacks tzdata for tz
+			runTZSkewSpecPulseCase(t, binPath, tz, specCommit, "2024-07-16 12:00", true)
+		}
 	})
 
-	t.Run("UTC-7: decisions 2h AFTER the spec commit must fire", func(t *testing.T) {
-		loc := mustLoadTZLocation(t, "America/Los_Angeles")
-		// CA summer (July): PDT, a fixed UTC-7 — no DST straddling.
-		specInstant := time.Date(2024, 7, 15, 0, 0, 0, 0, time.UTC)
-		decisionInstant := specInstant.Add(2 * time.Hour) // genuinely AFTER the commit
-		runTZSkewSpecPulseCase(t, binPath, "America/Los_Angeles", loc, specInstant, decisionInstant, true)
+	t.Run("decision on the SAME day as the spec commit stays silent in every zone", func(t *testing.T) {
+		for _, tz := range zones {
+			mustLoadTZLocation(t, tz)
+			// Same calendar day as the spec commit → tie is NOT-after → silent.
+			// The pre-#222 code fired here under America/Los_Angeles.
+			runTZSkewSpecPulseCase(t, binPath, tz, specCommit, "2024-07-15 12:00", false)
+		}
 	})
 }
 
@@ -190,15 +199,17 @@ func mustLoadTZLocation(t *testing.T, name string) *time.Location {
 }
 
 // runTZSkewSpecPulseCase builds a repo with a spec file committed at
-// specInstant (a real, TZ-independent instant) and specPulseThreshold
-// decision entries whose headers carry the LOCAL wall-clock rendering of
-// decisionInstant in `loc` — exactly what log.go's buildDecisionEntry would
-// have written had `time.Now()` returned decisionInstant while the process
-// ran under `loc`. It then runs the real `logmind log` binary with TZ=tz on
-// its environment and asserts the spec pulse fires (or doesn't) per
-// wantFire — the ground truth being decisionInstant.After(specInstant),
-// which is independent of any timezone.
-func runTZSkewSpecPulseCase(t *testing.T, binPath, tz string, loc *time.Location, specInstant, decisionInstant time.Time, wantFire bool) {
+// specCommitRFC3339 (a real, TZ-independent instant) and specPulseThreshold
+// decision entries all carrying the SAME fixed `## YYYY-MM-DD HH:MM` header
+// (decisionHeader). It then runs the real `logmind log` binary with TZ=tz on
+// its environment and asserts the spec pulse fires (or doesn't) per wantFire.
+// Because #222 compares at calendar-day granularity — the decision header's day
+// vs the spec commit's day, both anchored at UTC midnight — the verdict is a
+// pure function of the on-disk state and must be the SAME for every tz. Running
+// under bracketing +12 / -7 zones is the regression guard: the pre-#222
+// time.Local compare made the verdict tz-dependent, so it disagrees with this
+// invariant.
+func runTZSkewSpecPulseCase(t *testing.T, binPath, tz, specCommitRFC3339, decisionHeader string, wantFire bool) {
 	t.Helper()
 	repo := t.TempDir()
 	initLogTestGitRepo(t, repo)
@@ -210,17 +221,17 @@ func runTZSkewSpecPulseCase(t *testing.T, binPath, tz string, loc *time.Location
 	}
 
 	mustWriteUnder(t, repo, ".logmind/config.yml", "context:\n  spec_file: SPEC.md\n")
-	commitFileWithDate(t, repo, "SPEC.md", "# Spec\n", specInstant.UTC().Format(time.RFC3339))
+	commitFileWithDate(t, repo, "SPEC.md", "# Spec\n", specCommitRFC3339)
 
 	// Overwrite the init-scaffolded decisions.md (which carries init's own
-	// "first decision", logged at real current wall-clock time and
-	// irrelevant to this reproduction) with `specPulseThreshold` entries,
-	// all sharing the SAME contrived wall-clock header.
-	wallClock := decisionInstant.In(loc).Format("2006-01-02 15:04")
+	// "first decision", logged at real current wall-clock time and irrelevant
+	// to this reproduction) with `specPulseThreshold` entries, all sharing the
+	// SAME fixed wall-clock header — its calendar day is the only decision-side
+	// input to the verdict.
 	var b strings.Builder
 	b.WriteString("# Decisions\n\n")
 	for i := 0; i < specPulseThreshold; i++ {
-		fmt.Fprintf(&b, "## %s - tz skew filler decision %d\n\n**Reasoning:** filler\n\n---\n\n", wallClock, i)
+		fmt.Fprintf(&b, "## %s - tz skew filler decision %d\n\n**Reasoning:** filler\n\n---\n\n", decisionHeader, i)
 	}
 	if err := os.WriteFile(filepath.Join(repo, "docs", "decisions.md"), []byte(b.String()), 0o644); err != nil {
 		t.Fatalf("overwrite decisions.md: %v", err)
@@ -238,9 +249,8 @@ func runTZSkewSpecPulseCase(t *testing.T, binPath, tz string, loc *time.Location
 
 	fired := strings.Contains(stderr.String(), "logmind: SPEC.md unchanged for")
 	if fired != wantFire {
-		t.Fatalf("TZ=%s: spec pulse fired=%v; want %v (ground truth: decisionInstant %s spec commit's instant).\nspecInstant=%s decisionInstant=%s wallClock(in %s)=%q\nstderr=%q",
-			tz, fired, wantFire, map[bool]string{true: "IS after", false: "is NOT after"}[wantFire],
-			specInstant, decisionInstant, tz, wallClock, stderr.String())
+		t.Fatalf("TZ=%s: spec pulse fired=%v; want %v (calendar-day compare: decision header %q vs spec commit %s).\nstderr=%q",
+			tz, fired, wantFire, decisionHeader, specCommitRFC3339, stderr.String())
 	}
 }
 

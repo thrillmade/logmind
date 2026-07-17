@@ -31,11 +31,11 @@
 //     to avoid silently dropping unstaged work.
 //
 //   - Self-heal (Layer 1). After commit, `linkcheck.CheckWithReport()`
-//     runs against the repo. Clean → exit 0. Issues found AND stdin is
-//     a TTY AND `--no-interactive` not set → enter retry loop (max 3
-//     tries: y re-checks, n exits 0 with warning, q exits 1). Issues
-//     found AND not interactive → print advisory and exit 0 (CI's
-//     check-doc-links workflow Layer 3 will catch it).
+//     runs against the repo. Clean → exit 0. Issues found AND stderr is
+//     a TTY (SPEC §3.1.1, issue #220) AND `--no-interactive` not set →
+//     enter retry loop (max 3 tries: y re-checks, n exits 0 with warning,
+//     q exits 1). Issues found AND not interactive → print advisory to
+//     stderr and exit 0 (CI's check-doc-links workflow Layer 3 catches it).
 //
 //   - Pulse (v2.0.0). After everything above, `emitPulse` (pulse.go)
 //     prints ZERO, ONE, or TWO repo-health advisory lines to STDERR: a
@@ -95,31 +95,37 @@ import (
 
 // isTerminalFunc is the indirection seam used by tests to fake TTY
 // detection. Production points it at the os.Stat-based heuristic in
-// isStdinTerminal; tests override it directly.
+// isStderrTerminal; tests override it directly.
 //
 // We avoid a hard dep on golang.org/x/term to keep the binary's
 // import graph small and the dep matrix predictable (term changes the
 // minimum-Go version on every other minor release).
-var isTerminalFunc = isStdinTerminal
+var isTerminalFunc = isStderrTerminal
 
-// isStdinTerminal reports whether stdin is connected to a terminal.
-// Pure stdlib implementation — checks the device mode of fd 0. A
-// character device with no Size hint (file size 0) is treated as a
-// TTY; piped input (regular file or named pipe) reports false.
+// isStderrTerminal reports whether STDERR (fd 2) is connected to a
+// terminal. SPEC §3.1.1 gates the interactive extras (the branch-summary
+// nudge, the Layer-1 self-heal retry loop) on isatty(STDERR), NOT stdin
+// (issue #220): those extras are written for a human WATCHING the terminal,
+// and stderr is the stream that stays a TTY even when stdout is captured
+// (`logmind log ... > out.txt`) or stdin is redirected (`... < answers`).
+// Keying the gate off stdin mis-classified `logmind log > file` (stdin
+// still a TTY) as interactive and, worse, let a redirected-stdin-but-TTY
+// session miss the extras it should show.
 //
-// This is the cross-platform fallback. The two cases that matter:
+// Pure stdlib implementation — checks the device mode of fd 2. The two
+// cases that matter:
 //
-//   - Interactive shell: stdin is /dev/ttyN (Unix) or CONIN$ (Win) →
+//   - Interactive shell: stderr is /dev/ttyN (Unix) or CONOUT$ (Win) →
 //     ModeCharDevice set → returns true.
-//   - Piped / redirected: stdin is a pipe or file → ModeCharDevice
-//     unset → returns false. Examples: `echo y | logmind log ...`,
-//     `logmind log ... < /dev/null`, CI runners.
+//   - Piped / redirected / captured: stderr is a pipe or file →
+//     ModeCharDevice unset → returns false. Examples: `logmind log ...
+//     2>err.txt`, CI runners that capture stderr.
 //
 // Falsing out on stat errors is the conservative default — better to
 // behave as non-interactive (skip prompts, exit 0) than to block a
 // scripted invocation waiting on stdin that will never deliver.
-func isStdinTerminal() bool {
-	fi, err := os.Stdin.Stat()
+func isStderrTerminal() bool {
+	fi, err := os.Stderr.Stat()
 	if err != nil {
 		return false
 	}
@@ -168,9 +174,9 @@ two files cross-link bidirectionally.
 
 After committing (unless --no-commit), pushes (unless --no-push or
 git.auto_push: false in .logmind/config.yml), then runs linkcheck.Check()
-against the repo. If issues are found, prints an advisory + (when stdin is
+against the repo. If issues are found, prints an advisory + (when stderr is
 a TTY) enters an interactive retry loop giving you up to 3 attempts to fix
-and re-check. Non-interactive contexts (CI, piped stdin, --no-interactive)
+and re-check. Non-interactive contexts (CI, captured stderr, --no-interactive)
 print the advisory and exit 0 — the check-doc-links workflow's Layer 3
 self-heal will catch any leftover issues at PR time.
 
@@ -382,24 +388,24 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// Branch-summary nudge — steer the author toward a clean one-sentence
 	// summary of the WHOLE branch (the timeline headline the next agent reads).
 	// Skipped when --headline was just set (already current). Runs BEFORE the
-	// commit so a TTY edit lands in the same commit. Gated to a branch file.
+	// commit so a TTY edit lands in the SAME commit. Gated to a branch file.
 	// Best-effort: never fails the log. Suppressed under QUIET — an agent that
 	// opted into terse output doesn't want the multi-line nudge.
 	//
-	// KNOWN SPEC §3.1.1 GAP (pre-existing, not introduced by this change,
-	// left as-is — flagged for the lead): in the TTY-interactive path this
-	// prints prompts to stdout BETWEEN required line 2 and required line 3,
-	// which strictly reads as "additional lines" appearing before the third
-	// required line rather than after it. Deferring the nudge until after
-	// line 3 would break its real-time TTY UX (the prompt has to appear
-	// before the user types a reply) and would also decouple the edit from
-	// landing in the same commit. The non-TTY / --no-interactive path is
-	// unaffected — the nudge there goes to stderr only (§3.1.1's carve-out)
-	// so the 3-line stdout contract holds exactly for the fixture-relevant
-	// case. Needs a product call: either accept this narrow TTY exemption
-	// explicitly in the SPEC, or redesign the nudge to run after commit.
+	// SPEC §3.1.1 ordering (issue #206, "reorder the code"): the interactive
+	// prompt I/O all happens on STDERR here (a human at a TTY still sees it;
+	// stderr conventionally carries prompts so stdout stays a clean contract
+	// stream), which keeps stdout byte-exact through required line 2. The edit
+	// is applied to disk here so it's captured by the commit below — but the
+	// human-facing STDOUT confirmation is deferred until AFTER required line 3
+	// (see summaryEdited below the commit block), so any nudge stdout appears
+	// strictly after the three §3.1 lines rather than between lines 2 and 3.
+	// The non-TTY / --no-interactive path is unchanged: it emits the advisory
+	// to stderr only and returns false, so its stdout stays exactly the three
+	// lines (SPEC §3.1.1's carve-out for the fixture-relevant case).
+	summaryEdited := false
 	if isBranchFile && f.headline == "" && !quiet {
-		nudgeBranchSummary(target, f.noInteractive, stdin, stdout, stderr)
+		summaryEdited = nudgeBranchSummary(target, f.noInteractive, stdin, stderr)
 	}
 
 	// Commit + push (unless --no-commit OR not in a git repo). SPEC §3.1
@@ -437,6 +443,17 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 		}
 	} else if shouldCommit {
 		fmt.Fprintln(stderr, "Warning: not inside a git repo; skipping auto-commit.")
+	}
+
+	// SPEC §3.1.1 extra, AFTER required line 3 (issue #206): the branch-summary
+	// confirmation for an interactive TTY edit. The edit itself was applied to
+	// disk BEFORE the commit above, so it's already captured by that commit —
+	// this line is only the human-facing receipt, deferred to here so nothing
+	// from the nudge lands on stdout between required lines 2 and 3. Only the
+	// interactive path (isTerminalFunc + a non-empty reply) sets summaryEdited,
+	// which is why this never touches the byte-exact non-TTY stdout contract.
+	if summaryEdited {
+		q.chat("✓ Branch summary updated.\n")
 	}
 
 	// Release the repo lock now — the write + commit/push sequence it
@@ -601,56 +618,114 @@ func insertMarkerAfterHeader(existing []byte, marker string) []byte {
 	return append([]byte(marker), existing...)
 }
 
+// nudgeReadTimeout bounds how long the interactive branch-summary nudge waits
+// on a single stdin line before giving up (issue #228). runLog holds the repo
+// lock across this prompt — the edit must land in the same commit — so an
+// unbounded ReadString on a human who steps away would keep the lock past
+// lockAcquireTimeout (15s) and make a concurrent `logmind log` in the same cwd
+// fail with the misleading "appears stuck". 10s sits safely under that 15s
+// window; on timeout the nudge keeps the current headline and falls back to
+// the stderr advisory. A package var so tests can shrink it.
+var nudgeReadTimeout = 10 * time.Second
+
+// nudgeSummaryAdvisory prints the stderr-only branch-summary advisory: the
+// current one-sentence summary plus how to refresh it asynchronously via
+// `logmind headline`. Shown to non-interactive callers (agents / CI) and to an
+// interactive caller whose prompt timed out (#228). In both cases stdout is
+// left untouched, so the byte-exact §3.1 stdout contract holds.
+func nudgeSummaryAdvisory(current string, stderr io.Writer) {
+	fmt.Fprintf(stderr, "\n📝 Branch summary: %s\n", current)
+	fmt.Fprintln(stderr, "   Keep it a one-sentence summary of the whole branch — refresh with: logmind headline \"<one sentence>\"")
+}
+
+// readLineWithTimeout reads a single '\n'-terminated line from r, waiting at
+// most d. Returns (line, true) when a line (or EOF) arrives in time, or
+// ("", false) on timeout. The blocking ReadString runs in a goroutine so a
+// human who walks away from the branch-summary prompt can't wedge the caller
+// while it holds the repo lock (#228). On timeout the goroutine is left parked
+// on the read — harmless: the process is finishing up — and the buffered
+// channel lets a late line deliver-and-exit without leaking on the send.
+func readLineWithTimeout(r *bufio.Reader, d time.Duration) (string, bool) {
+	ch := make(chan string, 1)
+	go func() {
+		line, _ := r.ReadString('\n')
+		ch <- line
+	}()
+	select {
+	case line := <-ch:
+		return line, true
+	case <-time.After(d):
+		return "", false
+	}
+}
+
 // nudgeBranchSummary steers the author toward a clean one-sentence branch
-// summary after a log. At a TTY it offers an interactive edit (the new summary
-// is written before the caller commits, so it lands in the same commit). For
-// an agent (non-TTY) it prints an advisory with the current summary + how to
-// refresh it — a blocking prompt can't reach a non-TTY caller, so the agent
-// acts asynchronously via `logmind headline`. Best-effort: any IO error just
-// skips the nudge; it never fails the log.
-func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader, stdout, stderr io.Writer) {
+// summary after a log. At a TTY it offers an interactive edit: the prompt I/O
+// goes to STDERR (SPEC §3.1.1 / issue #206 — stdout stays the clean contract
+// stream) and the edit is written before the caller commits, so it lands in
+// the SAME commit; it returns true so the caller prints the stdout confirmation
+// AFTER required line 3. Each stdin read is bounded by nudgeReadTimeout (#228)
+// so a human who pauses can't hold the repo lock long enough to make a
+// concurrent `logmind log` fail with "appears stuck"; on timeout it keeps the
+// current headline and falls back to the advisory. For an agent (non-TTY) it
+// prints the advisory and returns false — a blocking prompt can't reach a
+// non-TTY caller, so the agent acts asynchronously via `logmind headline`.
+// Best-effort: any IO error just skips the nudge; it never fails the log.
+func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader, stderr io.Writer) bool {
 	data, err := os.ReadFile(target)
 	if err != nil {
-		return
+		return false
 	}
 	current, ok := timeline.CurrentHeadline(string(data))
 	if !ok {
-		return
+		return false
 	}
 
 	if forceNonInteractive || !isTerminalFunc() {
 		// Agent / CI: advisory only — never block on stdin, and the nudge
 		// MUST go to stderr so stdout stays byte-identical to the three §3.1
 		// log lines (SPEC §3.1.1: the non-TTY headline nudge is stderr-only).
-		fmt.Fprintf(stderr, "\n📝 Branch summary: %s\n", current)
-		fmt.Fprintln(stderr, "   Keep it a one-sentence summary of the whole branch — refresh with: logmind headline \"<one sentence>\"")
-		return
+		nudgeSummaryAdvisory(current, stderr)
+		return false
 	}
 
-	// Interactive TTY: offer an inline edit.
+	// Interactive TTY: offer an inline edit. Prompts go to stderr (§3.1.1 /
+	// #206); each read is deadline-bounded (#228).
 	reader := bufio.NewReader(stdin)
-	fmt.Fprintf(stdout, "\nBranch summary: %s\n", current)
-	fmt.Fprint(stdout, "Update it to a one-sentence summary of the whole branch? [y to edit / N to keep]: ")
-	line, _ := reader.ReadString('\n')
-	if strings.ToLower(strings.TrimSpace(line)) != "y" {
-		return
+	fmt.Fprintf(stderr, "\nBranch summary: %s\n", current)
+	fmt.Fprint(stderr, "Update it to a one-sentence summary of the whole branch? [y to edit / N to keep]: ")
+	line, ok := readLineWithTimeout(reader, nudgeReadTimeout)
+	if !ok {
+		// Human stepped away — keep the current headline + fall back to the
+		// advisory so the caller releases the lock and commits promptly (#228).
+		nudgeSummaryAdvisory(current, stderr)
+		return false
 	}
-	fmt.Fprint(stdout, "New summary: ")
-	newSummary, _ := reader.ReadString('\n')
+	if strings.ToLower(strings.TrimSpace(line)) != "y" {
+		return false
+	}
+	fmt.Fprint(stderr, "New summary: ")
+	newSummary, ok := readLineWithTimeout(reader, nudgeReadTimeout)
+	if !ok {
+		nudgeSummaryAdvisory(current, stderr)
+		return false
+	}
 	newSummary = strings.TrimSpace(newSummary)
 	if newSummary == "" {
-		fmt.Fprintln(stdout, "  (empty — kept the current summary)")
-		return
+		fmt.Fprintln(stderr, "  (empty — kept the current summary)")
+		return false
 	}
 	updated, replaced := timeline.ReplaceFirstHeadline(string(data), newSummary, prSuffixFromEnv())
 	if !replaced {
-		return
+		return false
 	}
 	if err := writeAtomic(target, updated); err != nil {
-		fmt.Fprintf(stdout, "  (could not write summary: %v)\n", err)
-		return
+		fmt.Fprintf(stderr, "  (could not write summary: %v)\n", err)
+		return false
 	}
-	fmt.Fprintln(stdout, "✓ Branch summary updated.")
+	// Edit applied on disk (captured by the pending commit). The caller prints
+	// the stdout "✓ Branch summary updated." receipt AFTER required line 3.
+	return true
 }
 
 // commitDecision stages the relevant files and creates the commit.

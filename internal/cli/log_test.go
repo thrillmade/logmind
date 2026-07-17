@@ -18,11 +18,14 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // initLogTestGitRepo turns a tmpdir into a working git repo on `main`.
@@ -628,4 +631,217 @@ func TestLog_DocsMissingErrors(t *testing.T) {
 		mustContain(t, out.String(), "docs/ directory not found")
 	})
 	_ = dir
+}
+
+// TestIsStderrTerminal_FollowsStderrNotStdin pins issue #220: the §3.1.1 TTY
+// gate must stat os.Stderr (fd 2), not os.Stdin (fd 0). /dev/null is a
+// CHARACTER device (ModeCharDevice set) so the isatty heuristic treats it as a
+// terminal, while a regular temp file is not. Crossing the two proves the gate
+// follows STDERR — the pre-fix stdin-based code returns the OPPOSITE verdict in
+// both branches, so this test fails against it and passes against the fix.
+func TestIsStderrTerminal_FollowsStderrNotStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("char-device fixture (/dev/null) is POSIX-only")
+	}
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer devNull.Close()
+	regular, err := os.CreateTemp(t.TempDir(), "reg")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer regular.Close()
+
+	origStdin, origStderr := os.Stdin, os.Stderr
+	t.Cleanup(func() { os.Stdin, os.Stderr = origStdin, origStderr })
+
+	// stderr = char device (reads as a tty), stdin = regular file (not a tty).
+	os.Stderr, os.Stdin = devNull, regular
+	if !isStderrTerminal() {
+		t.Fatalf("stderr=/dev/null (char device) should read as a terminal; a stdin-based gate would wrongly return false")
+	}
+	// Inverse: stderr = regular file (not a tty), stdin = char device.
+	os.Stderr, os.Stdin = regular, devNull
+	if isStderrTerminal() {
+		t.Fatalf("stderr=regular-file should NOT read as a terminal; a stdin-based gate would wrongly return true")
+	}
+}
+
+// TestLog_NonTTY_ByteExactThreeLines_BranchFile pins the §3.1.1 / #220 contract
+// from the stderr-gate angle: when stderr is NOT a TTY (agent/CI), the
+// branch-summary nudge goes to stderr only and stdout is byte-exact three
+// lines — even on a feature branch where the nudge fires. bytes.Equal, not a
+// substring match: a stray byte anywhere fails this.
+func TestLog_NonTTY_ByteExactThreeLines_BranchFile(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit the scaffold on main FIRST so main is a born branch — else
+		// DefaultBranch would resolve to the only branch carrying commits (the
+		// feature branch), making isBranchFile false and skipping the nudge.
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/byte-exact")
+
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "byte exact branch decision", "-r", "why", "--no-push", "--no-interactive"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\nstderr:\n%s", err, errBuf.String())
+			}
+			want := []byte("ℹ Staging all changes (use --stage scoped to limit)\n" +
+				`✓ Logged decision: "byte exact branch decision"` + "\n" +
+				"✓ Committed changes\n")
+			if !bytes.Equal(out.Bytes(), want) {
+				t.Fatalf("stdout not byte-exact.\nwant %q\ngot  %q", want, out.Bytes())
+			}
+			// The branch-summary nudge advisory lands on stderr, never stdout.
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+		})
+	})
+}
+
+// TestLog_NudgeInteractive_TimesOutInsteadOfHanging pins issue #228: at a TTY
+// the branch-summary nudge must not block indefinitely on a human who walks
+// away — runLog holds the repo lock across the prompt, so an unbounded stdin
+// read would keep the lock past lockAcquireTimeout (15s) and make a concurrent
+// `logmind log` in the same cwd fail with the misleading "appears stuck". Each
+// read is bounded by nudgeReadTimeout; on timeout the nudge keeps the current
+// headline, emits the stderr advisory, and returns so runLog commits/unlocks
+// promptly. We shrink nudgeReadTimeout so the test is fast but still exercises
+// the real timeout path (not a hang).
+func TestLog_NudgeInteractive_TimesOutInsteadOfHanging(t *testing.T) {
+	orig := nudgeReadTimeout
+	nudgeReadTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { nudgeReadTimeout = orig })
+
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit on main first so DefaultBranch resolves to main (else the
+		// feature branch would be the only branch with commits → isBranchFile
+		// false → the nudge never fires).
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/nudge-timeout")
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "nudge timeout decision", "-r", "why", "--no-push"})
+			// A pipe whose write end is never written/closed → the read blocks
+			// forever, standing in for a human who walked away from the prompt.
+			pr, pw := io.Pipe()
+			t.Cleanup(func() { _ = pw.Close() })
+			root.SetIn(pr)
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+
+			done := make(chan error, 1)
+			go func() { done <- root.Execute() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("runLog returned error: %v\nstderr:\n%s", err, errBuf.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("runLog hung past 5s — nudge stdin read not bounded (#228)")
+			}
+			// Timeout path emitted the fallback advisory (kept current headline).
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+			// The commit still happened — caller proceeded promptly after timeout.
+			mustContain(t, out.String(), "✓ Committed changes")
+			// No interactive edit was applied → no post-line-3 confirmation.
+			if strings.Contains(out.String(), "✓ Branch summary updated.") {
+				t.Fatalf("timeout must NOT apply an edit; stdout:\n%s", out.String())
+			}
+		})
+	})
+}
+
+// TestLog_NudgeInteractive_ImmediateReply guards that bounding the nudge reads
+// (#228) did NOT change behavior for replies that arrive immediately: 'y' plus
+// a new summary rewrites the branch headline and prints the confirmation.
+func TestLog_NudgeInteractive_ImmediateReply(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		runGitIn(t, d, "checkout", "-b", "feat/nudge-immediate")
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "original headline", "-r", "why", "--no-commit"})
+			root.SetIn(strings.NewReader("y\nRefined whole-branch summary\n"))
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\n%s", err, errBuf.String())
+			}
+			mustContain(t, out.String(), "✓ Branch summary updated.")
+		})
+
+		body, err := os.ReadFile(filepath.Join(d, "docs", "decisions-branches", "feat__nudge-immediate.md"))
+		if err != nil {
+			t.Fatalf("read branch file: %v", err)
+		}
+		if !strings.Contains(string(body), "Refined whole-branch summary") {
+			t.Fatalf("branch summary not updated on disk; body:\n%s", body)
+		}
+	})
+}
+
+// TestLog_NudgeInteractive_StdoutOrderedAfterCommitLine pins issue #206: on the
+// interactive TTY path the branch-summary nudge's stdout output must come AFTER
+// SPEC §3.1 line 3 ("✓ Committed…"), never between lines 2 and 3. The prompts
+// go to stderr (so stdout stays the canonical contract stream); the only stdout
+// the nudge adds is the post-commit confirmation — and the human's edit still
+// lands in the commit.
+func TestLog_NudgeInteractive_StdoutOrderedAfterCommitLine(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit on main first so DefaultBranch resolves to main (else the
+		// feature branch would be the only branch with commits → isBranchFile
+		// false → the nudge never fires).
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/nudge-order")
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "ordering decision", "-r", "why", "--no-push"})
+			root.SetIn(strings.NewReader("y\nWhole branch summary edited\n"))
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\nstderr:\n%s", err, errBuf.String())
+			}
+			so := out.String()
+			iLogged := strings.Index(so, `✓ Logged decision: "ordering decision"`)
+			iCommitted := strings.Index(so, "✓ Committed changes")
+			iConfirm := strings.Index(so, "✓ Branch summary updated.")
+			if iLogged < 0 || iCommitted < 0 || iConfirm < 0 {
+				t.Fatalf("missing expected stdout lines:\n%s", so)
+			}
+			if !(iLogged < iCommitted && iCommitted < iConfirm) {
+				t.Fatalf("§3.1.1 ordering violated (want Logged < Committed < confirmation):\n%s", so)
+			}
+			// The interactive PROMPTS must NOT be on stdout (they're on stderr,
+			// so the three-line stdout contract holds up to the confirmation).
+			if strings.Contains(so, "Update it to a one-sentence summary") {
+				t.Fatalf("interactive prompt leaked to stdout (must be stderr):\n%s", so)
+			}
+			mustContain(t, errBuf.String(), "Update it to a one-sentence summary")
+		})
+
+		// The human's edit actually landed in the decision commit (HEAD).
+		body := runGitOut(t, d, "show", "HEAD:docs/decisions-branches/feat__nudge-order.md")
+		if !strings.Contains(body, "Whole branch summary edited") {
+			t.Fatalf("edit not captured by the commit; HEAD file:\n%s", body)
+		}
+	})
 }

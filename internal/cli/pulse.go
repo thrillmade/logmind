@@ -169,36 +169,31 @@ func specPulseLine(cwd string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	// Count decisions logged strictly AFTER the spec's last commit, compared
+	// at CALENDAR-DAY granularity (issue #222, residual of #211). Why day
+	// granularity and not the instant:
+	//
+	//   - A decision header `## YYYY-MM-DD HH:MM` is a ZONELESS local wall
+	//     clock: decisions.Iter labels it UTC, but buildDecisionEntry (log.go)
+	//     wrote it from time.Now().Format(...) on whatever machine logged it.
+	//     There is NO recoverable instant for a header written on a different
+	//     machine in a different zone.
+	//   - specTime IS a true instant (gitcli.LastCommitTime parses git's %cI,
+	//     with an explicit offset).
+	//
+	// An instant-vs-instant compare therefore flips by the running machine's
+	// UTC offset — the exact bug #211's localize attempt could not fix for the
+	// cross-machine case (TZ=Etc/GMT-12 vs TZ=UTC gave opposite verdicts on
+	// identical repo state). Reducing both sides to their Y/M/D at UTC midnight
+	// and requiring the decision's DAY to be strictly after the spec commit's
+	// DAY bounds cross-machine skew to ≤1 day instead of a full offset, and a
+	// same-day tie counts as NOT-after (no false "still accurate?" nudge). This
+	// stays local to the pulse: decisions.Iter keeps its UTC label, so the
+	// timeline dedup/sort path (internal/timeline/canonical.go) is untouched.
+	specDay := dateOnlyUTC(specTime)
 	count := 0
 	for _, e := range entries {
-		// decisions.Iter parses `## YYYY-MM-DD HH:MM` decision headers with
-		// a zoneless time.Parse, which Go labels UTC — but those headers
-		// are written from time.Now().Format(...) (buildDecisionEntry in
-		// log.go), i.e. LOCAL wall-clock time. specTime, by contrast, is a
-		// true instant (gitcli.LastCommitTime parses git's %cI, strict
-		// ISO 8601 with an explicit offset). Comparing e.Date.After(specTime)
-		// directly mixes a local-wall-clock-mislabeled-as-UTC value against
-		// a real instant, skewing the comparison by the full local UTC
-		// offset — a false fire in positive-offset zones (e.g. UTC+12: a
-		// decision logged BEFORE the spec commit reads as hours AFTER it),
-		// a missed fire in negative-offset zones (e.g. UTC-7: a decision
-		// logged AFTER the spec commit reads as hours BEFORE it).
-		//
-		// The fix is deliberately LOCAL to this comparison rather than
-		// changing decisions.Iter's parse itself: Iter's output also feeds
-		// internal/timeline/canonical.go's dedupeAndSuffix, which compares
-		// Iter-derived dates against entry-block-marker dates (always
-		// parsed as bare UTC via time.Parse("2006-01-02", ...)) using
-		// Time.Equal/After for sorting and same-entry dedup. Relabeling
-		// Iter's zone to Local would make those two date sources disagree
-		// on the same calendar date's instant whenever the host isn't UTC,
-		// changing docs/timeline.md's byte output (dedup collisions no
-		// longer collapse, sort order shifts) for the COMMON case — direct
-		// decisions.md / decisions-archive.md entries always take the
-		// Iter-derived path since those files never carry entry-block
-		// markers. So Iter stays UTC-labeled; only this comparison
-		// re-interprets the wall clock as local time before comparing.
-		if localizeDecisionDate(e.Date).After(specTime) {
+		if dateOnlyUTC(e.Date).After(specDay) {
 			count++
 		}
 	}
@@ -208,14 +203,13 @@ func specPulseLine(cwd string) (string, bool) {
 	return fmt.Sprintf("logmind: %s unchanged for %d decisions — still accurate?", relSpec, count), true
 }
 
-// localizeDecisionDate reinterprets a decisions.Iter-parsed Entry.Date's
-// wall-clock components (year/month/day/hour/minute) as LOCAL time instead
-// of Iter's default UTC label. Decision headers are written by
-// buildDecisionEntry (log.go) via time.Now().Format("2006-01-02 15:04") —
-// local wall time, by construction, always — so re-labeling as time.Local
-// recovers the real instant the decision was logged at. See the comment at
-// specPulseLine's e.Date.After(specTime) call site for why this fix is
-// scoped to the pulse rather than to decisions.Iter itself.
-func localizeDecisionDate(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.Local)
+// dateOnlyUTC reduces t to its calendar day (year/month/day) anchored at UTC
+// midnight, discarding the time-of-day and zone. specPulseLine uses it to
+// compare a zoneless decision-header wall clock against the spec's last-commit
+// instant at day granularity, which makes the staleness verdict independent of
+// the running machine's timezone and bounds cross-machine skew to ≤1 day
+// (issue #222). Note t.Year()/Month()/Day() read the components in t's OWN
+// location, so each side contributes the calendar day its author actually saw.
+func dateOnlyUTC(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
