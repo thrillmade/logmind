@@ -280,6 +280,27 @@ func TestInstallCommitMsg_UpgradesWarnOnlyV0616Body(t *testing.T) {
 	if string(got) != BuildCommitMsgBody() {
 		t.Fatalf("hook was not upgraded to the current enforcing body")
 	}
+
+	fi, err := os.Stat(hookPath)
+	if err != nil {
+		t.Fatalf("stat upgraded hook: %v", err)
+	}
+	if fi.Mode().Perm() != 0o755 {
+		t.Errorf("mode = %o; want 0755 (executable bit must survive the atomic rewrite)", fi.Mode().Perm())
+	}
+
+	// Guards the atomic-write fix: overwriting this EXISTING hook must go
+	// through atomicio's temp-sibling-plus-rename, leaving no ".tmp-*"
+	// residue in .git/hooks/ behind.
+	entries, err := os.ReadDir(filepath.Dir(hookPath))
+	if err != nil {
+		t.Fatalf("read hooks dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("leftover temp file after hook upgrade: %s", e.Name())
+		}
+	}
 }
 
 func TestInstallCommitMsg_LeavesForeignHook(t *testing.T) {

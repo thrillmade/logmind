@@ -62,6 +62,14 @@ type Config struct {
 	// check records the visibility shape but doesn't block; layers
 	// 1-3 still run unchanged.
 	AllowPromoteFromPrivate bool `yaml:"allow_promote_from_private"`
+
+	// PinVersion is the SPEC §1.2.1 / §3.7 self-update floor: when set to
+	// a non-empty version string, `logmind self-update` MUST no-op instead
+	// of refreshing templates/hooks to the running binary's version. A
+	// top-level key (not nested under a section), camelCase per the SPEC's
+	// own naming — matches how the SPEC's example config.yml renders it
+	// (`pinVersion: null`). Default "" (unset) = self-update runs normally.
+	PinVersion string `yaml:"pinVersion"`
 }
 
 // PrivacyScannerConfig is the typed shape of the `privacy_scanner:`
@@ -216,6 +224,18 @@ func DefaultConfig() Config {
 				"dist",
 				"build",
 				"*.egg-info",
+				// SPEC §1.2.1's default list MUST also include these three
+				// (.next/, .turbo/, .DS_Store) — added without the SPEC
+				// prose's trailing "/" because internal/tree's matcher
+				// (patternSetMatches) does a literal filepath.Match against
+				// the basename/path component; every OTHER default pattern
+				// here is already written without a trailing slash for the
+				// same reason (a literal ".next/" would never match the
+				// directory component ".next" and so would silently ignore
+				// nothing).
+				".next",
+				".turbo",
+				".DS_Store",
 			},
 			RootLabel: "",
 		},
@@ -253,6 +273,15 @@ func DefaultConfig() Config {
 		// source → public catalog push gets blocked unless the user
 		// explicitly opts in.
 		AllowPromoteFromPrivate: false,
+		// PinVersion: "" (unset) — `logmind self-update` runs normally.
+		// Deliberately NOT added to DefaultMap (below): like root_label /
+		// context.repomap / context.spec_file, it's a key with no Python
+		// v0.6.14 ancestor, and DefaultMap must stay byte-for-byte
+		// Python-parity for `config list` (see
+		// TestDefaultMap_OmitsNewKeys_PreservesConfigListByteParity).
+		// Reads/writes via config.yml (LoadPath/GetPath/`config get
+		// pinVersion`) work regardless of listing.
+		PinVersion: "",
 	}
 }
 
@@ -326,6 +355,9 @@ func DefaultMap() *OrderedMap {
 		"dist",
 		"build",
 		"*.egg-info",
+		".next",
+		".turbo",
+		".DS_Store",
 	}
 	fileStructure.Set("ignore_patterns", patterns)
 	root.Set("file_structure", fileStructure)

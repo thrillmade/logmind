@@ -38,6 +38,44 @@ func assertSingleOK(t *testing.T, out string, wantTokens ...string) {
 	}
 }
 
+// TestQuietFlagHelp_DoesNotOverpromiseUnwiredVerbs guards the MINOR fix:
+// cobra renders --quiet's Usage string identically under every
+// subcommand's "Global Flags" section (it's a persistent flag on root),
+// including the 13 verbs that don't read it at all. The help text must not
+// make the unqualified "one ok line per verb" promise; it must instead
+// name the actual wired subset (or otherwise scope the claim) so a verb
+// that ignores --quiet doesn't look broken against its own --help output.
+func TestQuietFlagHelp_DoesNotOverpromiseUnwiredVerbs(t *testing.T) {
+	root := NewRootCmd()
+	f := root.PersistentFlags().Lookup(quietFlagName)
+	if f == nil {
+		t.Fatal("--quiet flag not registered on root")
+	}
+	usage := f.Usage
+
+	// The unqualified promise this fix removes: "per verb" / "every verb"
+	// with no scoping. cobra shows this same sentence on ALL 22
+	// subcommands, but only 9 currently wire quietEnabled/qout in.
+	if strings.Contains(usage, "per verb") && !strings.Contains(usage, "read/emit verb") {
+		t.Errorf("usage still says %q; the unqualified 'per verb' promise must be scoped to the verbs that actually honor it", usage)
+	}
+
+	// The wired set the fix documents (see quiet.go's newQout callers +
+	// doctor.go's inline quietEnabled use) must be named somewhere in the
+	// help text, so an agent reading --help learns the real surface.
+	for _, verb := range []string{"doctor", "file-structure", "guard-commit", "headline", "log", "repomap", "search", "show", "timeline"} {
+		if !strings.Contains(usage, verb) {
+			t.Errorf("usage %q does not name wired verb %q", usage, verb)
+		}
+	}
+
+	// And it must signal, in some form, that other verbs are out of scope —
+	// otherwise a reader still can't tell the list above is exhaustive.
+	if !strings.Contains(strings.ToLower(usage), "other verbs") && !strings.Contains(strings.ToLower(usage), "ignore this flag") {
+		t.Errorf("usage %q does not disclose that unwired verbs ignore --quiet", usage)
+	}
+}
+
 func TestQuietEnvSet(t *testing.T) {
 	cases := map[string]bool{
 		"1": true, "true": true, "TRUE": true, "yes": true, "on": true, "anything": true,

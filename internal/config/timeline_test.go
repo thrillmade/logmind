@@ -48,6 +48,32 @@ func TestFileStructureRootLabel_DefaultAndRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPinVersion_DefaultAndRoundTrip pins the MINOR fix (SPEC §1.2.1 /
+// §3.7): pinVersion is a top-level (not nested) config key, default "" so
+// self-update runs normally, and a set value round-trips through
+// LoadPath into the typed Config the CLI layer reads.
+func TestPinVersion_DefaultAndRoundTrip(t *testing.T) {
+	if got := DefaultConfig().PinVersion; got != "" {
+		t.Errorf("default PinVersion = %q; want \"\" (self-update runs normally)", got)
+	}
+	cfg, err := LoadPath(writeTimelineCfg(t, "pinVersion: \"1.2.3\"\n"))
+	if err != nil {
+		t.Fatalf("LoadPath: %v", err)
+	}
+	if cfg.PinVersion != "1.2.3" {
+		t.Errorf("PinVersion = %q; want 1.2.3", cfg.PinVersion)
+	}
+	// A `pinVersion: null` config (the SPEC's own example) must resolve to
+	// the same "" default, not error or leave a literal "null" string.
+	nullCfg, err := LoadPath(writeTimelineCfg(t, "pinVersion: null\n"))
+	if err != nil {
+		t.Fatalf("LoadPath with pinVersion:null: %v", err)
+	}
+	if nullCfg.PinVersion != "" {
+		t.Errorf("PinVersion with YAML null = %q; want \"\"", nullCfg.PinVersion)
+	}
+}
+
 func TestDefaultMap_OmitsNewKeys_PreservesConfigListByteParity(t *testing.T) {
 	// THE load-bearing guard for PR2: the new typed keys must NOT appear in
 	// DefaultMap. DefaultMap is what `logmind config list` serializes, and

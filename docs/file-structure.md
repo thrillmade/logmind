@@ -36,6 +36,7 @@ logmind
 │   └── install.sh
 ├── internal
 │   ├── agents
+│   ├── atomicio
 │   ├── claudehook
 │   ├── cli
 │   ├── clierr

@@ -19,6 +19,11 @@
 //     get its commit-msg hook auto-upgraded to enforcing (Layer 2) while
 //     Layer 1 stays missing forever — and doctor would never nudge,
 //     because "missing" is benign.
+//
+// pinVersion (SPEC §1.2.1 / §3.7): when `.logmind/config.yml` sets a
+// non-empty top-level `pinVersion`, self-update no-ops entirely — none of
+// the refreshes above run. This is checked FIRST, before any refresh
+// work, so a pinned repo never partially refreshes.
 package cli
 
 import (
@@ -29,6 +34,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/claudehook"
+	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/inserter"
 )
@@ -53,6 +59,16 @@ func runSelfUpdate(cmd *cobra.Command) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
+
+	// pinVersion floor (SPEC §1.2.1 / §3.7): a repo that pins below the
+	// running binary's version wants NO refresh at all — checked before any
+	// file is touched, so a pin is a true, complete no-op.
+	if cfg, _ := config.Load(cwd); cfg.PinVersion != "" {
+		fmt.Fprintf(out, "logmind self-update: pinned to %s, skipping (unset pinVersion in .logmind/config.yml to resume updates)\n", cfg.PinVersion)
+		fmt.Fprintln(out, "ok self-update pinned")
+		return nil
+	}
+
 	updated := false
 
 	if msg, err := inserter.EnsureAgentsMD(cwd); err == nil && msg != "" {

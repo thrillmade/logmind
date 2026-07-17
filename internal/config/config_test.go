@@ -34,6 +34,8 @@ func TestDefaultConfig(t *testing.T) {
 		"__pycache__", ".git", "node_modules", "venv", ".venv",
 		"env", ".env", "*.pyc", ".pytest_cache", ".mypy_cache",
 		"dist", "build", "*.egg-info",
+		// SPEC §1.2.1 additions: .next/, .turbo/, .DS_Store.
+		".next", ".turbo", ".DS_Store",
 	}
 	if !reflect.DeepEqual(c.FileStructure.IgnorePatterns, wantPatterns) {
 		t.Errorf("FileStructure.IgnorePatterns =\n  %q\nwant\n  %q", c.FileStructure.IgnorePatterns, wantPatterns)
@@ -50,6 +52,65 @@ func TestDefaultConfig(t *testing.T) {
 	// user's `logmind skill push` somewhere else.
 	if c.CatalogTarget != "thrillmade/agent-skills" {
 		t.Errorf("CatalogTarget default = %q; want thrillmade/agent-skills", c.CatalogTarget)
+	}
+}
+
+// TestDefaultConfig_IgnorePatterns_IncludesSpecRequiredDefaults pins the
+// MINOR fix: SPEC §1.2.1 states the default file_structure.ignore_patterns
+// "MUST include at least" .git/, node_modules/, venv/, __pycache__/,
+// .next/, dist/, build/, .turbo/, *.pyc, .DS_Store. .next/.turbo/.DS_Store
+// were missing entirely. (Checked here without the SPEC prose's trailing
+// "/" — see the doc comment on DefaultConfig's IgnorePatterns literal for
+// why: internal/tree's matcher does a literal component match, and every
+// sibling default pattern already omits the trailing slash for the same
+// reason.)
+func TestDefaultConfig_IgnorePatterns_IncludesSpecRequiredDefaults(t *testing.T) {
+	got := DefaultConfig().FileStructure.IgnorePatterns
+	set := map[string]bool{}
+	for _, p := range got {
+		set[p] = true
+	}
+	for _, want := range []string{".next", ".turbo", ".DS_Store"} {
+		if !set[want] {
+			t.Errorf("DefaultConfig().FileStructure.IgnorePatterns = %q; missing SPEC §1.2.1-required default %q", got, want)
+		}
+	}
+}
+
+// TestDefaultMap_IgnorePatterns_MatchesDefaultConfig guards against the
+// two hand-maintained pattern lists (DefaultConfig's typed slice and
+// DefaultMap's `config list`/get/set-facing []any slice) drifting apart —
+// `logmind config list` must show the same ignore_patterns file-structure
+// tree generation actually uses.
+func TestDefaultMap_IgnorePatterns_MatchesDefaultConfig(t *testing.T) {
+	typed := DefaultConfig().FileStructure.IgnorePatterns
+	fileStructure, ok := DefaultMap().Get("file_structure")
+	if !ok {
+		t.Fatal("DefaultMap() has no file_structure key")
+	}
+	om, ok := fileStructure.(*OrderedMap)
+	if !ok {
+		t.Fatalf("file_structure value is %T; want *OrderedMap", fileStructure)
+	}
+	rawPatterns, ok := om.Get("ignore_patterns")
+	if !ok {
+		t.Fatal("DefaultMap() file_structure has no ignore_patterns key")
+	}
+	anyPatterns, ok := rawPatterns.([]any)
+	if !ok {
+		t.Fatalf("ignore_patterns value is %T; want []any", rawPatterns)
+	}
+	if len(anyPatterns) != len(typed) {
+		t.Fatalf("DefaultMap ignore_patterns has %d entries; DefaultConfig has %d", len(anyPatterns), len(typed))
+	}
+	for i, p := range anyPatterns {
+		s, ok := p.(string)
+		if !ok {
+			t.Fatalf("ignore_patterns[%d] = %T; want string", i, p)
+		}
+		if s != typed[i] {
+			t.Errorf("DefaultMap ignore_patterns[%d] = %q; DefaultConfig has %q", i, s, typed[i])
+		}
 	}
 }
 

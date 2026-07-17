@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/version"
 )
 
@@ -371,12 +372,13 @@ func installHook(hookPath, body, marker string) (bool, error) {
 			return false, nil // already current
 		}
 	}
-	if err := os.WriteFile(hookPath, []byte(body), 0o755); err != nil {
-		return false, err
-	}
-	// WriteFile honours the perm bits only when creating the file —
-	// re-chmod explicitly so updates also keep the executable bit.
-	if err := os.Chmod(hookPath, 0o755); err != nil {
+	// Write atomically (temp sibling + rename): a bare os.WriteFile here
+	// would O_TRUNC an EXISTING hook before writing the new body, so a
+	// crash mid-write could leave a truncated/corrupt git hook behind.
+	// atomicio.WriteFile also chmods the temp file before the rename, so
+	// the executable bit lands correctly whether hookPath is new or being
+	// updated — no separate re-chmod needed.
+	if err := atomicio.WriteFile(hookPath, []byte(body), 0o755); err != nil {
 		return false, err
 	}
 	return true, nil

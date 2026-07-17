@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -191,6 +192,31 @@ func TestGenerateMainCanonical_SameEntryTwoSourcesCollapses(t *testing.T) {
 	blocks := extractEntryBlocks(out, &stderr)
 	if len(blocks) != 1 {
 		t.Errorf("got %d; want 1 (identical body collapses to one)\n%s", len(blocks), out)
+	}
+}
+
+// TestGenerateMainCanonical_CRLFAndLFSameEntryCollapses guards the CRLF
+// determinism fix end-to-end: a branch file checked out with CRLF line
+// endings (core.autocrlf=true on Windows) and one checked out with plain LF,
+// both carrying the SAME entry body, must still collapse to one row via the
+// same-entry carve-out — a stray "\r" surviving into the body would make
+// "body\r" != "body" and silently duplicate the entry.
+func TestGenerateMainCanonical_CRLFAndLFSameEntryCollapses(t *testing.T) {
+	docs := filepath.Join(t.TempDir(), "docs")
+	crlfBlock := strings.ReplaceAll(block("2026-06-29-dup", "- identical body"), "\n", "\r\n")
+	writeDoc(t, docs, "decisions-branches/feat__a.md", crlfBlock)
+	writeDoc(t, docs, "decisions-branches/feat__b.md", block("2026-06-29-dup", "- identical body"))
+	var stderr bytes.Buffer
+	out, err := Generate(docs, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := extractEntryBlocks(out, &stderr)
+	if len(blocks) != 1 {
+		t.Errorf("got %d; want 1 (CRLF- and LF-sourced identical bodies must collapse)\n%s", len(blocks), out)
+	}
+	if strings.Contains(out, "\r") {
+		t.Errorf("rendered timeline contains a stray \\r:\n%q", out)
 	}
 }
 

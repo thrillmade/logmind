@@ -163,11 +163,26 @@ func extractEntryBlocks(content string, stderr io.Writer) []entryBlock {
 			fmt.Fprintf(stderr, "logmind: skipping entry-block %q: unclosed at end of file\n", key)
 			i++
 		default:
-			out = append(out, entryBlock{Key: key, Body: strings.Join(lines[i+1:j], "\n")})
+			out = append(out, entryBlock{Key: key, Body: joinBodyLines(lines[i+1 : j])})
 			i = j + 1
 		}
 	}
 	return out
+}
+
+// joinBodyLines joins entry-block body lines with "\n", stripping any
+// trailing "\r" from each line first. A CRLF-line-ended source (e.g. a
+// Windows core.autocrlf=true checkout of docs/decisions-branches/*.md) would
+// otherwise leave a "\r" on every body line after the raw "\n" split, which
+// (a) writes a literal CR into docs/timeline.md — breaking this file's own
+// byte-determinism invariant (see the package doc comment) — and (b) can
+// defeat dedupeAndSuffix's same-body carve-out, since "body\r" != "body".
+func joinBodyLines(lines []string) string {
+	clean := make([]string, len(lines))
+	for i, l := range lines {
+		clean[i] = strings.TrimSuffix(l, "\r")
+	}
+	return strings.Join(clean, "\n")
 }
 
 // --- §1.6.4 main-canonical assembly ---------------------------------------

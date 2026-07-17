@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/version"
 )
@@ -169,7 +170,10 @@ func EnsurePreToolUseGuard(repoRoot string) (changed bool, err error) {
 	if !changed {
 		return false, nil
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	// path already exists here (we're on the post-ReadFile-success branch) —
+	// use the atomic writer so a crash mid-write can't leave the user's
+	// settings.json truncated/corrupt.
+	if err := atomicio.WriteFile(path, out, 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

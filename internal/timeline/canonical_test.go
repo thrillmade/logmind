@@ -159,4 +159,47 @@ func TestExtractEntryBlocks_TolerateCRLF(t *testing.T) {
 	if len(got) != 1 || got[0].Key != "2026-06-29-x" {
 		t.Errorf("got %+v (stderr=%s); want 1 block keyed 2026-06-29-x", got, stderr.String())
 	}
+	// The body itself must be clean — no trailing "\r" leaking in from the
+	// raw "\n" split, or renderCanonical would write a literal CR into
+	// docs/timeline.md (breaking its own byte-determinism invariant).
+	if strings.Contains(got[0].Body, "\r") {
+		t.Errorf("body = %q; contains a stray \\r (CRLF must be stripped from body lines)", got[0].Body)
+	}
+	if got[0].Body != "body" {
+		t.Errorf("body = %q; want %q", got[0].Body, "body")
+	}
+}
+
+func TestExtractEntryBlocks_CRLFMultiLineBodyIsClean(t *testing.T) {
+	// A multi-line body under CRLF must have EVERY line stripped of its
+	// trailing "\r", not just the last one.
+	content := entryStartPrefix + "2026-06-29-x" + entryStartSuffix + "\r\n" +
+		"line one\r\nline two\r\n" + entryEndMarker + "\r\n"
+	var stderr bytes.Buffer
+	got := extractEntryBlocks(content, &stderr)
+	if len(got) != 1 {
+		t.Fatalf("got %d blocks; want 1 (stderr=%s)", len(got), stderr.String())
+	}
+	if want := "line one\nline two"; got[0].Body != want {
+		t.Errorf("body = %q; want %q (no \\r on any line)", got[0].Body, want)
+	}
+}
+
+// TestExtractEntryBlocks_CRLFAndLFIdenticalBodiesDedup pins the interaction
+// with dedupeAndSuffix's same-body carve-out: a CRLF-sourced entry and an
+// LF-sourced entry with the otherwise-identical body must be recognized as
+// the SAME entry (one row), not two — "body\r" != "body" would otherwise
+// silently duplicate every entry that round-trips through a CRLF checkout.
+func TestExtractEntryBlocks_CRLFAndLFIdenticalBodiesDedup(t *testing.T) {
+	crlf := entryStartPrefix + "2026-06-29-dup" + entryStartSuffix + "\r\nsame body\r\n" + entryEndMarker + "\r\n"
+	lf := entryStartPrefix + "2026-06-29-dup" + entryStartSuffix + "\nsame body\n" + entryEndMarker + "\n"
+	var stderr bytes.Buffer
+	gotCRLF := extractEntryBlocks(crlf, &stderr)
+	gotLF := extractEntryBlocks(lf, &stderr)
+	if len(gotCRLF) != 1 || len(gotLF) != 1 {
+		t.Fatalf("got %d CRLF blocks, %d LF blocks; want 1 each", len(gotCRLF), len(gotLF))
+	}
+	if gotCRLF[0].Body != gotLF[0].Body {
+		t.Errorf("CRLF body %q != LF body %q; dedupeAndSuffix's same-body carve-out requires exact equality", gotCRLF[0].Body, gotLF[0].Body)
+	}
 }
