@@ -1,4 +1,4 @@
-# logmind-template-version: v3
+# logmind-template-version: v4
 name: logmind / check-decisions
 
 # Fail PRs that introduce >20 lines of non-docs code changes without
@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read # fetch the live PR title (Enforce step) so a retitle+rerun honors [skip-logmind]
 
 jobs:
   check-decisions:
@@ -26,6 +27,9 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_TITLE: ${{ github.event.pull_request.title }}
+          GH_TOKEN: ${{ github.token }}
           THRESHOLD: "20"
         run: |
           set -euo pipefail
@@ -53,16 +57,44 @@ jobs:
             decision_touched=1
           fi
 
-          echo "total_lines=$total" >> "$GITHUB_OUTPUT"
-          echo "decision_touched=$decision_touched" >> "$GITHUB_OUTPUT"
+          # [skip-logmind] is a NORMATIVE maintainer override (protocol SPEC
+          # §15.3 / Appendix A.2), not just a convenience. github.event.
+          # pull_request.title is frozen at trigger time, so re-running a
+          # failed check after a maintainer retitles the PR would still
+          # judge the STALE title — the override would silently not take
+          # effect (issue #212). Fetch the LIVE title instead. PR_NUMBER
+          # comes from the event too, but it IS stable across reruns (a PR
+          # keeps its number for life; only the title payload goes stale).
+          # This workflow only triggers on `pull_request`, so there's no
+          # non-PR event to guard against. Fail OPEN to the event payload
+          # title if the API call errors (rate limit, transient outage,
+          # etc.) — a `gh` hiccup must never crash this check.
+          live_title="$(gh pr view "$PR_NUMBER" --json title -q .title 2>/dev/null)" || live_title=""
+          if [ -z "$live_title" ]; then
+            live_title="$EVENT_TITLE"
+          fi
+          skip_logmind=false
+          case "$live_title" in
+            *"[skip-logmind]"*) skip_logmind=true ;;
+          esac
+
+          {
+            echo "total_lines=$total"
+            echo "decision_touched=$decision_touched"
+            echo "skip_logmind=$skip_logmind"
+          } >> "$GITHUB_OUTPUT"
           echo "Non-docs lines changed: $total (threshold: $THRESHOLD)"
           echo "Decision log touched: $decision_touched"
+          echo "skip-logmind override: $skip_logmind"
 
       - name: Enforce
         # Gate trips when the PR exceeds THRESHOLD non-docs lines without
         # touching a decision log. `[skip-logmind]` in the PR title bypasses
-        # the gate for one-off overrides (handled by maintainers).
-        if: steps.diff.outputs.total_lines >= fromJSON(env.THRESHOLD) && steps.diff.outputs.decision_touched == '0' && !contains(github.event.pull_request.title, '[skip-logmind]')
+        # the gate for one-off overrides (handled by maintainers). Reads
+        # steps.diff.outputs.skip_logmind, resolved from the LIVE PR title
+        # above — NOT github.event.pull_request.title, which is frozen at
+        # trigger time and would miss a retitle+rerun (issue #212).
+        if: steps.diff.outputs.total_lines >= fromJSON(env.THRESHOLD) && steps.diff.outputs.decision_touched == '0' && steps.diff.outputs.skip_logmind != 'true'
         env:
           THRESHOLD: "20"
         run: |
