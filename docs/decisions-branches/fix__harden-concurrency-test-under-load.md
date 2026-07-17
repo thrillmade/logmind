@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-07-17 10:21 - test(pulse): loosen hostile-PATH hang-proof bound 3s to 15s (saturation-robust)
+
+**Reasoning:** the HangProof/hard_sleep bound of 3s flaked under full-suite saturation where a correct file-only logmind log can take a few seconds; the real signal is elapsed being far below the 30s hostile sleep, so 15s still catches a genuine PATH-subprocess hang while tolerating a loaded CI host
+
+**Alternatives considered:** leave it at 3s and accept the flake (rejected: false hang-proof failures pre-tag are a landmine); bump the hostile sleep instead (rejected: slower regression detection; 15s vs 30s already gives a 2x margin)
+
+**Implications:**
+- a regression that shells the PATH logmind still takes about 30s and trips the 15s bound; only saturation noise of a few seconds is now tolerated
+
+---
+
