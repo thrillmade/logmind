@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-07-17 14:32 - fix(guard-commit): detect -c bundled with other shell flags (bash -xc, sh -ec, -x -c) (#221 review)
+
+**Reasoning:** the dual-review flagged as MAJOR that the -c unwrap only matched -c as the exact second token, so bash -xc / sh -ec / bash -ic / bash -x -c all defeated detection and a real wrapped git commit slipped past the Layer-1 nudge; now scan the shell's option tokens for the first bundle containing c and recurse on the token after it
+
+**Alternatives considered:** keep the exact words[1] equals -c check (rejected: misses every bundled/preceding-flag form, the MAJOR gap); a full getopt parser (rejected: overkill for a Layer-1 advisory; the scan covers the real forms and Layer-2 git-hook still backstops)
+
+**Implications:**
+- recursion still terminates (the command string is strictly shorter); a shell that runs a script file with no -c correctly does not match
+
+---
+

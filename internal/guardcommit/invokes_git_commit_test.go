@@ -165,6 +165,10 @@ func TestInvokesGitCommit_WrapperUnwrap_Issue221(t *testing.T) {
 		{`FOO=1 command git commit -m x`, true},        // env-assign + command
 		{`command /usr/bin/git commit`, true},          // command + abs git path
 		{`timeout 30 bash -c "git commit -m x"`, true}, // wrapper + shell -c
+		{`bash -xc "git commit -m x"`, true},           // bundled -x + -c (dual-review #5)
+		{`sh -ec "git commit -m x"`, true},             // bundled -e + -c
+		{`bash -ic "git commit"`, true},                // bundled -i + -c
+		{`bash -x -c "git commit -m x"`, true},         // separate flag before -c
 
 		// Negative controls — must NOT match.
 		{`git status`, false},
@@ -174,6 +178,8 @@ func TestInvokesGitCommit_WrapperUnwrap_Issue221(t *testing.T) {
 		{`command npm test`, false},         // command builtin, non-git
 		{`command -v git`, false},           // -v/git alone: no commit subcommand
 		{`/usr/bin/git status`, false},      // abs path, but not the commit subcommand
+		{`bash -x script.sh`, false},        // shell + flag but no -c (runs a script)
+		{`bash script.sh`, false},           // shell runs a script, not -c mode
 		{`mygit commit`, false},             // basename "mygit" != "git"
 		{`/opt/notgit/mygit commit`, false}, // basename still "mygit"
 	}

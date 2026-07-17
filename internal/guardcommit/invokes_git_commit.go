@@ -99,12 +99,28 @@ func statementInvokesCommit(statement string) bool {
 	// nested command line — which may itself contain &&/;/command
 	// substitutions — so recurse the full InvokesGitCommit over that inner
 	// string rather than word-stripping it. Termination is guaranteed: the
-	// inner argument (words[2]) is strictly shorter than `statement`, since
+	// inner argument (the -c command string) is strictly shorter than `statement`, since
 	// at minimum the `<shell> -c` tokens and the quotes around the argument
 	// have been removed. So each recursion level shrinks the input toward the
 	// bare-command base case.
-	if shellCommands[commandBase(words[0])] && len(words) >= 3 && words[1] == "-c" {
-		return InvokesGitCommit(words[2])
+	if shellCommands[commandBase(words[0])] {
+		// The -c flag may be bundled with other single-letter options
+		// (bash -xc, sh -ec, bash -ic) or preceded by separate flags
+		// (bash -x -c), so scan the option tokens for the first bundle
+		// containing `c`; the token right after it is the command string.
+		for i := 1; i < len(words); i++ {
+			w := words[i]
+			if !strings.HasPrefix(w, "-") || w == "-" {
+				break // first non-option token → a script file, not -c mode
+			}
+			if strings.Contains(w, "c") {
+				if i+1 < len(words) {
+					return InvokesGitCommit(words[i+1])
+				}
+				return false
+			}
+		}
+		return false // a recognized shell, but no `-c <cmdline>`
 	}
 	if commandBase(words[0]) != "git" {
 		return false
