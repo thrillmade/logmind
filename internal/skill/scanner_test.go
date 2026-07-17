@@ -74,9 +74,11 @@ func TestScanContent_HardcodedCredentialBaseline(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			hits := ScanContent([]byte(c.Body), ScannerConfig{})
 			gotCredHit := false
+			gotKind := ""
 			for _, h := range hits {
 				if h.Kind == KindCredential {
 					gotCredHit = true
+					gotKind = h.Kind
 					// Baseline credential hits must default to BLOCK.
 					if h.Severity != SeverityBlock {
 						t.Errorf("credential hit severity = %q; want block",
@@ -94,7 +96,13 @@ func TestScanContent_HardcodedCredentialBaseline(t *testing.T) {
 				t.Errorf("got credential hit = %v; want %v (body=%q, hits=%+v)",
 					gotCredHit, c.WantHit, c.Body, hits)
 			}
-			_ = c.WantKind
+			// Positive cases must categorise the hit as the documented kind —
+			// wiring WantKind so a miscategorisation regression fails (issue
+			// #225), instead of the field being read-and-discarded.
+			if c.WantHit && gotKind != c.WantKind {
+				t.Errorf("credential hit Kind = %q; want %q (body=%q)",
+					gotKind, c.WantKind, c.Body)
+			}
 		})
 	}
 }
