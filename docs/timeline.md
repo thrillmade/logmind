@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-17-test-log-harden-concurrency-tests-against-acquire-timeout-fl -->
+- **2026-07-17** — test(log): harden concurrency tests against acquire-timeout flakes under load → [detail](decisions-branches/fix__harden-concurrency-test-under-load.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-17-serialize-concurrent-decision-writes-and-give-writeatomic-a- -->
 - **2026-07-17** — Serialize concurrent decision writes and give writeAtomic a unique temp file per call → [detail](decisions-branches/worktree-agent-a5c1f3d5a00748f87.md)
 <!-- logmind-entry-end -->
