@@ -364,6 +364,56 @@ func TestCheckDocLinksTemplate_V7_AdvisoryNoStrand(t *testing.T) {
 	}
 }
 
+// TestCheckDecisionsTemplate_V4_LivePRTitle pins the issue #212 fix: the
+// `[skip-logmind]` override (a NORMATIVE escape hatch — protocol SPEC
+// §15.3 / Appendix A.2) must be read from the LIVE PR title at run time,
+// not from github.event.pull_request.title, which is frozen at trigger
+// time and goes stale across a maintainer retitle+rerun.
+func TestCheckDecisionsTemplate_V4_LivePRTitle(t *testing.T) {
+	body := Workflow("check-decisions.yml.template")
+
+	// Marker bump v3 → v4.
+	if !strings.Contains(body, "# logmind-template-version: v4") {
+		t.Errorf("check-decisions template missing v4 marker")
+	}
+
+	// The Enforce step's `if:` must no longer trust the frozen event
+	// payload title for the skip-logmind check — that's the bug: a
+	// re-run after a retitle replays the ORIGINAL payload.
+	if strings.Contains(body, "contains(github.event.pull_request.title, '[skip-logmind]')") {
+		t.Errorf("check-decisions v4 Enforce step must not gate on the frozen github.event.pull_request.title (issue #212)")
+	}
+	// Instead it must key off a step output resolved from the live title.
+	if !strings.Contains(body, "steps.diff.outputs.skip_logmind != 'true'") {
+		t.Errorf("check-decisions v4 Enforce step must gate on steps.diff.outputs.skip_logmind (resolved from the live PR title)")
+	}
+
+	// The live title must be fetched via `gh pr view` using the PR number
+	// from the event (stable across reruns) — not the title.
+	if !strings.Contains(body, `gh pr view "$PR_NUMBER" --json title -q .title`) {
+		t.Errorf("check-decisions v4 missing the live-title fetch via `gh pr view \"$PR_NUMBER\" --json title -q .title`")
+	}
+	if !strings.Contains(body, "PR_NUMBER: ${{ github.event.pull_request.number }}") {
+		t.Errorf("check-decisions v4 missing PR_NUMBER sourced from the event (stable across reruns, unlike the title)")
+	}
+
+	// A `gh` API hiccup must fail OPEN to the old behavior (the event
+	// payload title), never crash the check.
+	if !strings.Contains(body, `live_title="$EVENT_TITLE"`) {
+		t.Errorf("check-decisions v4 missing the fail-open fallback to the event payload title on a `gh pr view` error")
+	}
+	if !strings.Contains(body, "EVENT_TITLE: ${{ github.event.pull_request.title }}") {
+		t.Errorf("check-decisions v4 missing EVENT_TITLE (the fail-open fallback source)")
+	}
+
+	// `gh pr view` needs read access to pull request data; the workflow
+	// token must grant it explicitly (the block already restricts
+	// everything else to none).
+	if !strings.Contains(body, "pull-requests: read") {
+		t.Errorf("check-decisions v4 missing pull-requests: read permission (required for `gh pr view`)")
+	}
+}
+
 // TestDecisionsBranchHeader_Shape pins the v1.2.0 backlink header
 // template (plan §8.7 deliverable 3). The single-line shape +
 // trailing blank line + relative ../timeline.md path are
