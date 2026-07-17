@@ -18,12 +18,44 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+// signalOnSubstr is a thread-safe io.Writer that closes `fired` the first time
+// its accumulated output contains `needle`. Used to synchronize a test writer
+// goroutine against output produced by runLog's goroutine WITHOUT racing on a
+// bytes.Buffer (the accumulation is mutex-guarded).
+type signalOnSubstr struct {
+	mu     sync.Mutex
+	buf    strings.Builder
+	needle string
+	once   sync.Once
+	fired  chan struct{}
+}
+
+func (w *signalOnSubstr) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if strings.Contains(w.buf.String(), w.needle) {
+		w.once.Do(func() { close(w.fired) })
+	}
+	return n, err
+}
+
+func (w *signalOnSubstr) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
 
 // initLogTestGitRepo turns a tmpdir into a working git repo on `main`.
 // Used by the log tests that need branch resolution + commit.
@@ -628,4 +660,401 @@ func TestLog_DocsMissingErrors(t *testing.T) {
 		mustContain(t, out.String(), "docs/ directory not found")
 	})
 	_ = dir
+}
+
+// TestIsStderrTerminal_FollowsStderrNotStdin pins issue #220: the §3.1.1 TTY
+// gate must stat os.Stderr (fd 2), not os.Stdin (fd 0). /dev/null is a
+// CHARACTER device (ModeCharDevice set) so the isatty heuristic treats it as a
+// terminal, while a regular temp file is not. Crossing the two proves the gate
+// follows STDERR — the pre-fix stdin-based code returns the OPPOSITE verdict in
+// both branches, so this test fails against it and passes against the fix.
+func TestIsStderrTerminal_FollowsStderrNotStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("char-device fixture (/dev/null) is POSIX-only")
+	}
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer devNull.Close()
+	regular, err := os.CreateTemp(t.TempDir(), "reg")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer regular.Close()
+
+	origStdin, origStderr := os.Stdin, os.Stderr
+	t.Cleanup(func() { os.Stdin, os.Stderr = origStdin, origStderr })
+
+	// stderr = char device (reads as a tty), stdin = regular file (not a tty).
+	os.Stderr, os.Stdin = devNull, regular
+	if !isStderrTerminal() {
+		t.Fatalf("stderr=/dev/null (char device) should read as a terminal; a stdin-based gate would wrongly return false")
+	}
+	// Inverse: stderr = regular file (not a tty), stdin = char device.
+	os.Stderr, os.Stdin = regular, devNull
+	if isStderrTerminal() {
+		t.Fatalf("stderr=regular-file should NOT read as a terminal; a stdin-based gate would wrongly return true")
+	}
+}
+
+// TestLog_NonTTY_ByteExactThreeLines_BranchFile pins the §3.1.1 / #220 contract
+// from the stderr-gate angle: when stderr is NOT a TTY (agent/CI), the
+// branch-summary nudge goes to stderr only and stdout is byte-exact three
+// lines — even on a feature branch where the nudge fires. bytes.Equal, not a
+// substring match: a stray byte anywhere fails this.
+func TestLog_NonTTY_ByteExactThreeLines_BranchFile(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit the scaffold on main FIRST so main is a born branch — else
+		// DefaultBranch would resolve to the only branch carrying commits (the
+		// feature branch), making isBranchFile false and skipping the nudge.
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/byte-exact")
+
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "byte exact branch decision", "-r", "why", "--no-push", "--no-interactive"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\nstderr:\n%s", err, errBuf.String())
+			}
+			want := []byte("ℹ Staging all changes (use --stage scoped to limit)\n" +
+				`✓ Logged decision: "byte exact branch decision"` + "\n" +
+				"✓ Committed changes\n")
+			if !bytes.Equal(out.Bytes(), want) {
+				t.Fatalf("stdout not byte-exact.\nwant %q\ngot  %q", want, out.Bytes())
+			}
+			// The branch-summary nudge advisory lands on stderr, never stdout.
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+		})
+	})
+}
+
+// TestLog_NudgeInteractive_TimesOutInsteadOfHanging pins issue #228: at a TTY
+// the branch-summary nudge must not block indefinitely on a human who walks
+// away — runLog holds the repo lock across the prompt, so an unbounded stdin
+// read would keep the lock past lockAcquireTimeout (15s) and make a concurrent
+// `logmind log` in the same cwd fail with the misleading "appears stuck". Both
+// reads share a single nudgeBudget deadline; on timeout the nudge keeps the
+// current headline, emits the stderr advisory, and returns so runLog
+// commits/unlocks promptly. We shrink nudgeBudget so the test is fast but still
+// exercises the real timeout path (not a hang).
+func TestLog_NudgeInteractive_TimesOutInsteadOfHanging(t *testing.T) {
+	orig := nudgeBudget
+	nudgeBudget = 150 * time.Millisecond
+	t.Cleanup(func() { nudgeBudget = orig })
+
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit on main first so DefaultBranch resolves to main (else the
+		// feature branch would be the only branch with commits → isBranchFile
+		// false → the nudge never fires).
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/nudge-timeout")
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "nudge timeout decision", "-r", "why", "--no-push"})
+			// A pipe whose write end is never written/closed → the read blocks
+			// forever, standing in for a human who walked away from the prompt.
+			pr, pw := io.Pipe()
+			t.Cleanup(func() { _ = pw.Close() })
+			root.SetIn(pr)
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+
+			done := make(chan error, 1)
+			go func() { done <- root.Execute() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("runLog returned error: %v\nstderr:\n%s", err, errBuf.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("runLog hung past 5s — nudge stdin read not bounded (#228)")
+			}
+			// Timeout path emitted the fallback advisory (kept current headline).
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+			// The commit still happened — caller proceeded promptly after timeout.
+			mustContain(t, out.String(), "✓ Committed changes")
+			// No interactive edit was applied → no post-line-3 confirmation.
+			if strings.Contains(out.String(), "✓ Branch summary updated.") {
+				t.Fatalf("timeout must NOT apply an edit; stdout:\n%s", out.String())
+			}
+		})
+	})
+}
+
+// TestLog_NudgeInteractive_ImmediateReply guards that bounding the nudge reads
+// (#228) did NOT change behavior for replies that arrive immediately: 'y' plus
+// a new summary rewrites the branch headline and prints the confirmation.
+func TestLog_NudgeInteractive_ImmediateReply(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		runGitIn(t, d, "checkout", "-b", "feat/nudge-immediate")
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "original headline", "-r", "why", "--no-commit"})
+			root.SetIn(strings.NewReader("y\nRefined whole-branch summary\n"))
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\n%s", err, errBuf.String())
+			}
+			mustContain(t, out.String(), "✓ Branch summary updated.")
+		})
+
+		body, err := os.ReadFile(filepath.Join(d, "docs", "decisions-branches", "feat__nudge-immediate.md"))
+		if err != nil {
+			t.Fatalf("read branch file: %v", err)
+		}
+		if !strings.Contains(string(body), "Refined whole-branch summary") {
+			t.Fatalf("branch summary not updated on disk; body:\n%s", body)
+		}
+	})
+}
+
+// TestLog_NudgeInteractive_StdoutOrderedAfterCommitLine pins issue #206: on the
+// interactive TTY path the branch-summary nudge's stdout output must come AFTER
+// SPEC §3.1 line 3 ("✓ Committed…"), never between lines 2 and 3. The prompts
+// go to stderr (so stdout stays the canonical contract stream); the only stdout
+// the nudge adds is the post-commit confirmation — and the human's edit still
+// lands in the commit.
+func TestLog_NudgeInteractive_StdoutOrderedAfterCommitLine(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit on main first so DefaultBranch resolves to main (else the
+		// feature branch would be the only branch with commits → isBranchFile
+		// false → the nudge never fires).
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/nudge-order")
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "ordering decision", "-r", "why", "--no-push"})
+			root.SetIn(strings.NewReader("y\nWhole branch summary edited\n"))
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\nstderr:\n%s", err, errBuf.String())
+			}
+			so := out.String()
+			iLogged := strings.Index(so, `✓ Logged decision: "ordering decision"`)
+			iCommitted := strings.Index(so, "✓ Committed changes")
+			iConfirm := strings.Index(so, "✓ Branch summary updated.")
+			if iLogged < 0 || iCommitted < 0 || iConfirm < 0 {
+				t.Fatalf("missing expected stdout lines:\n%s", so)
+			}
+			if !(iLogged < iCommitted && iCommitted < iConfirm) {
+				t.Fatalf("§3.1.1 ordering violated (want Logged < Committed < confirmation):\n%s", so)
+			}
+			// The interactive PROMPTS must NOT be on stdout (they're on stderr,
+			// so the three-line stdout contract holds up to the confirmation).
+			if strings.Contains(so, "Update it to a one-sentence summary") {
+				t.Fatalf("interactive prompt leaked to stdout (must be stderr):\n%s", so)
+			}
+			mustContain(t, errBuf.String(), "Update it to a one-sentence summary")
+		})
+
+		// The human's edit actually landed in the decision commit (HEAD).
+		body := runGitOut(t, d, "show", "HEAD:docs/decisions-branches/feat__nudge-order.md")
+		if !strings.Contains(body, "Whole branch summary edited") {
+			t.Fatalf("edit not captured by the commit; HEAD file:\n%s", body)
+		}
+	})
+}
+
+// TestNudge_SharedDeadlineAcrossBothReads pins finding #1 (#233): the two nudge
+// prompts (y/N, then "New summary:") must share ONE deadline, not arm a fresh
+// full timeout each. runLog holds the repo lock across the whole nudge, so a
+// per-read timeout could hold it ~2× nudgeBudget and blow past
+// lockAcquireTimeout (15s), reintroducing the "appears stuck" failure a
+// concurrent `logmind log` sees.
+//
+// Two checks: (a) a STATIC invariant that the whole-nudge budget sits under the
+// lock window; (b) a behavioral proof — the y/N reply arrives at ~0.7×budget,
+// the summary never arrives, so a single shared deadline finishes the nudge
+// near budget while the pre-fix per-read timeout would run ~1.7×budget.
+func TestNudge_SharedDeadlineAcrossBothReads(t *testing.T) {
+	if nudgeBudget >= lockAcquireTimeout {
+		t.Fatalf("nudgeBudget (%v) must be < lockAcquireTimeout (%v) so the nudge can never hold the repo lock long enough to fail a concurrent log (#233)", nudgeBudget, lockAcquireTimeout)
+	}
+
+	orig := nudgeBudget
+	nudgeBudget = 500 * time.Millisecond
+	t.Cleanup(func() { nudgeBudget = orig })
+
+	withTempCwd(t, func(d string) {
+		// A branch decision file carrying a headline marker so CurrentHeadline
+		// resolves (no git/commit needed — we call the nudge directly).
+		target := filepath.Join(d, "docs", "decisions-branches", "feat__budget.md")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		content := buildTimelineMarker(time.Now(), "current headline", "")
+		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+			t.Fatalf("write target: %v", err)
+		}
+
+		pr, pw := io.Pipe()
+		t.Cleanup(func() { _ = pw.Close() })
+		lines := newStdinLines(pr)
+
+		withFakeTTY(t, true, func() {
+			// "y" arrives LATE (0.7×budget); the summary never arrives so the
+			// second read must time out on the REMAINING budget. Started just
+			// before the call so the delay is measured against the nudge clock.
+			go func() {
+				time.Sleep(350 * time.Millisecond)
+				_, _ = pw.Write([]byte("y\n"))
+			}()
+
+			var errBuf bytes.Buffer
+			start := time.Now()
+			edited := nudgeBranchSummary(target, false, true, lines, &errBuf)
+			elapsed := time.Since(start)
+
+			if edited {
+				t.Fatalf("nudge must NOT report an edit when the summary read times out")
+			}
+			// Shared deadline: ≈ budget (500ms), NOT ≈ 1.7×budget (850ms) as a
+			// per-read timeout would give.
+			if elapsed > 750*time.Millisecond {
+				t.Fatalf("nudge held for %v; a single shared deadline must keep it near nudgeBudget (%v), not ~2× (#233)", elapsed, nudgeBudget)
+			}
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+		})
+	})
+}
+
+// TestLog_NudgeTimeout_ThenSelfHealGetsAnswer_NoTheft pins finding #2 (#233):
+// after the branch-summary nudge times out, the following self-heal prompt must
+// receive the human's first typed answer. Pre-fix the nudge and the self-heal
+// loop each wrapped os.Stdin in their OWN bufio.Reader; the nudge's parked
+// reader swallowed the first byte the human typed and the self-heal reader hung
+// forever. One shared stdin reader hands that answer to the self-heal loop.
+func TestLog_NudgeTimeout_ThenSelfHealGetsAnswer_NoTheft(t *testing.T) {
+	orig := nudgeBudget
+	nudgeBudget = 200 * time.Millisecond
+	t.Cleanup(func() { nudgeBudget = orig })
+
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit on main first so DefaultBranch resolves to main (else the
+		// feature branch is the only branch with commits → isBranchFile false →
+		// the nudge never fires).
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/no-theft")
+		// Orphan → the self-heal loop has something to prompt about.
+		if err := os.WriteFile(filepath.Join(d, "docs", "orphan.md"), []byte("# Orphan\n"), 0o644); err != nil {
+			t.Fatalf("write orphan: %v", err)
+		}
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "no theft decision", "-r", "why", "--no-commit"})
+			// A real *io.PipeReader (readable, so both nudge + self-heal go
+			// interactive). The human ignores the nudge; we type the self-heal
+			// answer only AFTER the nudge has DEFINITIVELY timed out — gated on
+			// its advisory landing on stderr, not a fragile wall-clock sleep, so
+			// the answer can only be consumed by self-heal (not swallowed as the
+			// nudge's y/N reply). This is the exact ordering finding #2 is about.
+			pr, pw := io.Pipe()
+			t.Cleanup(func() { _ = pw.Close() })
+			root.SetIn(pr)
+			var out bytes.Buffer
+			root.SetOut(&out)
+			// Signal once the nudge's timeout advisory is written to stderr.
+			errBuf := &signalOnSubstr{needle: "📝 Branch summary:", fired: make(chan struct{})}
+			root.SetErr(errBuf)
+
+			go func() {
+				<-errBuf.fired // nudge has timed out + moved on
+				_, _ = pw.Write([]byte("n\n"))
+			}()
+
+			done := make(chan error, 1)
+			go func() { done <- root.Execute() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("runLog returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errBuf.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("runLog hung — self-heal read blocked because the timed-out nudge stole the answer (#233)")
+			}
+			// Nudge timed out → advisory on stderr (kept current headline).
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+			// Self-heal actually RECEIVED the human's "n" (proves no theft): it
+			// prints the skip line and exits 0.
+			mustContain(t, out.String(), "Skipped")
+		})
+	})
+}
+
+// TestLog_SelfHeal_StderrTTY_StdinDeadPipe_DoesNotHang pins finding #3: #220
+// moved the interactivity gate to isatty(STDERR), but the self-heal reply read
+// is unbounded — so with stderr a TTY and stdin an open-but-never-delivering
+// pipe the loop would hang where the old isatty(STDIN) gate exited 0. The
+// stdinReadable gate must fall through to the non-interactive advisory + exit 0
+// when stdin is a pipe that can never make progress.
+func TestLog_SelfHeal_StderrTTY_StdinDeadPipe_DoesNotHang(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Default branch (main) → no branch-summary nudge; isolates the
+		// self-heal loop. Orphan → self-heal would want to prompt.
+		if err := os.WriteFile(filepath.Join(d, "docs", "orphan.md"), []byte("# Orphan\n"), 0o644); err != nil {
+			t.Fatalf("write orphan: %v", err)
+		}
+
+		// A real OS pipe read-end: *os.File whose mode is a fifo (not a char
+		// device, not a regular file) → stdinReadable == false. Never written,
+		// so any unbounded read on it would hang forever.
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		t.Cleanup(func() { _ = pr.Close(); _ = pw.Close() })
+
+		// stderr is a TTY (the #220 output gate) but stdin is the dead pipe.
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "dead pipe decision", "-r", "why", "--no-commit"})
+			root.SetIn(pr)
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+
+			done := make(chan error, 1)
+			go func() { done <- root.Execute() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("runLog returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errBuf.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("runLog hung on a never-delivering stdin pipe — stdinReadable gate missing (finding #3)")
+			}
+			// Fell through to the non-interactive advisory on stderr, NOT the
+			// interactive prompt loop.
+			mustContain(t, errBuf.String(), "⚠ Standard markdown links need attention")
+			mustContain(t, errBuf.String(), "Non-interactive context")
+			if strings.Contains(out.String(), "reply [y to re-check") || strings.Contains(errBuf.String(), "reply [y to re-check") {
+				t.Fatalf("dead-pipe stdin must NOT enter the interactive prompt loop\nstdout:\n%s\nstderr:\n%s", out.String(), errBuf.String())
+			}
+		})
+	})
 }

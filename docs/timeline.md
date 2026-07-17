@@ -34,6 +34,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-17** — fix(guard-commit): detect git commit wrapped in sh -c / command / absolute git path (#221) → [detail](decisions-branches/worktree-agent-a8826d36dbe21daf7.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-17-fix-cli-stderr-tty-gate-bounded-interactive-nudge-spec-order -->
+- **2026-07-17** — fix(cli): stderr TTY gate + bounded interactive nudge + spec-ordered receipt + TZ-stable pulse (#228 #220 #222 #206) → [detail](decisions-branches/fix__cli-3.1.1-stderr-nudge-pulse.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-17-fix-ci-check-decisions-honors-skip-logmind-on-rerun-fetch-th -->
 - **2026-07-17** — fix(ci): check-decisions honors [skip-logmind] on rerun — fetch the live PR title (#212) → [detail](decisions-branches/fix__check-decisions-live-pr-title-212.md)
 <!-- logmind-entry-end -->

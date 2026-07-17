@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thrillmade/logmind/internal/hooks"
 )
@@ -467,5 +468,67 @@ func TestLog_Pulse_GitAbsentFromPath_NoErrorNoPulse(t *testing.T) {
 				t.Fatalf("pulse should be silent when git is absent from PATH; stderr:\n%s", errBuf.String())
 			}
 		})
+	})
+}
+
+// TestLog_Pulse_SpecLine_TimezoneStable pins issue #222: the spec-staleness
+// verdict must be identical regardless of the running machine's timezone (the
+// #211 localize+instant compare flipped it by the full UTC offset). We pin
+// time.Local to several extreme zones and assert specPulseLine returns the same
+// (line, ok) for the same on-disk repo state, and that a decision on the SAME
+// calendar day as the spec commit is NOT counted (same-day tie is not-after, so
+// no false "still accurate?" nudge). The pre-fix code fired for the same-day
+// fixture under negative-offset zones while staying silent under positive ones,
+// so this test fails against it and passes against the calendar-day fix.
+func TestLog_Pulse_SpecLine_TimezoneStable(t *testing.T) {
+	origLocal := time.Local
+	t.Cleanup(func() { time.Local = origLocal })
+
+	zones := []*time.Location{
+		time.UTC,
+		time.FixedZone("UTC+14", 14*3600),
+		time.FixedZone("UTC-12", -12*3600),
+	}
+
+	run := func(t *testing.T, decisionDay string, wantOK bool, wantCount int) {
+		withTempCwd(t, func(d string) {
+			initLogTestGitRepo(t, d)
+			scaffoldDocs(t)
+			mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: SPEC.md\n")
+			commitFileWithDate(t, d, "SPEC.md", "# Spec\n", "2020-06-15T12:00:00Z")
+
+			// Overwrite docs/decisions.md with exactly specPulseThreshold headers
+			// dated decisionDay at noon — direct-write so the header dates are
+			// fully controlled (not time.Now()).
+			var b strings.Builder
+			for i := 0; i < specPulseThreshold; i++ {
+				fmt.Fprintf(&b, "## %s 12:00 - decision %d\n\n**Reasoning:** why\n\n---\n\n", decisionDay, i)
+			}
+			mustWriteUnder(t, d, "docs/decisions.md", b.String())
+
+			for _, loc := range zones {
+				time.Local = loc
+				line, ok := specPulseLine(d)
+				if ok != wantOK {
+					t.Fatalf("TZ %s day=%s: specPulseLine ok=%v want %v (line=%q)", loc, decisionDay, ok, wantOK, line)
+				}
+				if wantOK {
+					want := fmt.Sprintf("logmind: SPEC.md unchanged for %d decisions — still accurate?", wantCount)
+					if line != want {
+						t.Fatalf("TZ %s: line=%q want %q", loc, line, want)
+					}
+				}
+			}
+		})
+	}
+
+	// Day AFTER the spec commit day → all counted → fires with count=threshold.
+	t.Run("day_after_fires", func(t *testing.T) {
+		run(t, "2020-06-16", true, specPulseThreshold)
+	})
+	// SAME calendar day as the spec commit → same-day tie is not-after → 0
+	// counted → below threshold → silent, in every zone.
+	t.Run("same_day_silent", func(t *testing.T) {
+		run(t, "2020-06-15", false, 0)
 	})
 }
