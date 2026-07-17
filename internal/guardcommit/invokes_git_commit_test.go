@@ -120,3 +120,66 @@ func TestInvokesGitCommit_AdditionalCases(t *testing.T) {
 		}
 	}
 }
+
+// TestInvokesGitCommit_WrapperUnwrap_Issue221 covers the three additional
+// wrapper shapes from issue #221 that previously slipped past the Layer-1
+// gate: (1) a shell `-c <cmdline>` (recurse into the nested command line),
+// (2) the `command` builtin and its -p/-v/-V options, and (3) an absolute or
+// relative path whose basename is `git`. Each capability is exercised alone
+// and in combination, with negative controls that must NOT match.
+func TestInvokesGitCommit_WrapperUnwrap_Issue221(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		// (1) Shell `-c <cmdline>` recursion — every shell in the set.
+		{`sh -c 'git commit'`, true},
+		{`bash -c "git commit -m x"`, true},
+		{`zsh -c 'git commit -m x'`, true},
+		{`dash -c 'git commit'`, true},
+		{`ksh -c 'git commit'`, true},
+		// The inner command line is fully re-parsed, so &&/;/pipes and
+		// leading non-git statements inside `-c` are handled.
+		{`sh -c 'cd x && git commit'`, true},
+		{`bash -c "npm test && git commit -m x"`, true},
+		{`sh -c 'git status; git commit -m x'`, true},
+		// Shell by absolute path (matched by basename).
+		{`/bin/bash -c "git commit -m x"`, true},
+		// Nested shells: recursion peels one `<shell> -c` per level and the
+		// input strictly shrinks, so it terminates at the bare `git commit`.
+		{`bash -c "sh -c 'git commit'"`, true},
+
+		// (2) The `command` builtin, with and without its options.
+		{`command git commit`, true},
+		{`command -p git commit`, true},
+		{`command -V git commit -m x`, true},
+
+		// (3) Absolute / relative git path (basename == "git").
+		{`/usr/bin/git commit`, true},
+		{`/usr/local/bin/git commit -m x`, true},
+		{`./bin/git commit`, true},
+		{`/usr/bin/git -C sub commit`, true},
+
+		// Combinations across capabilities.
+		{`FOO=1 bash -c "git commit -m x"`, true},      // env-assign + shell -c
+		{`FOO=1 command git commit -m x`, true},        // env-assign + command
+		{`command /usr/bin/git commit`, true},          // command + abs git path
+		{`timeout 30 bash -c "git commit -m x"`, true}, // wrapper + shell -c
+
+		// Negative controls — must NOT match.
+		{`git status`, false},
+		{`bash -c "echo hi"`, false},        // shell -c, but no git commit inside
+		{`sh -c 'npm test'`, false},         // shell -c into a non-git command
+		{`bash -c "git status"`, false},     // recursion into a non-commit subcommand
+		{`command npm test`, false},         // command builtin, non-git
+		{`command -v git`, false},           // -v/git alone: no commit subcommand
+		{`/usr/bin/git status`, false},      // abs path, but not the commit subcommand
+		{`mygit commit`, false},             // basename "mygit" != "git"
+		{`/opt/notgit/mygit commit`, false}, // basename still "mygit"
+	}
+	for _, c := range cases {
+		if got := InvokesGitCommit(c.cmd); got != c.want {
+			t.Errorf("InvokesGitCommit(%q) = %v; want %v", c.cmd, got, c.want)
+		}
+	}
+}
