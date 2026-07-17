@@ -2,15 +2,18 @@
 //
 // v1.0.0 shipped 2026-06-03 via the v1-go-rewrite → main cutover (#132).
 // Local `go build` and `make build` produce a binary reporting the
-// "1.0.0-dev" default; tagged release builds running through
+// "2.0.0-dev" default; tagged release builds running through
 // `.goreleaser.yaml` override via `-ldflags
 // "-X 'github.com/thrillmade/logmind/internal/version.Version=v1.2.3'"`
 // to inject the actual tag.
 //
-// SpecVersion tracks the thrillmade/protocol SPEC.md document — bumped
-// to "1.0.0" 2026-07-04 (the coordinated SPEC 1.0.0 that REMOVES the
-// branch-divergent timeline model: §1.6.4 main-canonical union assembly
-// is now the sole, unconditional timeline. See v2.0.0 below).
+// SpecVersion tracks the thrillmade/protocol SPEC.md document. It was
+// bumped to "1.0.0" 2026-07-04 (the coordinated SPEC 1.0.0 that REMOVES
+// the branch-divergent timeline model: §1.6.4 main-canonical union
+// assembly is now the sole, unconditional timeline. See v2.0.0 below),
+// then advanced to the current "1.5.0" ahead of the v2.0.0 tag (§15
+// decision-logging enforcement, §16 the canonical spec-file contract,
+// §3.1.1 the pulse — see docs/spec.md).
 package version
 
 // Version is the logmind binary's semantic version. Bumped at release.

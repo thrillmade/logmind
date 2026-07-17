@@ -1,5 +1,10 @@
 # Building Custom Integrations
 
+> **Historical — Python v0.6.x era (frozen).** The `BaseIntegration` API
+> described below does not exist in the Go binary (v1.0+). It is kept for
+> historical reference only; see [docs/plan.md](plan.md) for the current
+> (Go) architecture.
+
 This guide explains how to build a logmind integration for any AI framework.
 
 ## Overview

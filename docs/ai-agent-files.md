@@ -2,7 +2,12 @@
 
 ## Goal
 
-When `logmind init` runs, it inserts logmind usage instructions into existing AI agent instruction files without overwriting existing content.
+`AGENTS.md` is the canonical instruction file. `logmind init` creates (or
+refreshes) it with the logmind decision-logging block, then writes a
+2-line **stub** for every enabled per-tool file (`CLAUDE.md`,
+`.cursorrules`, ...) that just points back at `AGENTS.md`. The guidance
+lives in one place; per-tool files never carry a second copy that can
+drift out of sync.
 
 ## Supported AI Agents
 
@@ -22,80 +27,89 @@ logmind supports the following AI coding assistants:
 | Cline | `.clinerules` | Supported |
 | OpenAI Codex | `AGENTS.md` | Supported |
 
+Which agents get a stub is controlled by the `agents:` block in
+`.logmind/config.yml` (`claude` and `cursor` default `true`; the rest
+default `false`) or overridden per-run with `--agents` / `--all-agents`.
+Codex's file *is* `AGENTS.md`, so it's always "configured" once init has
+run — there's no separate stub to write.
+
 ## Insertion Strategy
 
-### If an AI instruction file exists:
+### AGENTS.md (canonical)
 
-Check if it already contains logmind instructions by searching for a marker:
-```markdown
-<!-- logmind-start -->
+`logmind init` inserts the logmind block between
+`<!-- logmind-start -->` / `<!-- logmind-end -->` markers, versioned via
+`<!-- logmind-block-version: v9-pointer -->`. If the marker is already
+present, the block is left alone on a plain re-run (`logmind doctor --fix`
+or a version bump refreshes a *stale* block in place); any other existing
+content in `AGENTS.md` — `## Project Overview`, `## Development Commands`,
+etc. — is preserved as-is.
+
+### Per-tool files (stubs)
+
+For every enabled agent, `logmind init` / `logmind agents add <name>`
+writes (or overwrites) a 2-line stub:
+
+```
+<!-- logmind-stub: AI agent instructions for this project live in AGENTS.md -->
+See [AGENTS.md](AGENTS.md) for project-specific AI agent instructions, including
+the decision-logging requirement (logmind) and required reading.
 ```
 
-**If marker exists:** Skip (already initialized)
+If a per-tool file already exists with real hand-written content (not yet
+a stub), `logmind agents add <name>` falls back to splicing a
+`<!-- logmind-start -->` / `<!-- logmind-end -->` section into that file
+in place (the legacy, pre-AGENTS.md insertion path) rather than clobbering
+it. `logmind agents migrate` consolidates any such files into stubs.
 
-**If marker doesn't exist:** Insert section after the title/first heading:
+### Context files
 
-```markdown
-# CLAUDE.md
+The required-reading list an agent should read before starting work,
+pointed to from the `AGENTS.md` block:
 
-This file provides guidance to Claude Code...
-
-<!-- logmind-start -->
-## Decision Logging (logmind)
-
-This project uses [logmind](https://logmind.dev) for decision tracking.
-
-### For AI Agents
-
-When making significant decisions or writing important code:
-
-```bash
-logmind log "Decision summary" \
-  -r "Why this approach" \
-  -a "Option A" -a "Option B" \
-  -i "Impact 1" -i "Impact 2"
-```
-
-### Context Files
-
-- **[docs/decisions.md](decisions.md)** - 20 most recent decisions
-- **[docs/decisions-archive.md](decisions-archive.md)** - Historical decisions
-- **[docs/file-structure.md](file-structure.md)** - Current project structure
-
-Read these files to understand project history and architecture.
-<!-- logmind-end -->
-
-[Rest of existing content]
-```
-
-### If no AI instruction file exists:
-
-Create `CLAUDE.md` with the full template (Claude Code is the default).
+- **[docs/timeline.md](timeline.md)** — auto-generated, main-canonical
+  union of every decision across every branch; start here
+- **[docs/decisions.md](decisions.md)** — 20 most recent decisions on the
+  default branch
+- **[docs/decisions-branches/](decisions-branches/)** — per-branch
+  decision logs for in-flight feature work
+- **[docs/file-structure.md](file-structure.md)** — current project tree
 
 ## CLI Commands
 
 ### View Agent Status
 
 ```bash
-logmind agents              # List all agents with status
+logmind agents list         # List all agents with status
 ```
 
 Example output:
 ```
 AI Agent Status:
-  ✓ claude      CLAUDE.md (configured)
-  ✓ cursor      .cursorrules (configured)
-  ✗ copilot     .github/copilot-instructions.md (not configured)
-  ✗ windsurf    .windsurfrules (not configured)
-  ...
+
+  ✓ claude       CLAUDE.md                                (configured)
+  ✓ cursor       .cursorrules                              (configured)
+  ✗ copilot      .github/copilot-instructions.md          (not configured)
+  ✗ windsurf     .windsurfrules                            (not configured)
+  ✗ aider        CONVENTIONS.md                            (not configured)
+  ✗ continue     .continuerules                            (not configured)
+  ✗ cody         .sourcegraph/cody.json                    (not configured)
+  ✗ zed          .zed/settings.json                        (not configured)
+  ✗ amazonq      .amazonq/rules.md                         (not configured)
+  ✗ cline        .clinerules                               (not configured)
+  ✓ codex        AGENTS.md                                 (configured)
+
+Supported agents: claude, cursor, copilot, windsurf, aider, continue, cody, zed, amazonq, cline, codex
 ```
 
-### Add/Remove Agents
+### Add/Remove/Migrate Agents
 
 ```bash
-logmind agents add cursor   # Create .cursorrules with logmind section
-logmind agents add windsurf # Create .windsurfrules with logmind section
+logmind agents add cursor    # Write .cursorrules as a stub pointing to AGENTS.md
+logmind agents add windsurf  # Write .windsurfrules as a stub pointing to AGENTS.md
 logmind agents remove cursor # Remove .cursorrules
+logmind agents update        # Refresh stale logmind blocks + CI workflow pins
+logmind agents migrate       # Consolidate any full per-agent files into stubs
 ```
 
 ### Initialize with Specific Agents
@@ -108,51 +122,88 @@ logmind init --all-agents              # All supported agents
 ## Edge Cases
 
 1. **File exists but is empty:** Treat as new file
-2. **File has no headings:** Insert at very top
-3. **Multiple AI instruction files exist:** Insert into all of them
-4. **File is not writable:** Show error, continue with other files
-5. **Already initialized:** Skip silently (idempotent)
+2. **File has no headings:** Insert at very top (legacy splice path)
+3. **File is not writable:** Show error, continue with other files
+4. **Already initialized:** Refresh mode — templates/hooks refreshed in
+   place, decision docs and `.logmind/config.yml` left untouched
 
 ## User Experience
 
 ### First initialization:
-```bash
+
+```
 $ logmind init
 
 Initializing logmind...
+
+✓ Created docs/
 ✓ Created docs/decisions.md
 ✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
-✓ Added logmind instructions to CLAUDE.md
+✓ Created docs/timeline.md
+✓ Created .logmind/config.yml
+Created AGENTS.md (canonical agent instructions)
+✓ Created CLAUDE.md
+✓ Created .cursorrules
+✓ Created .github/workflows/check-decisions.yml
+✓ Created .github/workflows/check-doc-links.yml
+✓ Created .github/workflows/logmind-self-update.yml
+✓ Created .github/workflows/regen-timeline.yml
+✓ Created .github/dependabot.yml
+✓ Added logmind block to .gitignore
+✓ Added logmind block to .gitattributes
+✓ Installed Claude Code guard-commit hook (.claude/settings.json)
 ✓ Logged first decision: "Initialize logmind decision tracking"
-✓ Committed changes: "logmind: Initialize decision tracking"
 
 logmind initialized successfully!
+
+Start logging decisions with:
+  logmind log "Your decision here" -r "why" -a "alternative" -i "implication"
 ```
 
 ### With specific agents:
-```bash
+
+```
 $ logmind init --agents claude,cursor,windsurf
 
 Initializing logmind...
+
+✓ Created docs/
 ✓ Created docs/decisions.md
 ✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
-✓ Added logmind instructions to CLAUDE.md
-✓ Created .cursorrules with logmind instructions
-✓ Created .windsurfrules with logmind instructions
+✓ Created docs/timeline.md
+✓ Created .logmind/config.yml
+Created AGENTS.md (canonical agent instructions)
+✓ Created CLAUDE.md
+✓ Created .cursorrules
+✓ Created .windsurfrules
+✓ Created .github/workflows/check-decisions.yml
+✓ Created .github/workflows/check-doc-links.yml
+✓ Created .github/workflows/logmind-self-update.yml
+✓ Created .github/workflows/regen-timeline.yml
+✓ Created .github/dependabot.yml
+✓ Added logmind block to .gitignore
+✓ Added logmind block to .gitattributes
+✓ Installed Claude Code guard-commit hook (.claude/settings.json)
 ✓ Logged first decision: "Initialize logmind decision tracking"
-✓ Committed changes: "logmind: Initialize decision tracking"
 
 logmind initialized successfully!
 ```
 
-### Already initialized:
-```bash
+### Already initialized (refresh mode):
+
+```
 $ logmind init
 
-✓ docs/ already exists
-✓ CLAUDE.md already has logmind instructions
+Initializing logmind...
 
-logmind is already initialized in this project.
+logmind is already initialized — running in refresh mode.
+
+  All workflow templates already current.
+✓ Refreshed .git/hooks/post-merge
+✓ Refreshed .git/hooks/post-rewrite
+✓ Refreshed .git/hooks/commit-msg
+
+Done. docs/ and .logmind/ left untouched.
 ```

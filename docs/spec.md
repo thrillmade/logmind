@@ -11,5 +11,6 @@ logmind's canonical, forward-looking contract is the SkDD protocol SPEC:
 
 logmind v2.0.0 implements SPEC 1.5.0+ (see `internal/version.SpecVersion`),
 including §15 (decision-logging enforcement), §16 (this canonical
-spec-file contract), and the §3.1.1 pulse. The near-term target is the v2.0.0 release:
-see [docs/plan.md](plan.md) for the current roadmap.
+spec-file contract), and the §3.1.1 pulse. logmind v2.0.0 is the current
+release line; see [docs/plan.md](plan.md) for architecture and the
+forward roadmap.

@@ -123,11 +123,15 @@ changelog:
   # for the wave they shipped in, which the agent author already wrote).
   sort: asc
   filters:
+    # Scope-aware: conventional commits with a scope (`docs(readme): ...`,
+    # `chore(release): ...`) don't match a bare `^docs:` anchor, so the
+    # optional `(\(.+\))?` group covers both `type:` and `type(scope):`.
+    # RE2 (Go's regexp), same engine GoReleaser compiles these against.
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
-      - "^ci:"
+      - '^docs(\(.+\))?:'
+      - '^test(\(.+\))?:'
+      - '^chore(\(.+\))?:'
+      - '^ci(\(.+\))?:'
       - "Merge pull request"
       - "Merge branch"
 
@@ -149,8 +153,8 @@ release:
 
     ## Install
 
-    - **Homebrew (macOS / Linux):** `brew install thrillmade/tap/logmind`
-    - **Curl:** `curl -fsSL logmind.dev/install.sh | sh`
+    - **Homebrew (macOS):** `brew install thrillmade/tap/logmind`
+    - **Curl (macOS / Linux):** `curl -fsSL logmind.dev/install.sh | sh`
     - **Manual:** download the matching `logmind_VERSION_OS_ARCH.tar.gz`
       from the assets below, extract `logmind`, drop into `$PATH`.
 

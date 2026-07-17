@@ -39,12 +39,15 @@ internal/
 ├── tree/          # deterministic, gitignore-aware file-structure tree
 ├── linkcheck/     # markdown link integrity (broken + orphaned links)
 ├── hooks/         # post-merge / post-rewrite git hook bodies
+├── guardcommit/   # shared decision engine: should this git commit be blocked for bypassing `logmind log`?
+├── claudehook/    # installs/inspects the Claude Code PreToolUse guard entry in .claude/settings.json
 ├── gitattr/       # .gitattributes block + merge-driver git-config
 ├── gitcli/        # thin exec.Command wrapper over git porcelain
 ├── inserter/      # AGENTS.md / per-agent-stub / dependabot scaffolding
 ├── agents/        # registry of supported AI agent instruction files
 ├── templates/     # embedded canonical templates (embed.FS)
 ├── skill/         # `logmind skill` — skill authoring/test/bench/audit
+├── clierr/        # shared error sentinels crossing package boundaries (skill ↔ cli)
 └── version/       # build-time Version / SpecVersion constants
 ```
 
@@ -143,23 +146,29 @@ consumer repos, and a 3-layer markdown self-healing gate on `logmind log`
 (interactive retry loop locally, deterministic CI comment / Anthropic
 auto-fix in the `check-doc-links` workflow).
 
-### v2.0.0 (in progress)
+### v2.0.0
 
 - **Shipped:** main-canonical is now the sole timeline model
   (branch-divergent removed, see Core Features above); the token-killer
   surface (`context`, `repomap` with ranking + `--map-tokens`,
   `LOGMIND_QUIET`, protocol §14); `show`, `search`, `headline`, and
   `doctor --fix` are all live.
-- **In progress — two features before the v2.0.0 tag:**
-  1. **Force-logmind-usage enforcement** — harness + git-hook changes
-     that steer substantive commits through `logmind log` rather than a
-     raw `git commit`.
-  2. **Canonical spec-file contract** — an optional, forward-looking spec
-     document surfaced via `logmind context`, defined SkDD-wide (shared
-     across logmind, clud-bug, and agent-skills) rather than
-     logmind-specific. logmind's own spec is the pointer doc
-     [docs/spec.md](spec.md) (`context.spec_file: docs/spec.md`).
-- Once both land, the release is tagged `v2.0.0`.
+- **Force-logmind-usage enforcement (SPEC §15):** the commit-msg hook
+  (git layer) and the Claude Code PreToolUse hook (harness layer) block a
+  substantive raw `git commit` that bypasses `logmind log`
+  (`internal/guardcommit` + `internal/claudehook`); escape hatches are
+  `[skip-logmind]`, `LOGMIND_ALLOW_GIT_COMMIT=1`, and
+  `git.enforce_commits: false`. The git layer signals a block via exit
+  65 and fails open on any other error.
+- **Canonical spec-file contract (SPEC §16):** an optional,
+  forward-looking spec document surfaced via `logmind context`, defined
+  SkDD-wide (shared across logmind, clud-bug, and agent-skills) rather
+  than logmind-specific. logmind's own spec is the pointer doc
+  [docs/spec.md](spec.md) (`context.spec_file: docs/spec.md`).
+- **The pulse (SPEC §3.1.1):** `logmind log` prints stderr advisories
+  after every commit — stale components (per `logmind doctor`) and spec
+  staleness (the spec file hasn't been touched in 20+ decisions).
+  Advisory only; it never blocks the commit that already landed.
 
 ## Technical Decisions
 

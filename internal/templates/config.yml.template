@@ -3,14 +3,20 @@
 
 # Git integration
 git:
-  # Auto-commit the decision after `logmind log`. Stages ONLY the decision
-  # log and its companion files (file-structure.md, decisions-archive.md
-  # if rotated). Use `logmind log ... --stage all` to stage everything in
-  # the working tree (the pre-v0.1.2 behavior).
+  # Auto-commit the decision after `logmind log`. Default `--stage all`
+  # sweeps the WHOLE working tree into the decision commit (the decision
+  # and the code that prompted it travel together, one commit, no
+  # follow-up `git add`/`git commit`). Pass `logmind log ... --stage
+  # scoped` to limit the commit to the decision log + its companion
+  # files (file-structure.md, decisions-archive.md if rotated) when you
+  # have unrelated WIP you don't want swept in.
   auto_commit: true
 
-  # Push automatically after committing. Safe with scoped staging above —
-  # unrelated working-tree changes do not piggyback on the decision commit.
+  # Push automatically after committing. With the default `--stage all`,
+  # anything else in the working tree rides along in the same commit —
+  # push follows accordingly. Use `--stage scoped` (or set this false) if
+  # you want to review/split unrelated changes before they leave your
+  # machine.
   auto_push: true
 
   # Commit message template
