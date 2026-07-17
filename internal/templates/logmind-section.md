@@ -44,10 +44,13 @@ logmind search "database" --no-archive
 ### Required Reading
 
 **READ THESE FILES FIRST** before starting any work:
+- **[docs/timeline.md](docs/timeline.md)** - Main-canonical decision timeline across every branch (REQUIRED, start here)
 - **[docs/decisions.md](docs/decisions.md)** - 20 most recent decisions on the default branch (REQUIRED)
 - **[docs/file-structure.md](docs/file-structure.md)** - Current project structure (REQUIRED)
 
 These files contain critical context about why the project is structured the way it is.
+
+**Enforcement:** a substantive raw `git commit` that bypasses `logmind log` is blocked (commit-msg + Claude Code PreToolUse hooks) — use `logmind log` instead.
 
 ### Additional Reference
 

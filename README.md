@@ -18,8 +18,20 @@ aggregation.
 **Key concept:** Install once, init anywhere, log everything. Feature
 branches get their own decision file; on PR merge a GitHub Action appends
 a one-line summary to `docs/decisions.md` linking the PR + the branch
-detail. AGENTS.md is the canonical agent-instruction file; per-tool files
+detail. `docs/timeline.md` is the main-canonical, source-derived union of
+every decision file in the repo — the one start-here doc for a cold agent.
+AGENTS.md is the canonical agent-instruction file; per-tool files
 (CLAUDE.md, .cursorrules, ...) are 2-line stubs pointing to it.
+
+`logmind log` *is* the commit primitive, not a wrapper around one. A
+commit-msg hook plus a Claude Code PreToolUse hook (both installed by
+`logmind init` / refreshed by `logmind doctor --fix`) block a substantive
+raw `git commit` and steer you back to `logmind log` — escape hatches are
+`[skip-logmind]`, `LOGMIND_ALLOW_GIT_COMMIT=1`, and `git.enforce_commits:
+false`. After every log, stderr may carry an advisory pulse — a stale
+component or a spec that's drifted 20+ decisions behind — worth a
+`logmind doctor --fix` or a look at the project's spec file
+(`context.spec_file`, scaffolded via `logmind init --spec`).
 
 ## Install
 
@@ -138,17 +150,23 @@ logmind log "Use PostgreSQL for database" \
 logmind show
 logmind search "postgres"
 
-# Log with a built-in template (pre-fills reasoning, alternatives, implications)
-logmind log --template database "Use PostgreSQL"
-logmind templates   # list all available templates
+# One-read agent cold-start context: file-structure + timeline in one go
+logmind context
+logmind context --stats     # token receipt instead of the payload
 
-# Analytics and stats
-logmind stats
-logmind stats --months 6
+# Repo signature skeleton (Go + TS/JS, function bodies dropped)
+logmind repomap
+logmind repomap --map-tokens 4000   # pack to a token budget, ranked by importance
 
-# Aggregate decisions across multiple projects
-logmind aggregate ~/projects/api ~/projects/frontend
-logmind aggregate --summary ~/work/*/
+# Health check — version drift, hook drift, missing timeline markers
+logmind doctor
+logmind doctor --fix
+
+# Set the branch's one-sentence timeline headline
+logmind headline "Added JWT session auth with refresh-token rotation"
+
+# Terse, chainable machine output for scripted/agent invocations
+LOGMIND_QUIET=1 logmind log "Use PostgreSQL" -r "Need ACID compliance"
 
 # Enforce decision logging with a pre-commit hook
 logmind install-hook          # installs .git/hooks/pre-commit
@@ -230,9 +248,19 @@ tests, release workflow).
 ## How It Works
 
 1. **Install** the `logmind` binary (brew / curl)
-2. **Init** creates `docs/` folder and inserts instructions into `AGENTS.md` (preserving existing content)
-3. **Log** a decision — appends, archives old ones (keeps 20 recent), regenerates tree, commits, and pushes
-4. **Context** AI agents read the 20 most recent decisions and current file structure
+2. **Init** creates `docs/` folder, inserts the canonical block into
+   `AGENTS.md` (2-line stubs for per-tool files), and installs the
+   commit-msg + Claude Code PreToolUse hooks that block a substantive
+   raw `git commit`
+3. **Log** a decision — `logmind log` *is* the commit: appends the entry,
+   archives old ones (keeps 20 recent), regenerates `docs/timeline.md`
+   (the main-canonical, cross-branch union) and `docs/file-structure.md`,
+   commits, and pushes. Stderr may carry a pulse advisory afterward — a
+   stale component or a spec falling behind.
+4. **Context** — `logmind context` gives an agent the file structure +
+   timeline in one cache-friendly read instead of reconstructing state
+   from `git log` / `ls -R` / `grep`; `logmind repomap` adds the API
+   surface on top
 
 ## Why logmind?
 

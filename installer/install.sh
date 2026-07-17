@@ -7,10 +7,10 @@
 # Usage:
 #   curl -fsSL logmind.dev/install.sh | bash
 #   curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=$HOME/.local
-#   curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
+#   curl -fsSL logmind.dev/install.sh | bash -s -- --version=v2.0.0
 #
 #   # Pin via env var (preserved for back-compat — see v1.1.0 notes):
-#   LOGMIND_VERSION=v1.0.0 curl -fsSL logmind.dev/install.sh | bash
+#   LOGMIND_VERSION=v2.0.0 curl -fsSL logmind.dev/install.sh | bash
 #
 # What it does:
 #   1. Detect OS (darwin | linux) + arch (x86_64 | arm64).
@@ -122,8 +122,8 @@ Env:
 Examples:
   curl -fsSL logmind.dev/install.sh | bash
   curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=/usr/local
-  curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.0.0
-  LOGMIND_VERSION=v1.0.0 curl -fsSL logmind.dev/install.sh | bash
+  curl -fsSL logmind.dev/install.sh | bash -s -- --version=v2.0.0
+  LOGMIND_VERSION=v2.0.0 curl -fsSL logmind.dev/install.sh | bash
 
 Report install bugs to https://github.com/${REPO}/issues
 EOF

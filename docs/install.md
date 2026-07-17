@@ -7,7 +7,7 @@ that matches your platform and preferences.
 > branch). v0.6.x Python users — see the
 > [Deprecated: Python install](#deprecated-python-install) section.
 
-## Homebrew (recommended on macOS and Linux)
+## Homebrew (recommended on macOS)
 
 ```bash
 brew install thrillmade/tap/logmind
@@ -15,8 +15,9 @@ brew install thrillmade/tap/logmind
 
 This installs the latest signed + notarized release from
 [`thrillmade/homebrew-tap`](https://github.com/thrillmade/homebrew-tap),
-keyed to your CPU architecture (Apple Silicon, Intel, ARM64 Linux, x86_64
-Linux). Brew handles `$PATH` setup for you.
+keyed to your CPU architecture (Apple Silicon, Intel). Brew handles
+`$PATH` setup for you. The tap ships a macOS-only cask — on Linux, use the
+[curl one-liner](#curl-one-liner) below.
 
 The fully-qualified name (`thrillmade/tap/logmind`) auto-trusts the cask
 under Homebrew 6.0.0's [tap trust](https://docs.brew.sh/Tap-Trust) rules,
@@ -133,14 +134,16 @@ binaries.
 |------------|--------------|---------------------|----------|
 | macOS      | Apple Silicon | brew, curl, manual | Yes      |
 | macOS      | Intel        | brew, curl, manual  | Yes      |
-| Linux      | x86_64       | brew, curl, manual  | No*      |
-| Linux      | ARM64        | brew, curl, manual  | No*      |
+| Linux      | x86_64       | curl, manual        | No*      |
+| Linux      | ARM64        | curl, manual        | No*      |
 | Windows    | x86_64       | manual              | No*      |
 
 *Code signing for Linux/Windows isn't established yet — the releases
 ship plain binaries with SHA256 checksums for integrity verification.
-Linux distros' package manager signatures (Homebrew on Linux uses the
-same path as macOS) cover the trust gap.
+The curl installer verifies the download against `SHA256SUMS` before
+installing, which covers the trust gap. Homebrew is a macOS-only
+distribution path here — the `thrillmade/tap/logmind` cask does not
+target Linux.
 
 ## Verifying your install
 
@@ -168,9 +171,6 @@ The deprecated path is documented for users on long-lived consumer
 repos that haven't yet swapped pip-install for brew/curl in their
 workflow YAML. Migration is a one-line change in your CI: replace
 `pip install logmind==0.6.X` with `brew install thrillmade/tap/logmind`.
-
-A full consumer-repo migration recipe lands alongside the v1.0 cutover
-PR (Phase 3) — it will live in `docs/migrate-from-pip.md` once published.
 
 ## Troubleshooting
 

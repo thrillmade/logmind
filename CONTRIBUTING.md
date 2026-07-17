@@ -34,8 +34,8 @@ Requires Go 1.22+ (matches `go.mod`'s floor).
 - `.goreleaser.yaml` — release pipeline (cross-compile, sign, brew bump)
 - `docs/` — project documentation (regenerated artifacts under
   `docs/timeline.md`, `docs/file-structure.md`, …)
-- `skill/` — content for the standalone `logmind-skill` repo published
-  via skills.sh; not shipped in the binary
+- `skill/` — source for the `logmind` skill published in the
+  thrillmade/agent-skills catalog (skills.sh); not shipped in the binary
 - `site/` — marketing site (Next.js, deploys via Vercel)
 
 ## Conventions
