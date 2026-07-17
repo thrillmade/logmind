@@ -14,6 +14,10 @@ PR's CI run, so this file is always coherent with current `main`.
 
 ## 2026-07
 
+<!-- logmind-entry-start: 2026-07-16-routes-the-non-interactive-link-advisory-to-stderr-closing-t -->
+- **2026-07-16** — Routes the non-interactive link advisory to stderr, closing the 206a section 3.1.1 stdout-exactness gap before the v2.0.0 tag → [detail](decisions-branches/fix__selfheal-advisory-stderr.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-16-release-prep-specversion-1-4-0-goreleaser-check-filter-moved -->
 - **2026-07-16** — Release prep: SpecVersion 1.4.0, goreleaser-check filter moved to main, install pins and stale narrative updated to v2.0.0 → [detail](decisions-branches/chore__release-prep-v2.md)
 <!-- logmind-entry-end -->
