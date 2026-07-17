@@ -22,6 +22,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-17** — Serialize concurrent decision writes and give writeAtomic a unique temp file per call → [detail](decisions-branches/worktree-agent-a5c1f3d5a00748f87.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-17-hang-guard-the-git-hook-logmind-calls-add-a-shell-exec-guard -->
+- **2026-07-17** — Hang-guard the git-hook logmind calls, add a shell-exec guard test, and fix doctor's --version regex (#213 #224 #214) → [detail](decisions-branches/fix__batch-b-hooks-doctor-hang-guard.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-17-fix-repomap-skill-template-literal-interpolation-scan-stable -->
 - **2026-07-17** — fix(repomap,skill): template-literal interpolation scan + stable suggest sort + assert scanner Kind (#219 #223 #225) → [detail](decisions-branches/worktree-agent-a2fc2395efafea012.md)
 <!-- logmind-entry-end -->

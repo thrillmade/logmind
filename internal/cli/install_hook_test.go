@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,9 +38,22 @@ func TestInstallHook_FreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read hook: %v", err)
 	}
-	want := "#!/bin/sh\nlogmind check-decisions\n"
+	// #213: the fresh body is the shebang + the hang-guarded invocation.
+	want := "#!/bin/sh\n" + preCommitGuardedCall
 	if string(body) != want {
 		t.Fatalf("hook body = %q; want %q", body, want)
+	}
+	// The guard-shape invariants the deadline wrapper must preserve.
+	for _, must := range []string{
+		"command -v logmind",        // missing-binary no-op guard
+		"logmind check-decisions &", // backgrounded under the watchdog
+		"( sleep 10; kill",          // the deadline watchdog
+		"wait \"$__lm_pid\"",        // capture the real exit code
+		"-gt 128",                   // timeout/crash → fail open
+	} {
+		if !strings.Contains(string(body), must) {
+			t.Errorf("pre-commit body missing %q", must)
+		}
 	}
 	info, err := os.Stat(hookPath)
 	if err != nil {
@@ -111,7 +125,9 @@ func TestInstallHook_ForeignWithForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
-	want := "#!/bin/sh\necho custom\nlogmind check-decisions\n"
+	// #213: the foreign content is preserved verbatim and the hang-guarded
+	// block is appended after a trailing-newline normalisation.
+	want := "#!/bin/sh\necho custom\n" + preCommitGuardedCall
 	if string(got) != want {
 		t.Fatalf("hook body = %q; want %q", got, want)
 	}

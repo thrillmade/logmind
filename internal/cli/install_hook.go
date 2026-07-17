@@ -19,16 +19,20 @@ import (
 // Behaviour mirror of src/logmind/cli.install_hook (cli.py:2814-2862):
 //
 //   - Not a git repo → "Error: not a git repository." to STDERR, exit 1.
-//   - No prior pre-commit hook → write "#!/bin/sh\nlogmind check-decisions\n",
+//   - No prior pre-commit hook → write "#!/bin/sh\n" + preCommitGuardedCall,
 //     chmod 0755, "✓ Installed logmind pre-commit hook."
 //   - Existing hook already contains "logmind check-decisions" → no-op,
 //     "✓ logmind hook already installed."
 //   - Existing hook is foreign + --force not set → "A pre-commit hook
 //     already exists. Use --force to append logmind to it.", exit 1.
-//   - Existing hook is foreign + --force set → append
-//     "logmind check-decisions\n" after stripping trailing newlines from
-//     the original, "✓ Added logmind check-decisions to existing
-//     pre-commit hook."
+//   - Existing hook is foreign + --force set → append preCommitGuardedCall
+//     after stripping trailing newlines from the original, "✓ Added logmind
+//     check-decisions to existing pre-commit hook."
+//
+// #213 divergence from Python parity: the emitted `logmind check-decisions`
+// invocation is now wrapped in a POSIX-portable hang-guard (see
+// preCommitGuardedCall) so a wedged binary can't stall `git commit`; it also
+// gains a `command -v logmind` guard the bare Python line lacked.
 //
 // The "✓ " prefix is preserved verbatim — agents that grep for it
 // (and downstream tooling that diffs Python and Go output) need the
@@ -90,7 +94,6 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 	}
 
 	hookPath := filepath.Join(top, ".git", "hooks", "pre-commit")
-	hookLine := "logmind check-decisions\n"
 
 	data, readErr := os.ReadFile(hookPath)
 	switch {
@@ -98,7 +101,7 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// Hook file exists. Decide: already-ours / no-force-conflict /
 		// force-append.
 		content := string(data)
-		if strings.Contains(content, "logmind check-decisions") {
+		if strings.Contains(content, preCommitMarker) {
 			fmt.Fprintln(stdout, "✓ logmind hook already installed.")
 			return nil
 		}
@@ -106,8 +109,10 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 			fmt.Fprintln(stdout, "A pre-commit hook already exists. Use --force to append logmind to it.")
 			return ErrSilent
 		}
-		// Append. Python: hook_path.write_text(content.rstrip("\n") + "\n" + hook_line).
-		newContent := strings.TrimRight(content, "\n") + "\n" + hookLine
+		// Append the hang-guarded block after the existing content
+		// (Python appended a bare `logmind check-decisions` line here; #213
+		// upgrades that to the deadline-wrapped invocation).
+		newContent := strings.TrimRight(content, "\n") + "\n" + preCommitGuardedCall
 		if err := os.WriteFile(hookPath, []byte(newContent), 0o755); err != nil {
 			return err
 		}
@@ -123,7 +128,7 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
 			return err
 		}
-		body := "#!/bin/sh\n" + hookLine
+		body := "#!/bin/sh\n" + preCommitGuardedCall
 		if err := os.WriteFile(hookPath, []byte(body), 0o755); err != nil {
 			return err
 		}
@@ -142,6 +147,53 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		return readErr
 	}
 }
+
+// preCommitMarker is the substring that identifies a logmind-owned
+// pre-commit hook. Kept literal (not the whole guarded body) so an existing
+// install written by ANY logmind version — the pre-#213 bare
+// `logmind check-decisions` line or the current hang-guarded block — is
+// recognized as ours and reported "already installed".
+const preCommitMarker = "logmind check-decisions"
+
+// preCommitGuardedCall is the pre-commit hook's `logmind check-decisions`
+// invocation wrapped in a POSIX-portable deadline (issue #213). A hung or
+// wedged logmind binary on PATH must never stall `git commit`; timeout(1)
+// isn't on macOS by default, so we background the call, background a
+// `sleep N; kill` watchdog, `wait` the main pid for its real exit code,
+// then reap the watchdog.
+//
+//   - Missing binary: the `command -v logmind` guard makes it a clean no-op
+//     (fall through to the end of the script → exit 0) instead of a
+//     `command not found` non-zero that would wrongly block the commit.
+//   - Normal completion: check-decisions' own exit code is PRESERVED —
+//     `exit 0` when clean/under-threshold, `exit 1` when it blocks an
+//     undocumented over-threshold change (its designed pre-commit behavior).
+//   - Timeout / crash: the watchdog kill (or a crash) yields a signal exit
+//     >128; we FAIL OPEN (exit 0) — matching the enforcement's "all else
+//     fails open" principle. The goal is to never HANG, not to block.
+//
+// The watchdog subshell's fds are redirected to /dev/null so its (possibly
+// orphaned) `sleep` child can't hold this hook's stdout/stderr open — else a
+// caller that CAPTURES git's output via a pipe (Claude Code's Bash tool, CI)
+// would block reading until the sleep expired, stalling even a fast commit.
+const preCommitGuardedCall = "# logmind check-decisions — hang-guarded (issue #213): run under a\n" +
+	"# deadline so a wedged logmind binary can never stall `git commit`.\n" +
+	"# Fail OPEN (exit 0) on timeout/crash; preserve a real block exit code\n" +
+	"# on the normal path. A missing binary is a clean no-op.\n" +
+	"if command -v logmind >/dev/null 2>&1; then\n" +
+	"    logmind check-decisions &\n" +
+	"    __lm_pid=$!\n" +
+	"    ( sleep 10; kill \"$__lm_pid\" 2>/dev/null ) >/dev/null 2>&1 &\n" +
+	"    __lm_watcher=$!\n" +
+	"    wait \"$__lm_pid\" 2>/dev/null\n" +
+	"    __lm_rc=$?\n" +
+	"    kill \"$__lm_watcher\" 2>/dev/null\n" +
+	"    wait \"$__lm_watcher\" 2>/dev/null\n" +
+	"    if [ \"$__lm_rc\" -gt 128 ]; then\n" +
+	"        exit 0\n" +
+	"    fi\n" +
+	"    exit \"$__lm_rc\"\n" +
+	"fi\n"
 
 // ErrSilent is the cli-layer alias of clierr.ErrSilent. Backward-compat
 // shim so existing cli/* references (cobra hooks, tests) keep working

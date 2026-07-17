@@ -3,8 +3,10 @@ package claudehook
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -22,6 +24,68 @@ func TestCanonicalCommand_Shape(t *testing.T) {
 	}
 	if strings.Contains(got, "command -v") {
 		t.Errorf("CanonicalCommand() must NOT contain a `command -v logmind` guard (must stay cross-platform + fail-open on missing binary); got %q", got)
+	}
+}
+
+// TestCanonicalCommand_ExecutesThroughRealShell runs CanonicalCommand()'s
+// output through `sh -c` exactly the way Claude Code's harness invokes a
+// PreToolUse `command` — closing the gap flagged in issue #224, where the
+// emitted command was only ever string-compared or invoked via clean argv,
+// never parsed by a real shell. A shell-quoting/escaping regression (e.g.
+// the trailing `# logmind-hook-version:` marker leaking into argv instead of
+// being a shell comment) would surface here as either a non-zero exit or the
+// wrong observed argv.
+func TestCanonicalCommand_ExecutesThroughRealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX sh; the harness runs CanonicalCommand under the user's shell on Windows")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not on PATH; skipping shell-exec test")
+	}
+
+	dir := t.TempDir()
+	argvFile := filepath.Join(dir, "argv.txt")
+	// Stub `logmind` on PATH: truncate the argv file, then record each arg on
+	// its own line, and exit 0. `$LOGMIND_STUB_ARGV_FILE` is passed via env so
+	// the stub needs no path baked in.
+	stub := "#!/bin/sh\n" +
+		": > \"$LOGMIND_STUB_ARGV_FILE\"\n" +
+		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"$LOGMIND_STUB_ARGV_FILE\"; done\n" +
+		"exit 0\n"
+	stubPath := filepath.Join(dir, "logmind")
+	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil {
+		t.Fatalf("write stub logmind: %v", err)
+	}
+	if err := os.Chmod(stubPath, 0o755); err != nil {
+		t.Fatalf("chmod stub logmind: %v", err)
+	}
+
+	cmd := exec.Command(sh, "-c", CanonicalCommand())
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"LOGMIND_STUB_ARGV_FILE="+argvFile,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("`sh -c CanonicalCommand()` exited non-zero: %v\n%s", err, out)
+	}
+
+	recorded, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("stub recorded no argv (the command may not have executed at all): %v", err)
+	}
+	var argv []string
+	for _, line := range strings.Split(strings.TrimRight(string(recorded), "\n"), "\n") {
+		if line != "" {
+			argv = append(argv, line)
+		}
+	}
+	// The `#`-prefixed version marker MUST be a shell comment, not argv — so
+	// the stub sees exactly `guard-commit --layer harness`.
+	want := []string{"guard-commit", "--layer", "harness"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Errorf("stub observed argv %#v; want %#v (marker must be a shell comment, not an argument)", argv, want)
 	}
 }
 

@@ -103,6 +103,16 @@ func firstLineForTest(s string) string {
 // wiring surfaces the H2 spec advisory in BOTH the human table and --json,
 // and Overall stays OK (advisory, not drift) end-to-end through the command.
 func TestDoctor_SpecAdvisory_HumanTableAndJSON(t *testing.T) {
+	// Isolate PATH so the live probePathResolution probe finds NO `logmind`
+	// (benign "missing") rather than a real, possibly-STALE host binary (e.g.
+	// a pyenv `logmind 1.2.0` shim) that would flip Overall to DRIFT and break
+	// the OK assertions below. Process-global, so it covers both sub-closures.
+	// The #214 regex fix (now parsing the real `logmind <ver> (spec <ver>)`
+	// line) is what makes the host binary visible to this probe at all.
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", t.TempDir())
+
 	withTempCwd(t, func(d string) {
 		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: docs/spec.md\n")
 
