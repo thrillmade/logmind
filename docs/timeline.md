@@ -30,6 +30,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-16** — Harden git-hook layer against stale logmind binaries + bump AGENTS enforcement prose to v8/v9-pointer → [detail](decisions-branches/feat__enforce-stale-binary-hardening.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-16-fix-pulse-subprocess-free-hot-path-local-time-comparison-adv -->
+- **2026-07-16** — fix(pulse): subprocess-free hot path + local-time comparison (adversarial-review findings) → [detail](decisions-branches/fix__pulse-hotpath-tz-skew.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-16-feat-log-the-pulse-doctor-drift-spec-staleness-advisories-on -->
 - **2026-07-16** — feat(log): the pulse - doctor-drift + spec-staleness advisories on every log → [detail](decisions-branches/feat__log-pulse.md)
 <!-- logmind-entry-end -->

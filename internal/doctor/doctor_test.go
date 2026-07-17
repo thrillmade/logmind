@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/version"
@@ -152,6 +153,122 @@ func TestStaleCount_MatchesDriftClassification(t *testing.T) {
 
 	if n := StaleCount(dir); n != 1 {
 		t.Errorf("StaleCount(one stale workflow) = %d; want 1", n)
+	}
+}
+
+// TestCollectLogmindStatusFast_ExcludesSubprocessProbes pins the shape
+// contract of the hot-path probe subset: the PATH-resolution row and the
+// git-config merge-driver row must NEVER appear (both fork a subprocess),
+// while every file-read-only probe row still does.
+func TestCollectLogmindStatusFast_ExcludesSubprocessProbes(t *testing.T) {
+	dir := freshRepo(t)
+	rows := collectLogmindStatusFast(dir)
+	names := workflowNames(rows)
+	if contains(names, "logmind on PATH") {
+		t.Errorf("collectLogmindStatusFast must not include the PATH-resolution probe row; got %v", names)
+	}
+	if contains(names, "git config (merge driver)") {
+		t.Errorf("collectLogmindStatusFast must not include the git-config merge-driver probe row; got %v", names)
+	}
+	for _, want := range []string{
+		"regen-timeline.yml", "check-doc-links.yml", "logmind-self-update.yml", "check-decisions.yml",
+		"AGENTS.md", ".gitattributes (merge driver)",
+		"post-merge hook", "post-rewrite hook", "commit-msg hook",
+		"Claude Code PreToolUse guard",
+	} {
+		if !contains(names, want) {
+			t.Errorf("collectLogmindStatusFast missing expected file-read probe %q; got %v", want, names)
+		}
+	}
+}
+
+// prependFakeBinDir puts dir FIRST on PATH (keeping the rest of the real
+// PATH after it) and restores the original PATH on test cleanup. Prepending
+// rather than replacing matters here: several of these fixtures write
+// wrapper shell scripts that themselves shell out to `sleep` / `touch` —
+// external binaries the script's own PATH lookup needs to find. Replacing
+// PATH wholesale (as a naive `os.Setenv("PATH", dir)` would) leaves those
+// binaries unresolvable, so the wrapper's shell fails instantly with
+// "command not found" instead of actually blocking — a false pass that
+// would silently defeat the whole point of these hang-proof tests.
+func prependFakeBinDir(t *testing.T, dir string) {
+	t.Helper()
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
+}
+
+// TestStaleCountFast_IgnoresStalePathBinary proves StaleCountFast's count
+// can legitimately differ from StaleCount's: a stale on-PATH `logmind`
+// binary flips the full probe set's count to 1, but the fast subset must
+// stay at 0 since it never runs that probe at all.
+func TestStaleCountFast_IgnoresStalePathBinary(t *testing.T) {
+	dir := freshRepo(t)
+	tmp := t.TempDir()
+	fake := filepath.Join(tmp, "logmind")
+	body := "#!/bin/sh\necho 'logmind, version 0.1.0'\n"
+	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	prependFakeBinDir(t, tmp)
+
+	if n := StaleCount(dir); n != 1 {
+		t.Fatalf("StaleCount (full probe set) = %d; want 1 (stale on-PATH binary)", n)
+	}
+	if n := StaleCountFast(dir); n != 0 {
+		t.Errorf("StaleCountFast = %d; want 0 — PATH-resolution drift must never surface on the hot-path subset", n)
+	}
+}
+
+// TestStaleCountFast_DoesNotBlockOnHungPathBinary is the unit-level
+// hang-proof: with a `logmind` on PATH that sleeps for 30s, StaleCountFast
+// must return near-instantly, proving it never touches probePathResolution
+// (the subprocess probe). The full end-to-end proof — through `logmind
+// log`'s actual pulse — lives in internal/cli/pulse_hotpath_test.go.
+func TestStaleCountFast_DoesNotBlockOnHungPathBinary(t *testing.T) {
+	dir := freshRepo(t)
+	tmp := t.TempDir()
+	fake := filepath.Join(tmp, "logmind")
+	body := "#!/bin/sh\nsleep 30\n"
+	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	prependFakeBinDir(t, tmp)
+
+	start := time.Now()
+	StaleCountFast(dir)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("StaleCountFast took %v with a hung logmind on PATH; want near-instant (no subprocess probe on this path)", elapsed)
+	}
+}
+
+// TestProbePathResolution_DaemonizingWrapper_WaitDelayBounds exercises the
+// on-demand `doctor` path's hardening (item 1(b)): a PATH binary that
+// forks a background grandchild (inheriting the CombinedOutput pipe) and
+// exits immediately itself. Without cmd.WaitDelay, CombinedOutput's
+// internal Wait blocks reading that pipe until EOF — which never arrives
+// while the grandchild lives — regardless of the 5s context timeout
+// (which only kills the direct child). WaitDelay bounds the wait to a
+// couple of seconds after the direct child exits.
+func TestProbePathResolution_DaemonizingWrapper_WaitDelayBounds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("subprocess timing test; skip in -short mode")
+	}
+	tmp := t.TempDir()
+	fake := filepath.Join(tmp, "logmind")
+	// The wrapper backgrounds a long sleep (inheriting stdout/stderr, i.e.
+	// the shared pipe) and returns immediately itself — the daemonizing
+	// pattern that defeats a naive ctx-timeout-only bound.
+	body := "#!/bin/sh\n(sleep 30 &)\nexit 0\n"
+	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	prependFakeBinDir(t, tmp)
+
+	start := time.Now()
+	_ = probePathResolution()
+	if elapsed := time.Since(start); elapsed > 6*time.Second {
+		t.Fatalf("probePathResolution with a daemonizing PATH wrapper took %v; want bounded (WaitDelay=2s after the near-instant direct-child exit), not the grandchild's full 30s sleep", elapsed)
 	}
 }
 

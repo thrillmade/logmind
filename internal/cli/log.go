@@ -770,13 +770,19 @@ func runSelfHealLayer1(cwd string, forceNonInteractive, quiet bool, stdin io.Rea
 	return ErrSilent
 }
 
-// printAdvisory renders the Layer 1 advisory format. Pulled out as a
-// helper so it can be invoked both on initial detection and after
-// each failed retry.
+// printAdvisory renders the Layer 1 advisory format to whichever writer the
+// caller hands it. Pulled out as a helper so it can be invoked both on
+// initial detection and after each failed retry.
 //
-// Output goes to stdout (the human surface). stderr is reserved for
-// real errors so consumers piping `logmind log` into a log file don't
-// see advisories twice.
+// The destination is NOT fixed to stdout: the interactive-TTY retry loop
+// (runSelfHealLayer1) writes it to stdout, since that path is a live
+// back-and-forth with a human at the terminal. Every non-interactive case —
+// --quiet, --no-interactive, or no TTY on stdin — writes it to stderr
+// instead, so the §3.1 stdout contract (three fixed lines) and the --quiet
+// single-`ok`-line contract both stay byte-exact; the advisory is a
+// recovery hint on those paths, not part of either contract (see issue
+// #206(a) / PR #207). Callers choose the writer; this function has no
+// opinion of its own.
 func printAdvisory(stdout io.Writer, report linkcheck.CheckReport) {
 	count := len(report.Broken) + len(report.Orphans)
 	fmt.Fprintln(stdout)

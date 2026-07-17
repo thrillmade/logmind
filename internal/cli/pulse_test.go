@@ -259,6 +259,88 @@ func TestLog_Pulse_SpecUntracked_Silent(t *testing.T) {
 	})
 }
 
+// TestLog_Pulse_SpecUncommittedWorkingTreeEdit_Silent: the spec file IS
+// tracked and has a real last-commit date, but it also has an uncommitted
+// working-tree edit right now (e.g. this same `logmind log` was invoked
+// with --no-commit, or --stage scoped, while the author is mid-edit on the
+// spec). The pulse must skip — the log that's touching the spec shouldn't
+// turn around and ask whether the spec is still accurate.
+func TestLog_Pulse_SpecUncommittedWorkingTreeEdit_Silent(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		neutralizePathProbe(t)
+		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: SPEC.md\n")
+		commitFileWithDate(t, d, "SPEC.md", "# Spec\n", "2020-01-01T00:00:00Z")
+
+		// Comfortably over specPulseThreshold against the 2020 commit date,
+		// so if this test fails it's unambiguously because the uncommitted
+		// edit was ignored — not because the count was too low.
+		addFillerDecisions(t, 25)
+
+		// Now edit SPEC.md WITHOUT committing — a dirty working tree.
+		if err := os.WriteFile(filepath.Join(d, "SPEC.md"), []byte("# Spec\n\nmid-edit.\n"), 0o644); err != nil {
+			t.Fatalf("edit SPEC.md: %v", err)
+		}
+
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			// --no-commit: nothing (including the SPEC.md edit) gets
+			// committed, so the edit is still dirty when emitPulse runs.
+			root.SetArgs([]string{"log", "mid-spec-edit test", "-r", "why", "--no-commit", "--no-interactive"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\n%s", err, errBuf.String())
+			}
+			if strings.Contains(errBuf.String(), "unchanged for") {
+				t.Fatalf("spec pulse fired while SPEC.md has an uncommitted working-tree edit; stderr:\n%s", errBuf.String())
+			}
+		})
+	})
+}
+
+// TestLog_Pulse_SpecUncommittedStagedEdit_Silent: same as the working-tree
+// variant above, but the spec edit is STAGED (git add'ed) rather than left
+// in the working tree — `git status --porcelain` reports it either way, so
+// the pulse must skip here too.
+func TestLog_Pulse_SpecUncommittedStagedEdit_Silent(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		neutralizePathProbe(t)
+		mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: SPEC.md\n")
+		commitFileWithDate(t, d, "SPEC.md", "# Spec\n", "2020-01-01T00:00:00Z")
+
+		addFillerDecisions(t, 25)
+
+		if err := os.WriteFile(filepath.Join(d, "SPEC.md"), []byte("# Spec\n\nstaged edit.\n"), 0o644); err != nil {
+			t.Fatalf("edit SPEC.md: %v", err)
+		}
+		addCmd := exec.Command("git", "add", "SPEC.md")
+		addCmd.Dir = d
+		if out, err := addCmd.CombinedOutput(); err != nil {
+			t.Fatalf("git add SPEC.md: %v\n%s", err, out)
+		}
+		// Deliberately NOT committed — staged only.
+
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "staged-spec-edit test", "-r", "why", "--no-commit", "--no-interactive"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("log: %v\n%s", err, errBuf.String())
+			}
+			if strings.Contains(errBuf.String(), "unchanged for") {
+				t.Fatalf("spec pulse fired while SPEC.md has a staged-but-uncommitted edit; stderr:\n%s", errBuf.String())
+			}
+		})
+	})
+}
+
 // TestLog_Pulse_SpecUnset_Silent: context.spec_file is left at its default
 // ("") — config.ResolveSpecFile reports unset, so the pulse must never
 // even attempt the git/decision-count work.

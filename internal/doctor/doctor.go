@@ -358,14 +358,71 @@ func collectLogmindStatus(projectRoot string) ToolStatus {
 // "does this repo need `doctor --fix`" should only count the same signal
 // doctor itself gates on.
 //
-// Exported for `logmind log`'s pulse advisory (internal/cli/pulse.go),
-// which wants doctor's exact stale-count without paying for
-// CollectStatus's extra SummariesNeeded / SpecAdvisories walks — this
-// calls collectLogmindStatus directly, the same probe set, nothing more.
+// This is the FULL probe set — including probePathResolution (a PATH lookup
+// + a live subprocess) and probeMergeDriverConfig (a `git config` shell-out)
+// — meant for on-demand callers like `logmind doctor` itself, which can
+// afford a subprocess or two. `logmind log`'s hot path cannot: see
+// StaleCountFast below.
 func StaleCount(projectRoot string) int {
 	status := collectLogmindStatus(projectRoot)
 	count := 0
 	for _, wf := range status.Workflows {
+		if wf.Drift == "stale" {
+			count++
+		}
+	}
+	return count
+}
+
+// collectLogmindStatusFast runs the FILE-READ-ONLY subset of
+// collectLogmindStatus's probes — every probe here does nothing but stat/
+// read a local file (or parse embedded template bytes already resident in
+// the binary). No probe here forks a subprocess, so the whole set costs a
+// handful of stat/read syscalls: single-digit milliseconds, safe to run on
+// EVERY `logmind log` invocation.
+//
+// EXCLUDED, and why:
+//
+//   - probePathResolution: does `exec.LookPath("logmind")` followed by a
+//     live `<path> --version` subprocess. A hung PATH binary — or a
+//     daemonizing wrapper whose grandchild inherits the output pipe past
+//     the parent's own exit — can stall this for seconds or hang it
+//     outright, exactly the failure mode the hot path must never risk. See
+//     probePathResolution's WaitDelay hardening below, which bounds this
+//     for the on-demand `doctor` path (which CAN tolerate a bounded
+//     subprocess wait; `logmind log` cannot tolerate any).
+//   - probeMergeDriverConfig: shells out to `git config --get` (via
+//     gitattr.DriverConfigured) — a subprocess, the same category of risk
+//     as above even though `git` itself is normally well-behaved.
+//
+// Both excluded signals — on-PATH version drift and merge-driver config
+// drift — still surface via an on-demand `logmind doctor` run (the full
+// probe set, StaleCount above); they're simply not worth paying a
+// subprocess for on every single `logmind log`.
+func collectLogmindStatusFast(projectRoot string) []WorkflowStatus {
+	var workflows []WorkflowStatus
+	for _, name := range LogmindWorkflows {
+		workflows = append(workflows, probeWorkflow(projectRoot, name, bundledLogmindMarker(name)))
+	}
+	workflows = append(workflows, probeAgentsMD(projectRoot))
+	workflows = append(workflows, probeMergeDriverAttrs(projectRoot)) // file read only (.gitattributes) — safe
+	workflows = append(workflows, probePostMergeHook(projectRoot))
+	workflows = append(workflows, probePostRewriteHook(projectRoot))
+	workflows = append(workflows, probeCommitMsgHook(projectRoot))
+	workflows = append(workflows, probeClaudePreToolUseHook(projectRoot))
+	return workflows
+}
+
+// StaleCountFast is StaleCount's subprocess-free subset, built from
+// collectLogmindStatusFast — see that function's doc comment for exactly
+// which probes are excluded and why. This is what `logmind log`'s pulse
+// advisory calls (internal/cli/pulse.go driftPulseLine): the hot-path
+// budget is single-digit milliseconds, not "however long a PATH binary
+// takes to answer `--version`, if it answers at all."
+func StaleCountFast(projectRoot string) int {
+	workflows := collectLogmindStatusFast(projectRoot)
+	count := 0
+	for _, wf := range workflows {
 		if wf.Drift == "stale" {
 			count++
 		}
@@ -684,6 +741,17 @@ func probePathResolution() WorkflowStatus {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, pathBin, "--version")
+	// WaitDelay bounds how long Wait (called internally by CombinedOutput)
+	// keeps blocking on the command's I/O pipes AFTER ctx's timeout kills
+	// the direct child. Without it, a wrapper script that daemonizes —
+	// forks a grandchild and exits — leaves that grandchild holding the
+	// stdout/stderr pipe open; CombinedOutput blocks reading from the pipe
+	// until EOF, which never arrives, so the 5s context timeout (which only
+	// SIGKILLs the direct child) doesn't actually bound this call. WaitDelay
+	// (Go 1.20+) forces the pipe closed and Wait to return once this grace
+	// period elapses after the context kill signal, capping the worst case
+	// at ctx-timeout + WaitDelay instead of unbounded.
+	cmd.WaitDelay = 2 * time.Second
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil && len(out) == 0 {
 		marker := fmt.Sprintf("%s (cannot exec --version)", pathBin)
