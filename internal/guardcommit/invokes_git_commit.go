@@ -14,6 +14,19 @@ var wrapperCommands = map[string]bool{
 	"stdbuf":  true,
 }
 
+// shellCommands are POSIX-style shells that, when invoked as `<shell> -c
+// <cmdline>`, run their argument as a whole nested command line. That inner
+// line may itself contain &&/;/command-substitutions, so InvokesGitCommit
+// recurses the full parse over it rather than merely stripping a prefix (see
+// statementInvokesCommit). Matched by basename, so `/bin/bash -c ...` counts.
+var shellCommands = map[string]bool{
+	"sh":   true,
+	"bash": true,
+	"zsh":  true,
+	"dash": true,
+	"ksh":  true,
+}
+
 // InvokesGitCommit reports whether bashCommand would, if run by a shell,
 // execute `git commit` (exactly — not `git commit-tree`, not any other
 // git subcommand) as one of its top-level statements or inside a command
@@ -38,10 +51,14 @@ var wrapperCommands = map[string]bool{
 //  3. For each statement (from either source), tokenize it into
 //     whitespace-separated, quote-aware words; optionally strip a leading
 //     run of shell env-assignments (FOO=1, GIT_AUTHOR_DATE=...), the `env`
-//     command and its options, and process-wrapper commands
-//     (timeout/time/nice/nohup/stdbuf) with their own arguments; if the
-//     first remaining word isn't literally "git", the statement doesn't
-//     match.
+//     command and its options, the `command` builtin and its options
+//     (-p/-v/-V), and process-wrapper commands
+//     (timeout/time/nice/nohup/stdbuf) with their own arguments. If the
+//     first remaining word is a shell (sh/bash/zsh/dash/ksh, by basename)
+//     invoked as `-c <cmdline>`, recurse the full InvokesGitCommit over that
+//     inner command line. Otherwise, if the first remaining word's basename
+//     isn't "git" (so `/usr/bin/git` counts, `mygit` does not), the
+//     statement doesn't match.
 //  4. Walk git's global flags (-C x, -c x, --git-dir[=x], --work-tree[=x],
 //     any other -*) consuming their values as needed; the first non-flag
 //     word is git's subcommand. Match only if it is EXACTLY "commit" (a
@@ -75,11 +92,53 @@ func statementsInvokeCommit(s string) bool {
 func statementInvokesCommit(statement string) bool {
 	words := tokenizeWords(statement)
 	words = stripWrapperPrefix(words)
-	if len(words) == 0 || words[0] != "git" {
+	if len(words) == 0 {
+		return false
+	}
+	// A shell invoked as `<shell> -c <cmdline>` runs its argument as a whole
+	// nested command line — which may itself contain &&/;/command
+	// substitutions — so recurse the full InvokesGitCommit over that inner
+	// string rather than word-stripping it. Termination is guaranteed: the
+	// inner argument (the -c command string) is strictly shorter than `statement`, since
+	// at minimum the `<shell> -c` tokens and the quotes around the argument
+	// have been removed. So each recursion level shrinks the input toward the
+	// bare-command base case.
+	if shellCommands[commandBase(words[0])] {
+		// The -c flag may be bundled with other single-letter options
+		// (bash -xc, sh -ec, bash -ic) or preceded by separate flags
+		// (bash -x -c), so scan the option tokens for the first bundle
+		// containing `c`; the token right after it is the command string.
+		for i := 1; i < len(words); i++ {
+			w := words[i]
+			if !strings.HasPrefix(w, "-") || w == "-" {
+				break // first non-option token → a script file, not -c mode
+			}
+			if strings.Contains(w, "c") {
+				if i+1 < len(words) {
+					return InvokesGitCommit(words[i+1])
+				}
+				return false
+			}
+		}
+		return false // a recognized shell, but no `-c <cmdline>`
+	}
+	if commandBase(words[0]) != "git" {
 		return false
 	}
 	subcommand, ok := firstGitSubcommand(words[1:])
 	return ok && subcommand == "commit"
+}
+
+// commandBase returns the final path element of word, so a command invoked
+// by an absolute or relative path (`/usr/bin/git`, `./bin/bash`) is
+// recognized by its basename. A word with no "/" is returned unchanged.
+// This is what lets `/usr/bin/git commit` match while `mygit commit` (whose
+// basename is "mygit", not "git") correctly does not.
+func commandBase(word string) string {
+	if i := strings.LastIndexByte(word, '/'); i >= 0 {
+		return word[i+1:]
+	}
+	return word
 }
 
 // stripWrapperPrefix removes a leading chain of "cruft" tokens that a
@@ -97,6 +156,10 @@ func statementInvokesCommit(statement string) bool {
 //   - The `env` command itself, plus its options (`-i`, `-u NAME`, ...)
 //     and inline `NAME=val` assignments, up to the command it runs
 //     (`env git commit`, `env -u HUSKY git commit`).
+//   - The `command` builtin, plus its options (`-p`, `-v`, `-V`), up to the
+//     command it runs (`command git commit`, `command -p git commit`). It
+//     bypasses shell functions/aliases; a `git commit` run through it must
+//     still be seen.
 //   - Process-wrapping commands (timeout/time/nice/nohup/stdbuf). Only
 //     `timeout` has a REQUIRED bare positional (its duration) ahead of the
 //     wrapped command; the others take only flag-style options (if any)
@@ -124,6 +187,16 @@ func stripWrapperPrefix(words []string) []string {
 					// The command `env` will exec — stop consuming.
 					return stripWrapperPrefix(words)
 				}
+			}
+		case words[0] == "command":
+			// The `command` builtin runs its argument as a command,
+			// bypassing shell functions/aliases. Its options are -p (use the
+			// default PATH), -v and -V (describe rather than run). Strip the
+			// builtin plus any such options, then loop to re-inspect the
+			// command it runs (which may itself be env-prefixed or wrapped).
+			words = words[1:]
+			for len(words) > 0 && strings.HasPrefix(words[0], "-") {
+				words = words[1:]
 			}
 		case wrapperCommands[words[0]]:
 			isTimeout := words[0] == "timeout"

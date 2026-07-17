@@ -31,7 +31,8 @@ This project uses [logmind](https://logmind.dev). What counts as a decision, bra
 
 Cross-repo writes from this project's workflows (Homebrew cask bumps today;
 future skill-catalog PRs and self-update fan-out) are signed by the
-`thrillmade-orchestrator[bot]` GitHub App, NOT a personal PAT. See
+`skdd-steward[bot]` GitHub App (renamed from `thrillmade-orchestrator[bot]`;
+same App ID, key, and installation), NOT a personal PAT. See
 [`docs/orchestrator-app.md`](docs/orchestrator-app.md) for the App spec,
 permissions, ruleset bypass details, and rotation procedure.
 

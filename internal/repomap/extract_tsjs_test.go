@@ -265,6 +265,67 @@ function tup(): Array<{ x: number }> { return []; }
 	}
 }
 
+// A template literal whose `${…}` interpolation contains a nested string with a
+// literal backtick (or a nested template literal, or a brace hidden in a nested
+// string) must not terminate the scan early — every declaration after the
+// literal must still be extracted (issue #219). The old flat-delimiter scanner
+// closed at the first inner backtick and masked all subsequent real source.
+func TestExtractTSJS_TemplateLiteralInterpolation(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want []string // top-level symbol names, in source order
+	}{
+		// Nested string containing a literal backtick inside `${…}` — the
+		// canonical #219 repro. `afterNested` must survive.
+		{
+			"nested-string-with-backtick",
+			"const t = `a ${f(\"`\")} b`;\nexport function afterNested(): void {}\n",
+			[]string{"afterNested"},
+		},
+		// A nested template literal inside the interpolation must recurse, not
+		// close the outer literal at its opening/closing backtick.
+		{
+			"nested-template-literal",
+			"const t = `outer ${`inner ${x}`} end`;\nexport function afterTmpl(): void {}\n",
+			[]string{"afterTmpl"},
+		},
+		// Several interpolations in one literal all scan correctly.
+		{
+			"multiple-interpolations",
+			"const t = `${a} plus ${b} plus ${c}`;\nexport function afterMulti(): void {}\n",
+			[]string{"afterMulti"},
+		},
+		// A plain literal with no interpolation still scans (and the data const
+		// is skipped, not emitted).
+		{
+			"plain-no-interpolation",
+			"const t = `just a plain literal`;\nexport function afterPlain(): void {}\n",
+			[]string{"afterPlain"},
+		},
+		// A `}` hidden inside a nested string in the interpolation must not close
+		// the interpolation early; brace depth stays balanced so the enclosing
+		// function body closes correctly and the next decl is reached.
+		{
+			"brace-in-nested-interp-string",
+			"export function wrap(): void {\n  const s = `x ${obj[\"}\"]} y`;\n}\nexport function afterBody(): void {}\n",
+			[]string{"wrap", "afterBody"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			syms, _ := extractTSJS(c.src)
+			var got []string
+			for _, s := range syms {
+				got = append(got, s.Name)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("symbols = %v; want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestIsJSTestFile(t *testing.T) {
 	cases := map[string]bool{
 		"foo.test.ts":        true,

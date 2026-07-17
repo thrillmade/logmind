@@ -554,44 +554,13 @@ func maskTSJS(src string) (display, mask string) {
 		c := src[i]
 		switch {
 		case c == '/' && i+1 < n && src[i+1] == '/':
-			for i < n && src[i] != '\n' {
-				i++ // drop to end of line; the '\n' is copied next iteration
-			}
+			i = maskLineComment(src, i)
 		case c == '/' && i+1 < n && src[i+1] == '*':
-			d.WriteByte(' ') // one space so tokens around the comment don't fuse
-			m.WriteByte(' ')
-			i += 2
-			for i < n && !(src[i] == '*' && i+1 < n && src[i+1] == '/') {
-				if src[i] == '\n' { // preserve line structure across both
-					d.WriteByte('\n')
-					m.WriteByte('\n')
-				}
-				i++
-			}
-			i += 2 // consume the closing */ (harmless if at EOF)
-		case c == '\'' || c == '"' || c == '`':
-			quote := c
-			d.WriteByte(c)
-			m.WriteByte(c)
-			i++
-			for i < n {
-				ch := src[i]
-				if ch == '\\' && i+1 < n {
-					nx := src[i+1]
-					d.WriteByte(ch)
-					m.WriteByte(neutralOrNewline(ch))
-					d.WriteByte(nx)
-					m.WriteByte(neutralOrNewline(nx))
-					i += 2
-					continue
-				}
-				d.WriteByte(ch)
-				m.WriteByte(neutralOrNewline(ch))
-				i++
-				if ch == quote {
-					break
-				}
-			}
+			i = maskBlockComment(src, i, &d, &m)
+		case c == '\'' || c == '"':
+			i = maskFlatString(src, i, &d, &m)
+		case c == '`':
+			i = maskTemplate(src, i, &d, &m)
 		default:
 			d.WriteByte(c)
 			m.WriteByte(c)
@@ -599,6 +568,158 @@ func maskTSJS(src string) (display, mask string) {
 		}
 	}
 	return d.String(), m.String()
+}
+
+// maskLineComment drops a `//` comment from src[i] to end of line, writing
+// nothing to either builder — the terminating '\n' is copied by the caller's
+// next iteration. Returns the index at the newline (or EOF).
+func maskLineComment(src string, i int) int {
+	n := len(src)
+	for i < n && src[i] != '\n' {
+		i++
+	}
+	return i
+}
+
+// maskBlockComment consumes a `/* … */` comment from src[i], emitting one space
+// (so tokens around it don't fuse) and mirroring interior newlines so line
+// offsets stay aligned. Returns the index just past the closing `*/`.
+func maskBlockComment(src string, i int, d, m *strings.Builder) int {
+	n := len(src)
+	d.WriteByte(' ')
+	m.WriteByte(' ')
+	i += 2
+	for i < n && !(src[i] == '*' && i+1 < n && src[i+1] == '/') {
+		if src[i] == '\n' { // preserve line structure across both
+			d.WriteByte('\n')
+			m.WriteByte('\n')
+		}
+		i++
+	}
+	i += 2 // consume the closing */ (harmless if at EOF)
+	return i
+}
+
+// maskFlatString consumes a single-quote or double-quote string from src[i]
+// (its opening delimiter), keeping the display verbatim and neutralising the
+// interior in the mask (the opening delimiter is preserved in the mask, every
+// other byte including the closer becomes 'x'/newline). A backslash escapes the
+// next byte so an escaped quote does not close the string. Returns the index
+// just past the closing quote (or EOF for an unterminated string).
+func maskFlatString(src string, i int, d, m *strings.Builder) int {
+	n := len(src)
+	quote := src[i]
+	d.WriteByte(quote)
+	m.WriteByte(quote)
+	i++
+	for i < n {
+		ch := src[i]
+		if ch == '\\' && i+1 < n {
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			d.WriteByte(src[i+1])
+			m.WriteByte(neutralOrNewline(src[i+1]))
+			i += 2
+			continue
+		}
+		d.WriteByte(ch)
+		m.WriteByte(neutralOrNewline(ch))
+		i++
+		if ch == quote {
+			break
+		}
+	}
+	return i
+}
+
+// maskTemplate consumes a template literal from src[i] (the opening backtick).
+// A template literal is NOT a flat single-delimiter span: a `${…}` interpolation
+// holds arbitrary code (nested strings, comments, and further template
+// literals), and only a backtick reached in string-body mode — never one buried
+// inside an interpolation — closes it. String-body bytes and interpolation code
+// alike are neutralised in the mask (matching the flat-string treatment); the
+// state machine exists solely to locate the correct closing backtick so real
+// source after the literal is not swallowed (issue #219). Returns the index
+// just past the closing backtick (or EOF for an unterminated literal).
+func maskTemplate(src string, i int, d, m *strings.Builder) int {
+	n := len(src)
+	// Opening backtick: verbatim in display, preserved as delimiter in mask.
+	d.WriteByte(src[i])
+	m.WriteByte(src[i])
+	i++
+	for i < n {
+		ch := src[i]
+		switch {
+		case ch == '\\' && i+1 < n:
+			// Escape: neutralise this byte and the escaped one. This also
+			// disarms `\${`, which is a literal `$` and opens no interpolation.
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			d.WriteByte(src[i+1])
+			m.WriteByte(neutralOrNewline(src[i+1]))
+			i += 2
+		case ch == '`':
+			// Closing delimiter — reached only in string-body mode.
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			return i + 1
+		case ch == '$' && i+1 < n && src[i+1] == '{':
+			// Enter interpolation: emit `${`, then scan code at brace depth 1.
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			d.WriteByte(src[i+1])
+			m.WriteByte(neutralOrNewline(src[i+1]))
+			i = maskInterp(src, i+2, d, m)
+		default:
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			i++
+		}
+	}
+	return i
+}
+
+// maskInterp consumes template-literal interpolation code starting just past
+// `${` (brace depth 1) and returns the index just past the matching `}` (depth
+// 0). Nested comments, strings, and template literals are consumed with the
+// SAME masking helpers so a `}` or backtick living inside one never closes the
+// interpolation or the enclosing literal; only a bare `{`/`}` moves the depth.
+// All bytes are neutralised in the mask (structural braces are counted from the
+// raw source, not the mask). Returns EOF for an unterminated interpolation.
+func maskInterp(src string, i int, d, m *strings.Builder) int {
+	n := len(src)
+	depth := 1
+	for i < n {
+		ch := src[i]
+		switch {
+		case ch == '/' && i+1 < n && src[i+1] == '/':
+			i = maskLineComment(src, i)
+		case ch == '/' && i+1 < n && src[i+1] == '*':
+			i = maskBlockComment(src, i, d, m)
+		case ch == '\'' || ch == '"':
+			i = maskFlatString(src, i, d, m)
+		case ch == '`':
+			i = maskTemplate(src, i, d, m) // nested literal: recurse, don't close
+		case ch == '{':
+			depth++
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			i++
+		case ch == '}':
+			depth--
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			i++
+			if depth == 0 {
+				return i
+			}
+		default:
+			d.WriteByte(ch)
+			m.WriteByte(neutralOrNewline(ch))
+			i++
+		}
+	}
+	return i
 }
 
 // neutralOrNewline maps a string-interior byte to a structurally neutral 'x',

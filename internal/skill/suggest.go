@@ -160,13 +160,25 @@ func SuggestFromDecisions(repoRoot string, sinceDays, minDecisions, topN int, no
 		ranked = append(ranked, rankedPair{tok, hits})
 	}
 
-	// Sort: descending by hit count, then ascending by lowercased
-	// token (deterministic tiebreak — matches Python's key tuple).
-	sort.Slice(ranked, func(i, j int) bool {
+	// Sort: descending by hit count, then ascending by lowercased token
+	// (matches Python's key tuple), then a case-sensitive token tiebreak.
+	// The `ranked` slice is built from Go-map iteration, whose order is
+	// randomised, so the comparator must FULLY disambiguate — an incomplete
+	// tiebreak fed into an unstable sort could reorder tokens that tie on
+	// count + lowercased form (e.g. "API"/"api") and, at the --top cutoff,
+	// drop a different candidate across runs (issue #223). SliceStable plus a
+	// case-sensitive final key makes the ordering deterministic.
+	sort.SliceStable(ranked, func(i, j int) bool {
 		if len(ranked[i].Hits) != len(ranked[j].Hits) {
 			return len(ranked[i].Hits) > len(ranked[j].Hits)
 		}
-		return strings.ToLower(ranked[i].Token) < strings.ToLower(ranked[j].Token)
+		if li, lj := strings.ToLower(ranked[i].Token), strings.ToLower(ranked[j].Token); li != lj {
+			return li < lj
+		}
+		if ranked[i].Token != ranked[j].Token {
+			return ranked[i].Token < ranked[j].Token
+		}
+		return false
 	})
 
 	if topN > 0 && len(ranked) > topN {
