@@ -403,9 +403,19 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// The non-TTY / --no-interactive path is unchanged: it emits the advisory
 	// to stderr only and returns false, so its stdout stays exactly the three
 	// lines (SPEC §3.1.1's carve-out for the fixture-relevant case).
+	// One shared stdin line-reader for BOTH the interactive nudge (below) and
+	// the self-heal loop (further down): only one goroutine ever drains stdin,
+	// so a timed-out nudge read can't steal the human's first self-heal answer
+	// (#233). stdinOK gates whether we may BLOCK on stdin at all (finding #3:
+	// stderr a TTY but stdin a never-delivering pipe). Both are cheap to compute
+	// and harmless on the non-interactive paths (the reader's goroutine starts
+	// lazily on the first prompt read, which those paths never reach).
+	lines := newStdinLines(stdin)
+	stdinOK := stdinReadable(stdin)
+
 	summaryEdited := false
 	if isBranchFile && f.headline == "" && !quiet {
-		summaryEdited = nudgeBranchSummary(target, f.noInteractive, stdin, stderr)
+		summaryEdited = nudgeBranchSummary(target, f.noInteractive, stdinOK, lines, stderr)
 	}
 
 	// Commit + push (unless --no-commit OR not in a git repo). SPEC §3.1
@@ -468,7 +478,7 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// should surface immediately. Under QUIET the advisory is routed to
 	// stderr (never onto the single-ok-line stdout) and the prompt is
 	// skipped.
-	if err := runSelfHealLayer1(cwd, f.noInteractive, quiet, stdin, stdout, stderr); err != nil {
+	if err := runSelfHealLayer1(cwd, f.noInteractive, quiet, stdinOK, lines, stdout, stderr); err != nil {
 		// runSelfHealLayer1 returns ErrSilent on user abort (`q` reply)
 		// or three failed retries. Propagate so the CLI exits non-zero
 		// and the agent sees the abort signal.
@@ -618,15 +628,20 @@ func insertMarkerAfterHeader(existing []byte, marker string) []byte {
 	return append([]byte(marker), existing...)
 }
 
-// nudgeReadTimeout bounds how long the interactive branch-summary nudge waits
-// on a single stdin line before giving up (issue #228). runLog holds the repo
-// lock across this prompt — the edit must land in the same commit — so an
-// unbounded ReadString on a human who steps away would keep the lock past
+// nudgeBudget is the TOTAL wall-clock the interactive branch-summary nudge may
+// spend across BOTH of its stdin reads (the y/N prompt AND the "New summary:"
+// prompt), sharing ONE deadline. runLog holds the repo lock across the whole
+// nudge — the edit must land in the same commit — so an unbounded (or a
+// per-read) wait on a human who steps away could keep the lock past
 // lockAcquireTimeout (15s) and make a concurrent `logmind log` in the same cwd
-// fail with the misleading "appears stuck". 10s sits safely under that 15s
-// window; on timeout the nudge keeps the current headline and falls back to
-// the stderr advisory. A package var so tests can shrink it.
-var nudgeReadTimeout = 10 * time.Second
+// fail with the misleading "appears stuck" (#228, #233). Bounding each read
+// SEPARATELY at nudgeBudget was the bug: two reads could hold the lock ~2×
+// budget. One shared deadline (computed once, drawn down by both reads) caps
+// the whole nudge — and thus the lock hold — at nudgeBudget. 12s leaves a
+// comfortable margin under the 15s lock window even if a human pauses at each
+// prompt; on timeout the nudge keeps the current headline and falls back to the
+// stderr advisory. A package var so tests can shrink it.
+var nudgeBudget = 12 * time.Second
 
 // nudgeSummaryAdvisory prints the stderr-only branch-summary advisory: the
 // current one-sentence summary plus how to refresh it asynchronously via
@@ -638,40 +653,156 @@ func nudgeSummaryAdvisory(current string, stderr io.Writer) {
 	fmt.Fprintln(stderr, "   Keep it a one-sentence summary of the whole branch — refresh with: logmind headline \"<one sentence>\"")
 }
 
-// readLineWithTimeout reads a single '\n'-terminated line from r, waiting at
-// most d. Returns (line, true) when a line (or EOF) arrives in time, or
-// ("", false) on timeout. The blocking ReadString runs in a goroutine so a
-// human who walks away from the branch-summary prompt can't wedge the caller
-// while it holds the repo lock (#228). On timeout the goroutine is left parked
-// on the read — harmless: the process is finishing up — and the buffered
-// channel lets a late line deliver-and-exit without leaking on the send.
-func readLineWithTimeout(r *bufio.Reader, d time.Duration) (string, bool) {
-	ch := make(chan string, 1)
+// stdinLineResult carries one line (or the terminal read error) from the
+// single stdin-draining goroutine to its consumers.
+type stdinLineResult struct {
+	line string
+	err  error // io.EOF or a read error once the stream is exhausted; nil otherwise
+}
+
+// stdinLines is a single-goroutine line reader SHARED by the interactive
+// branch-summary nudge and the Layer-1 self-heal retry loop. Exactly one
+// goroutine ever touches stdin: it drains '\n'-terminated lines, in order, into
+// a buffered channel. Two properties matter:
+//
+//   - No stolen answers (#233). Pre-fix, the nudge and the self-heal loop each
+//     wrapped os.Stdin in their OWN bufio.Reader. When a nudge read timed out,
+//     its goroutine stayed parked on ReadString; the next byte the human typed
+//     was consumed by THAT parked reader (and discarded to a channel nobody
+//     drained), so the self-heal loop's second reader blocked forever. With one
+//     shared reader every line flows through one channel and is handed to
+//     whoever reads NEXT — the self-heal loop receives the human's first
+//     answer, never the abandoned nudge.
+//
+//   - Lazy start. The goroutine starts on the FIRST read, so non-interactive
+//     invocations (which never prompt) never touch stdin and the byte-exact
+//     non-TTY stdout contract is untouched.
+//
+// started/done/doneErr are only ever read/written by the single consumer
+// goroutine (runLog runs the nudge, then the self-heal loop, sequentially), so
+// they need no synchronization; the channel carries the only cross-goroutine
+// handoff. A late line delivered after a timed-out read stays buffered in the
+// channel and is picked up by the next reader rather than leaking on the send.
+type stdinLines struct {
+	r       *bufio.Reader
+	ch      chan stdinLineResult
+	started bool
+	done    bool
+	doneErr error
+}
+
+func newStdinLines(stdin io.Reader) *stdinLines {
+	return &stdinLines{r: bufio.NewReader(stdin), ch: make(chan stdinLineResult, 1)}
+}
+
+func (s *stdinLines) start() {
+	if s.started {
+		return
+	}
+	s.started = true
 	go func() {
-		line, _ := r.ReadString('\n')
-		ch <- line
+		for {
+			line, err := s.r.ReadString('\n')
+			s.ch <- stdinLineResult{line: line, err: err}
+			if err != nil {
+				return
+			}
+		}
 	}()
+}
+
+// next waits at most d for the next line. Returns (line, true) when a line (or
+// the final EOF chunk) arrives in time, or ("", false) on timeout. A
+// non-positive d is treated as an immediate timeout — this is what lets the
+// nudge share ONE deadline across its two reads (#233): once the budget is
+// spent the second read returns instantly instead of arming a fresh full
+// timeout. The terminal read error (io.EOF / worse) is returned alongside so
+// callers can distinguish a real reply from a closed stream.
+func (s *stdinLines) next(d time.Duration) (line string, ok bool, err error) {
+	s.start()
+	if s.done {
+		return "", true, s.doneErr
+	}
+	if d <= 0 {
+		return "", false, nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
 	select {
-	case line := <-ch:
-		return line, true
-	case <-time.After(d):
-		return "", false
+	case res := <-s.ch:
+		if res.err != nil {
+			s.done, s.doneErr = true, res.err
+		}
+		return res.line, true, res.err
+	case <-timer.C:
+		return "", false, nil
 	}
 }
 
+// nextBlocking waits INDEFINITELY for the next line. The self-heal loop uses it
+// because a human may take arbitrarily long to go fix docs before replying —
+// bounding that read would regress the UX (#220-follow-up). The unbounded wait
+// is safe only because runLog gates entry to the loop on stdinReadable (a
+// never-delivering pipe never gets here); see runSelfHealLayer1.
+func (s *stdinLines) nextBlocking() (line string, err error) {
+	s.start()
+	if s.done {
+		return "", s.doneErr
+	}
+	res := <-s.ch
+	if res.err != nil {
+		s.done, s.doneErr = true, res.err
+	}
+	return res.line, res.err
+}
+
+// stdinReadable reports whether stdin can safely serve a block-and-wait
+// interactive prompt. #220 moved the interactivity gate to isatty(STDERR) so
+// that `logmind log > out.txt` (stdout captured) still shows a human the
+// prompts — but the self-heal loop's reply read is UNBOUNDED, so with stderr a
+// TTY and stdin an open-but-never-delivering pipe the read would hang where the
+// old isatty(STDIN) gate exited 0. Output routing stays keyed on isatty(STDERR)
+// per §3.1.1; this gate only decides whether we may BLOCK on stdin waiting for
+// a reply.
+//
+// A terminal (char device) or a regular file always makes progress — a human
+// replies or sends EOF, a file delivers bytes then EOF — so both are safe to
+// block on. A pipe / socket / fifo can block forever with no data and no EOF,
+// so we decline to wait on those and fall through to the non-interactive
+// advisory instead. A non-*os.File reader (in-process tests, or an embedder
+// that injected its own stream) is trusted — the caller wired it deliberately.
+func stdinReadable(stdin io.Reader) bool {
+	f, ok := stdin.(*os.File)
+	if !ok {
+		return true
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	mode := fi.Mode()
+	return mode&os.ModeCharDevice != 0 || mode.IsRegular()
+}
+
 // nudgeBranchSummary steers the author toward a clean one-sentence branch
-// summary after a log. At a TTY it offers an interactive edit: the prompt I/O
-// goes to STDERR (SPEC §3.1.1 / issue #206 — stdout stays the clean contract
-// stream) and the edit is written before the caller commits, so it lands in
-// the SAME commit; it returns true so the caller prints the stdout confirmation
-// AFTER required line 3. Each stdin read is bounded by nudgeReadTimeout (#228)
-// so a human who pauses can't hold the repo lock long enough to make a
-// concurrent `logmind log` fail with "appears stuck"; on timeout it keeps the
-// current headline and falls back to the advisory. For an agent (non-TTY) it
-// prints the advisory and returns false — a blocking prompt can't reach a
-// non-TTY caller, so the agent acts asynchronously via `logmind headline`.
-// Best-effort: any IO error just skips the nudge; it never fails the log.
-func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader, stderr io.Writer) bool {
+// summary after a log. At a TTY (and with a readable stdin) it offers an
+// interactive edit: the prompt I/O goes to STDERR (SPEC §3.1.1 / issue #206 —
+// stdout stays the clean contract stream) and the edit is written before the
+// caller commits, so it lands in the SAME commit; it returns true so the caller
+// prints the stdout confirmation AFTER required line 3. The y/N prompt and the
+// "New summary:" prompt SHARE a single nudgeBudget deadline (#228, #233): two
+// per-read timeouts could hold the repo lock ~2× the budget and blow past
+// lockAcquireTimeout (15s), reintroducing the "appears stuck" failure a
+// concurrent `logmind log` sees — one shared deadline caps the whole nudge (and
+// thus the lock) under budget. On timeout it keeps the current headline and
+// falls back to the advisory. For an agent (non-TTY), a --no-interactive
+// caller, or a stdin we can't safely block on (finding #3), it prints the
+// advisory and returns false — a blocking prompt can't reach those callers, so
+// they act asynchronously via `logmind headline`. The stdin reads share
+// runLog's single stdinLines reader so a timed-out read here can't steal the
+// self-heal loop's first answer (#233). Best-effort: any IO error just skips
+// the nudge; it never fails the log.
+func nudgeBranchSummary(target string, forceNonInteractive, stdinOK bool, lines *stdinLines, stderr io.Writer) bool {
 	data, err := os.ReadFile(target)
 	if err != nil {
 		return false
@@ -681,20 +812,22 @@ func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader
 		return false
 	}
 
-	if forceNonInteractive || !isTerminalFunc() {
-		// Agent / CI: advisory only — never block on stdin, and the nudge
-		// MUST go to stderr so stdout stays byte-identical to the three §3.1
-		// log lines (SPEC §3.1.1: the non-TTY headline nudge is stderr-only).
+	if forceNonInteractive || !isTerminalFunc() || !stdinOK {
+		// Agent / CI / non-readable stdin: advisory only — never block on
+		// stdin, and the nudge MUST go to stderr so stdout stays byte-identical
+		// to the three §3.1 log lines (SPEC §3.1.1: the non-TTY headline nudge
+		// is stderr-only).
 		nudgeSummaryAdvisory(current, stderr)
 		return false
 	}
 
 	// Interactive TTY: offer an inline edit. Prompts go to stderr (§3.1.1 /
-	// #206); each read is deadline-bounded (#228).
-	reader := bufio.NewReader(stdin)
+	// #206). BOTH reads draw down ONE shared deadline (#233) so the repo lock
+	// runLog holds across this nudge can never be held ≥ lockAcquireTimeout.
+	deadline := time.Now().Add(nudgeBudget)
 	fmt.Fprintf(stderr, "\nBranch summary: %s\n", current)
 	fmt.Fprint(stderr, "Update it to a one-sentence summary of the whole branch? [y to edit / N to keep]: ")
-	line, ok := readLineWithTimeout(reader, nudgeReadTimeout)
+	line, ok, _ := lines.next(time.Until(deadline))
 	if !ok {
 		// Human stepped away — keep the current headline + fall back to the
 		// advisory so the caller releases the lock and commits promptly (#228).
@@ -705,7 +838,9 @@ func nudgeBranchSummary(target string, forceNonInteractive bool, stdin io.Reader
 		return false
 	}
 	fmt.Fprint(stderr, "New summary: ")
-	newSummary, ok := readLineWithTimeout(reader, nudgeReadTimeout)
+	// Second read draws down the SAME deadline (remaining budget), not a fresh
+	// one — if the y/N reply consumed most of the budget this returns promptly.
+	newSummary, ok, _ := lines.next(time.Until(deadline))
 	if !ok {
 		nudgeSummaryAdvisory(current, stderr)
 		return false
@@ -769,10 +904,17 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 // Flow:
 //
 //   - Run linkcheck.CheckWithReport(). Clean → exit 0 silently.
-//   - Issues found, NOT interactive (--no-interactive OR no TTY):
+//   - Issues found, NOT interactive (--no-interactive OR no stderr TTY OR a
+//     stdin we can't safely block on — see stdinReadable / finding #3):
 //     print advisory + nudge that CI Layer 3 will catch it + exit 0.
 //   - Issues found, interactive: print advisory + enter retry loop.
 //     Up to 3 attempts of y/n/q.
+//
+// The retry loop reads replies from the shared stdinLines reader (the same one
+// the branch-summary nudge used) so a timed-out nudge read can't steal the
+// human's first answer here (#233); the read is unbounded because a human may
+// take arbitrarily long to go fix docs, and stdinOK guarantees stdin can't hang
+// us (finding #3).
 //
 // The advisory format is the one the plan locked in §8.7:
 //
@@ -783,7 +925,7 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 //	    → fix: ...
 //	Fix the issues above, then reply [y] to re-check, [n] to skip, [q] to abort:
 //	>
-func runSelfHealLayer1(cwd string, forceNonInteractive, quiet bool, stdin io.Reader, stdout, stderr io.Writer) error {
+func runSelfHealLayer1(cwd string, forceNonInteractive, quiet, stdinOK bool, lines *stdinLines, stdout, stderr io.Writer) error {
 	report, err := linkcheck.CheckWithReport(cwd, nil, nil)
 	if err != nil {
 		// Linkcheck plumbing failure isn't a self-heal-able error;
@@ -804,13 +946,20 @@ func runSelfHealLayer1(cwd string, forceNonInteractive, quiet bool, stdin io.Rea
 		return nil
 	}
 
-	interactive := !forceNonInteractive && isTerminalFunc()
+	// Output routing stays keyed on isatty(STDERR) (§3.1.1 / #220), but we only
+	// ENTER the block-and-wait retry loop when stdin is one we can safely block
+	// on: the reply read below is UNBOUNDED (a human may take arbitrarily long
+	// to go fix docs), so a stderr-TTY invocation whose stdin is a
+	// never-delivering pipe would hang here without the stdinOK gate (finding
+	// #3). A non-readable stdin falls through to the non-interactive advisory,
+	// exactly where the old isatty(STDIN) gate exited 0.
+	interactive := !forceNonInteractive && isTerminalFunc() && stdinOK
 
 	if !interactive {
-		// §3.1.1: non-TTY / --no-interactive stdout MUST stay exactly the
-		// three §3.1 lines. The advisory is a recovery hint, not part of the
-		// contract — route it to stderr, mirroring the quiet path above and
-		// the headline nudge (PR #173). Fixes issue #206(a).
+		// §3.1.1: non-TTY / --no-interactive / non-readable-stdin stdout MUST
+		// stay exactly the three §3.1 lines. The advisory is a recovery hint,
+		// not part of the contract — route it to stderr, mirroring the quiet
+		// path above and the headline nudge (PR #173). Fixes issue #206(a).
 		printAdvisory(stderr, report)
 		fmt.Fprintln(stderr, "Non-interactive context — decision is saved but docs may be stale.")
 		fmt.Fprintln(stderr, "The check-doc-links workflow's Layer 3 self-heal will catch this at PR time.")
@@ -820,12 +969,14 @@ func runSelfHealLayer1(cwd string, forceNonInteractive, quiet bool, stdin io.Rea
 	printAdvisory(stdout, report)
 
 	const maxTries = 3
-	reader := bufio.NewReader(stdin)
+	// Reads come from runLog's SHARED stdinLines reader (not a fresh bufio.Reader
+	// over stdin) so the branch-summary nudge above can't have left a parked
+	// reader that swallows the human's first answer here (#233).
 	for try := 1; try <= maxTries; try++ {
 		fmt.Fprintln(stdout)
 		fmt.Fprint(stdout, "Fix the issues above, then reply [y to re-check, n to skip, q to abort]: ")
 
-		line, err := reader.ReadString('\n')
+		line, err := lines.nextBlocking()
 		if err != nil && err != io.EOF {
 			// Plumbing error reading stdin — fail open, exit 0.
 			fmt.Fprintln(stderr, "Warning: stdin read failed:", err)

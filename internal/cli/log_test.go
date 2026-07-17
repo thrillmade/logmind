@@ -24,9 +24,38 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// signalOnSubstr is a thread-safe io.Writer that closes `fired` the first time
+// its accumulated output contains `needle`. Used to synchronize a test writer
+// goroutine against output produced by runLog's goroutine WITHOUT racing on a
+// bytes.Buffer (the accumulation is mutex-guarded).
+type signalOnSubstr struct {
+	mu     sync.Mutex
+	buf    strings.Builder
+	needle string
+	once   sync.Once
+	fired  chan struct{}
+}
+
+func (w *signalOnSubstr) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if strings.Contains(w.buf.String(), w.needle) {
+		w.once.Do(func() { close(w.fired) })
+	}
+	return n, err
+}
+
+func (w *signalOnSubstr) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
 
 // initLogTestGitRepo turns a tmpdir into a working git repo on `main`.
 // Used by the log tests that need branch resolution + commit.
@@ -709,15 +738,15 @@ func TestLog_NonTTY_ByteExactThreeLines_BranchFile(t *testing.T) {
 // the branch-summary nudge must not block indefinitely on a human who walks
 // away — runLog holds the repo lock across the prompt, so an unbounded stdin
 // read would keep the lock past lockAcquireTimeout (15s) and make a concurrent
-// `logmind log` in the same cwd fail with the misleading "appears stuck". Each
-// read is bounded by nudgeReadTimeout; on timeout the nudge keeps the current
-// headline, emits the stderr advisory, and returns so runLog commits/unlocks
-// promptly. We shrink nudgeReadTimeout so the test is fast but still exercises
-// the real timeout path (not a hang).
+// `logmind log` in the same cwd fail with the misleading "appears stuck". Both
+// reads share a single nudgeBudget deadline; on timeout the nudge keeps the
+// current headline, emits the stderr advisory, and returns so runLog
+// commits/unlocks promptly. We shrink nudgeBudget so the test is fast but still
+// exercises the real timeout path (not a hang).
 func TestLog_NudgeInteractive_TimesOutInsteadOfHanging(t *testing.T) {
-	orig := nudgeReadTimeout
-	nudgeReadTimeout = 150 * time.Millisecond
-	t.Cleanup(func() { nudgeReadTimeout = orig })
+	orig := nudgeBudget
+	nudgeBudget = 150 * time.Millisecond
+	t.Cleanup(func() { nudgeBudget = orig })
 
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
@@ -843,5 +872,189 @@ func TestLog_NudgeInteractive_StdoutOrderedAfterCommitLine(t *testing.T) {
 		if !strings.Contains(body, "Whole branch summary edited") {
 			t.Fatalf("edit not captured by the commit; HEAD file:\n%s", body)
 		}
+	})
+}
+
+// TestNudge_SharedDeadlineAcrossBothReads pins finding #1 (#233): the two nudge
+// prompts (y/N, then "New summary:") must share ONE deadline, not arm a fresh
+// full timeout each. runLog holds the repo lock across the whole nudge, so a
+// per-read timeout could hold it ~2× nudgeBudget and blow past
+// lockAcquireTimeout (15s), reintroducing the "appears stuck" failure a
+// concurrent `logmind log` sees.
+//
+// Two checks: (a) a STATIC invariant that the whole-nudge budget sits under the
+// lock window; (b) a behavioral proof — the y/N reply arrives at ~0.7×budget,
+// the summary never arrives, so a single shared deadline finishes the nudge
+// near budget while the pre-fix per-read timeout would run ~1.7×budget.
+func TestNudge_SharedDeadlineAcrossBothReads(t *testing.T) {
+	if nudgeBudget >= lockAcquireTimeout {
+		t.Fatalf("nudgeBudget (%v) must be < lockAcquireTimeout (%v) so the nudge can never hold the repo lock long enough to fail a concurrent log (#233)", nudgeBudget, lockAcquireTimeout)
+	}
+
+	orig := nudgeBudget
+	nudgeBudget = 500 * time.Millisecond
+	t.Cleanup(func() { nudgeBudget = orig })
+
+	withTempCwd(t, func(d string) {
+		// A branch decision file carrying a headline marker so CurrentHeadline
+		// resolves (no git/commit needed — we call the nudge directly).
+		target := filepath.Join(d, "docs", "decisions-branches", "feat__budget.md")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		content := buildTimelineMarker(time.Now(), "current headline", "")
+		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+			t.Fatalf("write target: %v", err)
+		}
+
+		pr, pw := io.Pipe()
+		t.Cleanup(func() { _ = pw.Close() })
+		lines := newStdinLines(pr)
+
+		withFakeTTY(t, true, func() {
+			// "y" arrives LATE (0.7×budget); the summary never arrives so the
+			// second read must time out on the REMAINING budget. Started just
+			// before the call so the delay is measured against the nudge clock.
+			go func() {
+				time.Sleep(350 * time.Millisecond)
+				_, _ = pw.Write([]byte("y\n"))
+			}()
+
+			var errBuf bytes.Buffer
+			start := time.Now()
+			edited := nudgeBranchSummary(target, false, true, lines, &errBuf)
+			elapsed := time.Since(start)
+
+			if edited {
+				t.Fatalf("nudge must NOT report an edit when the summary read times out")
+			}
+			// Shared deadline: ≈ budget (500ms), NOT ≈ 1.7×budget (850ms) as a
+			// per-read timeout would give.
+			if elapsed > 750*time.Millisecond {
+				t.Fatalf("nudge held for %v; a single shared deadline must keep it near nudgeBudget (%v), not ~2× (#233)", elapsed, nudgeBudget)
+			}
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+		})
+	})
+}
+
+// TestLog_NudgeTimeout_ThenSelfHealGetsAnswer_NoTheft pins finding #2 (#233):
+// after the branch-summary nudge times out, the following self-heal prompt must
+// receive the human's first typed answer. Pre-fix the nudge and the self-heal
+// loop each wrapped os.Stdin in their OWN bufio.Reader; the nudge's parked
+// reader swallowed the first byte the human typed and the self-heal reader hung
+// forever. One shared stdin reader hands that answer to the self-heal loop.
+func TestLog_NudgeTimeout_ThenSelfHealGetsAnswer_NoTheft(t *testing.T) {
+	orig := nudgeBudget
+	nudgeBudget = 200 * time.Millisecond
+	t.Cleanup(func() { nudgeBudget = orig })
+
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit on main first so DefaultBranch resolves to main (else the
+		// feature branch is the only branch with commits → isBranchFile false →
+		// the nudge never fires).
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/no-theft")
+		// Orphan → the self-heal loop has something to prompt about.
+		if err := os.WriteFile(filepath.Join(d, "docs", "orphan.md"), []byte("# Orphan\n"), 0o644); err != nil {
+			t.Fatalf("write orphan: %v", err)
+		}
+
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "no theft decision", "-r", "why", "--no-commit"})
+			// A real *io.PipeReader (readable, so both nudge + self-heal go
+			// interactive). The human ignores the nudge; we type the self-heal
+			// answer only AFTER the nudge has DEFINITIVELY timed out — gated on
+			// its advisory landing on stderr, not a fragile wall-clock sleep, so
+			// the answer can only be consumed by self-heal (not swallowed as the
+			// nudge's y/N reply). This is the exact ordering finding #2 is about.
+			pr, pw := io.Pipe()
+			t.Cleanup(func() { _ = pw.Close() })
+			root.SetIn(pr)
+			var out bytes.Buffer
+			root.SetOut(&out)
+			// Signal once the nudge's timeout advisory is written to stderr.
+			errBuf := &signalOnSubstr{needle: "📝 Branch summary:", fired: make(chan struct{})}
+			root.SetErr(errBuf)
+
+			go func() {
+				<-errBuf.fired // nudge has timed out + moved on
+				_, _ = pw.Write([]byte("n\n"))
+			}()
+
+			done := make(chan error, 1)
+			go func() { done <- root.Execute() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("runLog returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errBuf.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("runLog hung — self-heal read blocked because the timed-out nudge stole the answer (#233)")
+			}
+			// Nudge timed out → advisory on stderr (kept current headline).
+			mustContain(t, errBuf.String(), "📝 Branch summary:")
+			// Self-heal actually RECEIVED the human's "n" (proves no theft): it
+			// prints the skip line and exits 0.
+			mustContain(t, out.String(), "Skipped")
+		})
+	})
+}
+
+// TestLog_SelfHeal_StderrTTY_StdinDeadPipe_DoesNotHang pins finding #3: #220
+// moved the interactivity gate to isatty(STDERR), but the self-heal reply read
+// is unbounded — so with stderr a TTY and stdin an open-but-never-delivering
+// pipe the loop would hang where the old isatty(STDIN) gate exited 0. The
+// stdinReadable gate must fall through to the non-interactive advisory + exit 0
+// when stdin is a pipe that can never make progress.
+func TestLog_SelfHeal_StderrTTY_StdinDeadPipe_DoesNotHang(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Default branch (main) → no branch-summary nudge; isolates the
+		// self-heal loop. Orphan → self-heal would want to prompt.
+		if err := os.WriteFile(filepath.Join(d, "docs", "orphan.md"), []byte("# Orphan\n"), 0o644); err != nil {
+			t.Fatalf("write orphan: %v", err)
+		}
+
+		// A real OS pipe read-end: *os.File whose mode is a fifo (not a char
+		// device, not a regular file) → stdinReadable == false. Never written,
+		// so any unbounded read on it would hang forever.
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		t.Cleanup(func() { _ = pr.Close(); _ = pw.Close() })
+
+		// stderr is a TTY (the #220 output gate) but stdin is the dead pipe.
+		withFakeTTY(t, true, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "dead pipe decision", "-r", "why", "--no-commit"})
+			root.SetIn(pr)
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+
+			done := make(chan error, 1)
+			go func() { done <- root.Execute() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("runLog returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errBuf.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("runLog hung on a never-delivering stdin pipe — stdinReadable gate missing (finding #3)")
+			}
+			// Fell through to the non-interactive advisory on stderr, NOT the
+			// interactive prompt loop.
+			mustContain(t, errBuf.String(), "⚠ Standard markdown links need attention")
+			mustContain(t, errBuf.String(), "Non-interactive context")
+			if strings.Contains(out.String(), "reply [y to re-check") || strings.Contains(errBuf.String(), "reply [y to re-check") {
+				t.Fatalf("dead-pipe stdin must NOT enter the interactive prompt loop\nstdout:\n%s\nstderr:\n%s", out.String(), errBuf.String())
+			}
+		})
 	})
 }

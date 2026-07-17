@@ -15,3 +15,16 @@
 
 ---
 
+## 2026-07-17 14:59 - fix(cli): single shared stdin reader, one nudge deadline, stdin-readable self-heal gate
+
+**Reasoning:** Adversarial dual-review of PR #234 found three lock/stdin bugs in the interactive nudge plus self-heal path. Finding 1: the two sequential nudge reads were each bounded at the full timeout, so the two-read path could hold the repo lock about 20s and exceed the 15s lockAcquireTimeout, reviving the appears-stuck failure for a concurrent log; fixed by sharing ONE nudgeBudget deadline of 12s across both reads. Finding 2: a timed-out nudge left a goroutine parked on its own reader over stdin, so the later self-heal opened a second reader and the parked one stole the humans first answer; fixed with a single shared stdinLines reader draining one goroutine to one channel, reused by both nudge and self-heal. Finding 3: after #220 moved the interactivity gate to isatty stderr, the unbounded self-heal read hung when stderr was a TTY but stdin an open-but-never-delivering pipe; fixed by only entering the block-and-wait when stdin is readable (terminal or regular file), else falling through to the non-interactive stderr advisory and exit 0. Output routing stays on isatty stderr per section 3.1.1.
+
+**Alternatives considered:** Bound the self-heal read with a short timeout (rejected: regresses the legitimate human-at-TTY case where fixing docs can take arbitrarily long), Gate self-heal on isatty stdin unconditionally (rejected: breaks scripted file-redirected input and the in-process test readers)
+
+**Implications:**
+- nudgeBudget must stay under lockAcquireTimeout; a static test asserts this invariant
+- Pipe/socket/fifo stdin no longer enters the interactive self-heal wait; it gets the non-interactive advisory and exit 0
+- Byte-exact 3-line non-TTY stdout contract (SPEC 3.1) unchanged; no golden moved
+
+---
+
