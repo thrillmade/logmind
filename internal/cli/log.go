@@ -701,14 +701,18 @@ func runSelfHealLayer1(cwd string, forceNonInteractive, quiet bool, stdin io.Rea
 
 	interactive := !forceNonInteractive && isTerminalFunc()
 
-	printAdvisory(stdout, report)
-
 	if !interactive {
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Non-interactive context — decision is saved but docs may be stale.")
-		fmt.Fprintln(stdout, "The check-doc-links workflow's Layer 3 self-heal will catch this at PR time.")
+		// §3.1.1: non-TTY / --no-interactive stdout MUST stay exactly the
+		// three §3.1 lines. The advisory is a recovery hint, not part of the
+		// contract — route it to stderr, mirroring the quiet path above and
+		// the headline nudge (PR #173). Fixes issue #206(a).
+		printAdvisory(stderr, report)
+		fmt.Fprintln(stderr, "Non-interactive context — decision is saved but docs may be stale.")
+		fmt.Fprintln(stderr, "The check-doc-links workflow's Layer 3 self-heal will catch this at PR time.")
 		return nil
 	}
+
+	printAdvisory(stdout, report)
 
 	const maxTries = 3
 	reader := bufio.NewReader(stdin)

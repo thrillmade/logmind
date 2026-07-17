@@ -367,17 +367,22 @@ func TestLog_TTYAutodetect_PipedStdinSkipsPrompt(t *testing.T) {
 		withFakeTTY(t, false, func() {
 			root := NewRootCmd()
 			root.SetArgs([]string{"log", "decision", "-r", "test", "--no-commit"})
-			var out bytes.Buffer
+			// Separate buffers: §3.1.1 requires the advisory on STDERR for
+			// non-TTY callers — stdout stays contract-only (issue #206a).
+			var out, errBuf bytes.Buffer
 			root.SetOut(&out)
-			root.SetErr(&out)
+			root.SetErr(&errBuf)
 			if err := root.Execute(); err != nil {
-				t.Fatalf("non-tty should exit 0; got %v\noutput:\n%s", err, out.String())
+				t.Fatalf("non-tty should exit 0; got %v\noutput:\n%s%s", err, out.String(), errBuf.String())
 			}
-			body := out.String()
-			mustContain(t, body, "⚠ Standard markdown links need attention")
-			mustContain(t, body, "Non-interactive context")
-			if strings.Contains(body, "reply [y to re-check") {
-				t.Fatalf("non-tty should NOT enter prompt loop\noutput:\n%s", body)
+			mustContain(t, errBuf.String(), "⚠ Standard markdown links need attention")
+			mustContain(t, errBuf.String(), "Non-interactive context")
+			if strings.Contains(out.String(), "Standard markdown links") ||
+				strings.Contains(out.String(), "Non-interactive context") {
+				t.Fatalf("advisory leaked to stdout (must be stderr-only, §3.1.1)\nstdout:\n%s", out.String())
+			}
+			if strings.Contains(out.String(), "reply [y to re-check") || strings.Contains(errBuf.String(), "reply [y to re-check") {
+				t.Fatalf("non-tty should NOT enter prompt loop")
 			}
 		})
 	})
