@@ -4,16 +4,16 @@
 // Two independent, best-effort advisories, printed in this order (drift
 // before spec) when applicable:
 //
-//   - Drift pulse: any doctor probe classified STALE (the drift class that
-//     flips doctor's Overall — stale hooks / stale AGENTS.md block / stale
-//     Claude PreToolUse guard; NOT missing, NOT markerless — see
-//     doctor.StaleCount):
+//   - Drift pulse: any FILE-READ-ONLY doctor probe classified STALE (the
+//     drift class that flips doctor's Overall — stale hooks / stale
+//     AGENTS.md block / stale Claude PreToolUse guard; NOT missing, NOT
+//     markerless — see doctor.StaleCountFast):
 //     `logmind: <n> component(s) stale — run 'logmind doctor --fix'`
 //
 //   - Spec pulse: context.spec_file is configured, resolves
-//     (config.ResolveSpecFile), the resolved file is git-TRACKED, and at
-//     least specPulseThreshold decision entries postdate the spec's last
-//     git commit:
+//     (config.ResolveSpecFile), the resolved file is git-TRACKED and has no
+//     uncommitted modifications, and at least specPulseThreshold decision
+//     entries postdate the spec's last git commit:
 //     `logmind: <spec-path> unchanged for <n> decisions — still accurate?`
 //
 // STDERR ONLY, unconditionally. This is deliberate and load-bearing:
@@ -31,12 +31,21 @@
 // Emitted in every mode — TTY, non-TTY, --quiet — with no gating on any of
 // them: only the STDOUT destination is contract-sensitive, and this package
 // never writes there.
+//
+// HOT-PATH BUDGET: emitPulse runs on EVERY `logmind log`, so every probe it
+// calls transitively must be subprocess-free (file reads / stats only). The
+// drift pulse uses doctor.StaleCountFast specifically because doctor's full
+// probe set (doctor.StaleCount, used by `logmind doctor` itself) includes a
+// PATH lookup + a live `<binary> --version` subprocess — a hung or
+// daemonizing PATH binary can stall or hang that call outright. See
+// doctor.StaleCountFast's doc comment for the exact excluded-probe list.
 package cli
 
 import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
@@ -85,12 +94,19 @@ func emitPulse(cwd string, stderr io.Writer) {
 }
 
 // driftPulseLine reports the doctor-drift advisory. Reuses
-// doctor.StaleCount, which runs the identical probe set
-// collectLogmindStatus uses internally, so the count here is EXACTLY the
-// number of components that would flip a `logmind doctor` run on this repo
-// to DRIFT — no re-derivation of doctor's classification rules.
+// doctor.StaleCountFast — the subprocess-free subset of doctor's probes —
+// NOT doctor.StaleCount. `logmind log` runs on every commit; doctor's full
+// probe set includes a PATH lookup + a live `<binary> --version`
+// subprocess (probePathResolution) and a `git config` shell-out
+// (probeMergeDriverConfig), either of which can add real latency or, in
+// the pathological case of a hung/daemonizing PATH binary, hang the log
+// outright. StaleCountFast excludes exactly those two probes; everything
+// else is a plain file read, so the count here can differ from what
+// `logmind doctor` itself reports (PATH / merge-driver-config drift is
+// invisible to the pulse) — that gap is intentional, see StaleCountFast's
+// doc comment. Run `logmind doctor` for the complete picture.
 func driftPulseLine(cwd string) (string, bool) {
-	n := doctor.StaleCount(cwd)
+	n := doctor.StaleCountFast(cwd)
 	if n <= 0 {
 		return "", false
 	}
@@ -108,11 +124,17 @@ func driftPulseLine(cwd string) (string, bool) {
 //     (unset, absolute, or path-escaping values are already treated as
 //     UNSET there — same rule the real `logmind context` fold-in uses, so
 //     this advisory and that behavior can never disagree).
-//   - the resolved file is git-TRACKED. An untracked or uncommitted spec
-//     file has no deterministic last-touched date across clones (mtime
-//     isn't preserved by git, isn't preserved across clones/CI checkouts),
-//     so git history is the only source of truth here and an untracked
-//     file silently skips the pulse rather than guessing from mtime.
+//   - the resolved file is git-TRACKED. An untracked spec file has no
+//     deterministic last-touched date across clones (mtime isn't preserved
+//     by git, isn't preserved across clones/CI checkouts), so git history
+//     is the only source of truth here and an untracked file silently
+//     skips the pulse rather than guessing from mtime.
+//   - the tracked file has NO uncommitted modifications (working-tree or
+//     staged) right now. This log call may be the one editing the spec —
+//     `--stage scoped` or `--no-commit` can leave that edit uncommitted at
+//     the point emitPulse runs — and the very commit that updates the spec
+//     shouldn't turn around and ask "is this still accurate?" about the
+//     file it's mid-edit on. See gitcli.StatusPorcelain.
 //   - at least specPulseThreshold decision entries — collected from
 //     docs/decisions.md, docs/decisions-archive.md, and
 //     docs/decisions-branches/*.md via decisions.Collect, the same
@@ -132,6 +154,12 @@ func specPulseLine(cwd string) (string, bool) {
 	if !gitcli.IsTrackedFile(cwd, relSpec) {
 		return "", false
 	}
+	if gitcli.StatusPorcelain(cwd, relSpec) != "" {
+		// Uncommitted changes (staged or working-tree) — the spec is
+		// mid-edit right now; skip rather than nag about the file this
+		// very log might be updating.
+		return "", false
+	}
 	specTime, ok := gitcli.LastCommitTime(cwd, relSpec)
 	if !ok {
 		return "", false
@@ -143,7 +171,34 @@ func specPulseLine(cwd string) (string, bool) {
 	}
 	count := 0
 	for _, e := range entries {
-		if e.Date.After(specTime) {
+		// decisions.Iter parses `## YYYY-MM-DD HH:MM` decision headers with
+		// a zoneless time.Parse, which Go labels UTC — but those headers
+		// are written from time.Now().Format(...) (buildDecisionEntry in
+		// log.go), i.e. LOCAL wall-clock time. specTime, by contrast, is a
+		// true instant (gitcli.LastCommitTime parses git's %cI, strict
+		// ISO 8601 with an explicit offset). Comparing e.Date.After(specTime)
+		// directly mixes a local-wall-clock-mislabeled-as-UTC value against
+		// a real instant, skewing the comparison by the full local UTC
+		// offset — a false fire in positive-offset zones (e.g. UTC+12: a
+		// decision logged BEFORE the spec commit reads as hours AFTER it),
+		// a missed fire in negative-offset zones (e.g. UTC-7: a decision
+		// logged AFTER the spec commit reads as hours BEFORE it).
+		//
+		// The fix is deliberately LOCAL to this comparison rather than
+		// changing decisions.Iter's parse itself: Iter's output also feeds
+		// internal/timeline/canonical.go's dedupeAndSuffix, which compares
+		// Iter-derived dates against entry-block-marker dates (always
+		// parsed as bare UTC via time.Parse("2006-01-02", ...)) using
+		// Time.Equal/After for sorting and same-entry dedup. Relabeling
+		// Iter's zone to Local would make those two date sources disagree
+		// on the same calendar date's instant whenever the host isn't UTC,
+		// changing docs/timeline.md's byte output (dedup collisions no
+		// longer collapse, sort order shifts) for the COMMON case — direct
+		// decisions.md / decisions-archive.md entries always take the
+		// Iter-derived path since those files never carry entry-block
+		// markers. So Iter stays UTC-labeled; only this comparison
+		// re-interprets the wall clock as local time before comparing.
+		if localizeDecisionDate(e.Date).After(specTime) {
 			count++
 		}
 	}
@@ -151,4 +206,16 @@ func specPulseLine(cwd string) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("logmind: %s unchanged for %d decisions — still accurate?", relSpec, count), true
+}
+
+// localizeDecisionDate reinterprets a decisions.Iter-parsed Entry.Date's
+// wall-clock components (year/month/day/hour/minute) as LOCAL time instead
+// of Iter's default UTC label. Decision headers are written by
+// buildDecisionEntry (log.go) via time.Now().Format("2006-01-02 15:04") —
+// local wall time, by construction, always — so re-labeling as time.Local
+// recovers the real instant the decision was logged at. See the comment at
+// specPulseLine's e.Date.After(specTime) call site for why this fix is
+// scoped to the pulse rather than to decisions.Iter itself.
+func localizeDecisionDate(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.Local)
 }

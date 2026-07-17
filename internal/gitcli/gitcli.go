@@ -428,7 +428,10 @@ func ConfigSet(repoRoot, key, value string) error {
 // the raw stdout (trimmed). Empty string means clean (no
 // modifications/untracked); non-empty means there's something to
 // commit. Used by `logmind log` (B3) to detect changed agent files
-// before staging.
+// before staging, and by the spec pulse (internal/cli/pulse.go) to skip
+// the staleness advisory when the tracked spec file has uncommitted
+// changes right now (the log that's editing the spec shouldn't nag about
+// it).
 func StatusPorcelain(repoRoot, path string) string {
 	cmd := exec.Command("git", "status", "--porcelain", "--", path)
 	cmd.Dir = repoRoot
