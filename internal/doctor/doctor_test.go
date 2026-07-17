@@ -27,7 +27,30 @@ func freshRepo(t *testing.T) string {
 	mustWrite(t, filepath.Join(dir, ".logmind", "config.yml"), "git:\n  auto_commit: true\n")
 	mustWrite(t, filepath.Join(dir, "docs", "decisions.md"), "# Decisions\n")
 	mustWrite(t, filepath.Join(dir, "docs", "timeline.md"), "# Timeline\n")
+	// Every freshRepo-based test that asserts Overall is inherently sensitive
+	// to the live probePathResolution probe, so isolate PATH by default.
+	isolatePathHermetic(t)
 	return dir
+}
+
+// isolatePathHermetic points PATH at an empty temp dir (restored on Cleanup)
+// so probePathResolution — the sole live-subprocess probe CollectStatus runs
+// — resolves NO `logmind` and reports the benign "missing", instead of
+// picking up whatever real, possibly-STALE logmind sits on the developer's
+// PATH (e.g. a pyenv `logmind 1.2.0` shim). Without this, an Overall
+// assertion is machine-dependent: the host binary alone can flip Overall to
+// DRIFT. Tests that WANT a specific on-PATH binary override this afterward
+// via prependFakeBinDir (which prepends onto this empty PATH). This mirrors
+// the inline `os.Setenv("PATH", t.TempDir())` guard the DRIFT-asserting tests
+// already use. The #214 regex fix (parsing the real `logmind <ver> (spec
+// <ver>)` line the old pattern couldn't) is what unmasked this latent
+// non-hermeticity: before it, every host binary silently classified
+// markerless and never perturbed Overall.
+func isolatePathHermetic(t *testing.T) {
+	t.Helper()
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", t.TempDir())
 }
 
 func mustWrite(t *testing.T, path, content string) {
@@ -206,7 +229,10 @@ func TestStaleCountFast_IgnoresStalePathBinary(t *testing.T) {
 	dir := freshRepo(t)
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
-	body := "#!/bin/sh\necho 'logmind, version 0.1.0'\n"
+	// Real Go `--version` format (see internal/cli/root.go versionLine); #214
+	// — the fixed regex only matches this, not the legacy Click `logmind,
+	// version X` shape this fixture used to print.
+	body := "#!/bin/sh\necho 'logmind 0.1.0 (spec 0.1.1)'\n"
 	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
 		t.Fatalf("write fake binary: %v", err)
 	}
@@ -335,10 +361,14 @@ func TestProbePathResolution_RunningBinaryNotFound(t *testing.T) {
 }
 
 func TestProbePathResolution_StaleVersionDrift(t *testing.T) {
-	// Construct a fake `logmind` shell script that prints an old version.
+	// Construct a fake `logmind` shell script that prints an old version in
+	// the REAL Go `--version` format (`logmind <ver> (spec <ver>)`) — issue
+	// #214: the legacy Click `logmind, version X` shape this test used to
+	// assert never occurs in practice, and the fixed regex only matches the
+	// real one.
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
-	body := "#!/bin/sh\necho 'logmind, version 0.1.0'\n"
+	body := "#!/bin/sh\necho 'logmind 0.1.0 (spec 0.1.1)'\n"
 	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
 		t.Fatalf("write fake binary: %v", err)
 	}
@@ -361,7 +391,9 @@ func TestProbePathResolution_StaleVersionDrift(t *testing.T) {
 func TestProbePathResolution_MatchingVersionIsCurrent(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
-	body := "#!/bin/sh\necho 'logmind, version " + version.Version + "'\n"
+	// Real Go `--version` format (see internal/cli/root.go versionLine) — the
+	// only shape the fixed #214 regex matches.
+	body := "#!/bin/sh\necho 'logmind " + version.Version + " (spec " + version.SpecVersion + ")'\n"
 	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
 		t.Fatalf("write fake binary: %v", err)
 	}
@@ -372,6 +404,37 @@ func TestProbePathResolution_MatchingVersionIsCurrent(t *testing.T) {
 	row := probePathResolution()
 	if row.Drift != "current" {
 		t.Errorf("Drift = %q; want current", row.Drift)
+	}
+}
+
+// TestProbePathResolution_RealVersionFormatNotMarkerless is the direct #214
+// regression: a PATH binary whose `--version` prints the genuine
+// `logmind <ver> (spec <ver>)` line (root.go's versionLine) MUST classify as
+// current/stale — never markerless. The pre-fix regex (`version\s+(\S+)`)
+// found no "version" token in that line, so a real on-PATH Go logmind was
+// always mis-labeled markerless and the PATH-drift row went blind.
+func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
+	tmp := t.TempDir()
+	fake := filepath.Join(tmp, "logmind")
+	// A DIFFERENT version than the running binary → the real format must
+	// resolve to a concrete stale classification, not the markerless fallback.
+	body := "#!/bin/sh\necho 'logmind 9.9.9-onpath (spec " + version.SpecVersion + ")'\n"
+	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", tmp)
+
+	row := probePathResolution()
+	if row.Drift == "markerless" {
+		t.Fatalf("Drift = markerless on a real `logmind <ver> (spec <ver>)` line; #214 regressed (marker=%v)", row.Marker)
+	}
+	if row.Drift != "stale" {
+		t.Errorf("Drift = %q; want stale (9.9.9-onpath != running %s)", row.Drift, version.Version)
+	}
+	if row.Marker == nil || !strings.Contains(*row.Marker, "9.9.9-onpath") {
+		t.Errorf("Marker = %v; want it to contain the parsed on-PATH version 9.9.9-onpath", row.Marker)
 	}
 }
 
@@ -458,6 +521,7 @@ func contains(haystack []string, needle string) bool {
 // enriched → excluded. The advisory MUST NOT flip Overall to DRIFT.
 func TestCollectStatus_SummariesNeeded(t *testing.T) {
 	dir := t.TempDir()
+	isolatePathHermetic(t) // Overall must be driven by the fixtures, not a stale host `logmind`.
 	mustWrite(t, filepath.Join(dir, ".logmind", "config.yml"), "timeline:\n  canonical: main-canonical\n")
 	mustWrite(t, filepath.Join(dir, "docs", "decisions.md"), "# D\n")
 	// markerless
