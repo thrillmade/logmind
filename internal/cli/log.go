@@ -271,6 +271,29 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// Resolve target file based on git state + config.branch_aware.
 	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
 
+	// Serialize concurrent `logmind log` invocations against this repo.
+	// Without this, two concurrent logs both read the pre-write content
+	// of `target`, both append their own entry in memory, and the last
+	// writeAtomic call wins — silently dropping every other concurrent
+	// decision (and, if a commit follows, committing a diff that
+	// doesn't match its own message). Acquired before the read below
+	// and held through the write + the git add/commit further down so
+	// the eventual commit reflects exactly what was written; released
+	// right after that commit/push block (see the matching Unlock
+	// call) so self-heal + the pulse advisories below don't pay for
+	// holding it. See filelock.go for why this is a repo-scoped lock
+	// rather than a per-target-file one.
+	lock, err := acquireRepoLock(cwd)
+	if err != nil {
+		return fmt.Errorf("logmind log: %w", err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			_ = lock.Unlock()
+		}
+	}()
+
 	// Detect first-creation: a branch file that doesn't exist yet gets
 	// the backlink header. Default-branch decisions.md is created by
 	// `logmind init` so this path doesn't trigger for it.
@@ -415,6 +438,13 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	} else if shouldCommit {
 		fmt.Fprintln(stderr, "Warning: not inside a git repo; skipping auto-commit.")
 	}
+
+	// Release the repo lock now — the write + commit/push sequence it
+	// was guarding is done. Everything below (self-heal, the pulse
+	// advisories) only reads/analyzes the repo; it doesn't need to
+	// hold up other concurrent `logmind log` invocations.
+	_ = lock.Unlock()
+	locked = false
 
 	// Layer 1 self-heal — runs whether we committed or not. The file is
 	// on disk either way, so a stale link introduced by this decision
