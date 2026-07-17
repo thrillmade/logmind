@@ -63,10 +63,12 @@ jobs:
           go-version: "1.22"
           cache: true
 
-      # Mint a 1-hour installation token for the `thrillmade-orchestrator[bot]`
-      # App, scoped to thrillmade/homebrew-tap only. The token replaces the
-      # personal HOMEBREW_TAP_PAT — see docs/orchestrator-app.md for the App
-      # spec and rotation procedure.
+      # Mint a 1-hour installation token for the `skdd-steward[bot]`
+      # App (renamed from thrillmade-orchestrator[bot]; org secrets keep
+      # their legacy THRILLMADE_ORCHESTRATOR_* names), scoped to
+      # thrillmade/homebrew-tap only. The token replaces the personal
+      # HOMEBREW_TAP_PAT — see docs/orchestrator-app.md for the App spec
+      # and rotation procedure.
       #
       # Allowlist constraint: this repo's `allowed_actions: selected` rule
       # only admits `actions/*`, `github/*`, verified-Marketplace creators,

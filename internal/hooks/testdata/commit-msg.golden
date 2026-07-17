@@ -19,14 +19,32 @@
 # argparse exit 2) — must NOT abort the commit, or a stale binary
 # would brick every commit on this machine, including `logmind log`'s
 # own internal one.
+#
+# Hang-guard (issue #213): a wedged/hung logmind must never stall
+# `git commit`. timeout(1) isn't on macOS by default, so we run
+# guard-commit in the background under a watchdog: a `sleep N; kill`
+# subshell terminates it after the deadline, we `wait` for its real
+# exit code, then reap the watchdog. On a timeout the watchdog kill
+# leaves a signal exit (>128, never 65), so the rc!=65 fall-through
+# below FAILS OPEN (exit 0) — the goal is to never HANG, not to block.
+# The watchdog's fds go to /dev/null so its (possibly orphaned) `sleep`
+# can't hold this hook's stdout/stderr open — otherwise a tool that
+# CAPTURES git's output (Claude Code's Bash tool, CI) would block
+# reading the pipe until the sleep expired, even on a fast commit.
 
 MSG_FILE="$1"
 if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
     exit 0
 fi
 if command -v logmind >/dev/null 2>&1; then
-    logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"
+    logmind guard-commit --layer git-hook --msg-file "$MSG_FILE" &
+    __lm_pid=$!
+    ( sleep 10; kill "$__lm_pid" 2>/dev/null ) >/dev/null 2>&1 &
+    __lm_watcher=$!
+    wait "$__lm_pid" 2>/dev/null
     rc=$?
+    kill "$__lm_watcher" 2>/dev/null
+    wait "$__lm_watcher" 2>/dev/null
     if [ "$rc" -eq 65 ]; then
         exit 1
     fi

@@ -78,7 +78,19 @@ var LogmindWorkflows = []string{
 var (
 	logmindMarkerRe       = regexp.MustCompile(`^# logmind-template-version:\s*(\S+)`)
 	logmindBlockVersionRe = regexp.MustCompile(`<!--\s*logmind-block-version:\s*(\S+)\s*-->`)
-	logmindVersionLineRe  = regexp.MustCompile(`version\s+(\S+)`)
+	// logmindVersionLineRe parses the version out of a PATH binary's
+	// `--version` output. It anchors on the REAL versionLine format emitted
+	// by internal/cli/root.go — `logmind <ver> (spec <ver>)` — capturing the
+	// first token after `logmind`. Issue #214: the previous pattern
+	// (`version\s+(\S+)`) expected the literal word "version" from Click's
+	// legacy Python `logmind, version X` output, so it NEVER matched a real
+	// Go binary's line and every on-PATH Go logmind was mis-classified
+	// markerless — leaving the PATH-drift row blind.
+	// Accepts BOTH the Go `logmind <ver> (spec <ver>)` and the legacy Click
+	// `logmind, version <ver>` shapes, so a stale Python binary on PATH is
+	// still classified (stale/DRIFT), not silently degraded to markerless
+	// (dual-review follow-up to #214).
+	logmindVersionLineRe = regexp.MustCompile(`^logmind,?\s+(?:version\s+)?(\S+)`)
 )
 
 // WorkflowStatus mirrors the Python dataclass — one row per workflow,

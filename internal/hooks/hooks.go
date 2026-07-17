@@ -261,6 +261,13 @@ func BuildPostRewriteBody() string {
 // itself never calls os.Exit with anything else meaningful here, so this is
 // safe: a current binary's block is ALWAYS exactly 65, never some other
 // nonzero value that would now be silently ignored.
+//
+// Hang-guard (issue #213): the `logmind guard-commit` call runs under a
+// POSIX-portable deadline (background + `sleep N; kill` watchdog + `wait`)
+// so a wedged binary can never stall `git commit`. A timeout kill yields a
+// signal exit >128 — never 65 — so it fails open through the same rc!=65
+// fall-through as a stale binary. The block path (rc==65 → exit 1) and the
+// escape hatches are untouched; only the never-HANG guarantee is added.
 func BuildCommitMsgBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind commit-msg hook\n" +
@@ -283,14 +290,32 @@ func BuildCommitMsgBody() string {
 		"# argparse exit 2) — must NOT abort the commit, or a stale binary\n" +
 		"# would brick every commit on this machine, including `logmind log`'s\n" +
 		"# own internal one.\n" +
+		"#\n" +
+		"# Hang-guard (issue #213): a wedged/hung logmind must never stall\n" +
+		"# `git commit`. timeout(1) isn't on macOS by default, so we run\n" +
+		"# guard-commit in the background under a watchdog: a `sleep N; kill`\n" +
+		"# subshell terminates it after the deadline, we `wait` for its real\n" +
+		"# exit code, then reap the watchdog. On a timeout the watchdog kill\n" +
+		"# leaves a signal exit (>128, never 65), so the rc!=65 fall-through\n" +
+		"# below FAILS OPEN (exit 0) — the goal is to never HANG, not to block.\n" +
+		"# The watchdog's fds go to /dev/null so its (possibly orphaned) `sleep`\n" +
+		"# can't hold this hook's stdout/stderr open — otherwise a tool that\n" +
+		"# CAPTURES git's output (Claude Code's Bash tool, CI) would block\n" +
+		"# reading the pipe until the sleep expired, even on a fast commit.\n" +
 		"\n" +
 		"MSG_FILE=\"$1\"\n" +
 		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then\n" +
 		"    exit 0\n" +
 		"fi\n" +
 		"if command -v logmind >/dev/null 2>&1; then\n" +
-		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\"\n" +
+		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\" &\n" +
+		"    __lm_pid=$!\n" +
+		"    ( sleep 10; kill \"$__lm_pid\" 2>/dev/null ) >/dev/null 2>&1 &\n" +
+		"    __lm_watcher=$!\n" +
+		"    wait \"$__lm_pid\" 2>/dev/null\n" +
 		"    rc=$?\n" +
+		"    kill \"$__lm_watcher\" 2>/dev/null\n" +
+		"    wait \"$__lm_watcher\" 2>/dev/null\n" +
 		"    if [ \"$rc\" -eq 65 ]; then\n" +
 		"        exit 1\n" +
 		"    fi\n" +
