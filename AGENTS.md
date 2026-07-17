@@ -7,18 +7,15 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v9-pointer -->
+<!-- logmind-block-version: v8-pointer -->
 ## Decision logging — `logmind log` is REQUIRED for substantive commits
 
 **`logmind log` replaces `git add` + `git commit` + `git push` for any change that carries a decision** — do not run those git commands directly.
 
 > **DO NOT run raw `git add` / `git commit` / `git push` for substantive code changes.**
-> The commit-msg hook and the Claude Code PreToolUse hook installed by
-> `logmind init` / `logmind doctor --fix` **BLOCK** a substantive commit that
-> skips `logmind log`. Genuinely no-decision commit? Add `[skip-logmind]` to
-> the subject, or set `LOGMIND_ALLOW_GIT_COMMIT=1` for one command.
-> `git.enforce_commits: false` disables enforcement per-repo. Typo / whitespace
-> / dep-bump-only commits MAY use raw git.
+> The commit-msg hook installed by `logmind init` warns when raw git is used on
+> a substantive commit; the intent is to prevent the warning, not bypass it via
+> `--no-verify`. Typo / whitespace / dep-bump-only commits MAY use raw git.
 
 ```bash
 logmind log "summary" -r "why" -a "alternative" -i "implication"
