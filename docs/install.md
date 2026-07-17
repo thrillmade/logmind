@@ -146,7 +146,7 @@ same path as macOS) cover the trust gap.
 
 ```bash
 logmind --version
-# logmind 2.0.0 (spec 1.4.0)
+# logmind 2.0.0 (spec 1.5.0)
 ```
 
 The `--version` line is the protocol contract — downstream tooling
