@@ -94,6 +94,92 @@ func TestSelfUpdate_InstallsClaudePreToolUseGuard(t *testing.T) {
 	}
 }
 
+// TestSelfUpdate_PinVersionSet_NoOps pins the MINOR fix (SPEC §1.2.1 /
+// §3.7): a `.logmind/config.yml` with a non-empty top-level `pinVersion`
+// makes self-update a complete no-op — not even a stale, clearly-outdated
+// hook gets refreshed. Reuses TestSelfUpdate_RefreshesStaleHook's fixture
+// shape so the contrast is direct: same stale hook, but pinned this time.
+func TestSelfUpdate_PinVersionSet_NoOps(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		if err := os.MkdirAll(".logmind", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(".logmind", "config.yml"), []byte("pinVersion: \"1.2.3\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(".git", "hooks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stale := "#!/bin/sh\n# logmind post-merge hook\n# logmind-hook-version: 0.1.0\necho stale\n"
+		if err := os.WriteFile(filepath.Join(".git", "hooks", "post-merge"), []byte(stale), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		root := NewRootCmd()
+		root.SetArgs([]string{"self-update"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("self-update: %v\n%s\n%s", err, out.String(), errOut.String())
+		}
+		if !strings.Contains(out.String(), "pinned to 1.2.3") {
+			t.Errorf("expected a clear pinned-version message; got\n%s", out.String())
+		}
+		if strings.Contains(out.String(), "Refreshed") {
+			t.Errorf("pinned self-update must not refresh anything; got\n%s", out.String())
+		}
+		if strings.Contains(out.String(), "ok self-update applied") {
+			t.Errorf("pinned self-update must not emit the normal-run ok line; got\n%s", out.String())
+		}
+	})
+	// The stale hook body must be untouched — no refresh happened at all.
+	body, err := os.ReadFile(filepath.Join(dir, ".git", "hooks", "post-merge"))
+	if err != nil {
+		t.Fatalf("read post-merge: %v", err)
+	}
+	if !strings.Contains(string(body), "echo stale") {
+		t.Errorf("pinned self-update must leave the stale hook alone; got\n%s", string(body))
+	}
+	// No .claude/settings.json either — Layer 1 install is also skipped.
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err == nil {
+		t.Errorf("pinned self-update must not install .claude/settings.json")
+	}
+}
+
+// TestSelfUpdate_PinVersionUnset_RunsNormally is the direct contrast: the
+// default (no pinVersion key at all) must still refresh exactly as before
+// — the fix must not accidentally gate the unset case.
+func TestSelfUpdate_PinVersionUnset_RunsNormally(t *testing.T) {
+	dir := withTempCwd(t, func(_ string) {
+		if err := os.MkdirAll(filepath.Join(".git", "hooks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stale := "#!/bin/sh\n# logmind post-merge hook\n# logmind-hook-version: 0.1.0\necho stale\n"
+		if err := os.WriteFile(filepath.Join(".git", "hooks", "post-merge"), []byte(stale), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		root := NewRootCmd()
+		root.SetArgs([]string{"self-update"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("self-update: %v\n%s\n%s", err, out.String(), errOut.String())
+		}
+		if !strings.Contains(out.String(), "ok self-update applied") {
+			t.Errorf("expected the normal-run ok line; got\n%s", out.String())
+		}
+	})
+	body, err := os.ReadFile(filepath.Join(dir, ".git", "hooks", "post-merge"))
+	if err != nil {
+		t.Fatalf("read post-merge: %v", err)
+	}
+	if strings.Contains(string(body), "echo stale") {
+		t.Errorf("stale body not replaced when pinVersion is unset; got\n%s", string(body))
+	}
+}
+
 // TestSelfUpdate_ClaudeDisabledInConfigSkipsGuard: agents.claude:false is
 // the same opt-out doctor --fix honors — self-update must respect it too.
 func TestSelfUpdate_ClaudeDisabledInConfigSkipsGuard(t *testing.T) {

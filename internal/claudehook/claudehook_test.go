@@ -280,6 +280,55 @@ func TestEnsurePreToolUseGuard_VersionBumpReplacesOnlyOurEntry(t *testing.T) {
 	}
 }
 
+// TestEnsurePreToolUseGuard_OverwriteLeavesNoTmpResidue guards the atomic-
+// write fix: updating an EXISTING settings.json (the stale-marker path
+// above) must go through atomicio's temp-sibling-plus-rename, not a bare
+// os.WriteFile truncate-then-write. A leftover ".tmp-*" file would mean the
+// rename didn't happen (or failed silently); its absence plus valid JSON
+// is the observable proof the atomic path landed cleanly.
+func TestEnsurePreToolUseGuard_OverwriteLeavesNoTmpResidue(t *testing.T) {
+	dir := t.TempDir()
+	path := SettingsPath(dir)
+	staleCommand := "logmind guard-commit --layer harness " + hooks.HookVersionPrefix + "0.1.0-STALE"
+	mustWriteJSON(t, path, map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": "Bash",
+					"hooks":   []any{map[string]any{"type": "command", "if": "Bash(git *)", "command": staleCommand, "timeout": float64(10)}},
+				},
+			},
+		},
+	})
+
+	changed, err := EnsurePreToolUseGuard(dir)
+	if err != nil {
+		t.Fatalf("EnsurePreToolUseGuard: %v", err)
+	}
+	if !changed {
+		t.Fatalf("changed = false on a stale marker; want true")
+	}
+
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Dir(path), err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("leftover temp file after overwrite: %s", e.Name())
+		}
+	}
+	// The final file must still be valid, complete JSON — not truncated.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("settings.json is not valid JSON after overwrite: %v\n%s", err, data)
+	}
+}
+
 // --- EnsurePreToolUseGuard: malformed settings.json --------------------
 
 func TestEnsurePreToolUseGuard_MalformedSettingsReturnsErrorAndLeavesFileUntouched(t *testing.T) {

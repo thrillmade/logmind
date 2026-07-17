@@ -31,6 +31,7 @@ package gitcli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -660,14 +661,35 @@ func Commit(repoRoot, message string) error {
 //     "authenticity of host" prompts (https + git's ssh prompts).
 //   - GIT_SSH_COMMAND=ssh -oBatchMode=yes tells OpenSSH never to prompt
 //     for a passphrase / password (ssh remotes).
+//
+// pushTimeout bounds how long a single `git push` may run before it is
+// killed. Push is the first NETWORK op in this package, and `logmind log`
+// runs it on the hot path (git.auto_push defaults true) — a wedged remote
+// (dead TCP connection, hung auth handshake, etc.) must not hang every log
+// forever. Var (not const) so tests can shrink it for a fast, hermetic
+// hang test.
+var pushTimeout = 45 * time.Second
+
+// pushWaitDelay bounds how long Run's internal Wait keeps blocking on the
+// command's I/O pipes AFTER pushTimeout's context kills the direct child —
+// mirrors doctor.probePathResolution's WaitDelay hardening (see that
+// function's comment for the full daemonizing-wrapper rationale: a context
+// timeout only signals the direct child, so a process that leaves a
+// grandchild holding the stdout/stderr pipe open can still block Wait
+// indefinitely without this). Var so tests can shrink it too.
+var pushWaitDelay = 2 * time.Second
+
 func Push(repoRoot string, args ...string) error {
 	gitArgs := append([]string{"push"}, args...)
-	cmd := exec.Command("git", gitArgs...)
+	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", gitArgs...)
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_SSH_COMMAND=ssh -oBatchMode=yes",
 	)
+	cmd.WaitDelay = pushWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

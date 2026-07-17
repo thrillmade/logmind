@@ -97,6 +97,45 @@ func TestPush_BadRemoteReturnsErrorFast(t *testing.T) {
 	}
 }
 
+// TestPush_HangingRemoteTimesOut guards the MAJOR fix: Push previously used
+// a plain cmd.Run() with no context timeout and no WaitDelay, so a wedged
+// `git push` (dead connection, hung auth handshake) would block forever —
+// on `logmind log`'s default hot path (git.auto_push defaults true). This
+// fakes out `git` itself via PATH with a script that just hangs, and
+// shrinks pushTimeout/pushWaitDelay so the test stays fast and hermetic
+// (no real network, no real git needed at all).
+func TestPush_HangingRemoteTimesOut(t *testing.T) {
+	tmp := t.TempDir()
+	fakeGit := filepath.Join(tmp, "git")
+	// A direct hang — simulates a wedged network call, not a daemonizing
+	// wrapper. pushTimeout's context must kill it.
+	body := "#!/bin/sh\nsleep 30\n"
+	if err := os.WriteFile(fakeGit, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	if err := os.Setenv("PATH", tmp+string(os.PathListSeparator)+origPath); err != nil {
+		t.Fatalf("set PATH: %v", err)
+	}
+
+	origTimeout, origWaitDelay := pushTimeout, pushWaitDelay
+	pushTimeout = 200 * time.Millisecond
+	pushWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { pushTimeout, pushWaitDelay = origTimeout, origWaitDelay })
+
+	start := time.Now()
+	err := Push(t.TempDir())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Push against a hanging git binary returned nil; want a timeout error")
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("Push took %v; want bounded by pushTimeout+pushWaitDelay (~400ms), not the fake binary's 30s sleep", elapsed)
+	}
+}
+
 // --- small local helpers (kept here so the push tests are self-contained) ---
 
 func runGit(t *testing.T, dir string, args ...string) {

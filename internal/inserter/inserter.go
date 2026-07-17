@@ -48,6 +48,7 @@ import (
 	"strings"
 
 	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/templates"
 )
 
@@ -250,7 +251,10 @@ func InsertLogmindSection(filePath string) (bool, error) {
 	newLines = append(newLines, lines[insertIndex:]...)
 
 	out := strings.Join(newLines, "\n")
-	if err := os.WriteFile(filePath, []byte(out), 0o644); err != nil {
+	// filePath is an EXISTING file (read successfully above) — write
+	// atomically so a crash mid-write can't leave the user's AGENTS.md/etc.
+	// truncated or partial.
+	if err := atomicio.WriteFile(filePath, []byte(out), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

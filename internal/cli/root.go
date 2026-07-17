@@ -48,16 +48,22 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 
-	// Persistent --quiet flag (token-killer Phase 1b). Inherited by every
-	// subcommand; wired verbs (log, timeline, file-structure, doctor,
-	// headline) then suppress progress chatter and emit a single chainable
-	// `ok <k=v>` line. Opt-in twin of the LOGMIND_QUIET env var — the default
-	// (unset) path stays byte-identical. See quiet.go.
+	// Persistent --quiet flag (token-killer Phase 1b). Registered on root so
+	// cobra accepts it ahead of every subcommand's own flags, but only the
+	// WIRED verbs (doctor, file-structure, guard-commit, headline, log,
+	// repomap, search, show, timeline) actually read it — §14.1 makes quiet
+	// a SHOULD, not a MUST, so the remaining verbs are free to ignore it.
+	// Opt-in twin of the LOGMIND_QUIET env var — the default (unset) path
+	// stays byte-identical. See quiet.go.
 	// NB: no back-quotes in this usage string — pflag's UnquoteUsage treats a
 	// back-quoted span as the flag's value placeholder, which would make this
 	// boolean flag render misleadingly as `--quiet ok <k=v>` in --help.
+	//
+	// The help text below deliberately does NOT promise "one ok line per
+	// verb" unqualified: cobra shows this same text under every subcommand's
+	// Global Flags section, including the 13 verbs that don't honor it yet.
 	root.PersistentFlags().Bool(quietFlagName, false,
-		"Terse machine output: suppress progress chatter, emit one chainable 'ok <k=v>' line per verb (env: LOGMIND_QUIET=1). Errors still go to stderr.")
+		"Terse machine output on the read/emit verbs (doctor, file-structure, guard-commit, headline, log, repomap, search, show, timeline): suppress progress chatter, emit one chainable 'ok <k=v>' line (env: LOGMIND_QUIET=1). Errors still go to stderr. Other verbs currently ignore this flag.")
 
 	root.AddCommand(newVersionCmd())
 	// B2: git integration + hooks subcommands.

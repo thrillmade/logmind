@@ -919,6 +919,18 @@ func TestInsertLogmindSection_NoHeading(t *testing.T) {
 	if markerIdx > rulesIdx {
 		t.Errorf("logmind block must precede user content (markerIdx=%d > rulesIdx=%d)", markerIdx, rulesIdx)
 	}
+	// Guards the atomic-write fix: overwriting this EXISTING file must go
+	// through atomicio's temp-sibling-plus-rename, leaving no ".tmp-*"
+	// residue behind in dir.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("leftover temp file after InsertLogmindSection: %s", e.Name())
+		}
+	}
 	// Idempotency: second call must be a no-op (marker already present).
 	changed2, err := InsertLogmindSection(target)
 	if err != nil {
