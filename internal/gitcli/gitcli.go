@@ -35,6 +35,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // ErrGitNotFound is returned when the `git` binary is missing from PATH.
@@ -438,6 +439,49 @@ func StatusPorcelain(repoRoot, path string) string {
 		return ""
 	}
 	return strings.TrimSpace(stdout.String())
+}
+
+// IsTrackedFile reports whether relPath (repo-relative; forward slashes
+// work regardless of OS since git normalizes them) is tracked in
+// repoRoot's index (`git ls-files --error-unmatch`). Returns false on any
+// failure path — not a repo, no git binary, or the path simply isn't
+// tracked — matching this package's best-effort posture. Used by the
+// `logmind log` spec pulse: an untracked or uncommitted spec file has no
+// deterministic "last touched" date across clones, so the pulse skips
+// rather than guessing from mtime.
+func IsTrackedFile(repoRoot, relPath string) bool {
+	cmd := exec.Command("git", "ls-files", "--error-unmatch", "--", relPath)
+	cmd.Dir = repoRoot
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+	return cmd.Run() == nil
+}
+
+// LastCommitTime returns the committer date of the most recent commit that
+// touched relPath (`git log -1 --format=%cI`, the committer date in strict
+// ISO 8601 — parseable with time.RFC3339). Returns the zero Time + false on
+// any failure: no commit history for the path, not a repo, or no git
+// binary. Committer date (not author date) is deliberate — it reflects
+// when the change actually landed on this history, which is what "has the
+// spec been touched since these decisions were logged" wants to know.
+func LastCommitTime(repoRoot, relPath string) (time.Time, bool) {
+	cmd := exec.Command("git", "log", "-1", "--format=%cI", "--", relPath)
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return time.Time{}, false
+	}
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, out)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // DefaultBranch resolves the repo's default branch following the same

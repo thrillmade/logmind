@@ -37,6 +37,13 @@
 //     found AND not interactive → print advisory and exit 0 (CI's
 //     check-doc-links workflow Layer 3 will catch it).
 //
+//   - Pulse (v2.0.0). After everything above, `emitPulse` (pulse.go)
+//     prints ZERO, ONE, or TWO repo-health advisory lines to STDERR: a
+//     doctor-drift pulse and/or a spec-staleness pulse. Unconditional
+//     across TTY / non-TTY / --quiet — stderr sits outside both the §3.1
+//     stdout contract and the --quiet single-`ok`-line contract. See
+//     pulse.go for the exact line formats and failure-safety wrapper.
+//
 // SPEC §3.1 stdout contract (reconciled, salvaged from retired #154):
 //
 // On success stdout's first three lines are, byte-exact:
@@ -427,6 +434,15 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	if quiet {
 		q.ok("logged path=%s committed=%t pushed=%t", relTarget, committed, pushed)
 	}
+
+	// v2.0.0 pulse — repo-health advisories, STDERR ONLY, always last on
+	// stderr. See pulse.go for the two probes (doctor drift + spec
+	// staleness) and the failure-safety wrapper. Runs unconditionally in
+	// every mode (TTY, non-TTY, --quiet): stderr sits outside both the
+	// §3.1 stdout contract above and the --quiet single-`ok`-line contract,
+	// so emitting here never touches either.
+	emitPulse(cwd, stderr)
+
 	return nil
 }
 

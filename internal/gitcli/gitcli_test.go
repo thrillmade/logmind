@@ -136,6 +136,64 @@ func TestConfigGet_MissingKey(t *testing.T) {
 	}
 }
 
+func TestIsTrackedFile_TrueForCommittedFile(t *testing.T) {
+	dir := initRepo(t)
+	if !IsTrackedFile(dir, "README.md") {
+		t.Fatalf("IsTrackedFile(README.md) = false; want true (committed by initRepo)")
+	}
+}
+
+func TestIsTrackedFile_FalseForUntrackedFile(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "untracked.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write untracked.md: %v", err)
+	}
+	if IsTrackedFile(dir, "untracked.md") {
+		t.Fatalf("IsTrackedFile(untracked.md) = true; want false (never added)")
+	}
+}
+
+func TestIsTrackedFile_FalseOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write x.md: %v", err)
+	}
+	if IsTrackedFile(dir, "x.md") {
+		t.Fatalf("IsTrackedFile outside a repo = true; want false")
+	}
+}
+
+func TestLastCommitTime_ReturnsCommitterDate(t *testing.T) {
+	dir := initRepo(t)
+	cmd := exec.Command("git", "commit", "--allow-empty", "-q", "-m", "second")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_DATE=2020-06-15T12:00:00Z",
+		"GIT_COMMITTER_DATE=2020-06-15T12:00:00Z",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	// README.md's last touch is still the FIRST commit (initRepo), not the
+	// empty second commit — LastCommitTime follows the file's own history,
+	// not HEAD.
+	got, ok := LastCommitTime(dir, "README.md")
+	if !ok {
+		t.Fatalf("LastCommitTime(README.md) ok=false; want true")
+	}
+	if got.IsZero() {
+		t.Fatalf("LastCommitTime(README.md) returned zero time")
+	}
+}
+
+func TestLastCommitTime_FalseForNeverCommittedPath(t *testing.T) {
+	dir := initRepo(t)
+	_, ok := LastCommitTime(dir, "never-existed.md")
+	if ok {
+		t.Fatalf("LastCommitTime(never-existed.md) ok=true; want false")
+	}
+}
+
 func TestCurrentBranch_ReturnsBranchName(t *testing.T) {
 	dir := initRepo(t)
 	branch := CurrentBranch(dir)
