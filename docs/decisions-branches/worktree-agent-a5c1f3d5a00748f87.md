@@ -17,3 +17,14 @@
 
 ---
 
+## 2026-07-17 09:36 - fix(log): kernel-released Windows lock — replace unsound staleness-steal
+
+**Reasoning:** the O_EXCL staleness-steal let a late waiter steal a LIVE lock once hold time crossed 30s (unbounded across git push), reintroducing silent decision-loss on windows/amd64 which goreleaser ships; share-mode-exclusive syscall.CreateFile gives kernel-released exclusivity like unix flock, eliminating steal/TOCTOU/unreachable-recovery with zero new deps
+
+**Alternatives considered:** retune staleness constants (rejected: fixed wall-clock age is the wrong primitive for an unbounded hold); add golang.org/x/sys LockFileEx (rejected: unnecessary dependency, share-mode achieves the same kernel release)
+
+**Implications:**
+- a windows crash while holding is released instantly by the kernel; release is CloseHandle only with no os.Remove, so concurrent waiters can never clobber each other
+
+---
+

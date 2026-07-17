@@ -34,8 +34,10 @@
 //     the extra path-hashing/lock-file-placement complexity.
 //
 // The two acquireRepoLock implementations (filelock_unix.go using
-// syscall.Flock, filelock_windows.go using a staleness-checked
-// O_EXCL lockfile) share the constants and the fileLock type below.
+// syscall.Flock, filelock_windows.go using a share-mode-exclusive
+// CreateFile) share the constants and the fileLock type below. Both
+// are released by the kernel when the holding process dies, so neither
+// needs stale-lock recovery.
 package cli
 
 import (
@@ -51,14 +53,6 @@ const lockAcquireTimeout = 15 * time.Second
 
 // lockPollInterval is the sleep between non-blocking acquire retries.
 const lockPollInterval = 25 * time.Millisecond
-
-// lockStaleAfter is used only by the non-flock (Windows) fallback in
-// filelock_windows.go: a lockfile older than this is presumed
-// abandoned by a dead holder and is stolen rather than waited out
-// forever. The unix flock path has no equivalent concept because the
-// kernel releases the lock the instant the holding process exits or
-// is killed, stale or not.
-const lockStaleAfter = 30 * time.Second
 
 // fileLock is a held advisory lock. Unlock releases it; safe to call
 // on a nil *fileLock (no-op) so callers can use it defensively.
