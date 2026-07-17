@@ -22,6 +22,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-16** — Harden git-hook layer against stale logmind binaries + bump AGENTS enforcement prose to v8/v9-pointer → [detail](decisions-branches/feat__enforce-stale-binary-hardening.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-16-feat-log-the-pulse-doctor-drift-spec-staleness-advisories-on -->
+- **2026-07-16** — feat(log): the pulse - doctor-drift + spec-staleness advisories on every log → [detail](decisions-branches/feat__log-pulse.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-16-dogfoods-the-canonical-spec-file-pointer-doc-context-spec-fi -->
 - **2026-07-16** — Dogfoods the canonical spec file (pointer doc + context.spec_file) and refreshes the clud-bug reviewContext to the v2 invariants → [detail](decisions-branches/chore__spec-dogfood-and-reviewcontext.md)
 <!-- logmind-entry-end -->
