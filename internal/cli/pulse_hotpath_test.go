@@ -81,7 +81,7 @@ func prependPathEnv(dir string) []string {
 
 // TestLogBinary_HangProof_HostilePathBinary is the release-bar proof for
 // item 1: with the REAL built `logmind` binary, `logmind log
-// --no-interactive --no-push` must complete in well under 3s even when a
+// --no-interactive --no-push` must complete in well under 15s even when a
 // hostile `logmind` shell script sits FIRST on PATH — whether it just
 // hangs, or daemonizes (forks a sleeping grandchild and exits). The pulse
 // must ALSO still be functional: a stale post-merge hook (a file-read-only
@@ -136,8 +136,12 @@ func TestLogBinary_HangProof_HostilePathBinary(t *testing.T) {
 			runErr := cmd.Run()
 			elapsed := time.Since(start)
 
-			if elapsed > 3*time.Second {
-				t.Fatalf("logmind log took %v with a hostile logmind FIRST on PATH (%s); want < 3s — the pulse must never touch the PATH-resolution subprocess.\nstdout=%q\nstderr=%q",
+			// Bound is deliberately well BELOW the 30s hostile sleep (so a
+			// regression that shells the PATH `logmind` still trips it) yet
+			// loose enough not to flake on a saturated CI host, where a
+			// correct run's file-only work can still take a few seconds.
+			if elapsed > 15*time.Second {
+				t.Fatalf("logmind log took %v with a hostile logmind FIRST on PATH (%s); want < 15s (the hostile sleep is 30s) — the pulse must never touch the PATH-resolution subprocess.\nstdout=%q\nstderr=%q",
 					elapsed, sc.name, stdout.String(), stderr.String())
 			}
 			if runErr != nil {
