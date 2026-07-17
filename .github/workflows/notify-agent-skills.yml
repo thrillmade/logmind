@@ -44,26 +44,27 @@ jobs:
           set -euo pipefail
           # v1.0 cutover note: PR #137 deleted the Python source tree
           # including `logmind.core.changelog`, so we no longer
-          # `pip install logmind==<TAG>` here — the changelog slice is
-          # now produced by the vendored `parse_changelog.py` script
-          # below, which has zero non-stdlib deps. Only the anthropic
-          # SDK remains (still used by `.github/scripts/propose_skill_update.py`
-          # to call Claude for the SKILL.md diff proposal).
+          # `pip install logmind==<TAG>` here. The changelog slice is
+          # now derived from `git log` (see the extract step below), so
+          # there's no changelog-parsing dependency to install either.
+          # Only the anthropic SDK remains (still used by
+          # `.github/scripts/propose_skill_update.py` to call Claude for
+          # the SKILL.md diff proposal).
           #
           # The PyPI propagation/retry dance we used to need also goes
           # away as a side effect: there's no `pip install logmind` to
           # race against publish.yml anymore.
           pip install anthropic
 
-      - name: Determine previous tag (for CHANGELOG slice)
+      - name: Determine previous tag (for the git-log range)
         id: prev
         run: |
           set -euo pipefail
           # The tag we're releasing is HEAD. Walk back one commit to
           # find the prior tag — `git describe --tags --abbrev=0 HEAD^`
           # returns it. If HEAD^ has no ancestor with a tag (very
-          # first release), set to empty so extract_sections_between
-          # emits everything up to the current tag.
+          # first release), set to empty so the extract step below walks
+          # the whole history up to the current tag.
           if git rev-parse HEAD^ >/dev/null 2>&1; then
             PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           else
@@ -72,25 +73,58 @@ jobs:
           echo "tag=${PREV}" >> "$GITHUB_OUTPUT"
           echo "  Previous tag: ${PREV:-<none — first release>}"
 
-      - name: Extract CHANGELOG section
+      - name: Extract release changelog from git history
         env:
           PREV_TAG: ${{ steps.prev.outputs.tag }}
         run: |
           set -euo pipefail
-          # Calls the vendored standalone script (zero non-stdlib deps)
-          # that replaced `from logmind.core.changelog import
-          # extract_sections_between` after PR #137 deleted the Python
-          # source tree. Script resolves the CHANGELOG file from
-          # `docs/changelog-python.md` (new home) with a fallback to
-          # top-level `CHANGELOG.md` for older checkouts.
+          # #208: the old path sliced `docs/changelog-python.md`, which
+          # froze at the Python era (0.6.14). Every Go-era release since
+          # v0.6.15 produced an EMPTY slice, so Claude received no input
+          # and the whole notify pipeline silently no-oped.
+          #
+          # There is no Go-era CHANGELOG.md and we deliberately don't
+          # maintain one (an ongoing burden). Instead derive the
+          # release-notes body straight from git history: the commit
+          # subjects between the previous tag and this one. This is the
+          # same raw material GitHub's auto-generated release notes are
+          # built from, but it needs no published Release to exist yet
+          # and no external API call.
           #
           # Long-term: replace with `logmind changelog --since <prev>`
           # once that Go subcommand exists (tracked as a follow-up).
           mkdir -p /tmp/notify
-          python3 .github/scripts/parse_changelog.py \
-            --since "${PREV_TAG}" \
-            --up-to "${TAG}" \
-            --out /tmp/notify/changelog-section.md
+          OUT=/tmp/notify/changelog-section.md
+          RELEASE_URL="https://github.com/thrillmade/logmind/releases/tag/${TAG}"
+
+          if [ -n "${PREV_TAG}" ]; then
+            RANGE="${PREV_TAG}..${TAG}"
+          else
+            # First release (no prior tag): the whole history up to TAG.
+            RANGE="${TAG}"
+          fi
+
+          BODY=$(git log --no-merges --pretty='- %s' "${RANGE}")
+          if [ -n "${BODY}" ]; then
+            {
+              echo "## ${TAG}"
+              echo
+              echo "${BODY}"
+            } > "${OUT}"
+          else
+            # Empty range (re-tag, PREV_TAG == TAG, or an unexpected
+            # history shape). Do NOT hand Claude an empty file — that is
+            # the exact #208 failure. Write a clear pointer to the
+            # GitHub Release page so the notify PR still carries context.
+            {
+              echo "## ${TAG}"
+              echo
+              echo "_No commit subjects found for ${RANGE}._"
+              echo "See the release notes: ${RELEASE_URL}"
+            } > "${OUT}"
+          fi
+
+          echo "  Wrote $(wc -c < "${OUT}") chars from range ${RANGE}"
 
       - name: Fetch current SKILL.md from agent-skills
         env:
@@ -175,21 +209,20 @@ jobs:
           git checkout -b "$BRANCH"
 
           # Always write the stub TODO file with full context.
-          # CHANGELOG file moved to docs/changelog-python.md in PR #137
-          # (Python source removal). The path here is rendered into
-          # markdown reviewers click — point at the new location.
+          # #208: the CHANGELOG doc froze at the Python era, so link the
+          # GitHub Release page (rendered into markdown reviewers click)
+          # rather than a stale docs/changelog-python.md blob.
           mkdir -p .skill-update-todo
           {
             echo "# logmind ${TAG} — skill update context"
             echo
-            echo "**CHANGELOG diff**: https://github.com/thrillmade/logmind/blob/${TAG}/docs/changelog-python.md"
-            echo "**Release URL**: https://github.com/thrillmade/logmind/releases/tag/${TAG}"
+            echo "**Release notes**: https://github.com/thrillmade/logmind/releases/tag/${TAG}"
             echo
             echo "## Claude's reasoning"
             echo
             cat /tmp/notify/reasoning.md
             echo
-            echo "## CHANGELOG section (verbatim, used as Claude's input)"
+            echo "## Changelog (from git history, used as Claude's input)"
             echo
             cat /tmp/notify/changelog-section.md
           } > ".skill-update-todo/${TAG}.md"
@@ -209,8 +242,7 @@ jobs:
           PR_BODY=$(cat <<EOF
           Automated notification from \`thrillmade/logmind\` — ${TAG} shipped.
 
-          **CHANGELOG**: [\`${TAG}\` on logmind](https://github.com/thrillmade/logmind/blob/${TAG}/docs/changelog-python.md)
-          **Release**: https://github.com/thrillmade/logmind/releases/tag/${TAG}
+          **Release notes**: https://github.com/thrillmade/logmind/releases/tag/${TAG}
 
           ## Shape of this PR
 
@@ -222,7 +254,7 @@ jobs:
 
           ## Reviewer checklist
 
-          - [ ] Read the CHANGELOG section (linked above) and Claude's reasoning
+          - [ ] Read the release notes (linked above) and Claude's reasoning
           - [ ] Verify the SKILL.md diff accurately reflects user-visible behavior. Edit if Claude over- or under-proposed; close if entirely wrong.
           - [ ] Merge to ship the SKILL.md update (auto-merge stays OFF — content is discretionary).
 
@@ -289,8 +321,8 @@ jobs:
 
           Falling back to the v0.3.x issue notification. Review \`skills/logmind/SKILL.md\` manually for any user-facing changes:
 
-          - CHANGELOG: https://github.com/thrillmade/logmind/blob/${TAG}/docs/changelog-python.md
-          - SKILL.md:  https://github.com/thrillmade/agent-skills/blob/main/skills/logmind/SKILL.md
+          - Release notes: https://github.com/thrillmade/logmind/releases/tag/${TAG}
+          - SKILL.md:      https://github.com/thrillmade/agent-skills/blob/main/skills/logmind/SKILL.md
 
           The workflow run (for debugging): https://github.com/thrillmade/logmind/actions/runs/${RUN_ID}
 
