@@ -1,4 +1,4 @@
-# logmind-template-version: v6
+# logmind-template-version: v7
 name: logmind / check-derived-docs
 
 # Self-healing derived-doc gate (v5 — advisory model).
@@ -29,6 +29,13 @@ name: logmind / check-derived-docs
 # The job always runs (no actor filter). Filtering a required check out for
 # bot/fork PRs would itself strand it as "Expected — Waiting…"; bots and
 # forks simply take the advisory path.
+#
+# v7 — the `thrillmade/setup-logmind@…` step now passes `token:
+# ${{ github.token }}`. Composite actions can't default an input to
+# `github.token`; without it, setup-logmind's release-lookup call is
+# anonymous, and shared GitHub-hosted-runner IP ranges routinely blow
+# through the 60-req/hour unauthenticated api.github.com budget, 403ing
+# before logmind is even installed (setup-logmind#4).
 #
 # Setup for the PAT (auto-push) path:
 #   1. Create a fine-grained PAT scoped to THIS repo (not org-wide, to bound
@@ -61,6 +68,8 @@ jobs:
           persist-credentials: false
 
       - uses: thrillmade/setup-logmind@v1.0.0
+        with:
+          token: ${{ github.token }}
 
       - name: Regenerate derived docs
         run: |

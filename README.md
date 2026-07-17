@@ -67,9 +67,17 @@ action. It handles platform detection, version pinning, and step
 caching:
 
 ```yaml
-- uses: thrillmade/setup-logmind@v1.0.0
+- uses: thrillmade/setup-logmind@v1
+  with:
+    token: ${{ github.token }}
 - run: logmind check-links
 ```
+
+The `token: ${{ github.token }}` line matters: composite actions can't
+default an input to `github.token`, so without it setup-logmind's
+release-lookup call is anonymous — shared GitHub-hosted-runner IP
+ranges routinely exhaust the unauthenticated `api.github.com` rate
+limit and 403 before logmind installs. Pass it explicitly.
 
 `logmind init` (v1.1.0+) installs a `.github/dependabot.yml` block that
 tells Dependabot to bump the action ref on every new logmind release.
