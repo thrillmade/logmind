@@ -17,3 +17,14 @@
 
 ---
 
+## 2026-07-17 14:29 - fix(doctor): version regex also accepts the legacy Click shape — stale Python binary stays classified (#214 review)
+
+**Reasoning:** the dual-review caught that the re-anchored #214 regex no longer matched Click's comma-form (logmind, version X), so a stale on-PATH Python binary degraded to markerless — blinding the drift row to the exact stale binary it exists to catch; widened to accept both the Go and Click shapes
+
+**Alternatives considered:** keep the Go-only anchor (rejected: silently drops detection of stale Python binaries, a real regression); a separate Click-only branch (rejected: one alternation covers both)
+
+**Implications:**
+- a stale Python logmind on PATH classifies stale/DRIFT again; added TestProbePathResolution_LegacyClickVersionClassified
+
+---
+

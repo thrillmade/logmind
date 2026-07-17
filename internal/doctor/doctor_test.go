@@ -438,6 +438,34 @@ func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
 	}
 }
 
+// TestProbePathResolution_LegacyClickVersionClassified is the dual-review
+// follow-up to #214: a stale PYTHON (Click) binary on PATH prints
+// `logmind, version X`. The re-anchored regex must still parse it and
+// classify it stale/DRIFT — not silently degrade it to markerless, which
+// would blind the drift row to exactly the stale binary it exists to catch.
+func TestProbePathResolution_LegacyClickVersionClassified(t *testing.T) {
+	tmp := t.TempDir()
+	fake := filepath.Join(tmp, "logmind")
+	body := "#!/bin/sh\necho 'logmind, version 0.6.16'\n"
+	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
+	_ = os.Setenv("PATH", tmp)
+
+	row := probePathResolution()
+	if row.Drift == "markerless" {
+		t.Fatalf("Drift = markerless on legacy Click `logmind, version 0.6.16`; a stale Python binary must be classified, not blinded (marker=%v)", row.Marker)
+	}
+	if row.Drift != "stale" {
+		t.Errorf("Drift = %q; want stale (0.6.16 != running %s)", row.Drift, version.Version)
+	}
+	if row.Marker == nil || !strings.Contains(*row.Marker, "0.6.16") {
+		t.Errorf("Marker = %v; want it to contain the parsed version 0.6.16", row.Marker)
+	}
+}
+
 func TestProbePathResolution_MarkerlessOnGarbageVersion(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")

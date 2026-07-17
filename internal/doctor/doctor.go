@@ -86,7 +86,11 @@ var (
 	// legacy Python `logmind, version X` output, so it NEVER matched a real
 	// Go binary's line and every on-PATH Go logmind was mis-classified
 	// markerless — leaving the PATH-drift row blind.
-	logmindVersionLineRe = regexp.MustCompile(`^logmind\s+(\S+)`)
+	// Accepts BOTH the Go `logmind <ver> (spec <ver>)` and the legacy Click
+	// `logmind, version <ver>` shapes, so a stale Python binary on PATH is
+	// still classified (stale/DRIFT), not silently degraded to markerless
+	// (dual-review follow-up to #214).
+	logmindVersionLineRe = regexp.MustCompile(`^logmind,?\s+(?:version\s+)?(\S+)`)
 )
 
 // WorkflowStatus mirrors the Python dataclass — one row per workflow,
