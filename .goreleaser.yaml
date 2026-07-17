@@ -181,8 +181,9 @@ homebrew_casks:
     binaries:
       - logmind
     # HOMEBREW_TAP_PAT is now an installation token for the
-    # `thrillmade-orchestrator[bot]` App (app_id 3951953), minted at
-    # workflow time by actions/create-github-app-token@v2 in release.yml.
+    # `skdd-steward[bot]` App (app_id 3951953, renamed from
+    # thrillmade-orchestrator), minted at workflow time by
+    # actions/create-github-app-token@v2 in release.yml.
     # The App is added as a bypass actor on the tap's ruleset 17128312,
     # so direct push to thrillmade/homebrew-tap/main goes through cleanly
     # with full audit trail under the App identity. No pull_request flow
@@ -202,8 +203,8 @@ homebrew_casks:
     # exact format ties each cask-bump commit to the App identity in
     # GitHub's UI rather than showing it as an anonymous bot.
     commit_author:
-      name: thrillmade-orchestrator[bot]
-      email: 3951953+thrillmade-orchestrator[bot]@users.noreply.github.com
+      name: skdd-steward[bot]
+      email: 3951953+skdd-steward[bot]@users.noreply.github.com
     commit_msg_template: "logmind {{ .Tag }}"
     # Post-install: strip macOS quarantine attr. logmind binaries are
     # codesigned + notarized in the release pipeline (so Gatekeeper will
