@@ -18,6 +18,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-17** — fix(ci): check-decisions honors [skip-logmind] on rerun — fetch the live PR title (#212) → [detail](decisions-branches/fix__check-decisions-live-pr-title-212.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-17-fix-audit-batch-crlf-determinism-push-timeout-atomic-config- -->
+- **2026-07-17** — fix: audit batch - CRLF determinism, push timeout, atomic config writes, quiet help, spec 1.2.1/3.7 conformance → [detail](decisions-branches/fix__adversarial-audit-batch-v2.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-17-authenticated-every-setup-logmind-call-site-and-un-bricked-t -->
 - **2026-07-17** — Authenticated every setup-logmind call site and un-bricked the dead self-update workflow (v-prefix + apples-to-oranges version compare). → [detail](decisions-branches/fix__setup-logmind-auth-and-self-update.md)
 <!-- logmind-entry-end -->
