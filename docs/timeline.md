@@ -22,6 +22,10 @@ PR's CI run, so this file is always coherent with current `main`.
 - **2026-07-17** — Serialize concurrent decision writes and give writeAtomic a unique temp file per call → [detail](decisions-branches/worktree-agent-a5c1f3d5a00748f87.md)
 <!-- logmind-entry-end -->
 
+<!-- logmind-entry-start: 2026-07-17-fix-guard-commit-detect-git-commit-wrapped-in-sh-c-command-a -->
+- **2026-07-17** — fix(guard-commit): detect git commit wrapped in sh -c / command / absolute git path (#221) → [detail](decisions-branches/worktree-agent-a8826d36dbe21daf7.md)
+<!-- logmind-entry-end -->
+
 <!-- logmind-entry-start: 2026-07-17-fix-ci-check-decisions-honors-skip-logmind-on-rerun-fetch-th -->
 - **2026-07-17** — fix(ci): check-decisions honors [skip-logmind] on rerun — fetch the live PR title (#212) → [detail](decisions-branches/fix__check-decisions-live-pr-title-212.md)
 <!-- logmind-entry-end -->
