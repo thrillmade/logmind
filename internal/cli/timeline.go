@@ -160,16 +160,64 @@ func pathExists(p string) bool {
 	return err == nil
 }
 
-// writeAtomic writes data to path via a .tmp + rename so a crashed
-// process can't leave a half-written file at the target. Mirror of
-// Python's atomic_io.atomic_write_text.
-func writeAtomic(path, data string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+// writeAtomic writes data to path via a temp file + rename so a
+// crashed process can't leave a half-written file at the target.
+// Mirror of Python's atomic_io.atomic_write_text.
+//
+// The temp file gets a unique, random-suffixed name (os.CreateTemp)
+// rather than the old fixed `path+".tmp"` — that fixed name was a
+// race all its own: two concurrent writeAtomic calls targeting the
+// SAME path (e.g. two `logmind log` processes racing on
+// docs/decisions.md) both wrote to the identical tmp file, so one
+// process's os.Rename could fire on bytes the other process had
+// already written, or on a tmp file the other process had already
+// renamed away — producing crashes like `rename ...tmp ...: no such
+// file or directory` and/or a renamed file that silently belongs to
+// the wrong writer. A unique temp name per call removes that
+// collision for EVERY caller of writeAtomic (log.go, headline.go,
+// doctor.go, and this file's own --write path), not just the caller
+// that happened to trigger it first.
+//
+// This alone does not make concurrent writers to the same target
+// file safe from lost updates (last-rename-wins can still silently
+// drop one writer's read-modify-write) — see log.go's
+// acquireRepoLock for the cross-process lock that closes that half
+// of the bug.
+func writeAtomic(path, data string) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(data), 0o644); err != nil {
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmpPath := tmp.Name()
+	// Clean up the temp file on any error path; once os.Rename below
+	// succeeds there's nothing left at tmpPath to remove.
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err = tmp.WriteString(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	// os.CreateTemp mode bits are 0600; match the historical 0644 of
+	// the file this replaces so permissions don't silently change.
+	if err = os.Chmod(tmpPath, 0o644); err != nil {
+		return err
+	}
+	if err = os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	succeeded = true
+	return nil
 }
