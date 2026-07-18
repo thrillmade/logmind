@@ -24,3 +24,14 @@
 
 ---
 
+## 2026-07-17 20:32 - L1: logmind log restores derived docs to HEAD before staging on a non-default branch
+
+**Reasoning:** Primary defense of the zero-conflict invariant on the commit path — even if a hook or manual edit dirties timeline.md/file-structure.md, the branch commit never carries the divergent copy; applies in both stage=all and scoped so a dirty derived doc can never leak, and touches only the two derived docs, never the branch decision file or its marker
+
+**Alternatives considered:** Pathspec-exclude from git add (rejected: leaves a dirty working tree a later raw git add could sweep)
+
+**Implications:**
+- No-op on the default branch (main stays current) and lossless everywhere since the docs regenerate from the committed decision files
+
+---
+

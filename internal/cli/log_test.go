@@ -27,6 +27,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
 // signalOnSubstr is a thread-safe io.Writer that closes `fired` the first time
@@ -1056,5 +1058,67 @@ func TestLog_SelfHeal_StderrTTY_StdinDeadPipe_DoesNotHang(t *testing.T) {
 				t.Fatalf("dead-pipe stdin must NOT enter the interactive prompt loop\nstdout:\n%s\nstderr:\n%s", out.String(), errBuf.String())
 			}
 		})
+	})
+}
+
+// TestLog_DoesNotCommitDirtiedDerivedDocOnBranch pins the L1 zero-conflict
+// guard (derived-docs-on-main plan, Task 3): docs/timeline.md and
+// docs/file-structure.md are purely-derived, main-only artifacts. On a
+// non-default branch, `commitDecision` restores them to HEAD before staging
+// so neither a stray hook regen nor `git add -A` can sweep a branch-local
+// edit into the decision commit — which would diverge the branch from main
+// and cause a future merge conflict. Here we simulate that stray edit by
+// hand-dirtying the already-committed docs/timeline.md, then assert the
+// resulting commit does NOT carry it and the working tree is restored to
+// HEAD's content.
+func TestLog_DoesNotCommitDirtiedDerivedDocOnBranch(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// Commit the scaffold (including docs/timeline.md) on main FIRST so
+		// there is a HEAD copy for the branch to diverge from and later be
+		// restored to.
+		commitAll(t, d, "initial")
+		runGitIn(t, d, "checkout", "-b", "feat/y")
+
+		timelinePath := filepath.Join(d, "docs", "timeline.md")
+		headTimeline := readFileStr(t, timelinePath)
+
+		// Simulate a stray hook/manual regen dirtying the derived doc on the
+		// branch — this must never reach the commit.
+		if err := os.WriteFile(timelinePath, []byte("STALE BRANCH EDIT\n"), 0o644); err != nil {
+			t.Fatalf("dirty docs/timeline.md: %v", err)
+		}
+
+		withFakeTTY(t, false, func() {
+			f := &logFlags{stage: "all"}
+			var out, errBuf bytes.Buffer
+			if err := runLog(d, "Decide something", f, false, strings.NewReader(""), &out, &errBuf); err != nil {
+				t.Fatalf("runLog: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errBuf.String())
+			}
+		})
+
+		// The commit must not carry the derived-doc edit.
+		names, _, err := gitcli.RunCaptured(d, "show", "--name-only", "--format=", "HEAD")
+		if err != nil {
+			t.Fatalf("git show --name-only HEAD: %v", err)
+		}
+		if strings.Contains(names, "docs/timeline.md") {
+			t.Fatalf("commit must NOT include docs/timeline.md on a branch (invariant); commit files:\n%s", names)
+		}
+
+		// And the working tree copy is back to committed (HEAD) content —
+		// which is also the pre-dirty content, since HEAD didn't move for
+		// this file.
+		head, ok := gitcli.ShowFile(d, "HEAD", "docs/timeline.md")
+		if !ok {
+			t.Fatalf("ShowFile HEAD:docs/timeline.md failed")
+		}
+		if head != headTimeline {
+			t.Fatalf("HEAD:docs/timeline.md changed unexpectedly; want original scaffold content")
+		}
+		if got := readFileStr(t, timelinePath); got != head {
+			t.Fatalf("working-tree docs/timeline.md must be restored to HEAD content; got %q want %q", got, head)
+		}
 	})
 }
