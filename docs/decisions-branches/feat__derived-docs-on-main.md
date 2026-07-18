@@ -46,3 +46,14 @@
 
 ---
 
+## 2026-07-17 21:04 - Freshness layer: logmind warp + main-decisions pulse probe + context origin-refresh
+
+**Reasoning:** A branch pins its derived docs to the merge-base (invariant), so it lags main; warp fetches origin and refreshes the working copy read-only, the 3rd pulse probe nudges warp when main advanced, and context renders the 2 derived docs from the last-fetched origin ref so cold-start reflects main without a network call
+
+**Alternatives considered:** warp merges origin/main into the branch (rejected: creates merge commits and can trip the invariant); a --refresh flag on context instead of a verb (rejected: the pulse needs a short verb to point at)
+
+**Implications:**
+- warp is the ONLY network caller (fetch); pulse+context read the local origin ref with no fetch, preserving the network-free hot path; context payload format is byte-unchanged, only the content source differs
+
+---
+

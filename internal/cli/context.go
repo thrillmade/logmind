@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/repomap"
 	"github.com/thrillmade/logmind/internal/tokens"
 )
@@ -178,8 +179,8 @@ func contextPayload(cwd string) string {
 			writeDoc(&b, d.typ, source, []byte(body))
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(cwd, d.rel))
-		if err != nil {
+		content, ok := readDerivedForContext(cwd, d.rel)
+		if !ok {
 			// A missing doc becomes a self-closing element carrying the
 			// regenerate command in an attribute — well-formed (an XML comment
 			// would hit the "--" double-hyphen rule via `--write`) and still
@@ -187,10 +188,54 @@ func contextPayload(cwd string) string {
 			fmt.Fprintf(&b, "<document type=%q source=%q status=\"absent\" regenerate=%q/>\n", d.typ, d.rel, d.regen)
 			continue
 		}
-		writeDoc(&b, d.typ, d.rel, data)
+		writeDoc(&b, d.typ, d.rel, []byte(content))
 	}
 	b.WriteString("</repo_context>\n")
 	return b.String()
+}
+
+// readDerivedForContext reads the content backing a file-backed contextDoc's
+// `rel` path. For the two governed derivedDocPaths (docs/timeline.md,
+// docs/file-structure.md) on a NON-default branch, it prefers the
+// last-fetched origin/<default> copy (gitcli.ShowFile) over the branch's own
+// working copy: the branch's committed copy is deliberately pinned to its
+// merge-base with main (the zero-conflict invariant, L1), so it can lag main
+// by however long the branch has existed, while origin/<default> — as of the
+// last `logmind warp` or `git fetch` — reflects what actually merged since.
+// NETWORK-FREE: reads the existing remote-tracking ref only, never fetches
+// (that is warp's job). Falls back to the local `os.ReadFile` when: rel is
+// not a governed derived doc, the branch IS the default branch, there's no
+// resolvable default branch, or the origin copy isn't available (no origin
+// remote, never fetched, path absent at that ref). Returns ("", false) only
+// when neither source has the doc — the caller renders the same "absent"
+// element it always has.
+func readDerivedForContext(cwd, rel string) (string, bool) {
+	if isDerivedDocPath(rel) && onNonDefaultBranch(cwd) {
+		if def := gitcli.DefaultBranch(cwd); def != "" {
+			if content, ok := gitcli.ShowFile(cwd, "origin/"+def, rel); ok {
+				return content, true
+			}
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(cwd, rel))
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
+// isDerivedDocPath reports whether rel is one of the two governed derived
+// docs (derivedDocPaths, derived.go) — the ONLY paths readDerivedForContext
+// treats specially. The spec doc and repomap are generated in-memory (d.gen)
+// and never reach this function; this guard keeps it that way even if a
+// future file-backed, non-derived contextDoc is added.
+func isDerivedDocPath(rel string) bool {
+	for _, p := range derivedDocPaths {
+		if p == rel {
+			return true
+		}
+	}
+	return false
 }
 
 // writeDoc emits one <document> envelope with a trailing-newline guarantee on

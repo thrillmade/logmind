@@ -81,6 +81,11 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newRepomapCmd())
 	root.AddCommand(newTreeCmd())
 	root.AddCommand(newRebaseCmd())
+	// v2.0.0 derived-docs-on-main: read-only refresh of docs/timeline.md +
+	// docs/file-structure.md from the default branch. Never stages/commits —
+	// committing main's newer blobs onto a branch would break the
+	// merge-base invariant the L1/L3 layers enforce.
+	root.AddCommand(newWarpCmd())
 	// B4: agent file templating subcommand tree.
 	root.AddCommand(newAgentsCmd())
 	// B5: skill authoring/validation/bench/audit/suggest tree.

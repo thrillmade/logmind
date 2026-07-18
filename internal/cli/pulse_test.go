@@ -1,5 +1,6 @@
 // pulse_test.go — exercises the v2.0.0 "pulse" feature: `logmind log`'s
-// stderr-only repo-health advisories (drift pulse + spec pulse, pulse.go).
+// stderr-only repo-health advisories (drift pulse + spec pulse + the
+// derived-docs-on-main main-decisions pulse, pulse.go).
 //
 // Coverage:
 //   - byte-exact §3.1 stdout contract holds even when a drift pulse fires
@@ -9,6 +10,10 @@
 //   - spec pulse: fires exactly at the specPulseThreshold boundary (19
 //     silent, 20 fires), with the correct count + path; stays silent when
 //     the spec is untracked or context.spec_file is unset
+//   - main-decisions pulse: fires with the correct singular/plural count on
+//     a stale feature branch, stays silent on the default branch, stays
+//     silent for a non-decision-touching origin advance, and is network-free
+//     (never auto-fetches — see the "no auto-fetch" case below)
 //   - ordering: drift pulse prints before spec pulse when both fire
 //   - --quiet: the single `ok ...` stdout contract holds; pulse still
 //     lands on stderr
@@ -530,5 +535,171 @@ func TestLog_Pulse_SpecLine_TimezoneStable(t *testing.T) {
 	// counted → below threshold → silent, in every zone.
 	t.Run("same_day_silent", func(t *testing.T) {
 		run(t, "2020-06-15", false, 0)
+	})
+}
+
+// --- v2.0.0 derived-docs-on-main: main-decisions pulse (mainDecisionsPulseLine) ---
+//
+// initClonePair / commitOn / runGitIn are shared with warp_test.go (same
+// package) — a real origin/repo clone pair is the natural fixture for
+// exercising a probe that compares HEAD against a remote-tracking ref.
+
+// TestMainDecisionsPulseLine_FiresOnStaleBranch: on a feature branch with a
+// pre-fetched origin/main carrying exactly one decision-touching commit the
+// branch lacks, the probe fires with the singular ("commit", not "commits")
+// exact message.
+func TestMainDecisionsPulseLine_FiresOnStaleBranch(t *testing.T) {
+	origin, repo := initClonePair(t)
+	commitOn(t, origin, "docs/decisions.md", "## decision one\n")
+	runGitIn(t, repo, "fetch", "origin", "main")
+	runGitIn(t, repo, "checkout", "-b", "feat/p")
+
+	line, ok := mainDecisionsPulseLine(repo)
+	if !ok {
+		t.Fatal("expected the main-decisions pulse to fire")
+	}
+	want := "logmind: main has 1 new decision commit — run 'logmind warp' to catch up"
+	if line != want {
+		t.Fatalf("line = %q; want %q", line, want)
+	}
+}
+
+// TestMainDecisionsPulseLine_PluralCount: two decision-touching commits
+// ahead pluralizes ("commits").
+func TestMainDecisionsPulseLine_PluralCount(t *testing.T) {
+	origin, repo := initClonePair(t)
+	commitOn(t, origin, "docs/decisions.md", "## decision one\n")
+	commitOn(t, origin, "docs/decisions-branches/other.md", "## decision two\n")
+	runGitIn(t, repo, "fetch", "origin", "main")
+	runGitIn(t, repo, "checkout", "-b", "feat/p2")
+
+	line, ok := mainDecisionsPulseLine(repo)
+	if !ok {
+		t.Fatal("expected the main-decisions pulse to fire")
+	}
+	want := "logmind: main has 2 new decision commits — run 'logmind warp' to catch up"
+	if line != want {
+		t.Fatalf("line = %q; want %q", line, want)
+	}
+}
+
+// TestMainDecisionsPulseLine_SilentOnDefaultBranch: the probe is gated by
+// onNonDefaultBranch — even with origin/main visibly ahead, staying on the
+// default branch (where L0/L1 don't apply and the docs regenerate locally)
+// must not fire.
+func TestMainDecisionsPulseLine_SilentOnDefaultBranch(t *testing.T) {
+	origin, repo := initClonePair(t)
+	commitOn(t, origin, "docs/decisions.md", "## decision one\n")
+	runGitIn(t, repo, "fetch", "origin", "main")
+	// repo stays on its default branch ("main") — no checkout.
+
+	if _, ok := mainDecisionsPulseLine(repo); ok {
+		t.Fatal("main-decisions pulse must stay silent on the default branch")
+	}
+}
+
+// TestMainDecisionsPulseLine_NonDecisionCommit_Silent: origin advancing on an
+// unrelated path (not one of the three decision sources) must not fire —
+// the probe is scoped to decision-touching commits only, not "any commit".
+func TestMainDecisionsPulseLine_NonDecisionCommit_Silent(t *testing.T) {
+	origin, repo := initClonePair(t)
+	commitOn(t, origin, "README.md", "unrelated change\n")
+	runGitIn(t, repo, "fetch", "origin", "main")
+	runGitIn(t, repo, "checkout", "-b", "feat/p3")
+
+	if _, ok := mainDecisionsPulseLine(repo); ok {
+		t.Fatal("main-decisions pulse must stay silent when origin advanced on a non-decision path")
+	}
+}
+
+// TestMainDecisionsPulseLine_NetworkFree_NoAutoFetch: the probe must NEVER
+// fetch — it reads the local origin/<default> ref as of the last explicit
+// fetch/warp only. Advancing origin WITHOUT fetching in repo must leave the
+// probe silent (the stale local ref still matches HEAD).
+func TestMainDecisionsPulseLine_NetworkFree_NoAutoFetch(t *testing.T) {
+	origin, repo := initClonePair(t)
+	runGitIn(t, repo, "checkout", "-b", "feat/q")
+	// Advance origin AFTER the clone/checkout, WITHOUT ever fetching in repo.
+	commitOn(t, origin, "docs/decisions.md", "## decision one\n")
+
+	if _, ok := mainDecisionsPulseLine(repo); ok {
+		t.Fatal("main-decisions pulse must be network-free: it saw origin's new commit without an explicit fetch")
+	}
+}
+
+// initClonePairScaffolded builds a fully logmind-scaffolded origin
+// (docs/decisions.md, docs/timeline.md, .logmind/config.yml, ... via
+// `logmind init --no-git`) and a `git clone` of it. The plain initClonePair
+// (warp_test.go) only seeds docs/timeline.md, which is enough for warp but
+// not for a real `logmind log` invocation (TestLog_DocsMissingErrors shows
+// log refuses to run against an unscaffolded repo).
+func initClonePairScaffolded(t *testing.T) (origin, repo string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping integration test")
+	}
+	origin = t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	initLogTestGitRepo(t, origin)
+	if err := os.Chdir(origin); err != nil {
+		t.Fatalf("Chdir origin: %v", err)
+	}
+	scaffoldDocs(t)
+	if err := os.Chdir(origWD); err != nil {
+		t.Fatalf("Chdir back: %v", err)
+	}
+	commitAll(t, origin, "scaffold")
+
+	repo = filepath.Join(t.TempDir(), "repo")
+	cmd := exec.Command("git", "clone", "-q", origin, repo)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git clone: %v\n%s", err, out)
+	}
+	runGitIn(t, repo, "config", "user.email", "test@example.com")
+	runGitIn(t, repo, "config", "user.name", "Test")
+	runGitIn(t, repo, "config", "commit.gpgsign", "false")
+	return origin, repo
+}
+
+// TestLog_Pulse_MainDecisionsLine_EndToEnd wires mainDecisionsPulseLine
+// through the real `logmind log` command on a stale feature branch: the
+// exact advisory string lands on stderr, positioned AFTER the drift/spec
+// pulses (none fire here, but the ordering is emitPulse's contract) and the
+// §3.1 stdout contract is untouched.
+func TestLog_Pulse_MainDecisionsLine_EndToEnd(t *testing.T) {
+	origin, repo := initClonePairScaffolded(t)
+	commitOn(t, origin, "docs/decisions.md", "## upstream decision\n")
+	runGitIn(t, repo, "fetch", "origin", "main")
+	runGitIn(t, repo, "checkout", "-b", "feat/pulse-e2e")
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("Chdir repo: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	withFakeTTY(t, false, func() {
+		root := NewRootCmd()
+		root.SetArgs([]string{"log", "branch decision", "-r", "why", "--no-push", "--no-interactive"})
+		var out, errBuf bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errBuf)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("log: %v\nstderr:\n%s", err, errBuf.String())
+		}
+		want := "logmind: main has 1 new decision commit — run 'logmind warp' to catch up"
+		if !strings.Contains(errBuf.String(), want) {
+			t.Fatalf("stderr missing the main-decisions pulse line; got %q", errBuf.String())
+		}
+		// The §3.1 stdout contract must stay untouched by the new probe.
+		if strings.Contains(out.String(), "logmind:") {
+			t.Fatalf("pulse output leaked onto stdout: %q", out.String())
+		}
 	})
 }

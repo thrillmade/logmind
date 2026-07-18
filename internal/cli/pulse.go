@@ -1,8 +1,8 @@
 // pulse.go — the v2.0.0 "pulse" feature: `logmind log` surfaces repo-health
 // advisories on STDERR after everything else has printed.
 //
-// Two independent, best-effort advisories, printed in this order (drift
-// before spec) when applicable:
+// Three independent, best-effort advisories, printed in this order (drift,
+// then spec, then main-decisions) when applicable:
 //
 //   - Drift pulse: any FILE-READ-ONLY doctor probe classified STALE (the
 //     drift class that flips doctor's Overall — stale hooks / stale
@@ -15,6 +15,13 @@
 //     uncommitted modifications, and at least specPulseThreshold decision
 //     entries postdate the spec's last git commit:
 //     `logmind: <spec-path> unchanged for <n> decisions — still accurate?`
+//
+//   - Main-decisions pulse (v2.0.0 derived-docs-on-main freshness layer): on a
+//     NON-default branch, the last-fetched origin/<default> remote-tracking
+//     ref carries one or more decision-touching commits (docs/decisions.md,
+//     docs/decisions-branches/, docs/decisions-archive.md) the branch does
+//     not yet have — see mainDecisionsPulseLine:
+//     `logmind: main has <n> new decision commit(s) — run 'logmind warp' to catch up`
 //
 // STDERR ONLY, unconditionally. This is deliberate and load-bearing:
 //
@@ -33,18 +40,25 @@
 // never writes there.
 //
 // HOT-PATH BUDGET: emitPulse runs on EVERY `logmind log`, so every probe it
-// calls transitively must be subprocess-free (file reads / stats only). The
-// drift pulse uses doctor.StaleCountFast specifically because doctor's full
-// probe set (doctor.StaleCount, used by `logmind doctor` itself) includes a
-// PATH lookup + a live `<binary> --version` subprocess — a hung or
-// daemonizing PATH binary can stall or hang that call outright. See
-// doctor.StaleCountFast's doc comment for the exact excluded-probe list.
+// calls transitively must stay fast and NETWORK-FREE. The drift and spec
+// pulses are subprocess-free (file reads / stats only). The drift pulse uses
+// doctor.StaleCountFast specifically because doctor's full probe set
+// (doctor.StaleCount, used by `logmind doctor` itself) includes a PATH
+// lookup + a live `<binary> --version` subprocess — a hung or daemonizing
+// PATH binary can stall or hang that call outright. See
+// doctor.StaleCountFast's doc comment for the exact excluded-probe list. The
+// main-decisions pulse is the one exception that shells out (`git
+// rev-list`), but ONLY against the local, already-fetched origin/<default>
+// ref — no `git fetch`, no `gh`, no HTTP anywhere in this file. Network
+// access is reserved for the explicit `logmind warp` command (warp.go).
 package cli
 
 import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thrillmade/logmind/internal/config"
@@ -89,6 +103,9 @@ func emitPulse(cwd string, stderr io.Writer) {
 		fmt.Fprintln(stderr, line)
 	}
 	if line, ok := specPulseLine(cwd); ok {
+		fmt.Fprintln(stderr, line)
+	}
+	if line, ok := mainDecisionsPulseLine(cwd); ok {
 		fmt.Fprintln(stderr, line)
 	}
 }
@@ -201,6 +218,36 @@ func specPulseLine(cwd string) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("logmind: %s unchanged for %d decisions — still accurate?", relSpec, count), true
+}
+
+// mainDecisionsPulseLine reports the "main has advanced" freshness advisory:
+// on a NON-default branch, when the last-fetched origin/<default> carries
+// decision-touching commits the branch does not, nudge a catch-up. NETWORK-FREE:
+// reads the existing remote-tracking ref (no fetch), so the count is as of the
+// last warp/fetch. Best-effort: ("", false) on any error or missing origin ref —
+// this runs on every `logmind log`, so it must never fail or slow the hot path.
+func mainDecisionsPulseLine(cwd string) (string, bool) {
+	if !onNonDefaultBranch(cwd) {
+		return "", false
+	}
+	def := gitcli.DefaultBranch(cwd)
+	if def == "" {
+		return "", false
+	}
+	out, _, err := gitcli.RunCaptured(cwd, "rev-list", "--count", "HEAD..origin/"+def, "--",
+		"docs/decisions.md", "docs/decisions-branches", "docs/decisions-archive.md")
+	if err != nil {
+		return "", false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil || n <= 0 {
+		return "", false
+	}
+	plural := "s"
+	if n == 1 {
+		plural = ""
+	}
+	return fmt.Sprintf("logmind: main has %d new decision commit%s — run 'logmind warp' to catch up", n, plural), true
 }
 
 // dateOnlyUTC reduces t to its calendar day (year/month/day) anchored at UTC
