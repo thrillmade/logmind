@@ -1,123 +1,76 @@
-# logmind-template-version: v7
+# logmind-template-version: v8
 name: logmind / check-derived-docs
 
-# Self-healing derived-doc gate (v5 — advisory model).
-#
-# docs/timeline.md + docs/file-structure.md are DERIVED artifacts,
-# deterministically regenerated from sources (per-branch decision logs +
-# decisions.md + archive for the timeline; the project tree for
-# file-structure). This gate keeps them current WITHOUT ever blocking a PR:
-#
-#   * PAT path (preferred). When `LOGMIND_AUTO_REGEN_PAT` is configured and
-#     the PR is from the same repo, stale docs are regenerated, committed
-#     (`[skip-logmind]`) and pushed back to the PR head. A PAT-pushed commit
-#     re-triggers required checks, so the merge gate stays healthy.
-#
-#   * Advisory path (default — no PAT, or a fork PR). Stale docs are
-#     regenerated in the job, a `::warning::` is emitted, and the job
-#     EXITS 0. It never red-lights the PR. Reconciliation happens on merge
-#     (the post-merge hook regenerates on the default branch).
-#
-# It NEVER pushes with the default GITHUB_TOKEN. A GITHUB_TOKEN-authored
-# push moves the PR head SHA but does NOT re-trigger workflows (GitHub's
-# anti-recursion rule), which would strand every required status check on
-# the new head ("Expected — Waiting for status to be reported…") and make
-# the PR permanently unmergeable. The workflow token is therefore kept at
-# `contents: read`; only the optional PAT pushes, and only at push time
-# (it is never persisted into .git, so it is not exposed to build steps).
-#
-# The job always runs (no actor filter). Filtering a required check out for
-# bot/fork PRs would itself strand it as "Expected — Waiting…"; bots and
-# forks simply take the advisory path.
-#
-# v7 — the `thrillmade/setup-logmind@…` step now passes `token:
-# ${{ github.token }}`. Composite actions can't default an input to
-# `github.token`; without it, setup-logmind's release-lookup call is
-# anonymous, and shared GitHub-hosted-runner IP ranges routinely blow
-# through the 60-req/hour unauthenticated api.github.com budget, 403ing
-# before logmind is even installed (setup-logmind#4).
-#
-# Setup for the PAT (auto-push) path:
-#   1. Create a fine-grained PAT scoped to THIS repo (not org-wide, to bound
-#      blast radius) with Contents: write.
-#   2. Add it as `LOGMIND_AUTO_REGEN_PAT` under
-#      Settings → Secrets and variables → Actions.
+# v2.0.0 derived-docs-on-main. The two derived docs are regenerated ONLY here on
+# main. On a PR this gate is NON-mutating and BLOCKING: it fails if the branch
+# edited either derived doc (which would cause cross-PR merge conflicts). A
+# branch's real decisions live in docs/decisions-branches/<branch>.md; timeline
+# and file-structure regenerate on main after merge.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
 
 permissions:
-  contents: read        # GITHUB_TOKEN stays read-only; the optional PAT does any push
+  contents: write        # regen-on-main commits + pushes the regen to main
+  pull-requests: read    # the PR gate reads the PR file list via `gh pr diff`
+  # NOTE: specifying ANY permission zeroes all others (GitHub default), so
+  # pull-requests MUST be listed explicitly — without it `gh pr diff` 403s and
+  # the gate fails-closed on EVERY PR, not just violators.
 
 jobs:
   check-derived-docs:
     name: check-derived-docs
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert the branch did not edit the derived docs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
+          if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|file-structure)\.md'; then
+            echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md and/or docs/file-structure.md. These are DERIVED, main-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to main's version — run 'logmind warp', or 'git checkout origin/main -- docs/timeline.md docs/file-structure.md' — then commit. Their real content regenerates on main after merge."
+            exit 1
+          fi
+          echo "Branch did not edit the derived docs — the merge cannot conflict on them."
+
+  regen-on-main:
+    name: regen-on-main
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          # Check out the PR head. `repository:` is REQUIRED so fork PRs work:
-          # a fork's head_ref does not exist on the base repo, so without it
-          # checkout fails and the gate would block every fork PR. Read-only;
-          # persist-credentials:false keeps any token out of .git during the
-          # regeneration step (the PAT is supplied only at push time below).
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 0
           persist-credentials: false
-
       - uses: thrillmade/setup-logmind@v1.0.0
         with:
           token: ${{ github.token }}
-
       - name: Regenerate derived docs
         run: |
           set -euo pipefail
           logmind timeline --write docs/timeline.md
           logmind file-structure --write docs/file-structure.md
-
-      - name: Self-heal (PAT) or advise
+      - name: Commit + push if changed
         env:
           PAT: ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          BASE_REPO: ${{ github.repository }}
-          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-
-          # Stale = any change in the derived docs, INCLUDING an untracked or
-          # missing file (a plain `git diff` would miss those).
           if [ -z "$(git status --porcelain -- docs/timeline.md docs/file-structure.md)" ]; then
-            echo "docs/timeline.md + docs/file-structure.md are up to date."
+            echo "Derived docs already current on main."
             exit 0
           fi
-
-          echo "Derived docs were stale on this PR."
-
-          is_fork="false"
-          if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" != "$BASE_REPO" ]; then
-            is_fork="true"
-          fi
-
-          # PAT auto-push path: same-repo PR + PAT configured. The PAT is used
-          # ONLY here (an explicit credentialed URL, never persisted), and a
-          # PAT push re-triggers downstream required checks.
-          if [ -n "${PAT:-}" ] && [ "$is_fork" = "false" ]; then
-            echo "::notice title=Auto-fixing derived docs::Regenerating and pushing to ${HEAD_REF}."
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add docs/timeline.md docs/file-structure.md
-            git commit -m "[skip-logmind] chore: regen derived docs"
-            if ! git push "https://x-access-token:${PAT}@github.com/${BASE_REPO}.git" "HEAD:${HEAD_REF}"; then
-              echo "::warning::Could not push the regen (push race or protected head ref); it reconciles on merge or the next run."
-            fi
-            echo "::notice::Derived docs regenerated."
+          if [ -z "${PAT:-}" ]; then
+            echo "::warning title=Derived docs stale on main::No LOGMIND_AUTO_REGEN_PAT configured; cannot push the regen. main is momentarily stale until the next push or a manual regen. (No conflict risk — this is a freshness-only gap.)"
             exit 0
           fi
-
-          # Advisory path: no PAT, or a fork PR. Warn, never block.
-          echo "::warning title=Derived docs stale (advisory — does not block)::docs/timeline.md or docs/file-structure.md is out of date on this PR. This is ADVISORY and does not fail the check; the post-merge hook reconciles it on the default branch. To update now, run \`logmind timeline --write docs/timeline.md && logmind file-structure --write docs/file-structure.md\` locally and commit, or configure a LOGMIND_AUTO_REGEN_PAT secret for automatic push-back."
-          git add -N -- docs/timeline.md docs/file-structure.md 2>/dev/null || true
-          git --no-pager diff -- docs/timeline.md docs/file-structure.md | head -80 || true
-          exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/timeline.md docs/file-structure.md
+          git commit -m "[skip-logmind] chore: regen derived docs"
+          git push "https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"

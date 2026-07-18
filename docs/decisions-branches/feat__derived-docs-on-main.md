@@ -57,3 +57,14 @@
 
 ---
 
+## 2026-07-17 21:19 - L3: check-derived-docs becomes a blocking PR gate; derived docs regenerate on main only (v7 to v8)
+
+**Reasoning:** The structural wall — a PR that edits a derived doc cannot merge (gh pr diff --name-only is the fork-correct branch-vs-merge-base delta), so even an unforeseen write path can never reintroduce a conflict. Adversarial review caught that permissions: contents:write alone zeroes pull-requests and would 403 gh pr diff on every PR — fixed by adding pull-requests: read in lockstep
+
+**Alternatives considered:** merge-base diff in shell (rejected: base.sha may be absent in a fork checkout; gh pr diff is simpler and fork-correct)
+
+**Implications:**
+- Regen moves to a main-only job that no-ops when current (no push loop); the main push needs a PAT with ruleset bypass and degrades to a freshness-only warning without it; a one-way rename of a derived doc evades --name-only but self-heals and causes no conflict (accepted); existing derived-doc-editing PRs now block until reverted; template bumped v7 to v8
+
+---
+

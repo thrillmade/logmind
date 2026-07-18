@@ -236,64 +236,70 @@ func TestWorkflowTemplates_SetupLogmindStepsCarryToken(t *testing.T) {
 	}
 }
 
-// TestRegenTimelineTemplate_V7_Advisory pins the Slice-1 de-friction
-// contract: the derived-doc gate must NEVER hard-block a PR and must NEVER
-// push with the default GITHUB_TOKEN (a GITHUB_TOKEN push moves the PR head
-// SHA without re-triggering checks, stranding every required check). On
-// stale docs it either pushes via LOGMIND_AUTO_REGEN_PAT (which re-triggers
-// checks) or emits an advisory ::warning:: and exits 0.
-func TestRegenTimelineTemplate_V7_Advisory(t *testing.T) {
+// TestRegenTimelineTemplate_V8_BlockingGate pins the v2.0.0
+// derived-docs-on-main contract (replaces the Slice-1 advisory model): on a
+// PR the `check-derived-docs` job is NON-mutating and BLOCKING — it fails
+// (exit 1) if the branch edited docs/timeline.md or docs/file-structure.md,
+// because those are derived, main-only artifacts and a branch edit is exactly
+// what causes cross-PR merge conflicts. Regeneration moves to a SEPARATE
+// main-only `regen-on-main` job. The required-check NAME stays
+// `check-derived-docs` so branch-protection rulesets keep matching.
+func TestRegenTimelineTemplate_V8_BlockingGate(t *testing.T) {
 	body := Workflow("regen-timeline.yml.template")
 
-	// Marker bump v6 → v7 (setup-logmind#4: added `token: ${{ github.token }}`).
-	if !strings.Contains(body, "# logmind-template-version: v7") {
-		t.Errorf("regen-timeline template missing v7 marker")
+	// Marker bump v7 → v8 (advisory model → blocking gate + main-only regen).
+	if !strings.Contains(body, "# logmind-template-version: v8") {
+		t.Errorf("regen-timeline template missing v8 marker")
 	}
-	// Advisory, never fail-fast: no literal `exit 1`. Staleness must not
-	// red-light the PR (a real tool crash still fails the job via `set -e`).
-	if strings.Contains(body, "exit 1") {
-		t.Errorf("regen-timeline v7 must not `exit 1` — the gate is advisory and must never block a PR")
+	// The required-check name MUST stay check-derived-docs (ruleset matching),
+	// and the main regen is a distinct job.
+	if !strings.Contains(body, "check-derived-docs") {
+		t.Errorf("regen-timeline v8 must keep the check-derived-docs job name (ruleset matching)")
 	}
-	// The no-PAT / fork path must warn and pass.
-	if !strings.Contains(body, "::warning") || !strings.Contains(body, "exit 0") {
-		t.Errorf("regen-timeline v7 missing the advisory warn + exit 0 path")
+	if !strings.Contains(body, "regen-on-main") {
+		t.Errorf("regen-timeline v8 missing the separate regen-on-main job")
 	}
-	// The PAT auto-push path is retained (the only path that pushes).
-	if !strings.Contains(body, "LOGMIND_AUTO_REGEN_PAT") {
-		t.Errorf("regen-timeline v7 missing the LOGMIND_AUTO_REGEN_PAT auto-push path")
+	// The PR gate BLOCKS: a branch edit to a derived doc must `exit 1`. This is
+	// the exact inversion of the old advisory contract and the structural
+	// guarantee that a derived-doc conflict can never merge.
+	if !strings.Contains(body, "exit 1") {
+		t.Errorf("regen-timeline v8 PR gate must `exit 1` on a derived-doc edit (blocking)")
 	}
-	// Regen commits carry the [skip-logmind] convention (SPEC §5.1/§5.2).
+	// The gate detects the edit via the PR's own file list (GitHub's 3-dot
+	// diff = branch-vs-merge-base, fork-correct) and matches ONLY the two
+	// derived docs as whole lines.
+	if !strings.Contains(body, "gh pr diff") || !strings.Contains(body, "--name-only") {
+		t.Errorf("regen-timeline v8 PR gate must use `gh pr diff --name-only`")
+	}
+	if !strings.Contains(body, `grep -qxE 'docs/(timeline|file-structure)\.md'`) {
+		t.Errorf("regen-timeline v8 PR gate must match exactly the two derived docs as whole lines")
+	}
+	// Event-gated jobs: gate runs only on pull_request, regen only on push.
+	if !strings.Contains(body, "github.event_name == 'pull_request'") ||
+		!strings.Contains(body, "github.event_name == 'push'") {
+		t.Errorf("regen-timeline v8 must event-gate the two jobs (pull_request gate / push regen)")
+	}
+	// The main regen commit carries the [skip-logmind] convention and pushes
+	// via the explicit PAT URL (never a persisted/GITHUB_TOKEN credential).
 	if !strings.Contains(body, "[skip-logmind]") {
-		t.Errorf("regen-timeline v7 PAT-push commit missing the [skip-logmind] prefix")
-	}
-	// The job must NOT filter itself out by actor: a filtered required check
-	// strands as "Expected — Waiting…". Bots/forks take the advisory path.
-	if strings.Contains(body, "github.actor != ") {
-		t.Errorf("regen-timeline v7 must not filter the job by actor (a filtered required check hangs forever)")
-	}
-	// Fork PRs must reach the advisory path, not die at checkout: the
-	// checkout MUST set `repository:` to the PR head repo (a fork's head_ref
-	// does not exist on the base repo, so checkout would otherwise fail red).
-	if !strings.Contains(body, "repository: ${{ github.event.pull_request.head.repo.full_name") {
-		t.Errorf("regen-timeline v7 checkout must set repository to the PR head repo (else fork PRs fail at checkout)")
-	}
-	// The advisory diff display MUST be SIGPIPE/pipefail-guarded: a large
-	// stale diff piped into `head` exits 141 under `set -euo pipefail` and
-	// would abort the job before `exit 0` — re-blocking on big diffs.
-	if !strings.Contains(body, "| head -80 || true") {
-		t.Errorf("regen-timeline v7 advisory diff must be `|| true`-guarded against SIGPIPE/pipefail")
-	}
-	// GITHUB_TOKEN must never push: the workflow token stays read-only and
-	// the push (if any) uses the explicit PAT-credentialed URL.
-	if !strings.Contains(body, "contents: read") {
-		t.Errorf("regen-timeline v7 must keep the workflow token read-only (contents: read)")
+		t.Errorf("regen-timeline v8 main regen commit missing the [skip-logmind] prefix")
 	}
 	if !strings.Contains(body, "x-access-token:${PAT}") {
-		t.Errorf("regen-timeline v7 PAT push must use the explicit PAT URL, not a persisted/GITHUB_TOKEN credential")
+		t.Errorf("regen-timeline v8 main push must use the explicit PAT URL")
 	}
-	// The PAT/token must not be persisted into .git during regeneration/build.
 	if !strings.Contains(body, "persist-credentials: false") {
-		t.Errorf("regen-timeline v7 checkout must set persist-credentials: false")
+		t.Errorf("regen-timeline v8 regen-on-main checkout must set persist-credentials: false")
+	}
+	// The PR gate reads the PR file list via `gh pr diff`, which needs
+	// pull-requests:read. Because specifying ANY permission zeroes the rest,
+	// this MUST be explicit or the gate 403s and fails-closed on every PR.
+	if !strings.Contains(body, "pull-requests: read") {
+		t.Errorf("regen-timeline v8 must grant pull-requests: read (else gh pr diff 403s and blocks every PR)")
+	}
+	// No-PAT is a freshness-only gap, not a failure: warn + exit 0 (never blocks
+	// the push event; the invariant guarantee lives in the PR gate, not here).
+	if !strings.Contains(body, "::warning") || !strings.Contains(body, "exit 0") {
+		t.Errorf("regen-timeline v8 regen-on-main must warn + exit 0 when no PAT (freshness-only)")
 	}
 }
 
