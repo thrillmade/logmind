@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -357,5 +358,66 @@ func TestTopLevel_FalseOutsideRepo(t *testing.T) {
 	dir := t.TempDir()
 	if top, ok := TopLevel(dir); ok || top != "" {
 		t.Fatalf("TopLevel(%q) = (%q, %v); want (\"\", false)", dir, top, ok)
+	}
+}
+
+// TestRestorePathsToHead_RevertsBranchEdit: RestorePathsToHead discards an
+// unstaged edit and puts the working-tree copy back to HEAD's content — the
+// primitive the L1 zero-conflict guard relies on.
+func TestRestorePathsToHead_RevertsBranchEdit(t *testing.T) {
+	repo := initRepo(t) // git init + committed README.md
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v2-edited"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := RestorePathsToHead(repo, "a.txt"); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(got) != "v1" {
+		t.Fatalf("want restored v1, got %q", string(got))
+	}
+}
+
+// TestShowFile_ReadsRefContent: ShowFile reads a path's content at a ref
+// without touching the working tree, and reports ok=false for a path that
+// does not exist at that ref.
+func TestShowFile_ReadsRefContent(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	got, ok := ShowFile(repo, "HEAD", "a.txt")
+	if !ok || got != "v1" {
+		t.Fatalf("ShowFile HEAD:a.txt = %q,%v want v1,true", got, ok)
+	}
+	if _, ok := ShowFile(repo, "HEAD", "missing.txt"); ok {
+		t.Fatal("ShowFile of missing path should be false")
+	}
+}
+
+// TestMergeBase_ReturnsCommonAncestor: MergeBase(repo, mainSha) resolves to a
+// non-empty SHA when ref and HEAD share history — the primitive `warp` and the
+// pulse main-compare probe both build on.
+func TestMergeBase_ReturnsCommonAncestor(t *testing.T) {
+	repo := initRepo(t)
+	mainSha := strings.TrimSpace(revParse(t, repo, "HEAD"))
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	got, ok := MergeBase(repo, mainSha)
+	if !ok || got == "" {
+		t.Fatalf("MergeBase(repo, %q) = (%q, %v); want a non-empty SHA", mainSha, got, ok)
+	}
+	if got != mainSha {
+		t.Fatalf("MergeBase = %q; want %q (mainSha is an ancestor of HEAD)", got, mainSha)
+	}
+}
+
+// TestMergeBase_FalseOnUnknownRef: an unresolvable ref is best-effort
+// ("", false), not an error the caller must special-case.
+func TestMergeBase_FalseOnUnknownRef(t *testing.T) {
+	repo := initRepo(t)
+	if got, ok := MergeBase(repo, "does-not-exist"); ok || got != "" {
+		t.Fatalf("MergeBase(unknown ref) = (%q, %v); want (\"\", false)", got, ok)
 	}
 }

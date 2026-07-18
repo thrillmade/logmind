@@ -558,6 +558,50 @@ func RunCaptured(repoRoot string, args ...string) (stdout, stderr string, err er
 	return so.String(), se.String(), err
 }
 
+// MergeBase returns the merge-base commit SHA of ref and HEAD. Best-effort:
+// ("", false) on any error (ref missing, no common ancestor, not a repo).
+func MergeBase(repoRoot, ref string) (string, bool) {
+	out, _, err := RunCaptured(repoRoot, "merge-base", ref, "HEAD")
+	if err != nil {
+		return "", false
+	}
+	sha := strings.TrimSpace(out)
+	return sha, sha != ""
+}
+
+// Fetch runs `git fetch <remote> <ref>` (a NETWORK call). Used only by explicit
+// commands (logmind warp) — never the `logmind log` hot path.
+func Fetch(repoRoot, remote, ref string) error {
+	_, _, err := RunCaptured(repoRoot, "fetch", remote, ref)
+	return err
+}
+
+// ShowFile returns the content of path at ref (`git show <ref>:<path>`).
+// ("", false) if the path does not exist at ref or on any error.
+func ShowFile(repoRoot, ref, path string) (string, bool) {
+	out, _, err := RunCaptured(repoRoot, "show", ref+":"+path)
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+// RestorePathsToHead restores each path to its committed (HEAD) content in BOTH
+// the index and the working tree (`git checkout HEAD -- <path>`), discarding any
+// staged or unstaged change. Per-path and best-effort: a path untracked at HEAD
+// errors for that path only and is skipped; the first error (if any) is returned
+// for logging but callers generally ignore it (the derived docs are purely
+// generated, so a failed restore just leaves the pre-existing state).
+func RestorePathsToHead(repoRoot string, paths ...string) error {
+	var firstErr error
+	for _, p := range paths {
+		if _, _, err := RunCaptured(repoRoot, "checkout", "HEAD", "--", p); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // AddPaths runs `git add <path>...` against repoRoot. Returns a
 // non-nil error only when git itself fails — callers wrap it in
 // best-effort logic where appropriate (e.g., installer hooks).

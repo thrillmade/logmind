@@ -15,3 +15,12 @@
 
 ---
 
+## 2026-07-17 20:26 - Foundation: gitcli MergeBase/Fetch/ShowFile/RestorePathsToHead + shared derivedDocPaths/onNonDefaultBranch
+
+**Reasoning:** Thin git-wrapper helpers and the single definition of the two governed docs plus the non-default-branch predicate, consumed by L1 log, warp, the pulse probe, and context refresh
+
+**Implications:**
+- Fetch is the only network helper and is never called from the log hot path; onNonDefaultBranch is conservative-false so non-repo/detached/default paths keep pre-v2.0.0 behavior
+
+---
+
