@@ -163,6 +163,12 @@ func BuildPostMergeBody() string {
 		"  # in place; strip it so the bare-name comparison below works.\n" +
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
+		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
+		"    # v2.0.0 derived-docs-on-main: never regenerate on a non-default branch —\n" +
+		"    # the branch must keep the derived docs byte-identical to its main\n" +
+		"    # merge-base (the zero-conflict invariant). main regenerates post-merge.\n" +
+		"    exit 0\n" +
+		"  fi\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ]; then\n" +
 		"    head_sha=$(git rev-parse HEAD 2>/dev/null || true)\n" +
 		"    origin_sha=$(git rev-parse \"origin/$default\" 2>/dev/null || true)\n" +
@@ -202,11 +208,15 @@ func BuildPostRewriteBody() string {
 		"# v0.6.10: hook-version marker embedded above for doctor drift detection.\n" +
 		"\n" +
 		"if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then\n" +
-		"  if [ -d docs ]; then\n" +
+		"  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)\n" +
+		"  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)\n" +
+		"  default=${default#origin/}\n" +
+		"  [ -z \"$default\" ] && default=main\n" +
+		"  # v2.0.0: regenerate only on the default branch (invariant: branches never\n" +
+		"  # edit the derived docs). A rebase/amend on a feature branch leaves them as-is.\n" +
+		"  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ] && [ -d docs ]; then\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
 		"    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n" +
-		"    # Stage the regens if they changed anything; user can `git commit --amend`\n" +
-		"    # or include in their next commit.\n" +
 		"    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true\n" +
 		"  fi\n" +
 		"fi\n"

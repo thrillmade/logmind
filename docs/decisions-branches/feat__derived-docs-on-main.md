@@ -35,3 +35,14 @@
 
 ---
 
+## 2026-07-17 20:45 - L0: post-merge and post-rewrite hooks regenerate derived docs on the default branch only
+
+**Reasoning:** A rebase/amend/merge on a feature branch previously regenerated (post-rewrite even git-added) the derived docs, diverging the branch from its main merge-base; gating regen to the default branch keeps branches clean so merges never conflict. Adversarial panel confirmed no feature-branch regen path; test strengthened to pin the full guard against an operator-precedence bug
+
+**Alternatives considered:** Rely on the merge driver alone (rejected: GitHub cannot run it, so PRs still conflict)
+
+**Implications:**
+- Over-gating when origin/HEAD is unset and the default is not literally main is freshness-only never a conflict, and CI regen-on-main is the authority for main freshness; golden fixtures updated for the sanctioned v2.0.0 body change
+
+---
+
