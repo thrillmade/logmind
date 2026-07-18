@@ -68,3 +68,12 @@
 
 ---
 
+## 2026-07-17 21:27 - Task 9: headline integration test — two concurrent branches merge with zero derived-doc conflict
+
+**Reasoning:** End-to-end regression guard for the whole invariant — each branch dirties timeline.md (simulating a stray hook regen), logs, and the commit still carries mains version (L1 restored it); both branches then merge into main with no conflict. Non-trivial: without L1 the per-branch assertion fails immediately and the second merge three-way conflicts
+
+**Implications:**
+- Proves the guarantee holds through the real logmind log path plus git merge, not just per-layer unit tests
+
+---
+
