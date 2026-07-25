@@ -58,21 +58,46 @@ jobs:
           set -euo pipefail
           ./bin/logmind timeline --write docs/timeline.md
           ./bin/logmind file-structure --write docs/file-structure.md
+      # Mint a 1-hour installation token for the `skdd-steward[bot]` App
+      # (org secrets keep their legacy THRILLMADE_ORCHESTRATOR_* names). This
+      # identity — NOT a PAT — is the one carrying ruleset bypass, which the
+      # push below REQUIRES: `main` is governed by a "changes must be made
+      # through a pull request" rule, so a plain credentialed push is rejected
+      # with GH013 no matter how much repo scope the token has.
+      # See docs/orchestrator-app.md for the App spec + rotation.
+      - name: Mint steward App installation token
+        id: app_token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
+          private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}
+          owner: thrillmade
+          repositories: logmind
+
       - name: Commit + push if changed
         env:
-          PAT: ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}
+          STEWARD_TOKEN: ${{ steps.app_token.outputs.token }}
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain -- docs/timeline.md docs/file-structure.md)" ]; then
             echo "Derived docs already current on main."
             exit 0
           fi
-          if [ -z "${PAT:-}" ]; then
-            echo "::warning title=Derived docs stale on main::No LOGMIND_AUTO_REGEN_PAT configured; cannot push the regen. main is momentarily stale until the next push or a manual regen. (No conflict risk — this is a freshness-only gap.)"
+          if [ -z "${STEWARD_TOKEN:-}" ]; then
+            echo "::warning title=Derived docs stale on main::Could not mint a steward token; cannot push the regen. main is momentarily stale until the next push or a manual regen. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "skdd-steward[bot]"
+          git config user.email "skdd-steward[bot]@users.noreply.github.com"
           git add docs/timeline.md docs/file-structure.md
           git commit -m "[skip-logmind] chore: regen derived docs"
-          git push "https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"
+          # Degrade, never fail: a rejected push (missing ruleset bypass, or a
+          # race with another push to main) leaves main's derived docs stale for
+          # one cycle — a freshness gap, never a conflict risk — and the next
+          # merge regenerates them. Failing the job here would red-light main
+          # for something that is by construction harmless.
+          if ! git push "https://x-access-token:${STEWARD_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"; then
+            echo "::warning title=Derived-doc regen could not be pushed to main::The push was rejected (most likely the steward App lacks a ruleset bypass for 'changes must be made through a pull request', or another push won a race). main's derived docs are stale by one cycle and will be regenerated on the next merge. No conflict risk."
+            exit 0
+          fi
