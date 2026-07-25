@@ -77,3 +77,12 @@
 
 ---
 
+## 2026-07-25 14:58 - Document the derived-docs-on-main model in docs/plan.md and close the orphan-link gate
+
+**Reasoning:** docs/plan.md is required reading per AGENTS.md but never described the v2 invariant, and the implementation plan had zero inbound links which red-lit check-links on PR 236; documenting the model rather than adding a bare link fixes both and closes a Tier-1 cleanup item
+
+**Implications:**
+- check-links now reports all markdown links resolve and no orphans found
+
+---
+

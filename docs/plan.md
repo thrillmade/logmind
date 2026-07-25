@@ -193,6 +193,30 @@ auto-fix in the `check-doc-links` workflow).
   old dual-mode (branch-divergent vs. main-canonical) design — less
   config surface, no risk of the two renderers drifting apart
 
+### Derived docs: regenerated at the integration point (v2.0.0)
+- **The invariant:** on a non-default branch, `docs/timeline.md` and
+  `docs/file-structure.md` stay byte-identical to their merge-base with the
+  default branch. A branch never edits them; they are regenerated on the
+  default branch after a merge. Because the branch side of the file is
+  unchanged, git takes the default branch's copy silently — **a merge conflict
+  on a derived doc is impossible by construction**, without relying on the
+  merge driver (which is client-side and so cannot run on a server-side merge —
+  the reason PRs still showed conflicts before v2.0.0).
+- **Why reverting a branch-side edit is always safe:** both files are pure
+  functions of committed sources (`timeline.md` of the decision files,
+  `file-structure.md` of the tracked tree). Discarding a branch-local edit
+  cannot lose information, which is what licenses silent self-heal.
+- **Enforced in layers:** hooks regenerate on the default branch only ·
+  `logmind log` restores both files to HEAD before staging on a branch ·
+  a pre-commit restore covers raw `git commit` · CI `check-derived-docs`
+  blocks a PR that modified either file.
+- **Staying current on a branch:** `logmind warp` refreshes the working copy
+  from the default branch (read-only — it never commits, which would break the
+  pin), `logmind context` renders the last-fetched default-branch copy, and the
+  pulse nudges when the default branch has advanced.
+- Design record: [derived-docs-on-main implementation plan](superpowers/plans/2026-07-17-derived-docs-on-main.md).
+  Normative backing: SPEC §0.3.2 integration-point regeneration mode.
+
 ### Git as audit trail
 - Every decision is one commit; git history is the timeline's ground
   truth; diffs show what changed when
