@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thrillmade/logmind/internal/claudehook"
+	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/version"
 )
 
@@ -93,6 +94,7 @@ func TestCollectStatus_FreshRepoListsAllProbes(t *testing.T) {
 		"AGENTS.md", ".gitattributes (merge driver)",
 		"git config (merge driver)", "post-merge hook",
 		"post-rewrite hook", "commit-msg hook",
+		"pre-commit hook (derived-docs pin)",
 		"Claude Code PreToolUse guard",
 		"logmind on PATH",
 	} {
@@ -197,6 +199,7 @@ func TestCollectLogmindStatusFast_ExcludesSubprocessProbes(t *testing.T) {
 		"regen-timeline.yml", "check-doc-links.yml", "logmind-self-update.yml", "check-decisions.yml",
 		"AGENTS.md", ".gitattributes (merge driver)",
 		"post-merge hook", "post-rewrite hook", "commit-msg hook",
+		"pre-commit hook (derived-docs pin)",
 		"Claude Code PreToolUse guard",
 	} {
 		if !contains(names, want) {
@@ -653,5 +656,98 @@ func revertClaudeHookMarker(t *testing.T, dir string) {
 	reverted := strings.ReplaceAll(string(data), version.Version, "0.1.0-FAKE")
 	if err := os.WriteFile(path, []byte(reverted), 0o644); err != nil {
 		t.Fatalf("write reverted settings.json: %v", err)
+	}
+}
+
+// --- probePreCommitHook (L2a / v2.0.0 derived-docs pin-preservation) -----
+
+// fakeGitDir plants a bare `.git/hooks/` directory under dir — enough for
+// probePreCommitHook's (and probeHook's) `.git`-presence check, without
+// needing a real `git init`. File-read-only probes only ever stat/read
+// paths, so this is a faithful, hermetic fixture.
+func fakeGitDir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
+		t.Fatalf("mkdir .git/hooks: %v", err)
+	}
+}
+
+func TestProbePreCommitHook_MissingOnFreshRepo(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	row := probePreCommitHook(dir)
+	if row.Drift != "missing" {
+		t.Errorf("Drift = %q; want missing", row.Drift)
+	}
+	if row.Installed {
+		t.Errorf("Installed = true; want false (no pre-commit hook on disk)")
+	}
+}
+
+// TestProbePreCommitHook_ForeignHookLeftAlone pins the "foreign, not
+// markerless/stale" classification (ruling 5): a pre-commit hook that
+// predates PreCommitMarker — here, the legacy `logmind install-hook`
+// check-decisions body — is reported as Installed=true, Drift="foreign", so
+// classifyLogmindDrift treats it exactly like a missing hook (benign, never
+// flips Overall to DRIFT) instead of "stale" (which WOULD flip it).
+func TestProbePreCommitHook_ForeignHookLeftAlone(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	foreign := "#!/bin/sh\n# logmind check-decisions — hang-guarded (issue #213)\nlogmind check-decisions\n"
+	mustWrite(t, filepath.Join(dir, ".git", "hooks", "pre-commit"), foreign)
+
+	row := probePreCommitHook(dir)
+	if row.Drift != "foreign" {
+		t.Errorf("Drift = %q; want foreign", row.Drift)
+	}
+	if !row.Installed {
+		t.Errorf("Installed = false; want true (a foreign hook IS present on disk)")
+	}
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "OK" {
+		t.Errorf("Overall = %q; want OK — a foreign pre-commit hook must not flip Overall to DRIFT", r.Overall)
+	}
+}
+
+func TestProbePreCommitHook_CurrentAfterInstall(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	if _, err := hooks.InstallPreCommit(dir); err != nil {
+		t.Fatalf("InstallPreCommit: %v", err)
+	}
+	row := probePreCommitHook(dir)
+	if row.Drift != "current" {
+		t.Errorf("Drift = %q; want current", row.Drift)
+	}
+	if row.Marker == nil || *row.Marker != version.Version {
+		t.Errorf("Marker = %v; want %v", row.Marker, version.Version)
+	}
+}
+
+func TestProbePreCommitHook_StaleOnRevertedMarker(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	if _, err := hooks.InstallPreCommit(dir); err != nil {
+		t.Fatalf("InstallPreCommit: %v", err)
+	}
+	path := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pre-commit: %v", err)
+	}
+	reverted := strings.ReplaceAll(string(data), version.Version, "0.1.0-FAKE")
+	if err := os.WriteFile(path, []byte(reverted), 0o755); err != nil {
+		t.Fatalf("write reverted pre-commit: %v", err)
+	}
+
+	row := probePreCommitHook(dir)
+	if row.Drift != "stale" {
+		t.Errorf("Drift = %q; want stale", row.Drift)
+	}
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "DRIFT" {
+		t.Errorf("Overall = %q; want DRIFT with stale pre-commit marker", r.Overall)
 	}
 }

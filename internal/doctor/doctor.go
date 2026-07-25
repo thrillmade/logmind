@@ -138,6 +138,16 @@ type StatusReport struct {
 	// spec_file is unset. Like SummariesNeeded, this NEVER affects Overall —
 	// the spec fold-in is a nice-to-have, not a gate.
 	SpecAdvisories []string `json:"spec_advisories"`
+
+	// DerivedDocsAdvisories is an ADVISORY list (v2.0.0 B6, the derived-docs
+	// adoption gate's version floor) reporting: a repo that declared
+	// `derived_docs: {mode: integration-point}` without a `min_binary`
+	// floor, or one whose declared floor the RUNNING binary doesn't
+	// satisfy (internal/version.SatisfiesMin). Empty for a "driver"-mode
+	// repo (the default) — there's nothing to warn about until a repo
+	// opts in. Like SpecAdvisories, this NEVER affects Overall: the floor
+	// is a nudge for contributors to upgrade, not a hard gate.
+	DerivedDocsAdvisories []string `json:"derived_docs_advisories"`
 }
 
 // ToJSON serialises the report with 2-space indent, matching Python's
@@ -203,13 +213,14 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 	}
 
 	return StatusReport{
-		ProjectRoot:     projectRoot,
-		Tools:           tools,
-		Overall:         overall,
-		NetworkUsed:     false,
-		Suggestions:     suggestions,
-		SummariesNeeded: collectSummariesNeeded(projectRoot),
-		SpecAdvisories:  collectSpecAdvisories(projectRoot),
+		ProjectRoot:           projectRoot,
+		Tools:                 tools,
+		Overall:               overall,
+		NetworkUsed:           false,
+		Suggestions:           suggestions,
+		SummariesNeeded:       collectSummariesNeeded(projectRoot),
+		SpecAdvisories:        collectSpecAdvisories(projectRoot),
+		DerivedDocsAdvisories: collectDerivedDocsAdvisories(projectRoot),
 	}
 }
 
@@ -316,6 +327,44 @@ func collectSpecAdvisories(projectRoot string) []string {
 	return nil
 }
 
+// collectDerivedDocsAdvisories returns the ADVISORY list (v2.0.0 B6) for
+// the derived-docs adoption gate's version floor. Nil for a "driver"-mode
+// repo (the default) — there's nothing to check until a repo declares
+// `derived_docs: {mode: integration-point}`. Two conditions, checked in
+// order (at most one fires — MinBinary is either set or it isn't):
+//
+//   - integration-point mode declared WITHOUT a min_binary floor — a repo
+//     that opted in gets no version-drift warning until it sets one.
+//   - a declared floor the RUNNING binary doesn't satisfy
+//     (internal/version.SatisfiesMin) — the repo expects contributors on
+//     at least this version.
+//
+// Like SpecAdvisories/SummariesNeeded, this NEVER affects Overall: it's a
+// nudge for contributors to upgrade, not a hard gate — doctor makes no
+// network calls and has no way to KNOW a contributor is stuck; it can only
+// compare the binary actually running it against the repo's own
+// declaration.
+func collectDerivedDocsAdvisories(projectRoot string) []string {
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		return nil
+	}
+	if cfg.DerivedDocs.Mode != "integration-point" {
+		return nil
+	}
+	if cfg.DerivedDocs.MinBinary == "" {
+		return []string{
+			`derived_docs.mode is "integration-point" but derived_docs.min_binary is unset — set it (e.g. "2.0.0") in .logmind/config.yml so ` + "`logmind doctor`" + ` can warn contributors running an older binary.`,
+		}
+	}
+	if !version.SatisfiesMin(version.Version, cfg.DerivedDocs.MinBinary) {
+		return []string{
+			fmt.Sprintf("running logmind %s is older than this repo's declared derived_docs.min_binary (%s) — upgrade before relying on integration-point mode's guarantees.", version.Version, cfg.DerivedDocs.MinBinary),
+		}
+	}
+	return nil
+}
+
 var prSuffixRe = regexp.MustCompile(` \(#\d+\)$`)
 
 // stripPRSuffix removes a trailing " (#NN)" PR suffix so a placeholder headline
@@ -342,6 +391,11 @@ func collectLogmindStatus(projectRoot string) ToolStatus {
 	workflows = append(workflows, probePostMergeHook(projectRoot))
 	workflows = append(workflows, probePostRewriteHook(projectRoot))
 	workflows = append(workflows, probeCommitMsgHook(projectRoot))
+	// v2.0.0 L2a probe — the pin-preservation pre-commit hook. Sits right
+	// after commit-msg (the other commit-time git hook) and right before
+	// the Claude Code harness guard (L2b uses the same restore, different
+	// layer) since all three are part of the same enforcement/pin story.
+	workflows = append(workflows, probePreCommitHook(projectRoot))
 	// v2.0.0 Layer 1 probe — the Claude Code harness's PreToolUse guard
 	// entry in .claude/settings.json. Sits right after the commit-msg row
 	// (Layer 2) since the two are the enforcement feature's matched pair.
@@ -421,6 +475,7 @@ func collectLogmindStatusFast(projectRoot string) []WorkflowStatus {
 	workflows = append(workflows, probePostMergeHook(projectRoot))
 	workflows = append(workflows, probePostRewriteHook(projectRoot))
 	workflows = append(workflows, probeCommitMsgHook(projectRoot))
+	workflows = append(workflows, probePreCommitHook(projectRoot))
 	workflows = append(workflows, probeClaudePreToolUseHook(projectRoot))
 	return workflows
 }
@@ -682,6 +737,72 @@ func probeCommitMsgHook(projectRoot string) WorkflowStatus {
 	return probeHook(projectRoot, "commit-msg hook", "commit-msg", hooks.BuildCommitMsgBody())
 }
 
+// probePreCommitHook reports drift for L2a of the v2.0.0 derived-docs
+// pin-preservation design — the `pre-commit` git hook installed by
+// hooks.InstallPreCommit (see hooks.BuildPreCommitBody). Unlike the three
+// probeHook-based probes above, a pre-commit hook file MAY ALREADY be owned
+// by a totally different, older, opt-in logmind feature: `logmind
+// install-hook`'s `check-decisions` body (internal/cli/install_hook.go),
+// which carries no hooks.PreCommitMarker of its own. Neither that body nor
+// a hand-written hook is drift — both are reported "foreign" (Installed:
+// true) rather than "stale"/"markerless", which classifyLogmindDrift falls
+// through to "ok" for, exactly like a missing hook: `logmind init` and
+// `doctor --fix` both deliberately leave a foreign pre-commit hook alone
+// (see hooks.installHook), so there is nothing to auto-fix here either.
+//
+// File-read only (stat + read, no subprocess) — safe for the fast path;
+// see StaleCountFast's doc comment for why that matters.
+func probePreCommitHook(projectRoot string) WorkflowStatus {
+	const displayName = "pre-commit hook (derived-docs pin)"
+	current := version.Version
+	if _, err := os.Stat(filepath.Join(projectRoot, ".git")); err != nil {
+		return WorkflowStatus{
+			Name: displayName, Installed: false,
+			Marker: nil, BundledMarker: nil, Drift: "missing",
+		}
+	}
+	path := filepath.Join(projectRoot, ".git", "hooks", "pre-commit")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return WorkflowStatus{
+			Name: displayName, Installed: false,
+			Marker: nil, BundledMarker: &current, Drift: "missing",
+		}
+	}
+	if !strings.Contains(string(data), hooks.PreCommitMarker) {
+		marker := "foreign pre-commit hook present — left alone"
+		return WorkflowStatus{
+			Name: displayName, Installed: true,
+			Marker: &marker, BundledMarker: &current, Drift: "foreign",
+		}
+	}
+	hookVer, ok := hookInstalledVersion(path)
+	if !ok {
+		marker := "markerless"
+		return WorkflowStatus{
+			Name: displayName, Installed: true,
+			Marker: &marker, BundledMarker: &current, Drift: "markerless",
+		}
+	}
+	if hookVer != current {
+		return WorkflowStatus{
+			Name: displayName, Installed: true,
+			Marker: &hookVer, BundledMarker: &current, Drift: "stale",
+		}
+	}
+	if string(data) != hooks.BuildPreCommitBody() {
+		marker := hookVer + " (content drift)"
+		return WorkflowStatus{
+			Name: displayName, Installed: true,
+			Marker: &marker, BundledMarker: &current, Drift: "stale",
+		}
+	}
+	return WorkflowStatus{
+		Name: displayName, Installed: true,
+		Marker: &hookVer, BundledMarker: &current, Drift: "current",
+	}
+}
+
 // probeClaudePreToolUseHook reports drift for Layer 1 of the v2.0.0
 // commit-enforcement design — the Claude Code harness's PreToolUse guard
 // entry in .claude/settings.json (installed/refreshed by
@@ -822,6 +943,8 @@ func formatDrift(drift string) string {
 		return "markerless"
 	case "missing":
 		return "—"
+	case "foreign":
+		return "foreign (left alone)"
 	}
 	return drift
 }
@@ -900,6 +1023,13 @@ func RenderStatus(r StatusReport) string {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("Canonical spec file (%d):", len(r.SpecAdvisories)))
 		for _, s := range r.SpecAdvisories {
+			lines = append(lines, fmt.Sprintf("  • %s", s))
+		}
+	}
+	if len(r.DerivedDocsAdvisories) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Derived-docs version floor (%d):", len(r.DerivedDocsAdvisories)))
+		for _, s := range r.DerivedDocsAdvisories {
 			lines = append(lines, fmt.Sprintf("  • %s", s))
 		}
 	}

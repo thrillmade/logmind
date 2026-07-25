@@ -376,6 +376,98 @@ func TestInit_RefreshMode_InstallsMissingClaudeHook(t *testing.T) {
 	}
 }
 
+// TestInit_RefreshMode_DriverModeSkipsPreCommitHookInstall: driver mode —
+// both the IMPLICIT default (config.yml as `logmind init` scaffolds it,
+// with no `derived_docs:` section at all) and an EXPLICIT
+// `derived_docs: {mode: driver}` — must NOT install L2a's pre-commit hook.
+// This is the v2.0.0 B6 inversion (see internal/cli/derived.go's
+// integrationPointMode): pin-preservation used to be unconditional-by-
+// default (git.pin_derived_docs: true, now removed); adoption is now
+// opt-in, so a repo that never declares `derived_docs.mode` gets the
+// pre-v2.0.0 behavior. The other three git hooks (post-merge/
+// post-rewrite/commit-msg), which are NOT gated on this key, still get
+// installed — proving the gate is scoped to pre-commit only, not a
+// wholesale `opts.git` failure. See
+// TestInit_RefreshMode_IntegrationPointModeInstallsPreCommitHook below for
+// the opt-in case.
+func TestInit_RefreshMode_DriverModeSkipsPreCommitHookInstall(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		derivedDocsCfg string // "" leaves the config.yml `logmind init` scaffolds untouched
+	}{
+		{name: "implicit default (config.yml as scaffolded)"},
+		{name: "explicit driver mode", derivedDocsCfg: "derived_docs:\n  mode: driver\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := withTempCwd(t, func(d string) {
+				initLogTestGitRepo(t, d)
+				// --no-git here scaffolds docs/ + .logmind/config.yml without
+				// touching git hooks at all (this test is purely about the
+				// refresh-mode gate, exercised by the SECOND init call below).
+				runQuiet(t, []string{"init", "--no-git"})
+
+				if tc.derivedDocsCfg != "" {
+					cfgPath := filepath.Join(d, ".logmind", "config.yml")
+					if err := os.WriteFile(cfgPath, []byte(tc.derivedDocsCfg), 0o644); err != nil {
+						t.Fatalf("write config.yml: %v", err)
+					}
+				}
+
+				// Second call: already-initialized → refresh mode. No --no-git
+				// this time, so applyRefresh's opts.git branch runs for real.
+				root := NewRootCmd()
+				root.SetArgs([]string{"init"})
+				var out, errOut bytes.Buffer
+				root.SetOut(&out)
+				root.SetErr(&errOut)
+				if err := root.Execute(); err != nil {
+					t.Fatalf("refresh init: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+				}
+				if strings.Contains(out.String(), "pre-commit") {
+					t.Errorf("did NOT expect a pre-commit hook line in driver mode:\n%s", out.String())
+				}
+			})
+			if _, err := os.Stat(filepath.Join(dir, ".git", "hooks", "pre-commit")); err == nil {
+				t.Errorf("did NOT expect .git/hooks/pre-commit in driver mode")
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".git", "hooks", "post-merge")); err != nil {
+				t.Errorf("expected .git/hooks/post-merge to still be installed (derived_docs.mode only gates pre-commit): %v", err)
+			}
+		})
+	}
+}
+
+// TestInit_RefreshMode_IntegrationPointModeInstallsPreCommitHook is the
+// opt-in companion to the driver-mode test above: with
+// `derived_docs: {mode: integration-point}` declared, a refresh-mode
+// `logmind init` DOES install L2a's pre-commit hook.
+func TestInit_RefreshMode_IntegrationPointModeInstallsPreCommitHook(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		runQuiet(t, []string{"init", "--no-git"})
+
+		cfgPath := filepath.Join(d, ".logmind", "config.yml")
+		if err := os.WriteFile(cfgPath, []byte("derived_docs:\n  mode: integration-point\n"), 0o644); err != nil {
+			t.Fatalf("write config.yml: %v", err)
+		}
+
+		root := NewRootCmd()
+		root.SetArgs([]string{"init"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("refresh init: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+		}
+		if !strings.Contains(out.String(), "pre-commit") {
+			t.Errorf("expected a pre-commit hook line with derived_docs.mode: integration-point:\n%s", out.String())
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, ".git", "hooks", "pre-commit")); err != nil {
+		t.Errorf("expected .git/hooks/pre-commit with derived_docs.mode: integration-point: %v", err)
+	}
+}
+
 // runQuiet runs a root command silencing stdout/stderr; used to drive
 // setup steps in multi-stage tests without polluting test logs.
 func runQuiet(t *testing.T, args []string) {

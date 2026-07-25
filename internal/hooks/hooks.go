@@ -64,6 +64,19 @@ const PostRewriteMarker = "# logmind post-rewrite hook"
 // to Layer 2 of the commit-enforcement design (see BuildCommitMsgBody).
 const CommitMsgMarker = "# logmind commit-msg hook"
 
+// PreCommitMarker identifies a logmind-installed pre-commit hook — L2a of
+// the v2.0.0 derived-docs pin-preservation design (see BuildPreCommitBody).
+// Distinct from `install-hook`'s OWN, separate, opt-in pre-commit body
+// (internal/cli/install_hook.go's preCommitMarker == "logmind
+// check-decisions"): that body predates this one, serves a different
+// purpose (blocking undocumented commits), and is intentionally left alone
+// by installHook's marker check below — a repo running the legacy
+// check-decisions hook is "foreign" from THIS marker's point of view, and
+// vice versa. Both markers can coexist in principle, but installHook never
+// merges two hook bodies into one file; see BuildPreCommitBody's doc
+// comment for the conservative-interop rule this implies.
+const PreCommitMarker = "# logmind pre-commit hook"
+
 // hookVersion returns the version string embedded in each hook body.
 // Reads from internal/version.Version — kept as a function (not a
 // package-level var) so tests can override it via a build-tagged
@@ -71,6 +84,19 @@ const CommitMsgMarker = "# logmind commit-msg hook"
 func hookVersion() string {
 	return version.Version
 }
+
+// derivedDocsIntegrationPointGrep is the shell fragment every L0 hook body
+// (BuildPostMergeBody / BuildPostRewriteBody) uses to detect this repo's
+// derived-docs adoption signal (v2.0.0 B6) WITHOUT a `logmind` subprocess —
+// git hooks already gate their whole body on `command -v logmind`, but the
+// mode check itself has to work even when that binary can't be trusted to
+// answer (or is momentarily absent) mid-hook, and reading one line out of a
+// YAML file is cheap enough to inline directly. Matches `mode:
+// integration-point`, optionally quoted, allowing leading indentation and
+// trailing whitespace — the exact shape DerivedDocsConfig.Mode's YAML tag
+// renders as. Kept as ONE shared Go constant so both hook bodies (and any
+// future one) never drift from each other on this string.
+const derivedDocsIntegrationPointGrep = `grep -Eq '^[[:space:]]*mode:[[:space:]]*"?integration-point"?[[:space:]]*$' .logmind/config.yml 2>/dev/null`
 
 // BuildPostMergeBody returns the canonical post-merge hook body for
 // the currently-running logmind binary. Byte-identical to the Python
@@ -99,6 +125,13 @@ func hookVersion() string {
 // reintroduce the GITHUB_TOKEN-stranding + self-trigger loop the advisory
 // model exists to avoid. The TestPostMergeBody_RollupInvariants guard pins
 // "regenerates the timeline, never pushes" even across a golden regen.
+//
+// v2.0.0 B6 adoption gate: the non-default-branch skip below fires ONLY when
+// THIS repo has opted into `derived_docs: {mode: integration-point}` (see
+// derivedDocsIntegrationPointGrep). "driver" (the default — including a repo
+// with no `derived_docs:` section at all) regenerates on every branch, the
+// exact pre-v2.0.0 behavior; that's the whole point of the adoption gate — a
+// v2 binary must never silently change a driver-mode repo's behavior.
 func BuildPostMergeBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind post-merge hook\n" +
@@ -164,10 +197,15 @@ func BuildPostMergeBody() string {
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
-		"    # v2.0.0 derived-docs-on-main: never regenerate on a non-default branch —\n" +
-		"    # the branch must keep the derived docs byte-identical to its main\n" +
-		"    # merge-base (the zero-conflict invariant). main regenerates post-merge.\n" +
-		"    exit 0\n" +
+		"    # v2.0.0 B6: only skip regen here when THIS repo declared\n" +
+		"    # derived_docs.mode: integration-point — the branch must then keep\n" +
+		"    # the derived docs byte-identical to its main merge-base (the\n" +
+		"    # zero-conflict invariant); main regenerates post-merge. A repo\n" +
+		"    # that hasn't adopted (mode unset or \"driver\", the default) falls\n" +
+		"    # through and regenerates on every branch — the pre-v2.0.0 behavior.\n" +
+		"    if " + derivedDocsIntegrationPointGrep + "; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"  fi\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ]; then\n" +
 		"    head_sha=$(git rev-parse HEAD 2>/dev/null || true)\n" +
@@ -186,6 +224,12 @@ func BuildPostMergeBody() string {
 // BuildPostRewriteBody returns the canonical post-rewrite hook body
 // for the currently-running logmind binary. See BuildPostMergeBody
 // for the byte-identical-vs-Python contract.
+//
+// v2.0.0 B6 adoption gate: same contract as BuildPostMergeBody — the
+// non-default-branch skip fires ONLY when THIS repo declared
+// `derived_docs: {mode: integration-point}` (see
+// derivedDocsIntegrationPointGrep). "driver" (the default) regenerates
+// after every rebase/amend regardless of branch, the pre-v2.0.0 behavior.
 func BuildPostRewriteBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind post-rewrite hook\n" +
@@ -212,9 +256,17 @@ func BuildPostRewriteBody() string {
 		"  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)\n" +
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
-		"  # v2.0.0: regenerate only on the default branch (invariant: branches never\n" +
-		"  # edit the derived docs). A rebase/amend on a feature branch leaves them as-is.\n" +
-		"  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ] && [ -d docs ]; then\n" +
+		"  # v2.0.0 B6: only skip regen on a non-default branch when THIS repo\n" +
+		"  # declared derived_docs.mode: integration-point (invariant: branches\n" +
+		"  # never edit the derived docs under that mode). A repo that hasn't\n" +
+		"  # adopted (mode unset or \"driver\", the default) falls through to the\n" +
+		"  # regen below regardless of branch — the pre-v2.0.0 behavior.\n" +
+		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
+		"    if " + derivedDocsIntegrationPointGrep + "; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"  fi\n" +
+		"  if [ -n \"$current\" ] && [ -d docs ]; then\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
 		"    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n" +
 		"    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true\n" +
@@ -333,6 +385,82 @@ func BuildCommitMsgBody() string {
 		"exit 0\n"
 }
 
+// BuildPreCommitBody returns the canonical pre-commit hook body — L2a of
+// the v2.0.0 derived-docs pin-preservation design (see internal/cli/derived.go
+// for the invariant, and internal/cli/log.go's commitDecision for L1, the
+// same restore already run by `logmind log` itself).
+//
+// The gap L2a closes: L1 only fires inside `logmind log`. A raw `git commit
+// -am ...` (or any commit that skips `logmind log` entirely) stages
+// whatever docs/timeline.md / docs/file-structure.md currently look like in
+// the working tree — including a stale/dirty copy left behind by something
+// like `logmind warp` deliberately writing the default branch's newer copy
+// into the working tree for review. `guard-commit`'s CarveOutUnderThreshold
+// lets such a commit through (a derived-doc-only change is small), so
+// nothing else in the enforcement stack catches it. This hook does: on a
+// non-default branch, it restores both files to their committed (HEAD)
+// content — in both the index and the working tree — before the commit is
+// built, so the raw commit can never carry a derived-doc change off the
+// zero-conflict invariant.
+//
+// MUST NEVER block a commit. Unlike the commit-msg hook (Layer 2 of commit
+// enforcement, which can legitimately reject a commit), this hook exists
+// solely to keep two files pinned — a purely mechanical, lossless operation
+// (the docs regenerate deterministically from the committed decision files,
+// which travel with the branch and never conflict). It always exits 0,
+// whether or not `.logmind/config.yml` is present, whether or not the
+// restore itself succeeds, and regardless of branch-detection failures.
+//
+// Deliberately pure git — NO `logmind` binary required on PATH, unlike the
+// commit-msg hook's delegation to `logmind guard-commit`. The restore is
+// simple enough (`git checkout HEAD -- <path>`) to inline directly, which
+// keeps this guardrail working in the two places it matters most: a fresh
+// clone or CI runner where logmind might not be installed yet, and a repo
+// where the on-PATH logmind is stale or broken.
+//
+// Branch detection mirrors BuildPostMergeBody / BuildPostRewriteBody
+// exactly: `git rev-parse --abbrev-ref HEAD` for the current branch,
+// `git symbolic-ref --short refs/remotes/origin/HEAD` (stripped of its
+// `origin/` prefix) for the default branch, falling back to "main" when the
+// remote symbolic ref can't be resolved (no origin, detached HEAD, etc.).
+func BuildPreCommitBody() string {
+	return "#!/bin/sh\n" +
+		"# logmind pre-commit hook\n" +
+		HookVersionPrefix + hookVersion() + "\n" +
+		"# Installed by `logmind init` (v2.0.0+). L2a of the derived-docs-on-main\n" +
+		"# pin-preservation design: docs/timeline.md and docs/file-structure.md are\n" +
+		"# purely-derived, main-only artifacts (see internal/cli/derived.go). A raw\n" +
+		"# `git commit` — bypassing `logmind log`, whose own commitDecision restore\n" +
+		"# is Layer 1 — could otherwise sweep a dirtied copy of either file into the\n" +
+		"# commit on a non-default branch, e.g. after `logmind warp` pulls in the\n" +
+		"# default branch's newer copy for review. This hook restores both to their\n" +
+		"# committed (HEAD) content, in both the index and the working tree, right\n" +
+		"# before the commit is built.\n" +
+		"#\n" +
+		"# This hook MUST NEVER block a commit — it always exits 0. The restore is\n" +
+		"# lossless (the docs regenerate deterministically from the committed\n" +
+		"# decision files) so there is nothing to protect by failing closed.\n" +
+		"#\n" +
+		"# Deliberately pure git — no `logmind` binary required on PATH. Unlike the\n" +
+		"# commit-msg hook (which delegates the enforce/allow decision to `logmind\n" +
+		"# guard-commit`), this restore is simple enough to inline directly, which\n" +
+		"# keeps it working in a fresh clone or CI runner before logmind is\n" +
+		"# installed, or when the on-PATH binary is stale or broken.\n" +
+		"\n" +
+		"if [ -f .logmind/config.yml ]; then\n" +
+		"  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)\n" +
+		"  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)\n" +
+		"  # --short on a remote symbolic-ref leaves the `origin/` prefix\n" +
+		"  # in place; strip it so the bare-name comparison below works.\n" +
+		"  default=${default#origin/}\n" +
+		"  [ -z \"$default\" ] && default=main\n" +
+		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
+		"    git checkout HEAD -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true\n" +
+		"  fi\n" +
+		"fi\n" +
+		"exit 0\n"
+}
+
 // InstallPostMerge writes `.git/hooks/post-merge` to the current
 // binary's canonical body. Returns (true, nil) if the file was
 // created or rewritten, (false, nil) if a logmind-marked hook was
@@ -366,6 +494,20 @@ func InstallCommitMsg(repoRoot string) (bool, error) {
 		filepath.Join(repoRoot, ".git", "hooks", "commit-msg"),
 		BuildCommitMsgBody(),
 		CommitMsgMarker,
+	)
+}
+
+// InstallPreCommit writes `.git/hooks/pre-commit`. See InstallPostMerge for
+// the shared contract — including the conservative-interop behavior that
+// matters most here: a pre-commit hook that already exists WITHOUT
+// PreCommitMarker (a hand-written hook, OR the separate, opt-in
+// `logmind check-decisions` body `logmind install-hook` writes — see
+// PreCommitMarker's doc comment) is left completely alone. v2.0.0+.
+func InstallPreCommit(repoRoot string) (bool, error) {
+	return installHook(
+		filepath.Join(repoRoot, ".git", "hooks", "pre-commit"),
+		BuildPreCommitBody(),
+		PreCommitMarker,
 	)
 }
 

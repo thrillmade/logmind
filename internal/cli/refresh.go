@@ -59,6 +59,12 @@ type refreshOpts struct {
 	githubActions      bool // install/refresh .github/workflows/*
 	git                bool // configure merge drivers + install git hooks (no-op outside a git repo)
 	claudeAgentEnabled bool // install/refresh .claude/settings.json PreToolUse guard (Layer 1)
+	// derivedDocsIntegrationPoint gates installing/refreshing L2a's
+	// pre-commit hook (hooks.InstallPreCommit) — resolved from
+	// derived_docs.mode == "integration-point" (default "driver"; see
+	// internal/cli/derived.go's integrationPointMode). Only meaningful when
+	// git is also true (same as the other 3 hooks).
+	derivedDocsIntegrationPoint bool
 }
 
 // applyRefresh runs every idempotent installer that brings a drifted repo
@@ -111,6 +117,16 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 		}
 		if c, _ := hooks.InstallCommitMsg(cwd); c {
 			res.HooksRefreshed = append(res.HooksRefreshed, "commit-msg")
+		}
+		// L2a (pin-preservation) — install ONLY on explicit opt-in
+		// (derived_docs.mode: integration-point). Unlike the three hooks
+		// above, this one is config-gated: a driver-mode repo (the default)
+		// shouldn't have the hook silently installed/reinstalled on the
+		// next `doctor --fix` / `init` refresh.
+		if opts.derivedDocsIntegrationPoint {
+			if c, _ := hooks.InstallPreCommit(cwd); c {
+				res.HooksRefreshed = append(res.HooksRefreshed, "pre-commit")
+			}
 		}
 	}
 

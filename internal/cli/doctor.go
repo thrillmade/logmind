@@ -100,9 +100,10 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return err
 	}
 	res, refreshErr := applyRefresh(cwd, refreshOpts{
-		githubActions:      true,
-		git:                true,
-		claudeAgentEnabled: claudeAgentEnabledFromConfig(cwd),
+		githubActions:               true,
+		git:                         true,
+		claudeAgentEnabled:          claudeAgentEnabledFromConfig(cwd),
+		derivedDocsIntegrationPoint: integrationPointMode(cwd),
 	})
 	if refreshErr != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "error: doctor --fix:", refreshErr)
@@ -165,13 +166,13 @@ func driftCount(r doctor.StatusReport) int {
 }
 
 // residualProbes returns the names of probes still drifted after a fix pass:
-// PATH/version drift and foreign (markerless) hooks, which --fix
-// deliberately does not touch.
+// PATH/version drift and foreign (markerless, or — for the pre-commit hook
+// specifically — "foreign") hooks, which --fix deliberately does not touch.
 func residualProbes(r doctor.StatusReport) []string {
 	var out []string
 	for _, t := range r.Tools {
 		for _, wf := range t.Workflows {
-			if wf.Drift == "stale" || wf.Drift == "markerless" {
+			if wf.Drift == "stale" || wf.Drift == "markerless" || wf.Drift == "foreign" {
 				out = append(out, wf.Name)
 			}
 		}

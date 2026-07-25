@@ -297,6 +297,36 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 
 	evalCwd := evalCwdOr(payload.Cwd, repoRootFlag)
 	repoRoot, enforce, threshold := resolveRepoAndConfig(evalCwd, thresholdFlag, thresholdExplicit)
+
+	// L2b — harness-layer restore (v2.0.0 derived-docs pin-preservation; see
+	// internal/cli/derived.go). ONLY runs when this repo has opted into
+	// `derived_docs: {mode: integration-point}` — see
+	// internal/cli/derived.go's integrationPointMode; "driver" (the
+	// default) never restores here. Deliberately runs BEFORE the
+	// enforce_commits off-ramp below and independent of its outcome:
+	// pin-preservation (derived_docs.mode) and commit enforcement
+	// (git.enforce_commits) are separate knobs, and a repo that opted OUT
+	// of enforcement may still want the zero-conflict invariant protected.
+	//
+	// Harness-layer ONLY — deliberately NOT added to guardCommitGitHook (the
+	// commit-msg layer): commit-msg fires AFTER git has already built the
+	// commit's tree from the index, so restoring files at that point can't
+	// change what's being committed — it would be a confusing no-op. This
+	// layer fires BEFORE git runs at all (Claude Code's PreToolUse guard
+	// intercepts the Bash tool call itself), so it catches two things L2a's
+	// pre-commit git hook can't: `git commit --no-verify` (which skips EVERY
+	// git hook, including pre-commit) and a fresh clone (git hooks aren't
+	// cloned — nothing under .git/ travels with `git clone` — but
+	// .claude/settings.json is regular repo content that IS cloned).
+	//
+	// Silent + best-effort, like every other restore call site: the docs
+	// regenerate deterministically from the committed decision files, so
+	// there's nothing to protect by surfacing a failure here, and doing so
+	// must never perturb the allow/block decision below.
+	if integrationPointMode(repoRoot) && onNonDefaultBranch(repoRoot) {
+		_ = gitcli.RestorePathsToHead(repoRoot, derivedDocPaths...)
+	}
+
 	if !enforce {
 		return 0 // the repo off-ramp: git.enforce_commits: false
 	}

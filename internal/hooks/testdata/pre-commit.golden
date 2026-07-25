@@ -1,0 +1,35 @@
+#!/bin/sh
+# logmind pre-commit hook
+# logmind-hook-version: 2.0.0-dev
+# Installed by `logmind init` (v2.0.0+). L2a of the derived-docs-on-main
+# pin-preservation design: docs/timeline.md and docs/file-structure.md are
+# purely-derived, main-only artifacts (see internal/cli/derived.go). A raw
+# `git commit` — bypassing `logmind log`, whose own commitDecision restore
+# is Layer 1 — could otherwise sweep a dirtied copy of either file into the
+# commit on a non-default branch, e.g. after `logmind warp` pulls in the
+# default branch's newer copy for review. This hook restores both to their
+# committed (HEAD) content, in both the index and the working tree, right
+# before the commit is built.
+#
+# This hook MUST NEVER block a commit — it always exits 0. The restore is
+# lossless (the docs regenerate deterministically from the committed
+# decision files) so there is nothing to protect by failing closed.
+#
+# Deliberately pure git — no `logmind` binary required on PATH. Unlike the
+# commit-msg hook (which delegates the enforce/allow decision to `logmind
+# guard-commit`), this restore is simple enough to inline directly, which
+# keeps it working in a fresh clone or CI runner before logmind is
+# installed, or when the on-PATH binary is stale or broken.
+
+if [ -f .logmind/config.yml ]; then
+  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  # --short on a remote symbolic-ref leaves the `origin/` prefix
+  # in place; strip it so the bare-name comparison below works.
+  default=${default#origin/}
+  [ -z "$default" ] && default=main
+  if [ -n "$current" ] && [ "$current" != "$default" ]; then
+    git checkout HEAD -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true
+  fi
+fi
+exit 0
