@@ -83,6 +83,65 @@ func TestCommitMsgBody_DelegatesToGuardCommit(t *testing.T) {
 	}
 }
 
+// TestPreCommitBody_MatchesGolden pins the L2a pre-commit hook body — the
+// derived-docs pin-preservation guardrail. No Python ancestor (this hook is
+// v2.0.0+/Go-only), same as commit-msg's golden: exists purely so a future
+// refactor that reflows the shell script trips CI loudly instead of
+// silently drifting every consumer's next `doctor --fix`/`init` upgrade.
+func TestPreCommitBody_MatchesGolden(t *testing.T) {
+	checkGolden(t, "pre-commit.golden", BuildPreCommitBody())
+}
+
+// TestPreCommitBody_GatesRestoreAndAlwaysExitsZero pins the L2a contract as
+// INTENT, distinct from the byte-golden above: the restore only runs on a
+// NON-default branch, and the hook exits 0 unconditionally — it must NEVER
+// block a commit. The full guard line (with `!=`, not accidentally
+// flippable to `==`/`||`) is pinned so an operator-bug regression trips
+// this test instead of silently defeating the gate.
+func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
+	body := BuildPreCommitBody()
+
+	for _, must := range []string{
+		`current=$(git rev-parse --abbrev-ref HEAD`,
+		`default=$(git symbolic-ref --short refs/remotes/origin/HEAD`,
+		`default=${default#origin/}`,
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("pre-commit body missing branch detection %q", must)
+		}
+	}
+
+	// The non-default-branch guard itself, pinned in FULL (not just the
+	// `!=` prefix) — the same operator-bug protection
+	// TestPostRewriteHook_NoRegenOnFeatureBranch applies to the post-rewrite
+	// hook's guard: a substitution like `A && B || true` would silently
+	// widen when the restore fires.
+	const guard = `if [ -n "$current" ] && [ "$current" != "$default" ]; then`
+	gi := strings.Index(body, guard)
+	if gi < 0 {
+		t.Fatalf("pre-commit body missing the non-default-branch guard %q", guard)
+	}
+
+	const restore = "git checkout HEAD -- docs/timeline.md docs/file-structure.md"
+	ri := strings.Index(body, restore)
+	if ri < 0 {
+		t.Fatalf("pre-commit body missing the restore command %q", restore)
+	}
+	if n := strings.Count(body, restore); n != 1 {
+		t.Errorf("restore command appears %d time(s); want exactly 1", n)
+	}
+	if ri < gi {
+		t.Errorf("restore command appears BEFORE the non-default-branch guard — it would also run on the default branch")
+	}
+
+	// MUST NEVER block a commit: a top-level (unindented) `exit 0` outside
+	// any conditional guarantees this regardless of the restore's outcome,
+	// missing `.logmind/config.yml`, or a branch-detection failure.
+	if !regexp.MustCompile(`(?m)^exit 0\s*(#.*)?$`).MatchString(body) {
+		t.Errorf("pre-commit body has no top-level `exit 0` — it must NEVER block a commit")
+	}
+}
+
 // TestPostMergeBody_RollupInvariants pins the Slice 2 roll-up contract as
 // INTENT (distinct from the byte-golden): the post-merge hook MUST regenerate
 // the timeline + file-structure (so a main-canonical repo rebuilds its §1.6.4
@@ -110,25 +169,122 @@ func TestPostMergeBody_RollupInvariants(t *testing.T) {
 	}
 }
 
-// TestPostRewriteHook_NoRegenOnFeatureBranch pins the v2.0.0 derived-docs-on-main
-// invariant for the post-rewrite hook: a rebase/amend regenerates (and
-// `git add`s) docs/timeline.md + docs/file-structure.md ONLY on the default
-// branch. On a feature branch (current != default) the hook must leave the
-// derived docs untouched, so the branch stays byte-identical to its main
-// merge-base and merges never conflict.
+// TestPostMergeBody_IntegrationPointModeSkipsFeatureBranchRegen pins the
+// v2.0.0 B6 adoption gate for the post-merge hook: on a non-default branch,
+// the hook exits BEFORE the roll-up regen ONLY when THIS repo declared
+// `derived_docs: {mode: integration-point}` (detected via
+// derivedDocsIntegrationPointGrep against .logmind/config.yml). "driver"
+// (the default) falls through and regenerates regardless of branch — see
+// TestPostMergeBody_DriverModeNoLongerUnconditionallySkipsNonDefaultBranch
+// for the companion proof that the old unconditional skip is gone.
+//
+// Approach: same as the post-rewrite sibling test — no in-package helper
+// fires a real post-merge hook against a live .logmind/config.yml, so this
+// asserts on the BODY STRING. It proves the gate structurally: the
+// mode-check's `exit 0` sits INSIDE the non-default-branch guard, strictly
+// BEFORE the roll-up regen block (itself guarded only by `[ -d docs ]`, no
+// branch condition — see the sibling test below).
+func TestPostMergeBody_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.T) {
+	body := BuildPostMergeBody()
+
+	const branchGuard = `if [ -n "$current" ] && [ "$current" != "$default" ]; then`
+	bgi := strings.Index(body, branchGuard)
+	if bgi < 0 {
+		t.Fatalf("post-merge body missing the non-default-branch guard %q", branchGuard)
+	}
+
+	modeCheck := "if " + derivedDocsIntegrationPointGrep + "; then"
+	mci := strings.Index(body, modeCheck)
+	if mci < 0 {
+		t.Fatalf("post-merge body missing the integration-point mode check %q", modeCheck)
+	}
+	if mci < bgi {
+		t.Errorf("mode check appears BEFORE the non-default-branch guard %q — it must be nested inside it", branchGuard)
+	}
+	// No bare `exit 0` between the guard opening and the mode check — that
+	// would be the OLD unconditional skip lingering alongside the new gate.
+	between := body[bgi:mci]
+	if strings.Contains(between, "exit 0") {
+		t.Errorf("post-merge body has an exit 0 between the branch guard and the mode check — the old unconditional skip must be fully replaced, not just supplemented")
+	}
+
+	exitRel := strings.Index(body[mci:], "exit 0")
+	if exitRel < 0 {
+		t.Fatalf("post-merge body's mode check has no exit 0")
+	}
+	exitIdx := mci + exitRel
+
+	for _, action := range []string{
+		"logmind timeline --write docs/timeline.md",
+		"logmind file-structure --write docs/file-structure.md",
+	} {
+		if n := strings.Count(body, action); n != 1 {
+			t.Errorf("action %q appears %d time(s); want exactly 1", action, n)
+			continue
+		}
+		if strings.Index(body, action) < exitIdx {
+			t.Errorf("action %q appears BEFORE the integration-point mode's exit 0", action)
+		}
+	}
+}
+
+// TestPostMergeBody_DriverModeNoLongerUnconditionallySkipsNonDefaultBranch
+// pins the inversion ruling 3 requires: the roll-up regen actions
+// (BuildPostMergeBody's final `[ -d docs ]` block) must NOT be nested
+// inside any `current != default` OR `current == default` branch
+// condition — driver mode (the default) regenerates after every local
+// merge regardless of branch, matching the pre-v2.0.0 behavior. Only the
+// integration-point mode check (pinned above) may skip it, and only via
+// its own explicit `exit 0`.
+func TestPostMergeBody_DriverModeNoLongerUnconditionallySkipsNonDefaultBranch(t *testing.T) {
+	body := BuildPostMergeBody()
+	const finalGuard = `if [ -d docs ]; then`
+	fgi := strings.LastIndex(body, finalGuard)
+	if fgi < 0 {
+		t.Fatalf("post-merge body missing the final regen guard %q", finalGuard)
+	}
+	// The two roll-up regen calls must sit inside THIS `[ -d docs ]` guard —
+	// not additionally re-gated on a branch-equality condition. We already
+	// proved (in the sibling test) that reaching this point at all requires
+	// falling through both the non-default-branch mode check AND the
+	// default-branch fast-forward check without hitting either `exit 0`; the
+	// only condition left immediately guarding the actions is `-d docs`.
+	for _, action := range []string{
+		"logmind timeline --write docs/timeline.md",
+		"logmind file-structure --write docs/file-structure.md",
+	} {
+		idx := strings.LastIndex(body, action)
+		if idx < fgi {
+			t.Errorf("action %q does not appear after the final `[ -d docs ]` guard %q", action, finalGuard)
+		}
+	}
+}
+
+// TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen pins the
+// v2.0.0 derived-docs-on-main invariant for the post-rewrite hook, UPDATED
+// for the B6 adoption gate: a rebase/amend on a non-default branch skips
+// the regen (and `git add`) of docs/timeline.md + docs/file-structure.md
+// ONLY when THIS repo declared `derived_docs: {mode: integration-point}`
+// (detected via derivedDocsIntegrationPointGrep against
+// .logmind/config.yml). "driver" (the default) regenerates regardless of
+// branch — the exact pre-v2.0.0 behavior; see
+// TestPostRewriteHook_DriverModeNoLongerGatesOnBranch for the companion
+// proof that the OLD unconditional branch guard is gone.
 //
 // Approach: the hooks package has no in-test helper to install + fire a real
-// post-rewrite hook (the initRepoWithLogmind / installHooks / isStagedOrDirty
-// helpers the plan sketches live in internal/cli), and the task forbids
-// inventing duplicates — so this asserts on the BODY STRING instead. It proves
-// the gate structurally: the body detects current/default and every regen+add
-// action sits INSIDE the `[ "$current" = "$default" ]` guard (appears exactly
-// once, only after the guard opens), so a feature-branch rewrite can never
-// reach it.
-func TestPostRewriteHook_NoRegenOnFeatureBranch(t *testing.T) {
+// post-rewrite hook against a live .logmind/config.yml (the
+// initRepoWithLogmind / installHooks / isStagedOrDirty helpers the plan
+// sketches live in internal/cli), and the task forbids inventing
+// duplicates — so this asserts on the BODY STRING instead. It proves the
+// gate structurally: the mode-check's `exit 0` sits INSIDE the
+// non-default-branch guard, and strictly BEFORE the (now
+// branch-unconditional) regen/add actions — so an interpreter reading
+// top-to-bottom exits before ever reaching those actions when (current !=
+// default) AND the repo's config matches integration-point mode.
+func TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.T) {
 	body := BuildPostRewriteBody()
 
-	// The branch-detection the default-branch guard depends on (mirrors
+	// The branch-detection the non-default-branch guard depends on (mirrors
 	// post-merge).
 	for _, must := range []string{
 		`current=$(git rev-parse --abbrev-ref HEAD`,
@@ -140,35 +296,58 @@ func TestPostRewriteHook_NoRegenOnFeatureBranch(t *testing.T) {
 		}
 	}
 
-	// The default-branch guard itself must be present — pinned in FULL,
-	// including the trailing `&& [ -d docs ]; then`. Pinning the whole guard
-	// line (not just the `= "$default"` prefix) is what catches an operator
-	// bug: `A && B || [ -d docs ]` parses as `(A && B) || [ -d docs ]`, which
-	// is true on ANY branch whenever docs/ exists — silently defeating the
-	// gate. That substitution breaks this substring match, so it can't pass.
-	const guard = `if [ -n "$current" ] && [ "$current" = "$default" ] && [ -d docs ]; then`
-	gi := strings.Index(body, guard)
-	if gi < 0 {
-		t.Fatalf("post-rewrite body missing the default-branch guard %q", guard)
+	const branchGuard = `if [ -n "$current" ] && [ "$current" != "$default" ]; then`
+	bgi := strings.Index(body, branchGuard)
+	if bgi < 0 {
+		t.Fatalf("post-rewrite body missing the non-default-branch guard %q", branchGuard)
 	}
 
+	modeCheck := "if " + derivedDocsIntegrationPointGrep + "; then"
+	mci := strings.Index(body, modeCheck)
+	if mci < 0 {
+		t.Fatalf("post-rewrite body missing the integration-point mode check %q", modeCheck)
+	}
+	if mci < bgi {
+		t.Errorf("mode check appears BEFORE the non-default-branch guard %q — it must be nested inside it", branchGuard)
+	}
+
+	exitRel := strings.Index(body[mci:], "exit 0")
+	if exitRel < 0 {
+		t.Fatalf("post-rewrite body's mode check has no exit 0")
+	}
+	exitIdx := mci + exitRel
+
 	// Every regen / stage action must appear EXACTLY ONCE and ONLY AFTER the
-	// guard opens — i.e. it is gated by `current == default`, so a
-	// feature-branch rewrite (current != default) never regenerates or stages
-	// the derived docs. An action appearing before the guard, or twice, would
-	// mean an ungated regen path — the invariant violation this pins against.
+	// mode check's exit 0 — so a non-default branch in integration-point
+	// mode exits before ever reaching these actions, while driver mode (no
+	// grep match) falls through to them regardless of branch.
 	for _, action := range []string{
 		"logmind timeline --write docs/timeline.md",
 		"logmind file-structure --write docs/file-structure.md",
 		"git add docs/timeline.md docs/file-structure.md",
 	} {
 		if n := strings.Count(body, action); n != 1 {
-			t.Errorf("action %q appears %d time(s); want exactly 1 (only inside the guard)", action, n)
+			t.Errorf("action %q appears %d time(s); want exactly 1", action, n)
 			continue
 		}
-		if strings.Index(body, action) < gi {
-			t.Errorf("action %q appears BEFORE the default-branch guard — it would run on a feature branch (invariant violation)", action)
+		if strings.Index(body, action) < exitIdx {
+			t.Errorf("action %q appears BEFORE the integration-point mode's exit 0", action)
 		}
+	}
+}
+
+// TestPostRewriteHook_DriverModeNoLongerGatesOnBranch pins the inversion
+// ruling 3 requires: the OLD unconditional `current == default` guard
+// around the regen/add actions must be GONE. Driver mode (the default —
+// including a repo with no `derived_docs:` section at all) must regenerate
+// on every branch after a rebase/amend, matching the pre-v2.0.0 behavior;
+// only an explicit integration-point-mode grep match (pinned by
+// TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen above)
+// may skip it.
+func TestPostRewriteHook_DriverModeNoLongerGatesOnBranch(t *testing.T) {
+	body := BuildPostRewriteBody()
+	if strings.Contains(body, `[ "$current" = "$default" ]`) {
+		t.Errorf("post-rewrite body still gates the regen on current==default — driver mode must regenerate on every branch regardless of default-branch equality")
 	}
 }
 
@@ -388,6 +567,159 @@ func TestInstallCommitMsg_LeavesForeignHook(t *testing.T) {
 	}
 }
 
+func TestInstallPreCommit_FreshInstall(t *testing.T) {
+	repo := tempRepoWithHooks(t)
+	changed, err := InstallPreCommit(repo)
+	if err != nil {
+		t.Fatalf("InstallPreCommit: %v", err)
+	}
+	if !changed {
+		t.Fatalf("InstallPreCommit returned changed=false on a fresh repo; want true")
+	}
+	body, err := os.ReadFile(filepath.Join(repo, ".git", "hooks", "pre-commit"))
+	if err != nil {
+		t.Fatalf("read pre-commit: %v", err)
+	}
+	if string(body) != BuildPreCommitBody() {
+		t.Fatalf("installed body drifts from BuildPreCommitBody()")
+	}
+}
+
+func TestInstallPreCommit_Idempotent(t *testing.T) {
+	repo := tempRepoWithHooks(t)
+	if _, err := InstallPreCommit(repo); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	changed, err := InstallPreCommit(repo)
+	if err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	if changed {
+		t.Fatalf("InstallPreCommit changed=true on identical second install; want false")
+	}
+}
+
+// TestInstallPreCommit_LeavesForeignHook pins the conservative-interop rule
+// (ruling 2): a pre-commit hook that already exists WITHOUT PreCommitMarker
+// is left completely untouched — no clobber, no append. Two distinct
+// foreign shapes are exercised: a hand-written hook, and the legacy
+// `logmind install-hook`-installed `check-decisions` body (a DIFFERENT
+// logmind-owned hook that predates this feature and carries no
+// PreCommitMarker of its own — see PreCommitMarker's doc comment).
+func TestInstallPreCommit_LeavesForeignHook(t *testing.T) {
+	cases := map[string]string{
+		"hand-written": "#!/bin/sh\n# user's custom pre-commit hook\necho hi\n",
+		"legacy check-decisions": "#!/bin/sh\n" +
+			"# logmind check-decisions — hang-guarded (issue #213): run under a\n" +
+			"# deadline so a wedged logmind binary can never stall `git commit`.\n" +
+			"if command -v logmind >/dev/null 2>&1; then\n" +
+			"    logmind check-decisions &\n" +
+			"    __lm_pid=$!\n" +
+			"    wait \"$__lm_pid\" 2>/dev/null\n" +
+			"    __lm_rc=$?\n" +
+			"    exit \"$__lm_rc\"\n" +
+			"fi\n",
+	}
+	for name, custom := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := tempRepoWithHooks(t)
+			hookPath := filepath.Join(repo, ".git", "hooks", "pre-commit")
+			if err := os.WriteFile(hookPath, []byte(custom), 0o755); err != nil {
+				t.Fatalf("seed foreign hook: %v", err)
+			}
+			changed, err := InstallPreCommit(repo)
+			if err != nil {
+				t.Fatalf("InstallPreCommit: %v", err)
+			}
+			if changed {
+				t.Fatalf("InstallPreCommit changed=true on foreign hook; want false (leave alone)")
+			}
+			got, err := os.ReadFile(hookPath)
+			if err != nil {
+				t.Fatalf("re-read hook: %v", err)
+			}
+			if string(got) != custom {
+				t.Fatalf("foreign hook was modified:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestPreCommitHook_EndToEnd_RawGitCommitDoesNotCarryDirtyDerivedDoc is the
+// L2a proof (ruling task 3b): with the pre-commit hook installed, a raw
+// `git commit -am` (bypassing `logmind log` and its own L1 restore) on a
+// feature branch must NOT let a dirtied docs/timeline.md ride into the
+// commit. This is the exact gap L2a exists to close — the named trigger
+// scenario is `logmind warp` writing the default branch's newer copy into
+// the working tree, but any raw commit reaches the same hook.
+//
+// Needs a REAL git repository (not just the `.git/hooks/` shell
+// tempRepoWithHooks builds) so `git commit` actually invokes the installed
+// hook — see initRealGitRepo.
+func TestPreCommitHook_EndToEnd_RawGitCommitDoesNotCarryDirtyDerivedDoc(t *testing.T) {
+	repo := initRealGitRepo(t)
+
+	docsDir := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	timelinePath := filepath.Join(docsDir, "timeline.md")
+	original := "# Timeline\n\noriginal content\n"
+	if err := os.WriteFile(timelinePath, []byte(original), 0o644); err != nil {
+		t.Fatalf("write timeline.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "file-structure.md"), []byte("# File structure\n"), 0o644); err != nil {
+		t.Fatalf("write file-structure.md: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".logmind"), 0o755); err != nil {
+		t.Fatalf("mkdir .logmind: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".logmind", "config.yml"), []byte("git: {}\n"), 0o644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+	gitCommitAll(t, repo, "initial scaffold")
+
+	// Install the pre-commit hook — mirrors the init/doctor --fix wiring.
+	if _, err := InstallPreCommit(repo); err != nil {
+		t.Fatalf("InstallPreCommit: %v", err)
+	}
+
+	// Move to a feature branch — the restore only fires when current !=
+	// default, and DefaultBranch resolves to whatever local branch `git
+	// init` created (main or master), so any freshly-created branch name
+	// differs from it.
+	gitIn(t, repo, "checkout", "-b", "feat/dirty-timeline")
+
+	// Dirty docs/timeline.md — simulates `logmind warp` (or any stray
+	// write) pulling in a different copy.
+	dirty := "# Timeline\n\nDIRTY simulated warp content\n"
+	if err := os.WriteFile(timelinePath, []byte(dirty), 0o644); err != nil {
+		t.Fatalf("dirty timeline.md: %v", err)
+	}
+
+	// Raw `git commit -am` — NOT `logmind log`. The pre-commit hook must
+	// fire and restore docs/timeline.md to HEAD before the commit is built.
+	gitIn(t, repo, "commit", "-am", "raw commit bypassing logmind log")
+
+	committed, ok := gitShowFile(repo, "HEAD", "docs/timeline.md")
+	if !ok {
+		t.Fatalf("git show HEAD:docs/timeline.md failed")
+	}
+	if committed != original {
+		t.Fatalf("commit carried the dirtied docs/timeline.md; L2a pre-commit hook did not restore it\nwant:\n%s\ngot:\n%s", original, committed)
+	}
+
+	// `git checkout HEAD --` restores both the index AND the working tree —
+	// confirm the on-disk copy was restored too, not just what got committed.
+	onDisk, err := os.ReadFile(timelinePath)
+	if err != nil {
+		t.Fatalf("read timeline.md: %v", err)
+	}
+	if string(onDisk) != original {
+		t.Fatalf("working tree docs/timeline.md not restored either\nwant:\n%s\ngot:\n%s", original, onDisk)
+	}
+}
+
 func TestExtractVersion_FromInstalledHook(t *testing.T) {
 	repo := tempRepoWithHooks(t)
 	if _, err := InstallPostMerge(repo); err != nil {
@@ -503,6 +835,55 @@ func tempRepoWithHooks(t *testing.T) string {
 		t.Fatalf("mkdir .git/hooks: %v", err)
 	}
 	return dir
+}
+
+// initRealGitRepo creates a fresh, REAL git working repo (not just the
+// `.git/hooks/` shell tempRepoWithHooks builds) rooted at t.TempDir(),
+// configured with a deterministic identity and gpg signing disabled.
+// Needed by TestPreCommitHook_EndToEnd_* — those tests run an actual
+// `git commit` so the installed pre-commit hook fires for real. Deliberately
+// uses plain `os/exec` rather than importing internal/gitcli, keeping this
+// package's import graph small (see the package doc comment).
+func initRealGitRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping integration test")
+	}
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	gitIn(t, dir, "config", "user.email", "test@example.com")
+	gitIn(t, dir, "config", "user.name", "Test")
+	gitIn(t, dir, "config", "commit.gpgsign", "false")
+	return dir
+}
+
+// gitIn runs `git <args>` against dir, failing the test on a non-zero exit.
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// gitCommitAll stages everything and commits it in dir.
+func gitCommitAll(t *testing.T, dir, msg string) {
+	t.Helper()
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", msg)
+}
+
+// gitShowFile returns the content of path at ref (`git show <ref>:<path>`)
+// within dir. ("", false) on any failure.
+func gitShowFile(dir, ref, path string) (string, bool) {
+	cmd := exec.Command("git", "show", ref+":"+path)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
 }
 
 func checkGolden(t *testing.T, name, body string) {

@@ -16,6 +16,11 @@
 // §3.1.1 the pulse — see docs/spec.md).
 package version
 
+import (
+	"strconv"
+	"strings"
+)
+
 // Version is the logmind binary's semantic version. Bumped at release.
 // Overridable via -ldflags at build time; see package docstring.
 //
@@ -59,3 +64,69 @@ var Version = "2.0.0-dev"
 // tools can detect protocol skew without parsing the binary version.
 // Overridable via -ldflags at build time; see package docstring.
 var SpecVersion = "1.5.0"
+
+// SatisfiesMin reports whether v is at least min, using a simple
+// major.minor.patch integer compare — NOT full semver precedence. v2.0.0 B6
+// (the derived-docs adoption gate's version floor, `derived_docs.min_binary`)
+// is the only caller today: `logmind doctor` compares the running Version
+// against a repo-declared floor and warns (never errors) when it's older.
+//
+// Deliberately no semver dependency (per the B6 build ruling: "do NOT add a
+// dependency") — go.mod carries none today, and the compare this needs is
+// small enough not to justify one.
+//
+// Both v and min tolerate a leading "v" and a trailing prerelease/build
+// suffix (anything from the first '-' or '+' onward) — the suffix is
+// stripped BEFORE comparing, a deliberate departure from strict semver
+// precedence (where "2.0.0-dev" < "2.0.0"): this repo's own dogfood binary
+// reports "2.0.0-dev" (see Version above), and it must satisfy its own
+// repo's `min_binary: "2.0.0"` floor rather than perpetually warning about
+// itself. A caller that needs strict prerelease ordering isn't served by
+// this helper — there is no such caller today.
+//
+// A version string that isn't parseable as three dot-separated integers
+// (missing a component, non-numeric, empty) makes SatisfiesMin return true
+// for BOTH v and min — fail open. A floor check is an advisory-only nudge
+// (see internal/doctor), never a gate; reporting a false warning off a
+// version string this helper can't even parse would be worse than staying
+// silent.
+func SatisfiesMin(v, min string) bool {
+	vp, ok := parseVersionCore(v)
+	if !ok {
+		return true
+	}
+	mp, ok := parseVersionCore(min)
+	if !ok {
+		return true
+	}
+	for i := 0; i < 3; i++ {
+		if vp[i] != mp[i] {
+			return vp[i] > mp[i]
+		}
+	}
+	return true // equal
+}
+
+// parseVersionCore extracts the [major, minor, patch] integer triple from a
+// version string, stripping a leading "v" and any trailing
+// prerelease/build suffix (from the first '-' or '+' onward) first. Returns
+// ok=false when the (suffix-stripped) remainder isn't exactly three
+// dot-separated non-negative integers.
+func parseVersionCore(s string) (core [3]int, ok bool) {
+	s = strings.TrimPrefix(s, "v")
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		s = s[:i]
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return core, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return core, false
+		}
+		core[i] = n
+	}
+	return core, true
+}

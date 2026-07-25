@@ -95,6 +95,19 @@ func TestDefaultMap_OmitsNewKeys_PreservesConfigListByteParity(t *testing.T) {
 	if _, ok := GetPath(m, "context.spec_file"); ok {
 		t.Errorf("DefaultMap exposes `context.spec_file` — breaks `config list` byte-parity")
 	}
+	// derived_docs.mode / derived_docs.min_binary (v2.0.0 B6 adoption-signal
+	// gate, replacing the removed git.pin_derived_docs) have no Python
+	// ancestor either — same rule as enforce_commits / commit_line_threshold
+	// in GitConfig.
+	if _, ok := m.Get("derived_docs"); ok {
+		t.Errorf("DefaultMap contains `derived_docs` — breaks `config list` byte-parity")
+	}
+	if _, ok := GetPath(m, "derived_docs.mode"); ok {
+		t.Errorf("DefaultMap exposes `derived_docs.mode` — breaks `config list` byte-parity")
+	}
+	if _, ok := GetPath(m, "derived_docs.min_binary"); ok {
+		t.Errorf("DefaultMap exposes `derived_docs.min_binary` — breaks `config list` byte-parity")
+	}
 	fs, ok := m.Get("file_structure")
 	if !ok {
 		t.Fatal("file_structure missing from DefaultMap")

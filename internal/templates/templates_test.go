@@ -236,7 +236,7 @@ func TestWorkflowTemplates_SetupLogmindStepsCarryToken(t *testing.T) {
 	}
 }
 
-// TestRegenTimelineTemplate_V8_BlockingGate pins the v2.0.0
+// TestRegenTimelineTemplate_V9_BlockingGate pins the v2.0.0
 // derived-docs-on-main contract (replaces the Slice-1 advisory model): on a
 // PR the `check-derived-docs` job is NON-mutating and BLOCKING — it fails
 // (exit 1) if the branch edited docs/timeline.md or docs/file-structure.md,
@@ -244,62 +244,86 @@ func TestWorkflowTemplates_SetupLogmindStepsCarryToken(t *testing.T) {
 // what causes cross-PR merge conflicts. Regeneration moves to a SEPARATE
 // main-only `regen-on-main` job. The required-check NAME stays
 // `check-derived-docs` so branch-protection rulesets keep matching.
-func TestRegenTimelineTemplate_V8_BlockingGate(t *testing.T) {
+//
+// v9 (B6 adoption gate): the blocking behavior is itself conditioned on this
+// repo having declared `derived_docs: {mode: integration-point}` — a repo
+// that hasn't adopted it (mode unset or "driver", the default) must PASS
+// with an explanatory message instead of ever blocking.
+func TestRegenTimelineTemplate_V9_BlockingGate(t *testing.T) {
 	body := Workflow("regen-timeline.yml.template")
 
-	// Marker bump v7 → v8 (advisory model → blocking gate + main-only regen).
-	if !strings.Contains(body, "# logmind-template-version: v8") {
-		t.Errorf("regen-timeline template missing v8 marker")
+	// Marker bump v8 → v9 (blocking gate now conditioned on repo adoption).
+	if !strings.Contains(body, "# logmind-template-version: v9") {
+		t.Errorf("regen-timeline template missing v9 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
 	if !strings.Contains(body, "check-derived-docs") {
-		t.Errorf("regen-timeline v8 must keep the check-derived-docs job name (ruleset matching)")
+		t.Errorf("regen-timeline v9 must keep the check-derived-docs job name (ruleset matching)")
 	}
 	if !strings.Contains(body, "regen-on-main") {
-		t.Errorf("regen-timeline v8 missing the separate regen-on-main job")
+		t.Errorf("regen-timeline v9 missing the separate regen-on-main job")
 	}
-	// The PR gate BLOCKS: a branch edit to a derived doc must `exit 1`. This is
-	// the exact inversion of the old advisory contract and the structural
-	// guarantee that a derived-doc conflict can never merge.
+	// The PR gate BLOCKS (for an adopted repo): a branch edit to a derived doc
+	// must `exit 1`. This is the exact inversion of the old advisory contract
+	// and the structural guarantee that a derived-doc conflict can never merge.
 	if !strings.Contains(body, "exit 1") {
-		t.Errorf("regen-timeline v8 PR gate must `exit 1` on a derived-doc edit (blocking)")
+		t.Errorf("regen-timeline v9 PR gate must `exit 1` on a derived-doc edit (blocking)")
 	}
 	// The gate detects the edit via the PR's own file list (GitHub's 3-dot
 	// diff = branch-vs-merge-base, fork-correct) and matches ONLY the two
 	// derived docs as whole lines.
 	if !strings.Contains(body, "gh pr diff") || !strings.Contains(body, "--name-only") {
-		t.Errorf("regen-timeline v8 PR gate must use `gh pr diff --name-only`")
+		t.Errorf("regen-timeline v9 PR gate must use `gh pr diff --name-only`")
 	}
 	if !strings.Contains(body, `grep -qxE 'docs/(timeline|file-structure)\.md'`) {
-		t.Errorf("regen-timeline v8 PR gate must match exactly the two derived docs as whole lines")
+		t.Errorf("regen-timeline v9 PR gate must match exactly the two derived docs as whole lines")
 	}
 	// Event-gated jobs: gate runs only on pull_request, regen only on push.
 	if !strings.Contains(body, "github.event_name == 'pull_request'") ||
 		!strings.Contains(body, "github.event_name == 'push'") {
-		t.Errorf("regen-timeline v8 must event-gate the two jobs (pull_request gate / push regen)")
+		t.Errorf("regen-timeline v9 must event-gate the two jobs (pull_request gate / push regen)")
 	}
 	// The main regen commit carries the [skip-logmind] convention and pushes
 	// via the explicit PAT URL (never a persisted/GITHUB_TOKEN credential).
 	if !strings.Contains(body, "[skip-logmind]") {
-		t.Errorf("regen-timeline v8 main regen commit missing the [skip-logmind] prefix")
+		t.Errorf("regen-timeline v9 main regen commit missing the [skip-logmind] prefix")
 	}
 	if !strings.Contains(body, "x-access-token:${PAT}") {
-		t.Errorf("regen-timeline v8 main push must use the explicit PAT URL")
+		t.Errorf("regen-timeline v9 main push must use the explicit PAT URL")
 	}
-	if !strings.Contains(body, "persist-credentials: false") {
-		t.Errorf("regen-timeline v8 regen-on-main checkout must set persist-credentials: false")
+	if strings.Count(body, "persist-credentials: false") < 2 {
+		t.Errorf("regen-timeline v9 must set persist-credentials: false on BOTH checkouts (the new check-derived-docs one + regen-on-main's)")
 	}
 	// The PR gate reads the PR file list via `gh pr diff`, which needs
 	// pull-requests:read. Because specifying ANY permission zeroes the rest,
 	// this MUST be explicit or the gate 403s and fails-closed on every PR.
 	if !strings.Contains(body, "pull-requests: read") {
-		t.Errorf("regen-timeline v8 must grant pull-requests: read (else gh pr diff 403s and blocks every PR)")
+		t.Errorf("regen-timeline v9 must grant pull-requests: read (else gh pr diff 403s and blocks every PR)")
 	}
 	// No-PAT is a freshness-only gap, not a failure: warn + exit 0 (never blocks
 	// the push event; the invariant guarantee lives in the PR gate, not here).
 	if !strings.Contains(body, "::warning") || !strings.Contains(body, "exit 0") {
-		t.Errorf("regen-timeline v8 regen-on-main must warn + exit 0 when no PAT (freshness-only)")
+		t.Errorf("regen-timeline v9 regen-on-main must warn + exit 0 when no PAT (freshness-only)")
+	}
+
+	// v9 adoption gate: the PR gate must check THIS repo's own
+	// .logmind/config.yml for integration-point mode before ever
+	// considering blocking, and pass with an explanatory message when
+	// unadopted.
+	if !strings.Contains(body, ".logmind/config.yml") {
+		t.Errorf("regen-timeline v9 PR gate must check .logmind/config.yml for adoption")
+	}
+	if !strings.Contains(body, `mode:[[:space:]]*"?integration-point"?`) {
+		t.Errorf("regen-timeline v9 PR gate must grep for the integration-point mode line")
+	}
+	if !strings.Contains(body, "has not adopted derived_docs.mode: integration-point") {
+		t.Errorf("regen-timeline v9 PR gate must explain WHY it passed on an unadopted repo")
+	}
+	// The PR gate now needs a checkout to read .logmind/config.yml — it had
+	// none in v8 (gh pr diff alone was enough).
+	if !strings.Contains(body, "actions/checkout@v7") {
+		t.Errorf("regen-timeline v9 PR gate must add a checkout step to read .logmind/config.yml")
 	}
 }
 

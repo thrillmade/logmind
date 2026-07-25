@@ -193,27 +193,92 @@ auto-fix in the `check-doc-links` workflow).
   old dual-mode (branch-divergent vs. main-canonical) design — less
   config surface, no risk of the two renderers drifting apart
 
-### Derived docs: regenerated at the integration point (v2.0.0)
-- **The invariant:** on a non-default branch, `docs/timeline.md` and
-  `docs/file-structure.md` stay byte-identical to their merge-base with the
-  default branch. A branch never edits them; they are regenerated on the
-  default branch after a merge. Because the branch side of the file is
-  unchanged, git takes the default branch's copy silently — **a merge conflict
-  on a derived doc is impossible by construction**, without relying on the
-  merge driver (which is client-side and so cannot run on a server-side merge —
-  the reason PRs still showed conflicts before v2.0.0).
+### Derived docs: regenerated at the integration point (v2.0.0), opt-in via `derived_docs.mode` (B6)
+- **Opt-in, not default.** The protocol owner HOLD-blocked the first cut of
+  this feature on two findings: the SPEC's claimed compatibility story was
+  fiction (nothing read `file_structure.auto_update`), and the L0/L1 layers
+  applied UNCONDITIONALLY — keyed only on branch name, no per-repo signal —
+  which silently changed a repo's behavior the moment any contributor
+  upgraded to a v2 binary. The fix is `derived_docs.mode` in
+  `.logmind/config.yml`:
+  ```yaml
+  derived_docs:
+    mode: driver              # "driver" (DEFAULT) | "integration-point"
+    min_binary: ""            # e.g. "2.0.0" — SHOULD be set when integration-point
+  ```
+  `mode` **defaults to `driver`** — the exact pre-v2.0.0 behavior (derived
+  docs regenerate on every branch; nothing restores or blocks anything). Only
+  `mode: integration-point` turns on the invariant below. Tolerant parse: an
+  empty/unrecognised `mode` value resolves to `driver` — never an error.
+  Replaces the earlier `git.pin_derived_docs bool` (unreleased at the time;
+  no back-compat needed).
+- **The invariant (integration-point mode only):** on a non-default branch,
+  `docs/timeline.md` and `docs/file-structure.md` stay byte-identical to
+  their merge-base with the default branch. A branch never edits them; they
+  are regenerated on the default branch after a merge. Because the branch
+  side of the file is unchanged, git takes the default branch's copy
+  silently — **a merge conflict on a derived doc is impossible by
+  construction**, without relying on the merge driver (which is client-side
+  and so cannot run on a server-side merge — the reason PRs still showed
+  conflicts before v2.0.0). In **driver mode** (the default) neither the
+  invariant nor any of the layers below apply — a driver-mode repo's derived
+  docs are free to diverge per branch, exactly like a pre-v2.0.0 install.
 - **Why reverting a branch-side edit is always safe:** both files are pure
   functions of committed sources (`timeline.md` of the decision files,
   `file-structure.md` of the tracked tree). Discarding a branch-local edit
   cannot lose information, which is what licenses silent self-heal.
-- **Enforced in layers:** hooks regenerate on the default branch only ·
-  `logmind log` restores both files to HEAD before staging on a branch ·
-  a pre-commit restore covers raw `git commit` · CI `check-derived-docs`
-  blocks a PR that modified either file.
+- **Enforced in layers — ALL FOUR gated on `derived_docs.mode:
+  integration-point` (see `internal/cli/derived.go`'s `integrationPointMode`):**
+  - **L0** — the `post-merge`/`post-rewrite` git hooks. In integration-point
+    mode they regenerate on the default branch only, restoring nothing on a
+    non-default branch. In driver mode they regenerate on EVERY branch — the
+    pre-v2.0.0 behavior. Because the hook body is a standalone `sh` script
+    with no Go process to call `integrationPointMode` from, the check is
+    inlined as a `grep` against `.logmind/config.yml` — one canonical body
+    per hook either way, so `doctor`'s byte-comparison drift detection keeps
+    working unchanged.
+  - **L1** — `logmind log`'s `commitDecision` restores both files to HEAD
+    before staging, on a non-default branch — but only in integration-point
+    mode. Driver mode never restores here.
+  - **L2 (pin-preservation)** — closes the raw-`git commit` gap L0/L1 can't
+    reach (e.g. `logmind warp` deliberately writing the default branch's
+    newer copy into the working tree, then a plain `git commit -am` sweeping
+    it in). Two halves, both gated on integration-point mode: **L2a** is a
+    `pre-commit` git hook — pure git (`git checkout HEAD -- <path>`), no
+    `logmind` binary required, always exits 0 — INSTALLED only in
+    integration-point mode, that restores both files before the commit is
+    built. **L2b** is the SAME restore performed inside `logmind guard-commit
+    --layer harness` (the Claude Code PreToolUse guard), before its
+    allow/block decision — this is what additionally catches `git commit
+    --no-verify` (which skips every git hook, including L2a) and works in a
+    fresh clone (git hooks aren't cloned; `.claude/settings.json`, which
+    invokes guard-commit, is).
+  - **L3** — CI's `check-derived-docs` workflow. It first checks the repo's
+    own `.logmind/config.yml` for `mode: integration-point`; an unadopted
+    repo (driver, the default) PASSES with an explanatory message instead of
+    blocking. Only an adopted repo's PR gate blocks a branch that modified
+    either derived doc.
+  - **Honest caveat:** L0-L2 are local guardrails, not guarantees — every one
+    of them is bypassable (`--no-verify`, deleting or disabling a hook,
+    hand-editing `.claude/settings.json`, or simply using a tool that never
+    goes through git or Claude Code). **L3 (CI) is the only non-bypassable
+    enforcement** — it runs server-side on every PR regardless of what did
+    or didn't happen on the contributor's machine, and even it only applies
+    once a repo has declared integration-point mode.
+- **Version floor.** `min_binary` (e.g. `"2.0.0"`) SHOULD be set alongside
+  `mode: integration-point` — `logmind doctor` compares it against the
+  running binary (`internal/version.SatisfiesMin`, a small major.minor.patch
+  compare with no new dependency; a `X.Y.Z-dev` prerelease satisfies its own
+  `X.Y.Z` floor) and reports an advisory (never a hard failure) when the
+  binary is older, or when integration-point mode is declared without a
+  floor at all.
 - **Staying current on a branch:** `logmind warp` refreshes the working copy
   from the default branch (read-only — it never commits, which would break the
   pin), `logmind context` renders the last-fetched default-branch copy, and the
-  pulse nudges when the default branch has advanced.
+  pulse nudges when the default branch has advanced. These apply regardless of
+  mode.
+- **This repo's own adoption:** logmind dogfoods `derived_docs: {mode:
+  integration-point, min_binary: "2.0.0"}` in its own `.logmind/config.yml`.
 - Design record: [derived-docs-on-main implementation plan](superpowers/plans/2026-07-17-derived-docs-on-main.md).
   Normative backing: SPEC §0.3.2 integration-point regeneration mode.
 

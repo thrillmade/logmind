@@ -100,17 +100,53 @@ verification, and the legacy Python path).
 
 ## Recommended repo settings
 
-`logmind init` ships a GitHub Action (`regen-timeline.yml`) that keeps the
-derived docs (`docs/timeline.md` + `docs/file-structure.md`) current on
-every PR. It **self-heals rather than blocks**: when a derived doc is
-stale it regenerates it and emits an advisory warning — a stale derived
-doc never red-lights your PR. If you configure a `LOGMIND_AUTO_REGEN_PAT`
-secret (fine-grained, repo-scoped, Contents: write), the gate also commits
-and pushes the regenerated docs back to the PR automatically; otherwise
-the derived docs reconcile on merge via the post-merge hook.
+`docs/timeline.md` and `docs/file-structure.md` are **purely derived** —
+under `derived_docs: {mode: integration-point}` in `.logmind/config.yml`, a
+branch never edits them; they regenerate only on `main`. **This is opt-in**:
+`mode` defaults to `"driver"`, which reproduces the pre-v2.0.0 behavior
+(derived docs regenerate on every branch, nothing restores or blocks
+anything) — set `mode: integration-point` to turn the invariant on. Once
+adopted, it's enforced in layers, each closing a gap the previous one can't
+reach:
+
+- **L0** — the `post-merge`/`post-rewrite` git hooks regenerate on the
+  default branch only; a feature branch is never touched. (In driver mode
+  they regenerate on every branch instead.)
+- **L1** — `logmind log` restores both files to `HEAD` before staging, on
+  a non-default branch.
+- **L2 (pin-preservation)** — catches a raw `git commit` that L0/L1 can't
+  reach, e.g. after `logmind warp` deliberately pulls `main`'s newer copy
+  into your working tree for review. **L2a** is a `pre-commit` git hook
+  (pure git, no `logmind` binary required, never blocks a commit),
+  installed only in integration-point mode. **L2b** is the same restore run
+  inside the Claude Code harness's PreToolUse guard, before its allow/block
+  decision — this additionally catches `git commit --no-verify` (which
+  skips every git hook, including L2a) and works in a fresh clone (git
+  hooks aren't cloned; `.claude/settings.json` is).
+- **L3** — the `regen-timeline.yml` GitHub Action's `check-derived-docs`
+  job first checks whether *this repo* declared integration-point mode; an
+  unadopted (driver-mode) repo passes with an explanatory message instead
+  of blocking. An adopted repo's PR gate **blocks a PR** that modified
+  either derived doc, and on every push to `main` regenerates both files
+  and commits + pushes them back (needs a `LOGMIND_AUTO_REGEN_PAT` secret,
+  fine-grained, repo-scoped, Contents: write; without it, the workflow just
+  warns that `main` is momentarily stale — never a conflict risk, only a
+  freshness gap).
+
+Set `derived_docs.min_binary` (e.g. `"2.0.0"`) alongside `mode:
+integration-point` — `logmind doctor` warns when the running binary is
+older than that floor.
+
+L0-L2 are local guardrails, not guarantees — every one is bypassable
+(`--no-verify`, a deleted or disabled hook, hand-editing
+`.claude/settings.json`, or a tool that never goes through git or Claude
+Code). **L3 (CI) is the only non-bypassable enforcement**, since it runs
+server-side on every PR regardless of what did or didn't happen locally —
+and even it only applies once a repo has adopted integration-point mode.
 
 For the derived files to stay conflict-free across *concurrent* PRs, the
-following is **recommended** (no longer required just to avoid blocking):
+following is **recommended** (belt-and-suspenders — L0-L3 already make a
+derived-doc conflict impossible by construction on any single merge):
 
 - **Strict required status checks on `main`** —
   `Settings → Branches → Branch protection rule (or Ruleset)` →
@@ -119,10 +155,12 @@ following is **recommended** (no longer required just to avoid blocking):
   `docs/timeline.md` (and any other derived file) conflict-free across
   concurrent PRs.
 
-Without that toggle, two PRs in flight can both regenerate against
-different base commits; the regenerating `logmind-timeline` merge driver
-resolves the derived files automatically where it's installed, but a
-rebase is still cleaner.
+Without that toggle, the derived-doc invariant still holds per merge — a
+branch's copy is always byte-identical to its own merge-base, so git takes
+`main`'s (regenerated) side automatically, and the `logmind-timeline` merge
+driver is belt-and-suspenders for the rare case a branch diverges anyway.
+Being up to date mainly helps avoid unrelated conflicts elsewhere (e.g. two
+branches editing the same decision file) and keeps history linear.
 
 ### One-command setup via reporulez
 

@@ -35,7 +35,17 @@ import (
 // merged in. Only the subsections B3 actually reads are typed —
 // extending this struct for B4+B5+B6 is purely additive.
 type Config struct {
-	Git           GitConfig           `yaml:"git"`
+	Git GitConfig `yaml:"git"`
+	// DerivedDocs is the v2.0.0 B6 adoption-signal gate for the
+	// derived-docs pin-preservation feature (see DerivedDocsConfig). A
+	// top-level section — not nested under `git:` — because it spans well
+	// beyond git-hook config: it governs L0 (the post-merge/post-rewrite
+	// hook bodies), L1 (logmind log's commitDecision restore), L2a/L2b (the
+	// pre-commit hook + Claude Code harness restore), and L3 (the CI
+	// blocking gate). Replaces the removed `git.pin_derived_docs` key
+	// (unreleased; no back-compat needed) — see DerivedDocsConfig's doc
+	// comment for why.
+	DerivedDocs   DerivedDocsConfig   `yaml:"derived_docs"`
 	Decisions     DecisionsConfig     `yaml:"decisions"`
 	FileStructure FileStructureConfig `yaml:"file_structure"`
 	// Context gates what `logmind context` folds into the cold-start payload
@@ -118,6 +128,57 @@ type GitConfig struct {
 	// `logmind guard-commit` wins over this; this value wins over the
 	// hardcoded fallback of 20.
 	CommitLineThreshold int `yaml:"commit_line_threshold"`
+}
+
+// DerivedDocsConfig mirrors the `derived_docs:` section — the v2.0.0 B6
+// adoption-signal gate for the derived-docs pin-preservation feature (SPEC
+// §0.3.2's integration-point regeneration mode).
+//
+// Replaces the removed `git.pin_derived_docs bool` (unreleased; no
+// back-compat needed). The protocol owner reviewed the SPEC amendment
+// describing pin-preservation and returned HOLD with two blocking findings:
+// (1) the SPEC's compatibility story was fiction — it claimed an old tool
+// would defer via `file_structure.auto_update`, but nothing reads that
+// flag; reproduced against a released binary, an old tool regenerating on
+// a branch, followed by `logmind log --stage all` sweeping the regen in,
+// diverges the branch from its merge-base and fails the new blocking CI
+// gate — violating the SPEC's "older minor version MUST continue to work"
+// rule. (2) "opt-in" wasn't true of the implementation: L0/L1 applied
+// UNCONDITIONALLY, keyed only on branch name, with no per-repo adoption
+// signal — which ALSO silently switched off a driver-mode repo's L0 branch
+// regeneration the moment any contributor upgraded to a v2 binary. This
+// section is the fix: an explicit, per-repo adoption signal that every
+// layer (L0-L3) gates on, defaulting to the pre-v2.0.0 behavior.
+type DerivedDocsConfig struct {
+	// Mode is "driver" (DEFAULT) or "integration-point". Adoption must be
+	// explicit — Mode defaults to "driver", which reproduces logmind's
+	// exact pre-v2.0.0 behavior: derived docs regenerate on every branch,
+	// and no layer in the L0-L3 stack restores or blocks anything. Setting
+	// Mode to "integration-point" opts this repo into the zero-conflict
+	// invariant (see internal/cli/derived.go): docs/timeline.md and
+	// docs/file-structure.md regenerate ONLY on the default branch, a
+	// non-default branch has them restored to HEAD before a commit can
+	// carry a branch-local edit (the pre-commit hook + the Claude Code
+	// harness restore), and a blocking CI gate rejects a PR that edited
+	// them anyway.
+	//
+	// Tolerant parse: an empty or unrecognised value — a typo, a value
+	// written by some future logmind version, whatever — resolves to
+	// "driver". The resolver (internal/cli.integrationPointMode) does an
+	// exact match against "integration-point" and nothing else; config.Load
+	// never errors or crashes over a bad Mode string.
+	Mode string `yaml:"mode"`
+
+	// MinBinary declares the minimum logmind binary version this repo's
+	// integration-point adoption expects contributors to run — e.g.
+	// "2.0.0". SHOULD be set whenever Mode is "integration-point" (a repo
+	// that opts in without declaring a floor gets no version-drift
+	// warning). `logmind doctor` compares this against the running
+	// binary (internal/version.Version, via internal/version.SatisfiesMin)
+	// and reports an advisory — never a hard failure — when the binary is
+	// older. Ignored entirely when Mode is "driver". Default "" (no floor
+	// declared).
+	MinBinary string `yaml:"min_binary"`
 }
 
 // DecisionsConfig mirrors the `decisions:` section.
@@ -203,6 +264,14 @@ func DefaultConfig() Config {
 			CommitMessageTemplate: "logmind: {decision}",
 			EnforceCommits:        true,
 			CommitLineThreshold:   20,
+		},
+		// DerivedDocs.Mode defaults to "driver" — the SAFE, pre-v2.0.0
+		// behavior. Adoption of the zero-conflict invariant
+		// ("integration-point") must be explicit per-repo; see
+		// DerivedDocsConfig's doc comment for the HOLD finding this fixes.
+		DerivedDocs: DerivedDocsConfig{
+			Mode:      "driver",
+			MinBinary: "",
 		},
 		Decisions: DecisionsConfig{
 			MaxRecent:   20,

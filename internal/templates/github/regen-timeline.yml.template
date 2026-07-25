@@ -1,4 +1,4 @@
-# logmind-template-version: v8
+# logmind-template-version: v9
 name: logmind / check-derived-docs
 
 # v2.0.0 derived-docs-on-main. The two derived docs are regenerated ONLY here on
@@ -6,6 +6,12 @@ name: logmind / check-derived-docs
 # edited either derived doc (which would cause cross-PR merge conflicts). A
 # branch's real decisions live in docs/decisions-branches/<branch>.md; timeline
 # and file-structure regenerate on main after merge.
+#
+# v9 (B6 adoption gate): the blocking check only applies to a repo that
+# declared `derived_docs: {mode: integration-point}` in .logmind/config.yml.
+# A repo that hasn't adopted it (mode unset or "driver", the default) PASSES
+# with an explanatory message instead — this workflow must never block a PR
+# in a repo whose derived docs are still free to diverge per branch.
 
 on:
   pull_request:
@@ -26,12 +32,22 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Assert the branch did not edit the derived docs
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # B6 adoption gate: this repo must have explicitly opted into the
+          # zero-conflict invariant. Unadopted (mode unset or "driver", the
+          # default) → pass with an explanatory message; never block.
+          if ! grep -Eq '^[[:space:]]*mode:[[:space:]]*"?integration-point"?[[:space:]]*$' .logmind/config.yml 2>/dev/null; then
+            echo "This repo has not adopted derived_docs.mode: integration-point in .logmind/config.yml — the derived-docs invariant isn't enforced here. Passing (see docs/plan.md's 'Derived docs' section to opt in)."
+            exit 0
+          fi
           changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
           if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|file-structure)\.md'; then
             echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md and/or docs/file-structure.md. These are DERIVED, main-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to main's version — run 'logmind warp', or 'git checkout origin/main -- docs/timeline.md docs/file-structure.md' — then commit. Their real content regenerates on main after merge."
