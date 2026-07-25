@@ -87,7 +87,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Use the regen PAT when available so we can push refreshed
           # workflow files. Falls through to GITHUB_TOKEN when absent —
@@ -122,7 +122,7 @@ jobs:
       # composite actions can't default an input to `github.token`;
       # without it this call is anonymous and shared-runner IPs 403
       # against api.github.com (setup-logmind#4).
-      - uses: thrillmade/setup-logmind@v1.0.0
+      - uses: thrillmade/setup-logmind@v1.0.1
         id: install
         if: steps.pin.outputs.skip == 'false'
         with:
