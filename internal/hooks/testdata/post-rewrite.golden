@@ -19,11 +19,15 @@
 # v0.6.10: hook-version marker embedded above for doctor drift detection.
 
 if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
-  if [ -d docs ]; then
+  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  default=${default#origin/}
+  [ -z "$default" ] && default=main
+  # v2.0.0: regenerate only on the default branch (invariant: branches never
+  # edit the derived docs). A rebase/amend on a feature branch leaves them as-is.
+  if [ -n "$current" ] && [ "$current" = "$default" ] && [ -d docs ]; then
     logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
     logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
-    # Stage the regens if they changed anything; user can `git commit --amend`
-    # or include in their next commit.
     git add docs/timeline.md docs/file-structure.md 2>/dev/null || true
   fi
 fi

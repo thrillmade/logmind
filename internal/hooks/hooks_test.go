@@ -110,6 +110,68 @@ func TestPostMergeBody_RollupInvariants(t *testing.T) {
 	}
 }
 
+// TestPostRewriteHook_NoRegenOnFeatureBranch pins the v2.0.0 derived-docs-on-main
+// invariant for the post-rewrite hook: a rebase/amend regenerates (and
+// `git add`s) docs/timeline.md + docs/file-structure.md ONLY on the default
+// branch. On a feature branch (current != default) the hook must leave the
+// derived docs untouched, so the branch stays byte-identical to its main
+// merge-base and merges never conflict.
+//
+// Approach: the hooks package has no in-test helper to install + fire a real
+// post-rewrite hook (the initRepoWithLogmind / installHooks / isStagedOrDirty
+// helpers the plan sketches live in internal/cli), and the task forbids
+// inventing duplicates — so this asserts on the BODY STRING instead. It proves
+// the gate structurally: the body detects current/default and every regen+add
+// action sits INSIDE the `[ "$current" = "$default" ]` guard (appears exactly
+// once, only after the guard opens), so a feature-branch rewrite can never
+// reach it.
+func TestPostRewriteHook_NoRegenOnFeatureBranch(t *testing.T) {
+	body := BuildPostRewriteBody()
+
+	// The branch-detection the default-branch guard depends on (mirrors
+	// post-merge).
+	for _, must := range []string{
+		`current=$(git rev-parse --abbrev-ref HEAD`,
+		`default=$(git symbolic-ref --short refs/remotes/origin/HEAD`,
+		`default=${default#origin/}`,
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("post-rewrite body missing branch detection %q", must)
+		}
+	}
+
+	// The default-branch guard itself must be present — pinned in FULL,
+	// including the trailing `&& [ -d docs ]; then`. Pinning the whole guard
+	// line (not just the `= "$default"` prefix) is what catches an operator
+	// bug: `A && B || [ -d docs ]` parses as `(A && B) || [ -d docs ]`, which
+	// is true on ANY branch whenever docs/ exists — silently defeating the
+	// gate. That substitution breaks this substring match, so it can't pass.
+	const guard = `if [ -n "$current" ] && [ "$current" = "$default" ] && [ -d docs ]; then`
+	gi := strings.Index(body, guard)
+	if gi < 0 {
+		t.Fatalf("post-rewrite body missing the default-branch guard %q", guard)
+	}
+
+	// Every regen / stage action must appear EXACTLY ONCE and ONLY AFTER the
+	// guard opens — i.e. it is gated by `current == default`, so a
+	// feature-branch rewrite (current != default) never regenerates or stages
+	// the derived docs. An action appearing before the guard, or twice, would
+	// mean an ungated regen path — the invariant violation this pins against.
+	for _, action := range []string{
+		"logmind timeline --write docs/timeline.md",
+		"logmind file-structure --write docs/file-structure.md",
+		"git add docs/timeline.md docs/file-structure.md",
+	} {
+		if n := strings.Count(body, action); n != 1 {
+			t.Errorf("action %q appears %d time(s); want exactly 1 (only inside the guard)", action, n)
+			continue
+		}
+		if strings.Index(body, action) < gi {
+			t.Errorf("action %q appears BEFORE the default-branch guard — it would run on a feature branch (invariant violation)", action)
+		}
+	}
+}
+
 // TestPostMergeBody_ByteIdenticalToPython is THE parity contract for
 // wave B2. It shells to the Python interpreter (skipping the test if
 // Python or the src/logmind package isn't importable), captures

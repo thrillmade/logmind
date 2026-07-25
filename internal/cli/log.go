@@ -875,6 +875,18 @@ func nudgeBranchSummary(target string, forceNonInteractive, stdinOK bool, lines 
 // Commit message uses cfg.Git.CommitMessageTemplate with `{decision}`
 // substituted for the summary. Default is `logmind: <summary>`.
 func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config.Config) error {
+	// Zero-conflict invariant (v2.0.0): docs/timeline.md + docs/file-structure.md
+	// are purely-derived, main-only artifacts. On a non-default branch, restore
+	// them to their committed (HEAD) content BEFORE staging so neither a stray
+	// hook regen nor `git add -A` can sweep a branch-local edit into this commit —
+	// which would diverge the branch from main and cause a future merge conflict.
+	// Lossless: they regenerate deterministically from the decision files (which
+	// ARE committed, per-branch, and never conflict). On the default branch this
+	// is intentionally skipped — main is where the derived docs SHOULD be current.
+	if onNonDefaultBranch(cwd) {
+		_ = gitcli.RestorePathsToHead(cwd, derivedDocPaths...)
+	}
+
 	if stage == "all" {
 		if err := gitcli.AddAll(cwd); err != nil {
 			return err
