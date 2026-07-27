@@ -968,7 +968,7 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// Zero-conflict invariant (v2.0.0) — INTEGRATION-POINT MODE ONLY (v2.0.0
 	// B6): docs/timeline.md + docs/file-structure.md are purely-derived,
 	// main-only artifacts under `derived_docs: {mode: integration-point}`.
-	// On a non-default branch, restore them to their merge-base-with-default
+	// On a non-default branch, restore them to their committed (HEAD)
 	// content BEFORE staging so neither a stray hook regen nor `git add -A`
 	// can sweep a branch-local edit into this commit — which would diverge
 	// the branch from main and cause a future merge conflict. Lossless:
@@ -980,22 +980,34 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// every branch, matching the pre-v2.0.0 behavior; see
 	// internal/cli/derived.go's integrationPointMode.
 	//
-	// Restore target is the merge-base with the default branch, NOT HEAD
-	// (v2.0.0 4b-bis repair-path fix): the invariant IS "byte-identical to
-	// the merge-base with the default branch", so restoring to HEAD is only
-	// correct when the branch hasn't diverged. On a branch whose HEAD
-	// already carries a diverged copy — an old binary regenerated it
-	// locally and committed, or a hand edit landed — restoring to HEAD
-	// silently RE-AFFIRMS the divergence on every subsequent `logmind log`,
-	// which is exactly backwards for repair: the CI gate's own advice ("git
-	// checkout origin/main -- docs/timeline.md docs/file-structure.md, then
-	// commit via logmind log") gets undone the moment this restore runs.
-	// Restoring to the merge-base self-heals that case instead, and changes
-	// nothing for the common, undiverged case: there, HEAD's content for
-	// these two files already equals the merge-base's (see
-	// gitcli.DefaultBranchMergeBase's doc comment).
+	// Restore target is HEAD, NOT the merge-base with the default branch
+	// (v2.0.0 4b-ter reversal of the short-lived 4b-bis "repair-path fix"):
+	// 4b-bis pointed this restore at gitcli.DefaultBranchMergeBase to
+	// self-heal an already-diverged branch, but that target depends on
+	// refs/remotes/origin/<default> being CURRENT — and nothing on this
+	// path ever refreshes it. `logmind log` is deliberately network-free
+	// (no implicit `git fetch`), so on a clone that hasn't fetched recently,
+	// the "merge-base" computed here is stale, and this restore would
+	// silently commit an OLDER snapshot than the branch's true merge-base —
+	// actively writing WRONG bytes, and typically causing the very CI gate
+	// this restore exists to satisfy to FAIL. Restoring to HEAD has no such
+	// dependency: it only ever needs to know what's already committed
+	// locally, so it is correct offline and always. The tradeoff, accepted
+	// deliberately: this restore can no longer repair a branch whose HEAD
+	// already carries a diverged copy (an old binary's local regen, or a
+	// hand edit) — it re-affirms whatever's there instead. That's fine: L1's
+	// job is narrower than "repair" — it only has to keep an ALREADY-clean
+	// branch clean, i.e. stop divergence from ARRIVING via a stray hook
+	// regen or `git add -A` sweep. Repairing a branch that has ALREADY
+	// diverged needs a trustworthy, freshly-fetched `origin/<default>` to
+	// compute a correct merge-base against — `logmind warp` is the one
+	// surface that fetches first, so that's where the repair now lives (see
+	// runWarp in warp.go). See TestLog_CommitPathDoesNotDependOnOriginRef
+	// (derived_repair_test.go) for the regression pin: deform
+	// refs/remotes/origin/<default> and confirm a clean branch's commit is
+	// unaffected.
 	if onNonDefaultBranch(cwd) && integrationPointMode(cwd) {
-		_ = gitcli.RestorePathsToRef(cwd, gitcli.DefaultBranchMergeBase(cwd), derivedDocPaths...)
+		_ = gitcli.RestorePathsToHead(cwd, derivedDocPaths...)
 	}
 
 	if stage == "all" {

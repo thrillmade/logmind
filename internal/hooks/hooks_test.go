@@ -122,26 +122,17 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 		t.Fatalf("pre-commit body missing the non-default-branch guard %q", guard)
 	}
 
-	// v2.0.0 4b-bis repair-path fix: the restore target is $target, resolved
-	// via the SAME fallback chain as gitcli.DefaultBranchMergeBase —
-	// merge-base(origin/$default, HEAD), then merge-base($default, HEAD),
-	// then a bare HEAD if neither resolves — NOT a bare "HEAD" restore.
-	// Restoring to HEAD unconditionally would silently re-affirm a branch
-	// that already diverged before this commit instead of repairing it.
-	for _, must := range []string{
-		`target=$(git merge-base "origin/$default" HEAD 2>/dev/null || true)`,
-		`[ -z "$target" ] && target=$(git merge-base "$default" HEAD 2>/dev/null || true)`,
-		`[ -z "$target" ] && target=HEAD`,
-	} {
-		if !strings.Contains(body, must) {
-			t.Errorf("pre-commit body missing merge-base target resolution %q", must)
-		}
-		if n := strings.Count(body, must); n != 1 {
-			t.Errorf("%q appears %d time(s); want exactly 1", must, n)
-		}
-	}
-
-	const restore = `git checkout "$target" -- docs/timeline.md docs/file-structure.md`
+	// v2.0.0 4b-ter reversal: the restore target is a bare "HEAD" again, NOT
+	// a merge-base computed via `git merge-base origin/$default HEAD`. The
+	// short-lived 4b-bis "repair-path fix" pointed this at the merge-base so
+	// an already-diverged branch could self-heal, but that target depends
+	// on refs/remotes/origin/$default being CURRENT — nothing on the commit
+	// path (this hook included) ever fetches, so a stale ref meant this
+	// restore could silently commit an OLDER snapshot than the branch's
+	// true merge-base, actively writing wrong bytes. HEAD has no such
+	// dependency. The repair capability moved to `logmind warp`, the one
+	// surface that fetches before it restores (see internal/cli/warp.go).
+	const restore = `git checkout HEAD -- docs/timeline.md docs/file-structure.md`
 	ri := strings.Index(body, restore)
 	if ri < 0 {
 		t.Fatalf("pre-commit body missing the restore command %q", restore)
@@ -152,8 +143,8 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 	if ri < gi {
 		t.Errorf("restore command appears BEFORE the non-default-branch guard — it would also run on the default branch")
 	}
-	if strings.Contains(body, "git checkout HEAD -- docs/timeline.md") {
-		t.Errorf("pre-commit body still restores unconditionally to HEAD — the 4b-bis fix must target $target (the merge-base), not a bare HEAD")
+	if strings.Contains(body, "merge-base") {
+		t.Errorf("pre-commit body computes a merge-base target — the 4b-ter reversal must restore to a bare HEAD, with no dependency on refs/remotes/origin/$default freshness")
 	}
 
 	// MUST NEVER block a commit: a top-level (unindented) `exit 0` outside
@@ -709,22 +700,35 @@ func TestPreCommitHook_EndToEnd_RawGitCommitDoesNotCarryDirtyDerivedDoc(t *testi
 	}
 }
 
-// TestPreCommitHook_EndToEnd_RepairsAlreadyDivergedBranch is the v2.0.0
-// 4b-bis repair-path proof for L2a specifically: unlike the sibling test
-// above (which dirties the WORKING TREE only), here a commit ALREADY on the
-// branch's HEAD carries a diverged copy of docs/timeline.md — simulating an
-// old binary's local regen, or a hand edit, having landed BEFORE the
-// pre-commit hook was installed (or before this fix existed at all; either
-// way, the hook can't have prevented it). The user then upgrades/installs
-// the hook (e.g. via `logmind doctor --fix`), follows the CI gate's own
-// repair advice (`git checkout main -- docs/timeline.md`, the local-repo
-// stand-in for `git checkout origin/main -- ...` when there's no origin
-// remote), and commits raw — bypassing `logmind log` entirely, so this
+// TestPreCommitHook_EndToEnd_DoesNotRepairAlreadyDivergedBranch is the v2.0.0
+// 4b-ter reversal proof for L2a specifically — the sibling/successor of the
+// short-lived 4b-bis repair-path test this replaces. Unlike the test above
+// (which dirties the WORKING TREE only, on an otherwise-clean branch), here a
+// commit ALREADY on the branch's HEAD carries a diverged copy of
+// docs/timeline.md — simulating an old binary's local regen, or a hand edit,
+// having landed BEFORE the pre-commit hook was installed. The user then
+// installs the hook (e.g. via `logmind doctor --fix`), follows the CI gate's
+// own repair advice (`git checkout main -- docs/timeline.md`, the
+// no-origin-remote local-repo stand-in for `git checkout origin/main --
+// ...`), and commits raw — bypassing `logmind log` entirely, so this
 // exercises the pre-commit hook body itself, not internal/cli's Go-level L1
-// restore. Before the 4b-bis fix (a bare `git checkout HEAD --`), this hook
-// would silently undo the repair by re-checking out the stale diverged HEAD
-// copy right before the commit was built.
-func TestPreCommitHook_EndToEnd_RepairsAlreadyDivergedBranch(t *testing.T) {
+// restore.
+//
+// This is now DELIBERATE, not a bug: the hook restores to a bare HEAD, so it
+// re-checks-out the stale diverged HEAD copy right before the commit is
+// built, UNDOING the manual repair. The 4b-bis version of this test asserted
+// the opposite (a merge-base-targeted restore that let the manual repair
+// through) — that target depended on refs/remotes/origin/<default> being
+// fresh, which this hook (a pure POSIX-sh script, no logmind binary, no
+// fetch anywhere on the commit path) cannot guarantee; a stale ref meant the
+// "repair" could commit an OLDER snapshot than the true merge-base, actively
+// writing wrong bytes. This hook's job is narrower and offline-safe: keep an
+// ALREADY-clean branch clean, not repair one that has already diverged.
+// Repairing an already-diverged branch now requires `logmind warp` (which
+// fetches origin FIRST, so it has a trustworthy merge-base to restore to —
+// see internal/cli/warp_test.go's TestWarp_RepairsAlreadyDivergedBranch for
+// the equivalent proof on that surface).
+func TestPreCommitHook_EndToEnd_DoesNotRepairAlreadyDivergedBranch(t *testing.T) {
 	repo := initRealGitRepo(t)
 
 	docsDir := filepath.Join(repo, "docs")
@@ -765,32 +769,33 @@ func TestPreCommitHook_EndToEnd_RepairsAlreadyDivergedBranch(t *testing.T) {
 		t.Fatalf("InstallPreCommit: %v", err)
 	}
 
-	// The repair: follow the CI gate's own advice, using the local `main`
-	// branch as the no-origin-remote stand-in for `origin/main`.
+	// The manual repair attempt: follow the CI gate's own advice, using the
+	// local `main` branch as the no-origin-remote stand-in for `origin/main`.
 	gitIn(t, repo, "checkout", "main", "--", "docs/timeline.md")
 	if got, err := os.ReadFile(timelinePath); err != nil || string(got) != mainContent {
 		t.Fatalf("test setup: working tree after manual repair = %q, err=%v; want %q", got, err, mainContent)
 	}
 
 	// Commit the fix RAW — bypassing `logmind log` — so only the pre-commit
-	// hook (L2a) is in play. Before the 4b-bis fix this would silently
-	// restore docs/timeline.md back to the stale diverged HEAD content.
-	gitIn(t, repo, "commit", "-am", "repair the diverged derived docs")
+	// hook (L2a) is in play. Post-4b-ter, the hook restores to a bare HEAD,
+	// which UNDOES this manual repair: the commit ends up carrying the stale
+	// diverged content back, not the repaired one.
+	gitIn(t, repo, "commit", "-am", "attempted repair of the diverged derived docs")
 
 	committed, ok := gitShowFile(repo, "HEAD", "docs/timeline.md")
 	if !ok {
 		t.Fatalf("git show HEAD:docs/timeline.md failed")
 	}
-	if committed != mainContent {
-		t.Fatalf("pre-commit hook undid the repair: committed docs/timeline.md = %q; want main's content %q (the merge-base) — got the stale content back = %v",
-			committed, mainContent, committed == stale)
+	if committed != stale {
+		t.Fatalf("pre-commit hook did not restore to HEAD as expected: committed docs/timeline.md = %q; want the pre-existing stale HEAD content %q (the hook must re-affirm, not repair)",
+			committed, stale)
 	}
 	onDisk, err := os.ReadFile(timelinePath)
 	if err != nil {
 		t.Fatalf("read timeline.md: %v", err)
 	}
-	if string(onDisk) != mainContent {
-		t.Fatalf("working tree docs/timeline.md after the repair commit = %q; want %q", onDisk, mainContent)
+	if string(onDisk) != stale {
+		t.Fatalf("working tree docs/timeline.md after the commit = %q; want the re-affirmed stale content %q", onDisk, stale)
 	}
 }
 

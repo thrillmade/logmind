@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-07-26 23:02 - Move the merge-base repair out of the commit path and into logmind warp
+
+**Reasoning:** The merge-base needs a current origin ref, but nothing on the commit path refreshes one and logmind log is network-free by design, so on a clone that had not fetched recently the restore computed against a stale base and wrote an OLDER snapshot than the true merge-base — the branch then failed the very gate the hook had just fixed. Previously a wrong restore was a harmless no-op; that change made it actively write wrong bytes, which is strictly worse
+
+**Alternatives considered:** Add a freshness threshold and skip the restore when the origin ref looks stale (rejected: a heuristic guarding a correctness property — tune it wrong and you either skip valid repairs or perform invalid ones), Fetch inside the hook (rejected: breaks the offline constraint and puts network latency on every commit)
+
+**Implications:**
+- Commit-path surfaces keep a clean branch clean using HEAD, which needs no ref freshness; warp already fetches so it owns the authoritative merge-base repair of an already-diverged branch. This also makes the gate own remediation advice true, since that advice is to run logmind warp. A new test deforms the origin ref and asserts the commit path is unaffected
+
+---
+

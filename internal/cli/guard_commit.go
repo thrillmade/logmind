@@ -324,14 +324,22 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 	// there's nothing to protect by surfacing a failure here, and doing so
 	// must never perturb the allow/block decision below.
 	//
-	// Restore target is the merge-base with the default branch, NOT HEAD —
-	// same v2.0.0 4b-bis repair-path fix as commitDecision's L1 (log.go):
-	// the invariant is defined against the merge-base, so restoring to HEAD
-	// re-affirms an already-diverged branch instead of repairing it. See
-	// gitcli.DefaultBranchMergeBase's doc comment; the undiverged case is
-	// unaffected (HEAD's content already equals the merge-base's there).
+	// Restore target is HEAD, NOT the merge-base with the default branch
+	// (v2.0.0 4b-ter reversal — same staleness reasoning as commitDecision's
+	// L1 in log.go): the merge-base target depends on a freshly-fetched
+	// refs/remotes/origin/<default>, which nothing on this harness-intercept
+	// path ever refreshes, so it can be arbitrarily stale and would restore
+	// to — and then let the commit carry — an OLDER snapshot than the
+	// branch's true merge-base. Restoring to HEAD needs no such freshness:
+	// it only depends on already-committed local state, so it's correct
+	// offline and always. This surface's job is narrower than "repair a
+	// diverged branch" — it only keeps an ALREADY-clean branch clean by
+	// stopping a stray dirty working-tree copy from riding into the commit.
+	// Repairing an already-diverged branch needs a trustworthy, just-fetched
+	// origin/<default> — that's `logmind warp`'s job now (see runWarp in
+	// warp.go), the one surface that fetches before it restores.
 	if integrationPointMode(repoRoot) && onNonDefaultBranch(repoRoot) {
-		_ = gitcli.RestorePathsToRef(repoRoot, gitcli.DefaultBranchMergeBase(repoRoot), derivedDocPaths...)
+		_ = gitcli.RestorePathsToHead(repoRoot, derivedDocPaths...)
 	}
 
 	if !enforce {
