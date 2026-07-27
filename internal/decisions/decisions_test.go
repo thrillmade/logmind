@@ -121,6 +121,111 @@ func TestCollectAllSources(t *testing.T) {
 	}
 }
 
+// TestSplitRawBytes_PreambleAndBoundaries: the header/preface text before
+// the first entry becomes `preamble`; each entry's Raw spans exactly its
+// header line through the byte before the next header (or EOF for the
+// last), reconstructing the original content when concatenated back
+// together.
+func TestSplitRawBytes_PreambleAndBoundaries(t *testing.T) {
+	content := "# Decision Log\n\n" +
+		"This file contains the 20 most recent decisions.\n\n" +
+		"---\n" +
+		"## 2026-06-01 10:00 - First\n\n" +
+		"**Reasoning:** why one\n\n" +
+		"---\n\n" +
+		"## 2026-06-02 11:00 - Second\n\n" +
+		"**Reasoning:** why two\n\n" +
+		"---\n\n"
+
+	preamble, entries := SplitRawBytes(content)
+	wantPreamble := "# Decision Log\n\n" +
+		"This file contains the 20 most recent decisions.\n\n" +
+		"---\n"
+	if preamble != wantPreamble {
+		t.Fatalf("preamble = %q; want %q", preamble, wantPreamble)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries; want 2", len(entries))
+	}
+	if entries[0].Title != "First" || entries[1].Title != "Second" {
+		t.Fatalf("titles = %q, %q", entries[0].Title, entries[1].Title)
+	}
+	wantEntry0 := "## 2026-06-01 10:00 - First\n\n" +
+		"**Reasoning:** why one\n\n" +
+		"---\n\n"
+	if entries[0].Raw != wantEntry0 {
+		t.Fatalf("entries[0].Raw = %q; want %q", entries[0].Raw, wantEntry0)
+	}
+	wantEntry1 := "## 2026-06-02 11:00 - Second\n\n" +
+		"**Reasoning:** why two\n\n" +
+		"---\n\n"
+	if entries[1].Raw != wantEntry1 {
+		t.Fatalf("entries[1].Raw = %q; want %q", entries[1].Raw, wantEntry1)
+	}
+	// Reassembly invariant: preamble + every entry's Raw, in order,
+	// reconstructs the original content exactly.
+	rebuilt := preamble
+	for _, e := range entries {
+		rebuilt += e.Raw
+	}
+	if rebuilt != content {
+		t.Fatalf("preamble+entries != original content:\ngot:  %q\nwant: %q", rebuilt, content)
+	}
+}
+
+// TestSplitRawBytes_NoEntries_WholeContentIsPreamble: a file with no
+// decision headers at all (e.g. a freshly-scaffolded, empty decisions.md)
+// returns the whole content as preamble and a nil entries slice.
+func TestSplitRawBytes_NoEntries_WholeContentIsPreamble(t *testing.T) {
+	content := "# Decision Log\n\nNo entries yet.\n\n---\n"
+	preamble, entries := SplitRawBytes(content)
+	if preamble != content {
+		t.Fatalf("preamble = %q; want whole content %q", preamble, content)
+	}
+	if entries != nil {
+		t.Fatalf("entries = %v; want nil", entries)
+	}
+}
+
+// TestSplitRawBytes_IgnoresEntryBlockMarker: the §1.6.3 HTML-comment marker
+// block that opens a branch decision file (`<!-- logmind-entry-start: ...
+// -->`) must never be mistaken for a decision entry — decisionHeader only
+// matches a literal "## " line prefix, so the marker rides along inside
+// whatever text precedes the first real "## " header.
+func TestSplitRawBytes_IgnoresEntryBlockMarker(t *testing.T) {
+	content := "<!-- logmind-entry-start: 2026-06-01-my-branch -->\n" +
+		"- **2026-06-01** — My branch\n" +
+		"<!-- logmind-entry-end -->\n\n" +
+		"## 2026-06-01 10:00 - First decision\n\n" +
+		"**Reasoning:** why\n\n" +
+		"---\n\n"
+	preamble, entries := SplitRawBytes(content)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries; want 1 (marker block must not count)", len(entries))
+	}
+	if strings.Contains(preamble, "First decision") {
+		t.Fatalf("preamble leaked into the decision entry: %q", preamble)
+	}
+	if !strings.Contains(preamble, "logmind-entry-start") {
+		t.Fatalf("marker block should live in preamble; got %q", preamble)
+	}
+	if entries[0].Title != "First decision" {
+		t.Fatalf("entries[0].Title = %q", entries[0].Title)
+	}
+}
+
+// TestSplitRaw_MissingFile: matches Iter's "no file, no entries, no error"
+// contract.
+func TestSplitRaw_MissingFile(t *testing.T) {
+	preamble, entries, err := SplitRaw("/nonexistent/path.md")
+	if err != nil {
+		t.Fatalf("missing file should not error; got %v", err)
+	}
+	if preamble != "" || entries != nil {
+		t.Fatalf("got (%q, %v); want (\"\", nil)", preamble, entries)
+	}
+}
+
 func TestBranchLabelFromFilename(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"feat__alpha.md", "feat/alpha"},

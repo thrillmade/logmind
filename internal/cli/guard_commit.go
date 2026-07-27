@@ -323,8 +323,15 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 	// regenerate deterministically from the committed decision files, so
 	// there's nothing to protect by surfacing a failure here, and doing so
 	// must never perturb the allow/block decision below.
+	//
+	// Restore target is the merge-base with the default branch, NOT HEAD —
+	// same v2.0.0 4b-bis repair-path fix as commitDecision's L1 (log.go):
+	// the invariant is defined against the merge-base, so restoring to HEAD
+	// re-affirms an already-diverged branch instead of repairing it. See
+	// gitcli.DefaultBranchMergeBase's doc comment; the undiverged case is
+	// unaffected (HEAD's content already equals the merge-base's there).
 	if integrationPointMode(repoRoot) && onNonDefaultBranch(repoRoot) {
-		_ = gitcli.RestorePathsToHead(repoRoot, derivedDocPaths...)
+		_ = gitcli.RestorePathsToRef(repoRoot, gitcli.DefaultBranchMergeBase(repoRoot), derivedDocPaths...)
 	}
 
 	if !enforce {

@@ -63,13 +63,15 @@
 // carry as "out of scope"): suppresses the auto-push step. gitcli.Push
 // wraps the underlying `git push`.
 //
-// Out of scope for v1.2.0 (carried by the Python shim until v1.3.x or
-// folded into a follow-up):
+// decisions-archive rotation (SPEC §1.3.2): when appending the new entry
+// would push docs/decisions.md's count above decisions.max_recent, the
+// OLDEST entry (or entries, if more than one overflow needs migrating at
+// once) is moved verbatim to docs/decisions-archive.md before the new entry
+// is appended — see rotateDecisions / appendToArchive below. Branch decision
+// files never rotate (SPEC §1.4 — no capacity cap there).
 //
-//   - decisions-archive rotation when count > max_recent. Python
-//     handles this via _archive_oldest_decision; the Go port lands
-//     the rotation in a follow-up so v1.2.0 stays focused on the
-//     self-heal feature.
+// Out of scope for v1.2.0 (carried until v1.3.x or folded into a follow-up):
+//
 //   - `--template` flag for pre-filled reasoning/alternatives/impl
 //     (low-traffic; users craft their own entries with -r/-a/-i).
 package cli
@@ -87,6 +89,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/linkcheck"
 	"github.com/thrillmade/logmind/internal/templates"
@@ -321,6 +324,22 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 			return fmt.Errorf("read %s: %w", target, err)
 		}
 		existing = data
+	}
+
+	// SPEC §1.3.2 capacity — docs/decisions.md only. Branch files have no
+	// cap: §1.4 states plainly "Branch decision files have no capacity cap
+	// (no archive overflow)." Rotate BEFORE composing body below, so the
+	// archive gets the oldest entry (or entries) FIRST and only THEN does
+	// the new one get appended — the SPEC's own ordering: "the OLDEST entry
+	// MUST be moved verbatim to docs/decisions-archive.md ... before the new
+	// entry is appended."
+	if !isBranchFile {
+		if kept, migrated := rotateDecisions(existing, cfg.Decisions.MaxRecent); migrated != "" {
+			if err := appendToArchive(docsPath, migrated); err != nil {
+				return fmt.Errorf("archive overflow decisions: %w", err)
+			}
+			existing = kept
+		}
 	}
 
 	// Compose: header (if first-creation branch file) + the §1.6.3 timeline
@@ -591,6 +610,75 @@ func buildDecisionEntry(summary, reasoning string, alternatives, implications []
 
 	b.WriteString("---\n\n")
 	return b.String()
+}
+
+// rotateDecisions applies SPEC §1.3.2 capacity to decisionsMD's current raw
+// bytes: when adding ONE more entry (the one `logmind log` is about to
+// append) would push the count above maxRecent, it peels enough of the
+// OLDEST entries off the front — decisions.md is append-only, so the
+// oldest entry is always the first one after the header — to bring the
+// count back down to maxRecent, and returns:
+//
+//   - kept: decisionsMD with the peeled entries removed (its preamble +
+//     the remaining entries' RAW bytes, concatenated verbatim). No entry is
+//     ever re-rendered here — only the set of entries present changes.
+//   - migrated: the peeled entries' raw bytes, concatenated in FIFO
+//     (oldest-first) order, ready to append to docs/decisions-archive.md
+//     verbatim. "" means nothing needed to move.
+//
+// maxRecent <= 0 disables rotation entirely — treating 0 as "archive
+// everything currently on file" would be a destructive surprise no config
+// author setting decisions.max_recent is likely to intend, and the SPEC's
+// default is a positive 20.
+func rotateDecisions(decisionsMD []byte, maxRecent int) (kept []byte, migrated string) {
+	if maxRecent <= 0 {
+		return decisionsMD, ""
+	}
+	preamble, entries := decisions.SplitRawBytes(string(decisionsMD))
+	// +1 accounts for the new entry this call to `logmind log` is about to
+	// append on top of what's already on disk.
+	overflow := len(entries) + 1 - maxRecent
+	if overflow <= 0 {
+		return decisionsMD, ""
+	}
+	if overflow > len(entries) {
+		overflow = len(entries) // defensive: never migrate more than exists
+	}
+
+	var mig strings.Builder
+	for _, e := range entries[:overflow] {
+		mig.WriteString(e.Raw)
+	}
+
+	var keptBuf strings.Builder
+	keptBuf.WriteString(preamble)
+	for _, e := range entries[overflow:] {
+		keptBuf.WriteString(e.Raw)
+	}
+	return []byte(keptBuf.String()), mig.String()
+}
+
+// appendToArchive appends migrated (already newline-terminated, verbatim
+// entry bytes — see rotateDecisions) to docs/decisions-archive.md, creating
+// it from the standard template first if it doesn't exist yet (mirrors
+// `logmind init`'s scaffold, so a repo that somehow reaches rotation without
+// ever having run init still ends up with a valid, headed archive file
+// rather than a bare entry dump).
+//
+// Always a pure byte append — never re-sorts existing content. SPEC §1.5:
+// "Archive ordering is append-on-overflow. Tools MUST NOT re-sort the
+// archive on write."
+func appendToArchive(docsPath, migrated string) error {
+	archivePath := filepath.Join(docsPath, "decisions-archive.md")
+	existing := templates.DecisionsArchiveTemplate()
+	if pathExists(archivePath) {
+		data, err := os.ReadFile(archivePath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", archivePath, err)
+		}
+		existing = string(data)
+	}
+	return writeAtomic(archivePath, existing+migrated)
 }
 
 // buildTimelineMarker renders the §1.6.3 entry-block headline that opens a
@@ -880,7 +968,7 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// Zero-conflict invariant (v2.0.0) — INTEGRATION-POINT MODE ONLY (v2.0.0
 	// B6): docs/timeline.md + docs/file-structure.md are purely-derived,
 	// main-only artifacts under `derived_docs: {mode: integration-point}`.
-	// On a non-default branch, restore them to their committed (HEAD)
+	// On a non-default branch, restore them to their merge-base-with-default
 	// content BEFORE staging so neither a stray hook regen nor `git add -A`
 	// can sweep a branch-local edit into this commit — which would diverge
 	// the branch from main and cause a future merge conflict. Lossless:
@@ -891,8 +979,23 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// at all — a driver-mode repo's derived docs are free to regenerate on
 	// every branch, matching the pre-v2.0.0 behavior; see
 	// internal/cli/derived.go's integrationPointMode.
+	//
+	// Restore target is the merge-base with the default branch, NOT HEAD
+	// (v2.0.0 4b-bis repair-path fix): the invariant IS "byte-identical to
+	// the merge-base with the default branch", so restoring to HEAD is only
+	// correct when the branch hasn't diverged. On a branch whose HEAD
+	// already carries a diverged copy — an old binary regenerated it
+	// locally and committed, or a hand edit landed — restoring to HEAD
+	// silently RE-AFFIRMS the divergence on every subsequent `logmind log`,
+	// which is exactly backwards for repair: the CI gate's own advice ("git
+	// checkout origin/main -- docs/timeline.md docs/file-structure.md, then
+	// commit via logmind log") gets undone the moment this restore runs.
+	// Restoring to the merge-base self-heals that case instead, and changes
+	// nothing for the common, undiverged case: there, HEAD's content for
+	// these two files already equals the merge-base's (see
+	// gitcli.DefaultBranchMergeBase's doc comment).
 	if onNonDefaultBranch(cwd) && integrationPointMode(cwd) {
-		_ = gitcli.RestorePathsToHead(cwd, derivedDocPaths...)
+		_ = gitcli.RestorePathsToRef(cwd, gitcli.DefaultBranchMergeBase(cwd), derivedDocPaths...)
 	}
 
 	if stage == "all" {

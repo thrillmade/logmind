@@ -402,10 +402,26 @@ func BuildCommitMsgBody() string {
 // into the working tree for review. `guard-commit`'s CarveOutUnderThreshold
 // lets such a commit through (a derived-doc-only change is small), so
 // nothing else in the enforcement stack catches it. This hook does: on a
-// non-default branch, it restores both files to their committed (HEAD)
+// non-default branch, it restores both files to their merge-base-with-default
 // content — in both the index and the working tree — before the commit is
 // built, so the raw commit can never carry a derived-doc change off the
 // zero-conflict invariant.
+//
+// Restore target is the merge-base with the default branch, NOT HEAD
+// (v2.0.0 4b-bis repair-path fix — mirrors commitDecision's L1 in
+// internal/cli/log.go and gitcli.DefaultBranchMergeBase's Go implementation,
+// reimplemented here in pure shell since this hook runs without a `logmind`
+// binary on PATH). The invariant IS "byte-identical to the merge-base with
+// the default branch", so restoring to HEAD is only correct when the branch
+// hasn't diverged; on a branch whose HEAD already carries a diverged copy
+// (an old binary regenerated it locally and committed, or a hand edit
+// landed), a HEAD-targeted restore would silently RE-AFFIRM that divergence
+// on every subsequent commit — exactly backwards for repair. Resolution
+// order, same as the Go implementation: merge-base(origin/<default>, HEAD),
+// then merge-base(<default>, HEAD) for a repo with no origin tracking ref,
+// then a bare "HEAD" if neither resolves (shallow clone, single-branch repo
+// with no fork point). The undiverged case is unaffected: there, HEAD's
+// content for these two files already equals the merge-base's.
 //
 // MUST NEVER block a commit. Unlike the commit-msg hook (Layer 2 of commit
 // enforcement, which can legitimately reject a commit), this hook exists
@@ -417,10 +433,10 @@ func BuildCommitMsgBody() string {
 //
 // Deliberately pure git — NO `logmind` binary required on PATH, unlike the
 // commit-msg hook's delegation to `logmind guard-commit`. The restore is
-// simple enough (`git checkout HEAD -- <path>`) to inline directly, which
-// keeps this guardrail working in the two places it matters most: a fresh
-// clone or CI runner where logmind might not be installed yet, and a repo
-// where the on-PATH logmind is stale or broken.
+// simple enough (`git checkout <target> -- <path>`) to inline directly,
+// which keeps this guardrail working in the two places it matters most: a
+// fresh clone or CI runner where logmind might not be installed yet, and a
+// repo where the on-PATH logmind is stale or broken.
 //
 // Branch detection mirrors BuildPostMergeBody / BuildPostRewriteBody
 // exactly: `git rev-parse --abbrev-ref HEAD` for the current branch,
@@ -438,8 +454,10 @@ func BuildPreCommitBody() string {
 		"# is Layer 1 — could otherwise sweep a dirtied copy of either file into the\n" +
 		"# commit on a non-default branch, e.g. after `logmind warp` pulls in the\n" +
 		"# default branch's newer copy for review. This hook restores both to their\n" +
-		"# committed (HEAD) content, in both the index and the working tree, right\n" +
-		"# before the commit is built.\n" +
+		"# merge-base-with-default content, in both the index and the working tree,\n" +
+		"# right before the commit is built — the merge-base, NOT HEAD, so a branch\n" +
+		"# that already diverged before this commit self-repairs instead of having\n" +
+		"# its diverged HEAD copy silently re-affirmed.\n" +
 		"#\n" +
 		"# This hook MUST NEVER block a commit — it always exits 0. The restore is\n" +
 		"# lossless (the docs regenerate deterministically from the committed\n" +
@@ -459,7 +477,10 @@ func BuildPreCommitBody() string {
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
-		"    git checkout HEAD -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true\n" +
+		"    target=$(git merge-base \"origin/$default\" HEAD 2>/dev/null || true)\n" +
+		"    [ -z \"$target\" ] && target=$(git merge-base \"$default\" HEAD 2>/dev/null || true)\n" +
+		"    [ -z \"$target\" ] && target=HEAD\n" +
+		"    git checkout \"$target\" -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true\n" +
 		"  fi\n" +
 		"fi\n" +
 		"exit 0\n"

@@ -8,8 +8,10 @@
 # is Layer 1 — could otherwise sweep a dirtied copy of either file into the
 # commit on a non-default branch, e.g. after `logmind warp` pulls in the
 # default branch's newer copy for review. This hook restores both to their
-# committed (HEAD) content, in both the index and the working tree, right
-# before the commit is built.
+# merge-base-with-default content, in both the index and the working tree,
+# right before the commit is built — the merge-base, NOT HEAD, so a branch
+# that already diverged before this commit self-repairs instead of having
+# its diverged HEAD copy silently re-affirmed.
 #
 # This hook MUST NEVER block a commit — it always exits 0. The restore is
 # lossless (the docs regenerate deterministically from the committed
@@ -29,7 +31,10 @@ if [ -f .logmind/config.yml ]; then
   default=${default#origin/}
   [ -z "$default" ] && default=main
   if [ -n "$current" ] && [ "$current" != "$default" ]; then
-    git checkout HEAD -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true
+    target=$(git merge-base "origin/$default" HEAD 2>/dev/null || true)
+    [ -z "$target" ] && target=$(git merge-base "$default" HEAD 2>/dev/null || true)
+    [ -z "$target" ] && target=HEAD
+    git checkout "$target" -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true
   fi
 fi
 exit 0

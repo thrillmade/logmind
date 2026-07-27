@@ -122,7 +122,26 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 		t.Fatalf("pre-commit body missing the non-default-branch guard %q", guard)
 	}
 
-	const restore = "git checkout HEAD -- docs/timeline.md docs/file-structure.md"
+	// v2.0.0 4b-bis repair-path fix: the restore target is $target, resolved
+	// via the SAME fallback chain as gitcli.DefaultBranchMergeBase —
+	// merge-base(origin/$default, HEAD), then merge-base($default, HEAD),
+	// then a bare HEAD if neither resolves — NOT a bare "HEAD" restore.
+	// Restoring to HEAD unconditionally would silently re-affirm a branch
+	// that already diverged before this commit instead of repairing it.
+	for _, must := range []string{
+		`target=$(git merge-base "origin/$default" HEAD 2>/dev/null || true)`,
+		`[ -z "$target" ] && target=$(git merge-base "$default" HEAD 2>/dev/null || true)`,
+		`[ -z "$target" ] && target=HEAD`,
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("pre-commit body missing merge-base target resolution %q", must)
+		}
+		if n := strings.Count(body, must); n != 1 {
+			t.Errorf("%q appears %d time(s); want exactly 1", must, n)
+		}
+	}
+
+	const restore = `git checkout "$target" -- docs/timeline.md docs/file-structure.md`
 	ri := strings.Index(body, restore)
 	if ri < 0 {
 		t.Fatalf("pre-commit body missing the restore command %q", restore)
@@ -132,6 +151,9 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 	}
 	if ri < gi {
 		t.Errorf("restore command appears BEFORE the non-default-branch guard — it would also run on the default branch")
+	}
+	if strings.Contains(body, "git checkout HEAD -- docs/timeline.md") {
+		t.Errorf("pre-commit body still restores unconditionally to HEAD — the 4b-bis fix must target $target (the merge-base), not a bare HEAD")
 	}
 
 	// MUST NEVER block a commit: a top-level (unindented) `exit 0` outside
@@ -684,6 +706,91 @@ func TestPreCommitHook_EndToEnd_RawGitCommitDoesNotCarryDirtyDerivedDoc(t *testi
 	}
 	if string(onDisk) != original {
 		t.Fatalf("working tree docs/timeline.md not restored either\nwant:\n%s\ngot:\n%s", original, onDisk)
+	}
+}
+
+// TestPreCommitHook_EndToEnd_RepairsAlreadyDivergedBranch is the v2.0.0
+// 4b-bis repair-path proof for L2a specifically: unlike the sibling test
+// above (which dirties the WORKING TREE only), here a commit ALREADY on the
+// branch's HEAD carries a diverged copy of docs/timeline.md — simulating an
+// old binary's local regen, or a hand edit, having landed BEFORE the
+// pre-commit hook was installed (or before this fix existed at all; either
+// way, the hook can't have prevented it). The user then upgrades/installs
+// the hook (e.g. via `logmind doctor --fix`), follows the CI gate's own
+// repair advice (`git checkout main -- docs/timeline.md`, the local-repo
+// stand-in for `git checkout origin/main -- ...` when there's no origin
+// remote), and commits raw — bypassing `logmind log` entirely, so this
+// exercises the pre-commit hook body itself, not internal/cli's Go-level L1
+// restore. Before the 4b-bis fix (a bare `git checkout HEAD --`), this hook
+// would silently undo the repair by re-checking out the stale diverged HEAD
+// copy right before the commit was built.
+func TestPreCommitHook_EndToEnd_RepairsAlreadyDivergedBranch(t *testing.T) {
+	repo := initRealGitRepo(t)
+
+	docsDir := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	timelinePath := filepath.Join(docsDir, "timeline.md")
+	mainContent := "# Timeline\n\nmain content\n"
+	if err := os.WriteFile(timelinePath, []byte(mainContent), 0o644); err != nil {
+		t.Fatalf("write timeline.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "file-structure.md"), []byte("# File structure\n"), 0o644); err != nil {
+		t.Fatalf("write file-structure.md: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".logmind"), 0o755); err != nil {
+		t.Fatalf("mkdir .logmind: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".logmind", "config.yml"), []byte("git: {}\n"), 0o644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+	gitCommitAll(t, repo, "initial scaffold")
+
+	// No pre-commit hook installed yet — this commit represents the state
+	// BEFORE the fix (or before the hook was ever set up), so nothing stops
+	// the divergence from landing.
+	gitIn(t, repo, "checkout", "-b", "feat/already-diverged")
+	stale := "# Timeline\n\nSTALE diverged content\n"
+	if err := os.WriteFile(timelinePath, []byte(stale), 0o644); err != nil {
+		t.Fatalf("write stale timeline.md: %v", err)
+	}
+	gitIn(t, repo, "commit", "-am", "bad regen (pre-existing divergence, no hook yet)")
+
+	// NOW install the hook — e.g. the user ran `logmind doctor --fix` (or
+	// upgraded to a version that installs it) AFTER the divergence already
+	// landed. This is the realistic order: the hook can only guard commits
+	// made after it exists.
+	if _, err := InstallPreCommit(repo); err != nil {
+		t.Fatalf("InstallPreCommit: %v", err)
+	}
+
+	// The repair: follow the CI gate's own advice, using the local `main`
+	// branch as the no-origin-remote stand-in for `origin/main`.
+	gitIn(t, repo, "checkout", "main", "--", "docs/timeline.md")
+	if got, err := os.ReadFile(timelinePath); err != nil || string(got) != mainContent {
+		t.Fatalf("test setup: working tree after manual repair = %q, err=%v; want %q", got, err, mainContent)
+	}
+
+	// Commit the fix RAW — bypassing `logmind log` — so only the pre-commit
+	// hook (L2a) is in play. Before the 4b-bis fix this would silently
+	// restore docs/timeline.md back to the stale diverged HEAD content.
+	gitIn(t, repo, "commit", "-am", "repair the diverged derived docs")
+
+	committed, ok := gitShowFile(repo, "HEAD", "docs/timeline.md")
+	if !ok {
+		t.Fatalf("git show HEAD:docs/timeline.md failed")
+	}
+	if committed != mainContent {
+		t.Fatalf("pre-commit hook undid the repair: committed docs/timeline.md = %q; want main's content %q (the merge-base) — got the stale content back = %v",
+			committed, mainContent, committed == stale)
+	}
+	onDisk, err := os.ReadFile(timelinePath)
+	if err != nil {
+		t.Fatalf("read timeline.md: %v", err)
+	}
+	if string(onDisk) != mainContent {
+		t.Fatalf("working tree docs/timeline.md after the repair commit = %q; want %q", onDisk, mainContent)
 	}
 }
 
