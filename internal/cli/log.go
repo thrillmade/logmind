@@ -1006,8 +1006,84 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// (derived_repair_test.go) for the regression pin: deform
 	// refs/remotes/origin/<default> and confirm a clean branch's commit is
 	// unaffected.
+	//
+	// v2.0.0 4b-quater — the L1-vs-`warp` seam, and its fix: moving the
+	// repair to `logmind warp` (above) reintroduced the exact bug that move
+	// was meant to avoid, one level up. `warp`'s repair DELIBERATELY STAGES
+	// the two derived docs (`git checkout <merge-base> -- <path>`, which
+	// writes the index too — see runWarp) so the fix rides into the
+	// caller's NEXT commit. But this restore ran unconditionally, so the
+	// remediation sequence the CI gate's own failure message tells a user
+	// to run — `logmind warp` then `logmind log` — silently no-op'd: warp
+	// repairs + stages, then THIS restore checked the path back out to
+	// HEAD's still-divergent content, undoing the repair before the `git
+	// add` below could even run, and the resulting commit captured the
+	// divergence AGAIN. Same error, same bytes, no indication the "fix"
+	// did nothing. Root cause: this restore couldn't tell a deliberate
+	// staged repair apart from an accidental unstaged dirty copy, so it
+	// undid both.
+	//
+	// The fix: restore only the paths gitcli.IsPathStaged (via
+	// unstagedDerivedDocPaths, derived.go) reports as NOT already staged.
+	// Rule, in one line: unstaged means accidental → revert it; staged
+	// means intentional → leave it alone — that's what staging means
+	// everywhere else in git. This works here specifically because this
+	// restore runs BEFORE commitDecision's OWN staging step (`git add -A` /
+	// `git add <target>`, immediately below): the only way a derived doc
+	// can already be staged at this point is a prior, SEPARATE action —
+	// chiefly `logmind warp` — never something this function itself just
+	// did. (guardCommitHarness's L2b restore in guard_commit.go shares this
+	// property — it fires before the pending Bash command even runs — and
+	// applies the identical filter. The pre-commit git hook, L2a, does NOT:
+	// it fires from `git commit` itself, AFTER whatever staged the index
+	// for THAT commit, so "already staged" there is the normal state of
+	// anything about to be committed, not a reliable intent signal — see
+	// BuildPreCommitBody's doc comment in internal/hooks/hooks.go for the
+	// full reasoning.) IMPORTANT CAVEAT: L2a is a REAL `.git/hooks/pre-commit`
+	// script, so it fires for EVERY `git commit` in this repo — including
+	// the one THIS function's own gitcli.Commit call makes a few lines
+	// below. A repo with the hook installed (the default the moment
+	// integration-point mode is adopted — see init.go) therefore still runs
+	// L2a's unconditional restore-to-HEAD on this exact commit, AFTER this
+	// function's own restore already (correctly) left a warp-staged repair
+	// alone — undoing it right back. Closing THAT coupling is unresolved,
+	// out-of-scope follow-up work (it needs a signal from this call site to
+	// L2a, e.g. an environment variable set only around this specific `git
+	// commit`, that a POSIX-sh hook could check for and stand down on); see
+	// BuildPreCommitBody's doc comment (internal/hooks/hooks.go) for the
+	// full account. Everything this comment block otherwise describes is
+	// still correct and tested (TestWarpThenLog_PreservesRepairAcrossCommit
+	// below passes) precisely because that test's fixtures — like every
+	// other fixture in this package — never install a REAL pre-commit hook;
+	// see initClonePairScaffolded / scaffoldDocs, which run `logmind init
+	// --no-git` and so skip hook installation entirely.
+	//
+	// THE TRADE-OFF, ACCEPTED DELIBERATELY: this relaxes L1. If a user
+	// hand-stages a DIVERGENT derived doc — `git add docs/timeline.md`
+	// after editing it directly, rather than trusting `logmind warp` to
+	// produce a correct one — and then runs `logmind log`, L1 now skips it
+	// and the divergence gets committed. There's no cheap way around this:
+	// the only signal available on this offline hot path is "does the
+	// index differ from HEAD", which cannot distinguish "staged because
+	// warp repaired it correctly" from "staged because a human added a bad
+	// copy" — and deliberately NOT closed with a merge-base comparison,
+	// because the merge-base is unavailable here for the exact staleness
+	// reason this restore targets HEAD instead of the merge-base in the
+	// first place (see above): computing one needs a freshly-fetched
+	// origin/<default>, which nothing on this network-free hot path ever
+	// refreshes. L3 (the CI check-derived-docs gate) remains the backstop
+	// for this residual gap, same as it always was for a genuinely
+	// diverged branch.
+	//
+	// See TestWarpThenLog_PreservesRepairAcrossCommit (derived_repair_test.go)
+	// for the regression pin: the full warp-then-log remediation sequence,
+	// asserting the resulting commit carries the merge-base content warp
+	// staged, not the divergent HEAD content this restore used to
+	// re-affirm. See TestLog_DoesNotCommitDirtiedDerivedDocOnBranch for
+	// proof L1's original job — reverting an UNSTAGED dirty derived doc —
+	// still holds unchanged.
 	if onNonDefaultBranch(cwd) && integrationPointMode(cwd) {
-		_ = gitcli.RestorePathsToHead(cwd, derivedDocPaths...)
+		_ = gitcli.RestorePathsToHead(cwd, unstagedDerivedDocPaths(cwd, derivedDocPaths)...)
 	}
 
 	if stage == "all" {

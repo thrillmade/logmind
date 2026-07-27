@@ -31,12 +31,29 @@ In a repo that has opted into ` + "`derived_docs: {mode: integration-point}`" + 
 'logmind doctor'), warp is also the repair surface for a branch that has
 ALREADY diverged from that invariant (e.g. an old binary's local regen, or a
 hand edit, landed in a past commit): after fetching, it restores both files
-to their merge-base-with-default content in both the index and the working
-tree. logmind log's own restore (and the pre-commit / harness guards) target
-HEAD instead — cheap and offline, but unable to repair a divergence that
-already happened — precisely because warp is the one surface that fetches
-first, giving it a trustworthy, current origin/<default> to compute a
-merge-base against.`,
+to their merge-base-with-default content in BOTH the index and the working
+tree — i.e. it deliberately STAGES the repair. That's not a side effect to
+apologize for: staging is what lets the repair ride into your NEXT commit
+instead of silently vanishing. 'logmind log' recognizes an already-staged
+derived doc as YOUR deliberate fix and leaves it alone (rather than
+reverting it back to the branch's own possibly-still-divergent HEAD
+content) — but ONLY if this repo has no pre-commit hook installed, or the
+installed one predates this fix: a repo with the hook installed (the
+default the moment integration-point mode is adopted; see 'logmind
+doctor') still routes 'logmind log's own commit THROUGH that hook, which —
+being a plain POSIX-sh script with no fetch and no reliable way to tell
+"warp staged this on purpose" apart from "git add -a swept up an
+accidental dirty copy" — restores to HEAD unconditionally and can still
+undo the repair on that path. This coupling is a known, currently
+UNRESOLVED gap (see BuildPreCommitBody's doc comment, internal/hooks/
+hooks.go); a raw 'git commit' instead of 'logmind log' hits the exact same
+hook and has the same exposure.
+
+logmind log's own restore (and the harness guard) target HEAD rather than
+the merge-base on their OWN hot path — cheap and offline, but unable to
+repair a divergence that already happened — precisely because warp is the
+one surface that fetches first, giving it a trustworthy, current
+origin/<default> to compute a merge-base against.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
@@ -99,11 +116,32 @@ func runWarp(cwd string, stdout, stderr io.Writer) error {
 	// is worse than a local timeline copy that's one merge-base behind — see
 	// warp's --help text and the CTO ruling this cites in the PR history.
 	//
-	// Restores BOTH the index and the working tree (gitcli.RestorePathsToRef
-	// is `git checkout <ref> -- <path>`, the same primitive the commit-path
-	// surfaces use) — narrower than a `git add -A` (it only ever touches
-	// these two known, already-tracked paths) and never creates a commit, so
-	// warp's "never commits" contract holds; see TestWarp_DoesNotCommit.
+	// Restores — and therefore DELIBERATELY STAGES — BOTH the index and the
+	// working tree (gitcli.RestorePathsToRef is `git checkout <ref> --
+	// <path>`, the same primitive the commit-path surfaces use). This is
+	// intentional, not merely a side effect of the primitive chosen: staging
+	// the repair is what lets it survive into the caller's next commit
+	// instead of sitting in the working tree until something else (a fresh
+	// `warp`, another read-refresh) overwrites it again. It is narrower than
+	// a `git add -A` (it only ever touches these two known, already-tracked
+	// paths) and never creates a commit, so warp's "never commits" contract
+	// holds; see TestWarp_DoesNotCommit.
+	//
+	// v2.0.0 4b-quater: this deliberate staging is also the signal
+	// commitDecision's L1 (log.go) and guardCommitHarness's L2b
+	// (guard_commit.go) now key off of — gitcli.IsPathStaged /
+	// unstagedDerivedDocPaths (derived.go) — to recognize this repair as
+	// intentional and leave it alone, instead of reverting it back to
+	// HEAD's still-divergent content on the very next `logmind log`. See
+	// TestWarpThenLog_PreservesRepairAcrossCommit (derived_repair_test.go)
+	// for the end-to-end proof. That recognition does NOT extend past L1/L2b:
+	// the pre-commit git hook (L2a) can't safely make the same distinction
+	// (see BuildPreCommitBody's doc comment, internal/hooks/hooks.go) and
+	// restores unconditionally — and since it is a REAL git hook, it also
+	// fires during `logmind log`'s OWN commit if installed (the default for
+	// an integration-point-mode repo), not just on a raw `git commit`. This
+	// repair can still be undone on that path; closing it is unresolved
+	// follow-up work, not part of this fix.
 	repaired := false
 	if onNonDefaultBranch(cwd) && integrationPointMode(cwd) {
 		mergeBase := gitcli.DefaultBranchMergeBase(cwd)

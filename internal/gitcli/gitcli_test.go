@@ -425,6 +425,68 @@ func TestRestorePathsToRef_RestoresArbitraryRefContent(t *testing.T) {
 	}
 }
 
+// TestIsPathStaged_TrueForStagedChange: `git add`ing a modified tracked
+// file makes IsPathStaged report true — this is the "deliberate" half of
+// the staged-vs-unstaged distinction internal/cli's L1/L2b restores rely
+// on (a `logmind warp` repair stages via `git checkout <ref> -- <path>`,
+// the same index-writing primitive).
+func TestIsPathStaged_TrueForStagedChange(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	runGit(t, repo, "add", "a.txt")
+	if !IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = false; want true for a staged change vs HEAD")
+	}
+}
+
+// TestIsPathStaged_FalseForUnstagedChange: a working-tree edit that was
+// never `git add`ed reports false — the "accidental" half of the
+// distinction; L1/L2b restore paths in this state.
+func TestIsPathStaged_FalseForUnstagedChange(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = true; want false for an unstaged working-tree edit")
+	}
+}
+
+// TestIsPathStaged_FalseForCleanPath: a path with no change at all (index
+// and working tree both match HEAD) reports false.
+func TestIsPathStaged_FalseForCleanPath(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	if IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = true; want false for a clean path")
+	}
+}
+
+// TestIsPathStaged_FalseAfterStagedChangeCommitted: once a staged change is
+// committed, the index and HEAD agree again — IsPathStaged must go back to
+// false, not latch true forever.
+func TestIsPathStaged_FalseAfterStagedChangeCommitted(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	writeAndCommit(t, repo, "a.txt", "v2", "update a.txt")
+	if IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = true; want false once the staged change is committed")
+	}
+}
+
+// TestIsPathStaged_FalseOutsideRepo: best-effort — a non-repo directory
+// must not panic or report a false "staged" positive.
+func TestIsPathStaged_FalseOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	if IsPathStaged(dir, "a.txt") {
+		t.Fatalf("IsPathStaged(%q) = true; want false outside a git repo", dir)
+	}
+}
+
 // TestDefaultBranchMergeBase_ResolvesLocalDefaultBranch: no origin remote —
 // DefaultBranchMergeBase falls back to the LOCAL default-branch ref and
 // resolves the actual fork point, not just HEAD.

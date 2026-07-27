@@ -590,6 +590,44 @@ func RestorePathsToRef(repoRoot, ref string, paths ...string) error {
 	return firstErr
 }
 
+// IsPathStaged reports whether path currently differs between the index and
+// HEAD — i.e. whether it has a STAGED change (`git diff --cached --quiet --
+// <path>` exits 1, meaning a difference exists).
+//
+// This is the signal commitDecision's L1 restore (internal/cli/log.go) and
+// guardCommitHarness's L2b restore (internal/cli/guard_commit.go) use to
+// distinguish a DELIBERATE staged change to a derived doc — chiefly
+// `logmind warp`'s merge-base repair, which stages the fix so it survives
+// into the caller's next commit (see runWarp, internal/cli/warp.go) — from
+// an ACCIDENTAL unstaged dirty working tree (a stray hook regen, a hand
+// edit nobody `git add`ed yet). Both callers restore only the paths this
+// reports NOT staged, leaving an already-staged path alone.
+//
+// Best-effort like every other helper in this package, and conservative in
+// the direction that matters for those callers: only a confirmed exit-code
+// of exactly 1 ("yes, the index differs from HEAD for this path") reports
+// true. Every other outcome — no difference (exit 0), a missing git
+// binary, an unborn HEAD, a bad pathspec, any other failure — reports
+// false. Callers use `true` to SKIP a restore, so a false negative here
+// just falls back to "restore it" (the pre-existing, unconditional
+// behavior), never a new way to silently let a genuinely accidental dirty
+// copy through.
+func IsPathStaged(repoRoot, path string) bool {
+	cmd := exec.Command("git", "diff", "--cached", "--quiet", "--", path)
+	cmd.Dir = repoRoot
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+	err := cmd.Run()
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode() == 1
+	}
+	return false
+}
+
 // DefaultBranchMergeBase resolves the ref the derived-docs pin-preservation
 // restore (commitDecision's L1, guardCommitHarness's L2b — see
 // internal/cli/derived.go) should target: the merge-base between HEAD and the

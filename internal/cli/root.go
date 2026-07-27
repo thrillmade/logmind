@@ -82,9 +82,13 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newTreeCmd())
 	root.AddCommand(newRebaseCmd())
 	// v2.0.0 derived-docs-on-main: read-only refresh of docs/timeline.md +
-	// docs/file-structure.md from the default branch. Never stages/commits —
+	// docs/file-structure.md from the default branch. Never COMMITS —
 	// committing main's newer blobs onto a branch would break the
-	// merge-base invariant the L1/L3 layers enforce.
+	// merge-base invariant the L1/L3 layers enforce. In integration-point
+	// mode it DOES deliberately STAGE a merge-base repair of an
+	// already-diverged branch (see runWarp in warp.go) so the fix survives
+	// into the caller's next commit — "never commits" stayed true; "never
+	// stages" did not, once the repair capability moved here.
 	root.AddCommand(newWarpCmd())
 	// B4: agent file templating subcommand tree.
 	root.AddCommand(newAgentsCmd())

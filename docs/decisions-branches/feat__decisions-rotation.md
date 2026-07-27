@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-07-26 23:40 - Close the warp-to-log handoff seam: skip derived-doc paths that are already staged
+
+**Reasoning:** The two-surface split had a seam where they met. warp repairs the working tree and index to the merge-base, then logmind log restored unconditionally to HEAD and overwrote it, so the commit captured the divergence again and the gate remediation advice silently no-opped one command later. L1 could not tell a deliberate repair from an accidental regen because it treated every working-tree change as accidental. Staging is the signal that already exists in git: unstaged means accidental so revert it, staged means intentional so leave it
+
+**Alternatives considered:** Have L1 compare against the merge-base to tell a legitimate staged repair from an illegitimate one (rejected: needs the merge-base on the offline hot path, which is the constraint that produced this split), A sidecar marker file written by warp (rejected: a marker can go stale and needs its own lifecycle; staging already carries this meaning everywhere else in git)
+
+**Implications:**
+- This deliberately RELAXES L1 — a user who hand-stages a divergent derived doc now gets it committed, because staged cannot be told apart from staged-and-correct offline. Documented at the call site as an accepted trade with L3 as the backstop. Verified by mutation: reverting the skip makes the remediation-sequence test fail
+
+---
+
