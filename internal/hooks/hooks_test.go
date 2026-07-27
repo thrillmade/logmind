@@ -861,7 +861,14 @@ func initRealGitRepo(t *testing.T) string {
 		t.Skip("git not on PATH; skipping integration test")
 	}
 	dir := t.TempDir()
-	gitIn(t, dir, "init", "-q")
+	// PIN the initial branch. A bare `git init` names it from the ambient
+	// `init.defaultBranch`, which differs by environment — `main` on a modern
+	// dev box, `master` on a runner that never set it. Tests here reference
+	// the default branch by name (the no-origin-remote stand-in for
+	// `origin/main`), so leaving it ambient makes them pass locally and fail
+	// in CI with `fatal: invalid reference: main`. internal/cli's helpers
+	// already pin it the same way.
+	gitIn(t, dir, "init", "-q", "--initial-branch=main")
 	gitIn(t, dir, "config", "user.email", "test@example.com")
 	gitIn(t, dir, "config", "user.name", "Test")
 	gitIn(t, dir, "config", "commit.gpgsign", "false")

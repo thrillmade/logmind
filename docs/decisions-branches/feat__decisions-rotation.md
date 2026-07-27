@@ -37,3 +37,14 @@
 
 ---
 
+## 2026-07-27 00:08 - Pin the hooks test repo initial branch so the suite does not depend on the ambient git default
+
+**Reasoning:** Four CI jobs failed on a test that passed locally: the helper used a bare git init, so the branch name came from init.defaultBranch — main on my machine, unset on the runner — and the test then referenced main by name and got fatal invalid reference. The test was green for an environmental reason, which is indistinguishable from green for the right reason until something moves
+
+**Alternatives considered:** Fix the single call site to discover the branch name at runtime (rejected: the next test using this helper inherits the same bug; pinning at the helper fixes the class)
+
+**Implications:**
+- Reproduced CI exactly by forcing init.defaultBranch to master, confirmed the identical error, then confirmed the fix passes and the reverted pin fails again. Matches how internal/cli helpers already pin it. Full suite re-run under the CI git config, not the local one
+
+---
+
