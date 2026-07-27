@@ -40,6 +40,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/atomicio"
 )
 
 // reviewSHARE matches the `<!-- review-sha: <40 hex chars> -->` comment
@@ -641,43 +643,15 @@ func recountForSHAs(reviewsDir, skillName string, shas []string, warn func(strin
 	return total, out
 }
 
-// atomicWriteFile writes to a temp sibling + renames. Avoids leaving a
-// half-written PROVENANCE.md if the process dies mid-write — same
-// discipline as Python v0.6.16's atomic_io.write_text.
+// atomicWriteFile writes to a temp sibling + renames, via the shared
+// internal/atomicio.WriteFile primitive. Avoids leaving a half-written
+// PROVENANCE.md if the process dies mid-write — same discipline as
+// Python v0.6.16's atomic_io.write_text.
 //
 // Held as a package-level var so tests can swap in a failing writer
 // that exercises the "persist failed, don't count the SHA" path in
 // Sync (review #135 / Bug 1).
-var atomicWriteFile func(path string, data []byte, perm os.FileMode) error = realAtomicWriteFile
-
-func realAtomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpName) }
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		cleanup()
-		return err
-	}
-	return nil
-}
+var atomicWriteFile func(path string, data []byte, perm os.FileMode) error = atomicio.WriteFile
 
 // FormatSummary renders a human-readable report of a Sync run for the
 // CLI layer. Kept here (alongside the data shape) so future tooling

@@ -3,48 +3,9 @@ package templates
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
-
-// TestTemplates_ByteIdenticalToPython is the load-bearing parity gate:
-// it diffs each embedded template byte-for-byte against the Python
-// source-of-truth at src/logmind/templates/<name>. Any drift between
-// the two trees fails the test immediately.
-//
-// Skipped when the Python tree isn't reachable (e.g., running tests
-// from an extracted release tarball) — in that case we degrade to the
-// other tests in this file which only validate marker presence.
-func TestTemplates_ByteIdenticalToPython(t *testing.T) {
-	pyDir := pythonTemplatesDir(t)
-	if pyDir == "" {
-		t.Skip("Python templates dir not reachable; skipping parity diff")
-	}
-
-	cases := []struct {
-		name     string
-		embedded string
-	}{
-		{"AGENTS.md.template", AgentsTemplate()},
-		{"AGENTS.md.slim.template", AgentsSlimTemplate()},
-		{"agent-stub.md", Stub()},
-		{"logmind-section.md", LogmindSection()},
-		{"CLAUDE.md.template", FullClaudeTemplate()},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			py, err := os.ReadFile(filepath.Join(pyDir, tc.name))
-			if err != nil {
-				t.Fatalf("read python source %s: %v", tc.name, err)
-			}
-			if string(py) != tc.embedded {
-				t.Fatalf("%s drift between Go embed and Python source\n--- want (python) ---\n%s\n--- got (embed) ---\n%s",
-					tc.name, py, tc.embedded)
-			}
-		})
-	}
-}
 
 // TestAgentsTemplate_HasV8Marker pins the protocol-version marker. The
 // `agents update --apply` workflow keys on this marker to decide
@@ -523,20 +484,19 @@ func TestSpecTemplate_HasExpectedSections(t *testing.T) {
 	}
 }
 
-// pythonTemplatesDir walks up from the running test file's location
-// to find the repo root, then returns src/logmind/templates/. Returns
-// "" when the Python tree is absent.
-func pythonTemplatesDir(t *testing.T) string {
+// repoRootFromCaller walks up from the test binary's working directory
+// (which `go test` sets to the package source directory) to find the
+// repo root, identified by go.mod.
+func repoRootFromCaller(t *testing.T) string {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatalf("runtime.Caller(0) failed")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
 	}
-	dir := filepath.Dir(thisFile)
+	dir := wd
 	for i := 0; i < 8; i++ {
-		candidate := filepath.Join(dir, "src", "logmind", "templates")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -544,5 +504,137 @@ func pythonTemplatesDir(t *testing.T) string {
 		}
 		dir = parent
 	}
+	t.Fatalf("could not locate go.mod walking up from %s", wd)
 	return ""
+}
+
+// TestRegenTimelineWorkflow_LockstepWithTemplate is a REAL pair-diff
+// lockstep test: before this, nothing actually diffed the installed
+// .github/workflows/regen-timeline.yml against the template this repo
+// hands to every other consumer repo
+// (internal/templates/github/regen-timeline.yml.template) — that parity
+// was maintained by hand, silently, which is how they drift.
+//
+// The two files are DELIBERATELY not byte-identical in exactly 3 ways:
+//
+//  1. The template's leading `# logmind-template-version: vN` marker
+//     line — the installed workflow isn't scaffolded from a template
+//     version, it IS the checked-in source of truth this repo runs on
+//     itself.
+//  2. The build mechanism: a consumer repo installs a released logmind
+//     binary via `thrillmade/setup-logmind`; this repo instead builds
+//     its own in-tree source (`actions/setup-go` + `make build` +
+//     `./bin/logmind`) so its own CI always exercises the code under
+//     review, never a stale release.
+//  3. The credential block: a consumer repo configures a
+//     LOGMIND_AUTO_REGEN_PAT secret directly; this repo mints a
+//     short-lived `skdd-steward[bot]` GitHub App installation token
+//     instead (see docs/orchestrator-app.md) — a different identity,
+//     the same "degrade, never fail" push contract.
+//
+// Everything else — MOST IMPORTANTLY the check-derived-docs job, which
+// is the actual PR-blocking enforcement logic — must be byte-identical,
+// or logmind's own CI would be exercising different gate behavior than
+// what every other repo installs. This test fails loudly if an edit to
+// either file's gate logic isn't mirrored on the other side, and it
+// fails loudly (pointing at the stale literal) if one of the 3
+// documented differences itself changes shape, forcing a human to
+// re-verify the divergence is still exactly what's documented above.
+func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
+	repoRoot := repoRootFromCaller(t)
+	wfBytes, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "regen-timeline.yml"))
+	if err != nil {
+		t.Fatalf("read installed workflow: %v", err)
+	}
+	workflow := string(wfBytes)
+	tmpl := Workflow("regen-timeline.yml.template")
+
+	// Difference 1: strip the template's leading version-marker line.
+	const markerPrefix = "# logmind-template-version: v"
+	nl := strings.IndexByte(tmpl, '\n')
+	if nl < 0 || !strings.HasPrefix(tmpl, markerPrefix) {
+		t.Fatalf("template does not start with the expected %q marker line; got first line %q",
+			markerPrefix, tmpl[:min(len(tmpl), 60)])
+	}
+	tmplBody := tmpl[nl+1:]
+
+	// --- Job 1: check-derived-docs (the PR gate) + everything above
+	// regen-on-main (name, header comments, on:, permissions:). This
+	// slice carries NONE of the 3 documented differences, so it must be
+	// byte-identical between the two files.
+	const splitAnchor = "  regen-on-main:\n"
+	tmplGateEnd := strings.Index(tmplBody, splitAnchor)
+	wfGateEnd := strings.Index(workflow, splitAnchor)
+	if tmplGateEnd < 0 {
+		t.Fatalf("template missing %q — regen-timeline.yml.template structure drifted", splitAnchor)
+	}
+	if wfGateEnd < 0 {
+		t.Fatalf("installed workflow missing %q — regen-timeline.yml structure drifted", splitAnchor)
+	}
+	tmplGate := tmplBody[:tmplGateEnd]
+	wfGate := workflow[:wfGateEnd]
+	if tmplGate != wfGate {
+		t.Fatalf("regen-timeline.yml's header/check-derived-docs job (the PR gate) drifted from its "+
+			"template — a gate-logic edit on one side wasn't mirrored on the other:\n"+
+			"--- template ---\n%s\n--- installed workflow ---\n%s", tmplGate, wfGate)
+	}
+
+	// --- Job 2: regen-on-main. Walk a fixed sequence of anchors that
+	// MUST appear, in order, identically in both files' regen-on-main
+	// section. The gaps between anchors are exactly where the build
+	// mechanism (gap 1), the credential env var (gap 2), and the rest of
+	// the credential block through EOF (gap 3, unanchored) are allowed
+	// to diverge. Anything else — an anchor going missing or moving —
+	// means the surrounding structure itself changed on only one side.
+	anchors := []string{
+		splitAnchor +
+			"    name: regen-on-main\n" +
+			"    if: github.event_name == 'push'\n" +
+			"    runs-on: ubuntu-latest\n" +
+			"    steps:\n" +
+			"      - uses: actions/checkout@v7\n" +
+			"        with:\n" +
+			"          fetch-depth: 0\n" +
+			"          persist-credentials: false\n",
+		// gap 1: build mechanism (setup-logmind vs setup-go+make build)
+		// and the "Regenerate derived docs" step body (logmind vs
+		// ./bin/logmind).
+		"      - name: Commit + push if changed\n" +
+			"        env:\n",
+		// gap 2: the single credential env var line (PAT vs STEWARD_TOKEN).
+		"        run: |\n" +
+			"          set -euo pipefail\n" +
+			"          if [ -z \"$(git status --porcelain -- docs/timeline.md docs/file-structure.md)\" ]; then\n" +
+			"            echo \"Derived docs already current on main.\"\n" +
+			"            exit 0\n" +
+			"          fi\n",
+		// gap 3 (unanchored, runs to EOF): the credential-missing check,
+		// the git identity, the push-failure comment prose, and the
+		// push URL's token variable — all keyed on which identity this
+		// repo vs. a consumer repo pushes as.
+	}
+	requireAnchorsInOrder(t, "template", tmplBody[tmplGateEnd:], anchors)
+	requireAnchorsInOrder(t, "installed workflow", workflow[wfGateEnd:], anchors)
+}
+
+// requireAnchorsInOrder asserts every string in anchors appears in body,
+// in order, as an exact substring — t.Fatal with the first one that
+// doesn't, naming which anchor and where the search gave up.
+func requireAnchorsInOrder(t *testing.T, label, body string, anchors []string) {
+	t.Helper()
+	pos := 0
+	for i, a := range anchors {
+		idx := strings.Index(body[pos:], a)
+		if idx < 0 {
+			end := pos + 200
+			if end > len(body) {
+				end = len(body)
+			}
+			t.Fatalf("%s: regen-on-main anchor %d not found at/after offset %d "+
+				"(regen-timeline.yml structure drifted from the lockstep test's anchors — "+
+				"update TestRegenTimelineWorkflow_LockstepWithTemplate):\nwant substring:\n%q\n"+
+				"--- body from offset %d ---\n%s", label, i, pos, a, pos, body[pos:end])
+		}
+		pos += idx + len(a)
+	}
 }

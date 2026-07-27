@@ -867,10 +867,12 @@ func nudgeBranchSummary(target string, forceNonInteractive, stdinOK bool, lines 
 // Mirrors Python's auto_commit path inside logger.log():
 //
 //   - stage=all → git add -A (sweeps the working tree)
-//   - stage=scoped → git add <target> (only the decision file itself;
-//     a fuller scoped surface would also include
-//     docs/timeline.md + docs/file-structure.md when they changed —
-//     deferred until the regen-on-log path lands in Go)
+//   - stage=scoped → git add <target> (only the decision file itself.
+//     docs/timeline.md + docs/file-structure.md are deliberately NEVER
+//     added here, scoped or not: under the zero-conflict invariant
+//     (see the restore call below) they are purely-derived, main-only
+//     artifacts, so a branch commit must never carry a local edit to
+//     either one. This is permanent, not a gap to close later.)
 //
 // Commit message uses cfg.Git.CommitMessageTemplate with `{decision}`
 // substituted for the summary. Default is `logmind: <summary>`.

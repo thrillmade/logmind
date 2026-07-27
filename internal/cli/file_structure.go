@@ -70,9 +70,8 @@ Examples:
 		"Write the rendered tree to PATH (typically docs/file-structure.md). "+
 			"Without this flag, prints to stdout.")
 	cmd.Flags().BoolVar(&check, "check", false,
-		"Exit nonzero if writing would change the file. Used in CI to fail "+
-			"the build before regen so the auto-commit step runs and updates the PR. "+
-			"Mirrors `logmind timeline --check`.")
+		"Exit nonzero if the file at --write is stale (would differ from a "+
+			"fresh render), without writing it. Mirrors `logmind timeline --check`.")
 	cmd.Flags().IntVar(&maxDepth, "max-depth", -1,
 		"Cap the tree at depth N (root is depth 0). Default: 2 (token-frugal). "+
 			"Pass 0 for unbounded (full tree); pass a positive integer to truncate.")
@@ -163,10 +162,10 @@ func newTreeCmd() *cobra.Command {
 		Short: "Regenerate docs/file-structure.md with the current project tree",
 		Long: `Regenerate docs/file-structure.md with the current project tree.
 
-Equivalent to the side-effect that runs after every ` + "`logmind log`" + ` when
-` + "`file_structure.auto_update: true`" + ` is set in ` + "`.logmind/config.yml`" + `.
-Useful as a pre-commit hook step or when an agent has just written
-several files and wants the docs/ snapshot to reflect them immediately.`,
+Equivalent to the regen the installed post-merge/post-rewrite git hooks
+already run automatically. Useful as a manual pre-commit step or when an
+agent has just written several files and wants the docs/ snapshot to
+reflect them immediately, without waiting for the next merge.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()

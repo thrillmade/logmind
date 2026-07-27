@@ -351,39 +351,6 @@ func TestPostRewriteHook_DriverModeNoLongerGatesOnBranch(t *testing.T) {
 	}
 }
 
-// TestPostMergeBody_ByteIdenticalToPython is THE parity contract for
-// wave B2. It shells to the Python interpreter (skipping the test if
-// Python or the src/logmind package isn't importable), captures
-// _build_post_merge_hook_body() output verbatim, normalises the
-// version-marker line so the Go (1.0.0-dev) and Python (0.6.14)
-// markers are equivalent, and asserts byte-equality.
-//
-// Skip semantics: if `python3` isn't on PATH, or `import logmind`
-// fails (e.g., in a CI container that strips the venv between
-// stages), the test is SKIPPED, not failed. The golden-based test
-// above still pins the Go shape; the parity test is the secondary
-// check that catches drift introduced when the Python helper itself
-// changes.
-func TestPostMergeBody_ByteIdenticalToPython(t *testing.T) {
-	pyBody, ok := pythonHookBody(t, "_build_post_merge_hook_body")
-	if !ok {
-		return // skipped
-	}
-	goBody := BuildPostMergeBody()
-	assertParity(t, "post-merge", goBody, pyBody)
-}
-
-// TestPostRewriteBody_ByteIdenticalToPython — same parity contract
-// for post-rewrite.
-func TestPostRewriteBody_ByteIdenticalToPython(t *testing.T) {
-	pyBody, ok := pythonHookBody(t, "_build_post_rewrite_hook_body")
-	if !ok {
-		return
-	}
-	goBody := BuildPostRewriteBody()
-	assertParity(t, "post-rewrite", goBody, pyBody)
-}
-
 func TestInstallPostMerge_FreshInstall(t *testing.T) {
 	repo := tempRepoWithHooks(t)
 	changed, err := InstallPostMerge(repo)
@@ -759,74 +726,6 @@ func TestExtractVersion_PreV0610Hook(t *testing.T) {
 }
 
 // --- helpers -------------------------------------------------------------
-
-// versionMarkerRE strips the version-marker line so the parity test
-// can compare Go (1.0.0-dev) and Python (0.6.14) bodies. The line
-// is a single comment; everything else MUST be byte-identical.
-var versionMarkerRE = regexp.MustCompile(`(?m)^# logmind-hook-version: \S+\n`)
-
-func assertParity(t *testing.T, name, goBody, pyBody string) {
-	t.Helper()
-	goNorm := versionMarkerRE.ReplaceAllString(goBody, "# logmind-hook-version: VERSION\n")
-	pyNorm := versionMarkerRE.ReplaceAllString(pyBody, "# logmind-hook-version: VERSION\n")
-	if goNorm != pyNorm {
-		// Surface the first differing line for quick triage.
-		goLines := strings.Split(goNorm, "\n")
-		pyLines := strings.Split(pyNorm, "\n")
-		max := len(goLines)
-		if len(pyLines) > max {
-			max = len(pyLines)
-		}
-		for i := 0; i < max; i++ {
-			var gl, pl string
-			if i < len(goLines) {
-				gl = goLines[i]
-			}
-			if i < len(pyLines) {
-				pl = pyLines[i]
-			}
-			if gl != pl {
-				t.Fatalf("%s body drifts from Python at line %d:\n  go: %q\n  py: %q",
-					name, i+1, gl, pl)
-			}
-		}
-		t.Fatalf("%s body drift detected but no per-line diff (length mismatch?)", name)
-	}
-}
-
-// pythonHookBody shells to the Python interpreter to capture the
-// _build_post_merge_hook_body / _build_post_rewrite_hook_body output
-// from the in-tree src/logmind package. Returns (body, false) — and
-// calls t.Skip — when Python isn't available or the import fails.
-//
-// Skip path covers:
-//   - python3 not on PATH (uncommon but happens on slim CI images)
-//   - logmind package not importable from src/ (e.g., running the
-//     Go test suite outside the repo, or after a partial checkout)
-//
-// We do NOT want a missing Python interpreter to fail the Go test
-// suite — the golden-based test above keeps the contract honest for
-// CI runs without Python.
-func pythonHookBody(t *testing.T, fn string) (string, bool) {
-	t.Helper()
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not on PATH; skipping byte-identical-vs-Python check")
-		return "", false
-	}
-	repoRoot := repoRootFromCaller(t)
-	script := `import sys; sys.path.insert(0, 'src'); ` +
-		`from logmind.core.gitattributes import ` + fn + `; ` +
-		`print(` + fn + `(), end='')`
-	cmd := exec.Command(py, "-c", script)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Skipf("python3 import-and-run failed (Python source unavailable?): %v\n%s", err, out)
-		return "", false
-	}
-	return string(out), true
-}
 
 func tempRepoWithHooks(t *testing.T) string {
 	t.Helper()

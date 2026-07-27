@@ -33,12 +33,26 @@
 // (`brew install thrillmade/tap/logmind` or curl-pipe-bash from
 // logmind.dev, then `logmind init`) is printed, not run.
 //
-// Deferred (out-of-scope for B6, tracked for B7 follow-up):
+// Not implemented (out-of-scope for B6; no single follow-up wave owns
+// these — B7 shipped distribution/Homebrew packaging and didn't touch
+// doctor):
 //
 //   - clud-bug status probe (reads `.claude/skills/.clud-bug.json`).
-//   - check_stale_derived_docs_warning (Phase-D divergence detection).
+//
 //   - check_clud_bug_skill_usage_integration (v0.6.6 upload-step gate).
+//
 //   - LOGMIND_AUTO_REGEN_PAT secret probe (queries GitHub repo settings).
+//
+//   - check_stale_derived_docs_warning (a branch-drift warning). Still
+//     unimplemented, and NOT obsolete. Under `derived_docs: {mode:
+//     integration-point}` the L1 restore in internal/cli/log.go's
+//     commitDecision makes the common case rare — but it only discards an
+//     UNCOMMITTED regen before staging. It cannot detect a branch whose
+//     derived docs ALREADY diverged from the merge-base in a landed commit
+//     (an older binary regenerating on a branch, a raw `git commit
+//     --no-verify`, or a hand edit). Those are exactly the cases the CI gate
+//     exists to catch, and a local probe would catch them sooner. Keep it on
+//     the list.
 package doctor
 
 import (
@@ -50,7 +64,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -658,22 +671,6 @@ func probeMergeDriverConfig(projectRoot string) WorkflowStatus {
 	}
 }
 
-// hookInstalledVersion returns the embedded `# logmind-hook-version:`
-// marker from a hook body, or nil when the marker line is missing.
-// Mirrors src/logmind/core/gitattributes.installed_<*>_hook_version.
-func hookInstalledVersion(path string) (string, bool) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(line, hooks.HookVersionPrefix); ok {
-			return strings.TrimSpace(rest), true
-		}
-	}
-	return "", false
-}
-
 // probeHook is the shared helper behind post-merge / post-rewrite /
 // commit-msg probes. `installedBody` is the canonical body the current
 // Go binary would write; content drift means installed bytes != bundled.
@@ -692,7 +689,7 @@ func probeHook(projectRoot, displayName, hookFile string, bundledBody string) Wo
 			Marker: nil, BundledMarker: &current, Drift: "missing",
 		}
 	}
-	hookVer, ok := hookInstalledVersion(path)
+	hookVer, ok := hooks.ExtractVersion(path)
 	if !ok {
 		marker := "markerless (pre-v0.6.10)"
 		return WorkflowStatus{
@@ -776,7 +773,7 @@ func probePreCommitHook(projectRoot string) WorkflowStatus {
 			Marker: &marker, BundledMarker: &current, Drift: "foreign",
 		}
 	}
-	hookVer, ok := hookInstalledVersion(path)
+	hookVer, ok := hooks.ExtractVersion(path)
 	if !ok {
 		marker := "markerless"
 		return WorkflowStatus{
@@ -1035,7 +1032,3 @@ func RenderStatus(r StatusReport) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
-// runtimeOS is exported for tests that want to swap behaviour by GOOS.
-// Currently unused but kept as a hook for future Windows-only branches.
-func runtimeOS() string { return runtime.GOOS }

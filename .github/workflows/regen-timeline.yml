@@ -86,6 +86,9 @@ jobs:
         continue-on-error: true
         uses: actions/create-github-app-token@v3
         with:
+          # KEEP `app-id` — see the note in release.yml. app-id and client-id
+          # are different values; this secret holds the numeric App ID, which
+          # `client-id` does not accept. The deprecation warning is cosmetic.
           app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
           private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}
           owner: thrillmade

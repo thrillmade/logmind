@@ -83,6 +83,13 @@ jobs:
         id: app_token
         uses: actions/create-github-app-token@v3
         with:
+          # KEEP `app-id`, do NOT "modernize" to `client-id`. The action warns
+          # that app-id is deprecated, but app-id and client-id are DIFFERENT
+          # VALUES: THRILLMADE_ORCHESTRATOR_APP_ID holds the App's numeric ID
+          # (docs/orchestrator-app.md), which `client-id` does not accept.
+          # Renaming the input without also provisioning the client-id value
+          # breaks token minting — and this step has no continue-on-error, so
+          # it would fail the whole release. Revisit only with a new secret.
           app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
           private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}
           owner: thrillmade

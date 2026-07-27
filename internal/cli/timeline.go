@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/timeline"
 )
 
@@ -53,8 +54,8 @@ Examples:
 		"Write the rendered timeline to PATH (typically docs/timeline.md). "+
 			"Without this flag, prints to stdout.")
 	cmd.Flags().BoolVar(&check, "check", false,
-		"Exit nonzero if writing would change the file. Used in CI to fail "+
-			"the build before regen so the auto-commit step runs and updates the PR.")
+		"Exit nonzero if the file at --write is stale (would differ from a "+
+			"fresh render), without writing it.")
 	// --full is accepted but ignored as of v2.0.0: the timeline is now a
 	// single format (the main-canonical entry-block union), so there is no
 	// brief/full distinction to select. Kept registered so existing scripts,
@@ -162,12 +163,14 @@ func pathExists(p string) bool {
 
 // writeAtomic writes data to path via a temp file + rename so a
 // crashed process can't leave a half-written file at the target.
-// Mirror of Python's atomic_io.atomic_write_text.
+// Mirror of Python's atomic_io.atomic_write_text. Thin string-typed
+// wrapper around the shared internal/atomicio.WriteFile primitive,
+// which every caller here routes through.
 //
-// The temp file gets a unique, random-suffixed name (os.CreateTemp)
-// rather than the old fixed `path+".tmp"` — that fixed name was a
-// race all its own: two concurrent writeAtomic calls targeting the
-// SAME path (e.g. two `logmind log` processes racing on
+// atomicio.WriteFile gets a unique, random-suffixed temp name
+// (os.CreateTemp) rather than a fixed `path+".tmp"` — a fixed name
+// was a race all its own: two concurrent writeAtomic calls targeting
+// the SAME path (e.g. two `logmind log` processes racing on
 // docs/decisions.md) both wrote to the identical tmp file, so one
 // process's os.Rename could fire on bytes the other process had
 // already written, or on a tmp file the other process had already
@@ -183,41 +186,9 @@ func pathExists(p string) bool {
 // drop one writer's read-modify-write) — see log.go's
 // acquireRepoLock for the cross-process lock that closes that half
 // of the bug.
-func writeAtomic(path, data string) (err error) {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	// Clean up the temp file on any error path; once os.Rename below
-	// succeeds there's nothing left at tmpPath to remove.
-	succeeded := false
-	defer func() {
-		if !succeeded {
-			os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err = tmp.WriteString(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	// os.CreateTemp mode bits are 0600; match the historical 0644 of
-	// the file this replaces so permissions don't silently change.
-	if err = os.Chmod(tmpPath, 0o644); err != nil {
-		return err
-	}
-	if err = os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	succeeded = true
-	return nil
+func writeAtomic(path, data string) error {
+	// 0644 matches the historical permission of every file this
+	// replaces (decisions.md, docs/timeline.md, etc.) — unchanged
+	// from before the atomicio consolidation.
+	return atomicio.WriteFile(path, []byte(data), 0o644)
 }

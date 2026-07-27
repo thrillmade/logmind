@@ -11,36 +11,29 @@ import (
 
 var update = flag.Bool("update", false, "regenerate testdata/*.golden files from current Go output")
 
-// TestEnsureBlock_FreshFileMatchesPython is the parity gate. It runs
-// EnsureBlock against an empty `.gitattributes` (no prior content)
-// and asserts the resulting bytes match what Python's
-// gitattributes.ensure_block emits in the same scenario. The Python
-// helper is shelled out so we catch drift introduced by either side.
-func TestEnsureBlock_FreshFileMatchesPython(t *testing.T) {
+// TestEnsureBlock_FreshFileMatchesGolden pins the EXACT bytes EnsureBlock
+// writes to a fresh/empty `.gitattributes` — the first-run path every new repo
+// hits on `logmind init`.
+//
+// This replaces the retired Python-parity test that used to be the only caller
+// of checkGolden. Dropping that test outright would have left the fresh-file
+// format pinned by nothing at all (the other EnsureBlock tests only exercise
+// the file-already-has-content and second-call-is-a-no-op paths). The Python
+// half is gone — the frozen Python is history, not a contract, and its source
+// no longer exists in this repo — but the golden itself still earns its keep:
+// the emitted block is a wire format that `logmind doctor`, the merge-driver
+// registration, and every consumer repo's `.gitattributes` depend on, so a
+// silent reflow of it must trip CI loudly.
+func TestEnsureBlock_FreshFileMatchesGolden(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitattributes")
-	changed, err := EnsureBlock(path)
-	if err != nil {
-		t.Fatalf("EnsureBlock: %v", err)
-	}
-	if !changed {
-		t.Fatalf("EnsureBlock returned changed=false on missing file; want true")
+
+	if _, err := EnsureBlock(path); err != nil {
+		t.Fatalf("EnsureBlock on a fresh file: %v", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-
-	pyOut, ok := pythonEnsureBlock(t, "")
-	if !ok {
-		// Python parity is best-effort. The golden file still pins
-		// the Go shape.
-		checkGolden(t, "gitattributes-fresh.golden", string(got))
-		return
-	}
-	if string(got) != pyOut {
-		t.Fatalf("EnsureBlock(fresh) drift vs Python:\n--- go ---\n%s\n--- py ---\n%s",
-			got, pyOut)
+		t.Fatalf("read %s: %v", path, err)
 	}
 	checkGolden(t, "gitattributes-fresh.golden", string(got))
 }
