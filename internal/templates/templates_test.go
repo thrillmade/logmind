@@ -253,8 +253,8 @@ func TestRegenTimelineTemplate_V9_BlockingGate(t *testing.T) {
 	if !strings.Contains(body, "x-access-token:${PAT}") {
 		t.Errorf("regen-timeline v9 main push must use the explicit PAT URL")
 	}
-	if strings.Count(body, "persist-credentials: false") < 2 {
-		t.Errorf("regen-timeline v9 must set persist-credentials: false on BOTH checkouts (the new check-derived-docs one + regen-on-main's)")
+	if !strings.Contains(body, "persist-credentials: false") {
+		t.Errorf("regen-timeline v9 must set persist-credentials: false on regen-on-main's checkout")
 	}
 	// The PR gate reads the PR file list via `gh pr diff`, which needs
 	// pull-requests:read. Because specifying ANY permission zeroes the rest,
@@ -281,10 +281,33 @@ func TestRegenTimelineTemplate_V9_BlockingGate(t *testing.T) {
 	if !strings.Contains(body, "has not adopted derived_docs.mode: integration-point") {
 		t.Errorf("regen-timeline v9 PR gate must explain WHY it passed on an unadopted repo")
 	}
-	// The PR gate now needs a checkout to read .logmind/config.yml — it had
-	// none in v8 (gh pr diff alone was enough).
-	if !strings.Contains(body, "actions/checkout@v7") {
-		t.Errorf("regen-timeline v9 PR gate must add a checkout step to read .logmind/config.yml")
+
+	// SECURITY — this is the load-bearing part of this test. The adoption
+	// signal MUST be read from the BASE ref, never from the pull request under
+	// judgement. The first v9 draft checked out the PR and grepped the
+	// workspace copy of .logmind/config.yml, which let a PR DISABLE THIS GATE
+	// FOR ITSELF by setting `mode: driver` in the very PR that edited a derived
+	// doc — the self-referential-authority failure the SPEC's base-ref MUSTs
+	// (§1.12.1, §10.3.3) exist to prevent. Pin BOTH the base-ref read AND the
+	// absence of any checkout in the PR job, so reintroducing the hole fails CI.
+	if !strings.Contains(body, "pull_request.base.sha") {
+		t.Errorf("regen-timeline v9 PR gate must read the adoption signal at the BASE sha, not from the PR itself")
+	}
+	if !strings.Contains(body, "contents/.logmind/config.yml?ref=") {
+		t.Errorf("regen-timeline v9 PR gate must fetch .logmind/config.yml pinned to a ref, not read a workspace copy")
+	}
+	if !strings.Contains(body, "on the BASE branch") {
+		t.Errorf("regen-timeline v9 PR gate's pass message must state the signal came from the BASE branch")
+	}
+	prJob, _, found := strings.Cut(body, "  regen-on-main:")
+	if !found {
+		t.Fatalf("regen-timeline v9: could not locate the regen-on-main job boundary")
+	}
+	// Match the STEP INVOCATION, not the bare action name — the security
+	// comment in the job body legitimately mentions `actions/checkout` while
+	// explaining why there isn't one.
+	if strings.Contains(prJob, "uses: actions/checkout") {
+		t.Errorf("regen-timeline v9 PR gate must NOT check out the PR — a checkout on a pull_request event lands refs/pull/N/merge (the PR's own content) and reintroduces the adoption-signal bypass")
 	}
 }
 
