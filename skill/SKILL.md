@@ -81,8 +81,11 @@ logmind show --all         # include archive
 logmind search "postgres"  # full-text across recent + archive
 ```
 
-As an agent, set `LOGMIND_QUIET=1` for terse, chainable machine output: each
-verb suppresses progress chatter and prints a single `ok <key=value>` line.
+As an agent, set `LOGMIND_QUIET=1` for terse, chainable machine output on
+the read/emit verbs (`doctor`, `file-structure`, `guard-commit`,
+`headline`, `log`, `repomap`, `search`, `show`, `timeline`): each
+suppresses progress chatter and prints a single `ok <key=value>` line.
+Other verbs currently ignore this flag.
 
 ## Enforcement: raw `git commit` is blocked
 

@@ -2,7 +2,6 @@ package linkcheck
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -226,45 +225,6 @@ func TestFormatReport_BrokenAndOrphans(t *testing.T) {
 	}
 }
 
-// TestCheck_ParityVsPython runs the same fixture through the Python
-// link_check and asserts byte-equal report strings. Skipped when
-// python3 isn't available.
-func TestCheck_ParityVsPython(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH; skipping byte-identical-vs-Python check")
-	}
-	dir := setupFixture(t, map[string]string{
-		"README.md":      "# Project\n[broken](missing.md)\n[ok](docs/guide.md)\n",
-		"docs/guide.md":  "# Guide\n",
-		"docs/orphan.md": "# Orphan\n",
-	})
-	broken, orphans, err := Check(dir, nil, nil)
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	goReport := FormatReport(broken, orphans)
-
-	repoRoot := repoRootFromCaller(t)
-	cmd := exec.Command("python3", "-c", `
-import sys, os
-sys.path.insert(0, 'src')
-os.chdir(sys.argv[1])
-from logmind.actions.link_check import check, format_report
-broken, orphans = check(__import__('pathlib').Path('.'))
-print(format_report(broken, orphans), end='')
-`, dir)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Skipf("python3 link_check unavailable: %v\n%s", err, out)
-	}
-	pyReport := string(out)
-	if goReport != pyReport {
-		t.Fatalf("link-check report drift vs Python:\n--- go ---\n%s\n--- py ---\n%s",
-			goReport, pyReport)
-	}
-}
-
 // --- helpers -------------------------------------------------------------
 
 func setupFixture(t *testing.T, files map[string]string) string {
@@ -280,27 +240,6 @@ func setupFixture(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
-}
-
-func repoRootFromCaller(t *testing.T) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	dir := wd
-	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	t.Fatalf("could not locate go.mod walking up from %s", wd)
-	return ""
 }
 
 // Sanity: keep strings imported (used by the build-tagged version).

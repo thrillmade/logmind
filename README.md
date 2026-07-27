@@ -184,8 +184,8 @@ curl -fsSL https://raw.githubusercontent.com/thrillmade/reporulez/main/bin/apply
 cd your-project
 logmind init
 
-# OR — install the full SkDD toolchain (logmind + clud-bug) in one go:
-logmind init --with-skdd      # subprocesses to `npx clud-bug init` (requires Node 20+)
+# OR — install the full SkDD toolchain (logmind + clud-bug):
+logmind init && npx clud-bug@latest init
 
 # Log decisions via CLI
 logmind log "Use PostgreSQL for database" \

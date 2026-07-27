@@ -11,9 +11,12 @@ import (
 
 // userConfigShape is the slice of .logmind/config.yml the suggest
 // command cares about. Defined locally (vs in internal/config) so the
-// B5 wave doesn't fight the parallel B6 rewrite of the config loader.
-// Once B6 lands a richer Config struct, this wrapper drops and the
-// command calls config.Load(cwd).SkillSuggest directly.
+// B5 wave didn't fight the parallel B6 rewrite of the config loader.
+// B6's richer Config struct has since landed, but it never grew a
+// `skill_suggest:` section — config.Config has no SkillSuggest field
+// — so this local wrapper is still the only reader of that block and
+// stays live (still called from skill.go's runSkillSuggest). Revisit
+// only if/when `skill_suggest:` is folded into config.Config.
 type userConfigShape struct {
 	SkillSuggest struct {
 		Engine                     *string `yaml:"engine,omitempty"`

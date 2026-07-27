@@ -196,7 +196,7 @@ func TestAgentsRemove_CancelOnNoConfirm(t *testing.T) {
 func TestAgentsUpdate_NoAgentsMD(t *testing.T) {
 	dir := t.TempDir()
 	var stdout bytes.Buffer
-	if err := runAgentsUpdate(dir, "1.0.0-dev", false, false, &stdout); err != nil {
+	if err := runAgentsUpdate(dir, "1.0.0-dev", false, &stdout); err != nil {
 		t.Fatalf("runAgentsUpdate: %v", err)
 	}
 	checkGolden(t, "agents_update_no_agents_md.golden", stdout.String())
@@ -211,7 +211,7 @@ func TestAgentsUpdate_AgentsMDNoBlock(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	var stdout bytes.Buffer
-	if err := runAgentsUpdate(dir, "1.0.0-dev", false, false, &stdout); err != nil {
+	if err := runAgentsUpdate(dir, "1.0.0-dev", false, &stdout); err != nil {
 		t.Fatalf("runAgentsUpdate: %v", err)
 	}
 	checkGolden(t, "agents_update_no_block.golden", stdout.String())
@@ -225,7 +225,7 @@ func TestAgentsUpdate_Current(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	var stdout bytes.Buffer
-	if err := runAgentsUpdate(dir, "1.0.0-dev", false, false, &stdout); err != nil {
+	if err := runAgentsUpdate(dir, "1.0.0-dev", false, &stdout); err != nil {
 		t.Fatalf("runAgentsUpdate: %v", err)
 	}
 	checkGolden(t, "agents_update_current.golden", stdout.String())

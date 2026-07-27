@@ -120,10 +120,14 @@ const derivedDocsIntegrationPointGrep = `grep -Eq '^[[:space:]]*mode:[[:space:]]
 // working tree — no hook-body edit, no HookVersionPrefix bump, no fleet-wide
 // "hook updated" churn. Branch detail pages are KEPT (never folded), so the
 // union always has its sources. The
-// server-side reconciler is the advisory regen-timeline.yml workflow (PR
-// #159). We deliberately add NO push-to-default trigger here: it would
-// reintroduce the GITHUB_TOKEN-stranding + self-trigger loop the advisory
-// model exists to avoid. The TestPostMergeBody_RollupInvariants guard pins
+// server-side reconciler is the regen-timeline.yml workflow's
+// check-derived-docs job (PR #159): in a repo that has adopted
+// `derived_docs: {mode: integration-point}` it BLOCKS a PR that modifies
+// either derived doc (and passes with an explanation otherwise), and it
+// regenerates + pushes both files on every push to the default branch. We
+// deliberately add NO push-to-default trigger here: it would reintroduce
+// the GITHUB_TOKEN-stranding + self-trigger loop that server-side design
+// exists to avoid. The TestPostMergeBody_RollupInvariants guard pins
 // "regenerates the timeline, never pushes" even across a golden regen.
 //
 // v2.0.0 B6 adoption gate: the non-default-branch skip below fires ONLY when
@@ -567,8 +571,8 @@ func installHook(hookPath, body, marker string) (bool, error) {
 // Mirrors src/logmind/core/gitattributes.extract_hook_version.
 //
 // Note: this is the SINGLE source of truth for version-marker
-// extraction across the Go codebase. Doctor (later wave) will call
-// it directly rather than reimplementing the regex.
+// extraction across the Go codebase. internal/doctor calls it
+// directly (see probeHook) rather than reimplementing the parsing.
 func ExtractVersion(hookPath string) (string, bool) {
 	data, err := os.ReadFile(hookPath)
 	if err != nil {

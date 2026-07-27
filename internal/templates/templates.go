@@ -1,9 +1,11 @@
 // Package templates embeds the canonical AGENTS.md, per-agent stub, and
 // per-tool legacy templates so the Go binary doesn't need to ship them as
-// loose files on disk. The embedded bytes are BYTE-IDENTICAL copies of
-// src/logmind/templates/* at v0.6.14 — see the verification step in the
-// B4 PR description and the package-level test that diffs the embed
-// against the Python source tree at test time.
+// loose files on disk. The embedded bytes originated as BYTE-IDENTICAL
+// copies of src/logmind/templates/* at v0.6.14 — see the verification
+// step in the B4 PR description. (src/logmind was deleted in 5979eef;
+// the byte-parity check against it is gone with it — see
+// templates_test.go's marker/shape tests for the tree's current
+// self-checks.)
 //
 // Why embed.FS vs string constants:
 //
@@ -11,9 +13,8 @@
 //     "templates" / name).read_text(encoding="utf-8")`. Mapping that to
 //     a single `embed.FS` lets the Go binary use the SAME file names
 //     (AGENTS.md.template, AGENTS.md.slim.template, agent-stub.md,
-//     logmind-section.md, CLAUDE.md.template) so future template
-//     additions cost nothing — drop the file into internal/templates/
-//     and re-run `go build`.
+//     logmind-section.md) so future template additions cost nothing —
+//     drop the file into internal/templates/ and re-run `go build`.
 //
 //   - String constants would force a name-mangling step (the Python
 //     path "AGENTS.md.slim.template" can't be a Go identifier) and
@@ -29,12 +30,11 @@ package templates
 
 import (
 	"embed"
-	"io/fs"
 	"sort"
 	"strings"
 )
 
-//go:embed AGENTS.md.template AGENTS.md.slim.template agent-stub.md logmind-section.md CLAUDE.md.template
+//go:embed AGENTS.md.template AGENTS.md.slim.template agent-stub.md logmind-section.md
 //go:embed config.yml.template decisions.md.template decisions-archive.md.template file-structure.md.template
 //go:embed decisions-branch-header.md.template
 //go:embed dependabot.yml.template
@@ -104,20 +104,6 @@ func Stub() string {
 func LogmindSection() string {
 	return readEmbed("logmind-section.md")
 }
-
-// FullClaudeTemplate returns the standalone CLAUDE.md template used by
-// the legacy `create_claude_md` Python path. Preserved here for parity
-// with src/logmind/core/inserter.get_full_claude_template().
-func FullClaudeTemplate() string {
-	return readEmbed("CLAUDE.md.template")
-}
-
-// FS exposes the underlying embed.FS so tests can iterate every shipped
-// template name + byte content without each test re-hardcoding the
-// filename list. NOT for production use — production code should
-// always go through the named accessors above so a typo on a filename
-// trips at compile time, not runtime.
-func FS() embed.FS { return embedFS }
 
 // readEmbed is a thin wrapper around embedFS.ReadFile that panics on a
 // missing entry. Every name fed into it appears in the //go:embed
@@ -234,7 +220,3 @@ func ListWorkflowTemplates() []string {
 	sort.Strings(out)
 	return out
 }
-
-// WalkEmbedded returns an fs.FS view of the templates dir; tests use it
-// to enumerate embedded files without re-listing them.
-func WalkEmbedded() fs.FS { return embedFS }

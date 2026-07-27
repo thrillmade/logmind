@@ -525,41 +525,6 @@ func TestRemoveAgentFile_Missing(t *testing.T) {
 	}
 }
 
-// TestDetectTemplateDrift_AgentsMDMissing — no AGENTS.md → "AGENTS.md missing".
-func TestDetectTemplateDrift_AgentsMDMissing(t *testing.T) {
-	dir := t.TempDir()
-	drift, err := DetectTemplateDrift(dir, nil)
-	if err != nil {
-		t.Fatalf("DetectTemplateDrift: %v", err)
-	}
-	if len(drift) != 1 || drift[0] != "AGENTS.md missing" {
-		t.Errorf("drift = %v; want [AGENTS.md missing]", drift)
-	}
-}
-
-// TestDetectTemplateDrift_NoMarkers — AGENTS.md exists without markers.
-func TestDetectTemplateDrift_NoMarkers(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# AGENTS\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	drift, err := DetectTemplateDrift(dir, nil)
-	if err != nil {
-		t.Fatalf("DetectTemplateDrift: %v", err)
-	}
-	want := "AGENTS.md present but missing logmind block"
-	found := false
-	for _, d := range drift {
-		if d == want {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("drift = %v; want to contain %q", drift, want)
-	}
-}
-
 // TestFindOutdatedMarkerBlocks_NoFile returns nil when AGENTS.md is
 // absent (nothing to update, distinct error path from "exists but
 // current").

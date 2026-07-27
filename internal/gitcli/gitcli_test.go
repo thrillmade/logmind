@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -394,30 +393,5 @@ func TestShowFile_ReadsRefContent(t *testing.T) {
 	}
 	if _, ok := ShowFile(repo, "HEAD", "missing.txt"); ok {
 		t.Fatal("ShowFile of missing path should be false")
-	}
-}
-
-// TestMergeBase_ReturnsCommonAncestor: MergeBase(repo, mainSha) resolves to a
-// non-empty SHA when ref and HEAD share history — the primitive `warp` and the
-// pulse main-compare probe both build on.
-func TestMergeBase_ReturnsCommonAncestor(t *testing.T) {
-	repo := initRepo(t)
-	mainSha := strings.TrimSpace(revParse(t, repo, "HEAD"))
-	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
-	got, ok := MergeBase(repo, mainSha)
-	if !ok || got == "" {
-		t.Fatalf("MergeBase(repo, %q) = (%q, %v); want a non-empty SHA", mainSha, got, ok)
-	}
-	if got != mainSha {
-		t.Fatalf("MergeBase = %q; want %q (mainSha is an ancestor of HEAD)", got, mainSha)
-	}
-}
-
-// TestMergeBase_FalseOnUnknownRef: an unresolvable ref is best-effort
-// ("", false), not an error the caller must special-case.
-func TestMergeBase_FalseOnUnknownRef(t *testing.T) {
-	repo := initRepo(t)
-	if got, ok := MergeBase(repo, "does-not-exist"); ok || got != "" {
-		t.Fatalf("MergeBase(unknown ref) = (%q, %v); want (\"\", false)", got, ok)
 	}
 }

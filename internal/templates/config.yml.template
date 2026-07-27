@@ -3,15 +3,6 @@
 
 # Git integration
 git:
-  # Auto-commit the decision after `logmind log`. Default `--stage all`
-  # sweeps the WHOLE working tree into the decision commit (the decision
-  # and the code that prompted it travel together, one commit, no
-  # follow-up `git add`/`git commit`). Pass `logmind log ... --stage
-  # scoped` to limit the commit to the decision log + its companion
-  # files (file-structure.md, decisions-archive.md if rotated) when you
-  # have unrelated WIP you don't want swept in.
-  auto_commit: true
-
   # Push automatically after committing. With the default `--stage all`,
   # anything else in the working tree rides along in the same commit —
   # push follows accordingly. Use `--stage scoped` (or set this false) if
@@ -61,9 +52,6 @@ decisions:
 
 # File structure generation
 file_structure:
-  # Update file-structure.md on every log
-  auto_update: true
-
   # Directories and files to ignore in tree output.
   # logmind also reads the project's .gitignore and unions these patterns.
   ignore_patterns:
@@ -93,18 +81,3 @@ file_structure:
     # General
     - .DS_Store
     - "*.log"
-
-# AI Agent configuration
-# Set to true to enable an agent, false to disable
-agents:
-  claude: true       # CLAUDE.md
-  cursor: true       # .cursorrules
-  copilot: false     # .github/copilot-instructions.md
-  windsurf: false    # .windsurfrules
-  aider: false       # CONVENTIONS.md
-  continue: false    # .continuerules
-  cody: false        # .sourcegraph/cody.json
-  zed: false         # .zed/settings.json
-  amazonq: false     # .amazonq/rules.md
-  cline: false       # .clinerules
-  codex: false       # AGENTS.md (OpenAI Codex / universal standard)

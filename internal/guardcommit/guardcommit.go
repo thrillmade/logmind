@@ -18,8 +18,10 @@
 //
 // This package is pure logic: no install wiring, no hook registration, and
 // no cobra command lives here. See internal/cli/guard_commit.go for the
-// (Hidden, manually-invokable-only) CLI surface this feeds; the hooks that
-// call it automatically are a follow-up PR.
+// (Hidden, manually-invokable-only) CLI surface this feeds; the git
+// commit-msg hook (internal/hooks) and the Claude Code PreToolUse hook
+// (internal/claudehook) both shell out to `logmind guard-commit` and call
+// it automatically on every commit.
 package guardcommit
 
 import (

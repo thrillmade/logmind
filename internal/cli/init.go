@@ -25,20 +25,12 @@
 //	--agents <list>       Comma-separated agent enable list
 //	--all-agents          Enable every agent in the registry
 //	--github-actions/--no-github-actions  Install workflow templates (default on)
-//	--skill-install/--no-skill-install    Install the logmind skill via skills.sh
-//	                                       (default: prompt when stdin is a TTY)
-//	--install-hook        Also install the local pre-commit hook
-//	--with-skdd           Subprocess to `npx clud-bug init` after logmind setup
-//	--configure-github    Apply the canonical-v1 ruleset via the GitHub API
 //	--spec                Scaffold docs/spec.md (if absent) and point
 //	                       context.spec_file at it (if unset). Idempotent;
 //	                       works in both fresh-install and refresh mode.
 //
-// SCOPE NOTE: this implementation lands the core scaffolding paths
-// (file writes, hook installs, workflow templates, AGENTS.md). The
-// `--with-skdd`, `--configure-github`, and `--install-hook` paths are
-// stubbed with warnings — they require external tool / API integration
-// and ship in a follow-up (B7 + dedicated PR for GitHub API auth).
+// Run `logmind install-hook` separately to set up the local pre-commit
+// hook; that is a real top-level subcommand, not an init flag.
 package cli
 
 import (
@@ -67,15 +59,11 @@ import (
 )
 
 type initFlags struct {
-	noGit            bool
-	agentsList       string
-	allAgents        bool
-	githubActions    bool
-	skillInstallFlag string // "" | "yes" | "no"  (Python: --skill-install / --no-skill-install / unset)
-	installHook      bool
-	withSkdd         bool
-	configureGithub  bool
-	spec             bool
+	noGit         bool
+	agentsList    string
+	allAgents     bool
+	githubActions bool
+	spec          bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -97,12 +85,6 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.agentsList, "agents", "", "Comma-separated list of agents to configure (e.g., claude,cursor,windsurf).")
 	cmd.Flags().BoolVar(&f.allAgents, "all-agents", false, "Configure all supported AI agents.")
 	cmd.Flags().BoolVar(&f.githubActions, "github-actions", true, "Install logmind GitHub Actions (decision aggregator, link checker). Default on.")
-	cmd.Flags().BoolVar(&f.installHook, "install-hook", false, "Also run `logmind install-hook` to set up the pre-commit hook.")
-	cmd.Flags().BoolVar(&f.withSkdd, "with-skdd", false, "Also install clud-bug (skill-driven PR review) via npx.")
-	cmd.Flags().BoolVar(&f.configureGithub, "configure-github", false, "Apply the thrillmade/protocol canonical-v1 ruleset via the GitHub API.")
-	// String flag accepts "" | "yes" | "no" to mirror Python's tri-state
-	// --skill-install / --no-skill-install / default-unset semantics.
-	cmd.Flags().StringVar(&f.skillInstallFlag, "skill-install", "", "Install (yes) or skip (no) the logmind agent skill. Default: skip when non-interactive.")
 	cmd.Flags().BoolVar(&f.spec, "spec", false,
 		"Scaffold docs/spec.md (only if absent) and set context.spec_file: docs/spec.md in .logmind/config.yml (only if unset). Idempotent; works in both fresh-install and refresh mode.")
 	return cmd
@@ -345,21 +327,6 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		} else {
 			fmt.Fprintln(out, "✓ Committed changes: \"logmind: Initialize decision tracking\"")
 		}
-	}
-
-	// Deferred features — surface explicit notices so users know they're
-	// not silently skipped. Each represents a follow-up PR.
-	if f.installHook {
-		fmt.Fprintln(out, "Note: --install-hook deferred to a follow-up — run `logmind install-hook` manually.")
-	}
-	if f.withSkdd {
-		fmt.Fprintln(out, "Note: --with-skdd deferred to a follow-up — run `npx clud-bug@latest init` manually.")
-	}
-	if f.configureGithub {
-		fmt.Fprintln(out, "Note: --configure-github deferred to a follow-up — see thrillmade/protocol/rulesets/canonical-v1.json.")
-	}
-	if f.skillInstallFlag == "yes" {
-		fmt.Fprintln(out, "Note: --skill-install yes deferred — run `npx skills add -g github.com/thrillmade/agent-skills --skill logmind` manually.")
 	}
 
 	fmt.Fprintln(out)

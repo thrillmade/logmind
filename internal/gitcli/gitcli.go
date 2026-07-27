@@ -135,22 +135,6 @@ func CurrentBranch(repoRoot string) string {
 	return strings.TrimSpace(stdout.String())
 }
 
-// UpstreamRef returns the value of `@{u}` for the current branch
-// (typically "origin/<branch>"), or an empty string if no upstream
-// is configured. Used by the post-merge hook orphan-branch check,
-// but ALSO callable from Go for testing the hook logic in-process.
-func UpstreamRef(repoRoot string) string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "@{u}")
-	cmd.Dir = repoRoot
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(stdout.String())
-}
-
 // RemoteHEAD returns the default-branch name from
 // `refs/remotes/origin/HEAD`, e.g. "main" or "master". Empty string
 // on any failure. Used by `logmind rebase` (B3) and as input to
@@ -556,17 +540,6 @@ func RunCaptured(repoRoot string, args ...string) (stdout, stderr string, err er
 	cmd.Stderr = &se
 	err = cmd.Run()
 	return so.String(), se.String(), err
-}
-
-// MergeBase returns the merge-base commit SHA of ref and HEAD. Best-effort:
-// ("", false) on any error (ref missing, no common ancestor, not a repo).
-func MergeBase(repoRoot, ref string) (string, bool) {
-	out, _, err := RunCaptured(repoRoot, "merge-base", ref, "HEAD")
-	if err != nil {
-		return "", false
-	}
-	sha := strings.TrimSpace(out)
-	return sha, sha != ""
 }
 
 // Fetch runs `git fetch <remote> <ref>` (a NETWORK call). Used only by explicit

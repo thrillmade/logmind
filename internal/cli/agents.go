@@ -291,37 +291,35 @@ func confirmYes(stdin io.Reader) bool {
 // Behaviour mirror of src/logmind/cli.agents_update (cli.py:1729-1856).
 // Dry-run (default) reports which files have stale logmind blocks and
 // which CI workflows have stale pins. `--apply` rewrites them in
-// place; `--commit` (later) commits the refresh.
+// place.
 //
 // The version source for the workflow pin sweep is the binary's
 // `version.Version` variable — matches Python's `__version__` import.
 // (B7 distribution wave converted Version from const → var so
 // GoReleaser can inject the tag value via ldflags at release-build time.)
 func newAgentsUpdateCmd() *cobra.Command {
-	var doApply, doCommit bool
+	var doApply bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Refresh stale logmind blocks + CI workflow pins",
 		Long: `Refresh outdated logmind marker blocks in AGENTS.md and CI workflow pins.
 
 Dry-run (default): reports which files would be updated.
---apply: rewrites the block body in place, preserving content above + below the markers.
---commit: also git-commits the refresh (requires --apply).`,
+--apply: rewrites the block body in place, preserving content above + below the markers.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			return runAgentsUpdate(cwd, version.Version, doApply, doCommit, cmd.OutOrStdout())
+			return runAgentsUpdate(cwd, version.Version, doApply, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().BoolVar(&doApply, "apply", false, "Rewrite stale marker blocks in place. Default is dry-run.")
-	cmd.Flags().BoolVar(&doCommit, "commit", false, "git-commit the refreshed files after applying. Requires --apply.")
 	return cmd
 }
 
-func runAgentsUpdate(cwd, currentVersion string, doApply, doCommit bool, stdout io.Writer) error {
+func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout io.Writer) error {
 	outdated, err := inserter.FindOutdatedMarkerBlocks(cwd)
 	if err != nil {
 		return err
@@ -409,12 +407,6 @@ func runAgentsUpdate(cwd, currentVersion string, doApply, doCommit bool, stdout 
 		fmt.Fprintf(stdout, "✓ Bumped logmind pin in %s\n", filepath.ToSlash(rel))
 	}
 
-	if doCommit {
-		// Auto-commit deferred to B6 — same logic as agents add /
-		// agents remove. Print one-line notice so users used to the
-		// Python ergonomics know to commit manually.
-		fmt.Fprintln(stdout, "(commit deferred — run `git add` + `git commit` manually until logmind v1.0 ships)")
-	}
 	return nil
 }
 

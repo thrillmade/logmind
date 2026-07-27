@@ -47,13 +47,6 @@ type refreshResult struct {
 	ClaudeHookChanged  bool     // .claude/settings.json PreToolUse guard was created/refreshed
 }
 
-// Changed reports whether applyRefresh wrote anything.
-func (r refreshResult) Changed() bool {
-	return len(r.WorkflowsCreated) > 0 || len(r.WorkflowsRefreshed) > 0 ||
-		r.AgentsMDMsg != "" || r.GitattrChanged || r.MergeDriverSet ||
-		len(r.HooksRefreshed) > 0 || r.ClaudeHookChanged
-}
-
 // refreshOpts gates the write surfaces that need a repo/CI context.
 type refreshOpts struct {
 	githubActions      bool // install/refresh .github/workflows/*

@@ -312,7 +312,7 @@ func newConcurrencyTestRepo(t *testing.T, binPath string) string {
 	runGitCmd(t, repo, "add", "README.md")
 	runGitCmd(t, repo, "commit", "-qm", "initial")
 
-	cmd := exec.Command(binPath, "init", "--skill-install", "no", "--github-actions=false")
+	cmd := exec.Command(binPath, "init", "--github-actions=false")
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("logmind init: %v\n%s", err, out)
