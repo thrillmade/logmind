@@ -32,20 +32,34 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
+      # NO checkout, deliberately. This job reads ONLY the base ref (via the
+      # API) and the PR's file list — never the PR's own content. See below.
       - name: Assert the branch did not edit the derived docs
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           # B6 adoption gate: this repo must have explicitly opted into the
           # zero-conflict invariant. Unadopted (mode unset or "driver", the
           # default) → pass with an explanatory message; never block.
-          if ! grep -Eq '^[[:space:]]*mode:[[:space:]]*"?integration-point"?[[:space:]]*$' .logmind/config.yml 2>/dev/null; then
-            echo "This repo has not adopted derived_docs.mode: integration-point in .logmind/config.yml — the derived-docs invariant isn't enforced here. Passing (see docs/plan.md's 'Derived docs' section to opt in)."
+          #
+          # SECURITY — the adoption signal MUST be read from the BASE ref, never
+          # from the pull request under judgement. `actions/checkout` on a
+          # pull_request event checks out refs/pull/N/merge (i.e. the PR's own
+          # content), so reading .logmind/config.yml from the workspace let a PR
+          # DISABLE THIS GATE FOR ITSELF just by setting `mode: driver` — or
+          # deleting the key — in the same PR that edits a derived doc. That is
+          # the self-referential-authority failure the SPEC's base-ref MUSTs
+          # (§1.12.1, §10.3.3) exist to prevent. Reading at base.sha makes the
+          # signal unforgeable by the PR: only a commit already ON the base
+          # branch can turn this gate on or off.
+          base_cfg=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/.logmind/config.yml?ref=${BASE_SHA}" \
+            --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+          if ! printf '%s\n' "$base_cfg" | grep -Eq '^[[:space:]]*mode:[[:space:]]*"?integration-point"?[[:space:]]*$'; then
+            echo "This repo has not adopted derived_docs.mode: integration-point on the BASE branch — the derived-docs invariant isn't enforced here. Passing (see docs/plan.md's 'Derived docs' section to opt in)."
             exit 0
           fi
           changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
