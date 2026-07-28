@@ -404,6 +404,15 @@ func DefaultMap() *OrderedMap {
 	git.Set("auto_push", true)
 	git.Set("commit_message_template", "logmind: {decision}")
 	git.Set("auto_rebase", false)
+	// SPEC §1.2.1 documents both keys with these defaults and places them
+	// here, after auto_rebase, in the section's example config. They are
+	// parsed and honored (guard_commit.go), but were missing from this map
+	// — so `config get git.enforce_commits` reported "not found" for a key
+	// with a documented default. §1.2.1's MAY-omit-from-listing carve-out
+	// covers context.repomap / file_structure.root_label / context.spec_file
+	// / skill_suggest.*; these two are not in it, so they belong here.
+	git.Set("enforce_commits", true)
+	git.Set("commit_line_threshold", 20)
 	root.Set("git", git)
 
 	decisions := NewOrderedMap()
