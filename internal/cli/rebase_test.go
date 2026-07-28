@@ -35,8 +35,10 @@ func gitInit(t *testing.T) string {
 		{"git", "init", "-q", "-b", "main"},
 		{"git", "config", "user.email", "test@example.com"},
 		{"git", "config", "user.name", "Test"},
-		// gc.auto=0 — see initLogTestGitRepo (log_test.go) for why.
+		// Both keys — see initLogTestGitRepo (log_test.go). maintenance.auto is
+		// the actual spawn gate; gc.auto alone does not suppress it.
 		{"git", "config", "gc.auto", "0"},
+		{"git", "config", "maintenance.auto", "false"},
 		{"git", "commit", "--allow-empty", "-q", "-m", "initial"},
 	}
 	for _, c := range cmds {

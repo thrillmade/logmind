@@ -74,15 +74,32 @@ func initLogTestGitRepo(t *testing.T, dir string) {
 	mustGit("config", "user.email", "test@example.com")
 	mustGit("config", "user.name", "Test")
 	mustGit("config", "commit.gpgsign", "false")
-	// gc.auto=0 — without it `git commit` forks a background `git gc --auto`
-	// once loose objects pass git's threshold. That gc is still writing into
-	// .git/objects when the test returns, so t.TempDir()'s RemoveAll races it
-	// and fails with "directory not empty" — a CLEANUP error, not an
-	// assertion failure, reported against whichever test happened to lose the
-	// race. It reddened three PRs on different matrix cells (ubuntu and
-	// macOS) while every test passed locally. gc buys nothing in a throwaway
-	// repo that lives for one test.
+	// Suppress git's background maintenance in throwaway test repos.
+	//
+	// The symptom: `t.TempDir() RemoveAll cleanup: unlinkat .../.git/objects:
+	// directory not empty` — a CLEANUP error, not an assertion failure,
+	// landing on whichever test lost the race. It reddened four PRs across
+	// ubuntu and macOS cells while every test passed locally.
+	//
+	// BOTH keys are required, and gc.auto alone is NOT enough — that was a
+	// first fix attempt that shipped and did not work. `git commit` calls
+	// run_auto_maintenance() unconditionally, and the spawn gate for it is
+	// `maintenance.auto` (default true), a SEPARATE key from `gc.auto`.
+	// Verified with GIT_TRACE2_EVENT on git 2.39.5: with gc.auto=0 alone,
+	// `git commit` still spawned `git maintenance` on 5 of 5 commits; adding
+	// maintenance.auto=false took it to 0 of 5, and removing it again in the
+	// same repo restored 5 of 5.
+	//
+	// That spawned maintenance can daemonize (maintenance.autoDetach, default
+	// true) into a grandchild outside git's process tree, which is why the
+	// race is load-dependent and never reproduces locally — unloaded, it
+	// finishes in single-digit milliseconds.
+	//
+	// This is NOT a logmind defect: every exec.Command in non-test code is
+	// paired with a blocking Run/Output/CombinedOutput, and there are zero
+	// bare .Start() calls, so no logmind command outlives itself.
 	mustGit("config", "gc.auto", "0")
+	mustGit("config", "maintenance.auto", "false")
 }
 
 // scaffoldDocs drives `logmind init --no-git` against the current cwd
