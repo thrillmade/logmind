@@ -74,6 +74,15 @@ func initLogTestGitRepo(t *testing.T, dir string) {
 	mustGit("config", "user.email", "test@example.com")
 	mustGit("config", "user.name", "Test")
 	mustGit("config", "commit.gpgsign", "false")
+	// gc.auto=0 — without it `git commit` forks a background `git gc --auto`
+	// once loose objects pass git's threshold. That gc is still writing into
+	// .git/objects when the test returns, so t.TempDir()'s RemoveAll races it
+	// and fails with "directory not empty" — a CLEANUP error, not an
+	// assertion failure, reported against whichever test happened to lose the
+	// race. It reddened three PRs on different matrix cells (ubuntu and
+	// macOS) while every test passed locally. gc buys nothing in a throwaway
+	// repo that lives for one test.
+	mustGit("config", "gc.auto", "0")
 }
 
 // scaffoldDocs drives `logmind init --no-git` against the current cwd

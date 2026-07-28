@@ -305,6 +305,13 @@ func newConcurrencyTestRepo(t *testing.T, binPath string) string {
 	runGitCmd(t, repo, "config", "user.email", "test@test.com")
 	runGitCmd(t, repo, "config", "user.name", "test")
 	runGitCmd(t, repo, "config", "commit.gpgsign", "false")
+	// gc.auto=0 — see initLogTestGitRepo (log_test.go) for the full write-up.
+	// Short version: a background `git gc --auto` forked by `git commit` is
+	// still writing into .git/objects when t.TempDir() cleanup runs, which
+	// fails RemoveAll with "directory not empty". This suite is the most
+	// exposed to it — it drives many concurrent commits into one repo, which
+	// is exactly how loose objects cross gc's threshold fastest.
+	runGitCmd(t, repo, "config", "gc.auto", "0")
 
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("test repo\n"), 0o644); err != nil {
 		t.Fatalf("seed README.md: %v", err)

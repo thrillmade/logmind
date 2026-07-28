@@ -98,22 +98,26 @@ func runWarp(cwd string, stdout, stderr io.Writer) error {
 	// compute a TRUSTWORTHY merge-base and self-heal a branch whose HEAD
 	// already carries a diverged copy of these two files.
 	//
-	// Unconditional, like the rest of the zero-conflict invariant — the
-	// v2.0.0 B6 `derived_docs.mode` adoption gate that used to make this
-	// step a no-op for an "unadopted" repo is gone; every non-default
-	// branch gets the repair.
+	// Conditional on ACTUAL DIVERGENCE, not on branch alone. The v2.0.0 B6
+	// `derived_docs.mode` adoption gate is gone — correctly, the invariant
+	// is unconditional now — but that gate's `if` was carrying a SECOND
+	// condition that had nothing to do with adoption: whether this branch
+	// has anything to repair. Deleting both at once made warp repair every
+	// branch, which broke the read-refresh above (see below) and hollowed
+	// out the §0.4.1.2 staging signal. divergedDerivedDocPaths (derived.go)
+	// restores that condition; its doc comment carries the full rationale.
 	//
-	// Interaction with the read-refresh loop above: that loop just wrote
+	// Interaction with the read-refresh loop above — this is why the
+	// condition matters, not just a nicety. That loop just wrote
 	// origin/<default>'s TIP content (freshest — good for a human/agent
 	// reading current context) into the working tree. The merge-base can be
 	// an ANCESTOR of that tip (whenever origin has advanced past this
-	// branch's fork point), so the two can disagree. Where they do, this
-	// step's write runs SECOND and wins: the repaired, invariant-correct
-	// (merge-base) content is what's left on disk and staged, at the cost of
-	// no longer showing the human the very latest main content for these two
-	// files. That's a deliberate trade — a branch that can't merge cleanly
-	// is worse than a local timeline copy that's one merge-base behind — see
-	// warp's --help text and the CTO ruling this cites in the PR history.
+	// branch's fork point), so the two disagree routinely. An unconditional
+	// repair runs SECOND and wins, discarding the refresh it just announced
+	// — warp printed "refreshed N derived doc(s)" and then threw them away,
+	// one statement later, in the same command. Repairing only the paths
+	// that actually diverged means a healthy branch keeps the fresh copy
+	// (the whole point of warp) and a broken one still gets fixed.
 	//
 	// Restores — and therefore DELIBERATELY STAGES — BOTH the index and the
 	// working tree (gitcli.RestorePathsToRef is `git checkout <ref> --
@@ -144,19 +148,22 @@ func runWarp(cwd string, stdout, stderr io.Writer) error {
 	repaired := false
 	if onNonDefaultBranch(cwd) {
 		mergeBase := gitcli.DefaultBranchMergeBase(cwd)
-		// RestorePathsToRef is per-path best-effort: it attempts EVERY path
-		// in derivedDocPaths regardless of an earlier one erroring, and
-		// returns only the FIRST error (if any) purely for logging. A path
-		// untracked at mergeBase (e.g. a repo that added one derived doc
-		// more recently than the other) is a normal, partial outcome, not a
-		// reason to call the whole repair a failure — so `repaired` reports
-		// "the repair ran", not "every path resolved cleanly", matching the
-		// fully-silent, fully-best-effort stance every other restore call
-		// site in this codebase (L1, L2a, L2b) already takes.
-		if err := gitcli.RestorePathsToRef(cwd, mergeBase, derivedDocPaths...); err != nil {
-			fmt.Fprintf(stderr, "warn: repair to merge-base %s had a partial error (expected if a path doesn't exist there yet): %v\n", mergeBase, err)
+		diverged := divergedDerivedDocPaths(cwd, mergeBase, derivedDocPaths)
+		if len(diverged) > 0 {
+			// RestorePathsToRef is per-path best-effort: it attempts EVERY
+			// path it is handed regardless of an earlier one erroring, and
+			// returns only the FIRST error (if any) purely for logging. A
+			// path untracked at mergeBase (e.g. a repo that added one derived
+			// doc more recently than the other) is a normal, partial outcome,
+			// not a reason to call the whole repair a failure — so `repaired`
+			// reports "the repair ran", not "every path resolved cleanly",
+			// matching the fully-silent, fully-best-effort stance every other
+			// restore call site in this codebase (L1, L2a, L2b) already takes.
+			if err := gitcli.RestorePathsToRef(cwd, mergeBase, diverged...); err != nil {
+				fmt.Fprintf(stderr, "warn: repair to merge-base %s had a partial error (expected if a path doesn't exist there yet): %v\n", mergeBase, err)
+			}
+			repaired = true
 		}
-		repaired = true
 	}
 
 	ahead := ""

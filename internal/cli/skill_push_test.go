@@ -43,6 +43,8 @@ func initGitRepo(t *testing.T, root string) {
 	runGit("config", "user.email", "test@example.com")
 	runGit("config", "user.name", "Test")
 	runGit("config", "commit.gpgsign", "false")
+	// gc.auto=0 — see initLogTestGitRepo (log_test.go) for why.
+	runGit("config", "gc.auto", "0")
 	runGit("remote", "add", "origin", "https://github.com/thrillmade/logmind.git")
 	// Seed a commit so HEAD exists.
 	dummy := filepath.Join(root, ".seed")

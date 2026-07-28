@@ -35,6 +35,8 @@ func gitInit(t *testing.T) string {
 		{"git", "init", "-q", "-b", "main"},
 		{"git", "config", "user.email", "test@example.com"},
 		{"git", "config", "user.name", "Test"},
+		// gc.auto=0 — see initLogTestGitRepo (log_test.go) for why.
+		{"git", "config", "gc.auto", "0"},
 		{"git", "commit", "--allow-empty", "-q", "-m", "initial"},
 	}
 	for _, c := range cmds {
