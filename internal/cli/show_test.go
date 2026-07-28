@@ -8,12 +8,21 @@
 //   - no decisions logged yet on the current branch → friendly message
 //   - --all appends the archive under an ARCHIVED DECISIONS banner when the
 //     archive file exists, and a "(no archive)" ok-suffix when it doesn't
+//   - --all ALSO appends every other docs/decisions-branches/*.md file under
+//     a BRANCH DECISIONS banner (SPEC section sec-3-2's "every branch
+//     decisions file" half), without duplicating the current branch's own
+//     file
 //   - --quiet collapses stdout to exactly one `ok k=v` line
 //   - docs/ missing → friendly error + ErrSilent
+//   - --brief: title + timestamp only, grouped by "[source]" tag under --all
+//   - --json: SPEC section sec-3-2's NORMATIVE schema — exact key set, exact
+//     source grammar (main / archive / branch:<name>), machine-clean stdout
+//   - --brief --json: full schema keys always present, body fields zeroed
 package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,5 +187,282 @@ func TestShow_DocsMissingErrors(t *testing.T) {
 			t.Fatalf("expected ErrSilent when docs/ missing")
 		}
 		mustContain(t, out.String(), "docs/ directory not found")
+	})
+}
+
+// TestShow_All_IncludesBranchFiles: SPEC section sec-3-2's "--all: include
+// archive and EVERY branch decisions file" — the gap this build closes.
+// Before this change, --all only appended the archive; a repo with a branch
+// decisions file (from another in-flight branch) never surfaced it.
+func TestShow_All_IncludesBranchFiles(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - Main decision\n")
+		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__other.md"),
+			"## 2026-06-02 11:00 - Other branch decision\n")
+
+		body := runShowCmd(t, "--all")
+		mustContain(t, body, "Main decision")
+		mustContain(t, body, "BRANCH DECISIONS: feat/other")
+		mustContain(t, body, "Other branch decision")
+		mustContain(t, body, "+ 1 branch file(s)")
+	})
+}
+
+// TestShow_All_ExcludesCurrentBranchFile: on a feature branch, the current
+// branch's own decisions-branches file is already the primary body — --all
+// must include every OTHER branch file without streaming the current one
+// twice.
+func TestShow_All_ExcludesCurrentBranchFile(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		checkoutBranch(t, d, "feat/login")
+		withFakeTTY(t, false, func() { logOnce(t, "Add JWT auth") })
+
+		// An unrelated in-flight branch's file, simulating another agent's work.
+		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__other.md"),
+			"## 2026-06-02 11:00 - Other branch decision\n")
+
+		body := runShowCmd(t, "--all")
+		mustContain(t, body, "Add JWT auth")
+		mustContain(t, body, "BRANCH DECISIONS: feat/other")
+		mustContain(t, body, "Other branch decision")
+
+		// Exactly one BRANCH DECISIONS banner (feat/other) — the current
+		// branch's own file must not ALSO get a "BRANCH DECISIONS: feat/login"
+		// section (its content is already the primary body above).
+		if n := strings.Count(body, "BRANCH DECISIONS:"); n != 1 {
+			t.Errorf("want exactly 1 BRANCH DECISIONS banner, got %d:\n%s", n, body)
+		}
+		if strings.Contains(body, "BRANCH DECISIONS: feat/login") {
+			t.Errorf("current branch file re-shown under its own BRANCH DECISIONS banner:\n%s", body)
+		}
+	})
+}
+
+// TestShow_Brief_TitleAndTimestampOnly: --brief prints "TIMESTAMP - TITLE"
+// only — the reasoning/alternatives/implications body must not leak into the
+// text output.
+func TestShow_Brief_TitleAndTimestampOnly(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - First decision\n\n"+
+				"**Reasoning:** Because reasons\n\n"+
+				"**Alternatives considered:** Option A, Option B\n\n"+
+				"**Implications:**\n- Impact one\n\n---\n\n")
+
+		body := runShowCmd(t, "--brief")
+		mustContain(t, body, "2026-06-01 10:00 - First decision")
+		mustContain(t, body, "ok show: 1 decision(s)")
+		if strings.Contains(body, "Because reasons") {
+			t.Errorf("--brief leaked the reasoning body:\n%s", body)
+		}
+		if strings.Contains(body, "Option A") {
+			t.Errorf("--brief leaked the alternatives body:\n%s", body)
+		}
+	})
+}
+
+// TestShow_Brief_All_GroupsBySource: under --all, --brief groups lines under
+// a "[source]" tag per source, in main → branch → archive order, and the
+// tag text matches the --json "source" value exactly.
+func TestShow_Brief_All_GroupsBySource(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - Main decision\n")
+		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__other.md"),
+			"## 2026-06-02 11:00 - Branch decision\n")
+		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
+			"## 2025-01-01 09:00 - Archived decision\n")
+
+		body := runShowCmd(t, "--brief", "--all")
+		mustContain(t, body, "[main]")
+		mustContain(t, body, "[branch:feat/other]")
+		mustContain(t, body, "[archive]")
+		mustContain(t, body, "2026-06-01 10:00 - Main decision")
+		mustContain(t, body, "2026-06-02 11:00 - Branch decision")
+		mustContain(t, body, "2025-01-01 09:00 - Archived decision")
+
+		mainIdx := strings.Index(body, "[main]")
+		branchIdx := strings.Index(body, "[branch:feat/other]")
+		archiveIdx := strings.Index(body, "[archive]")
+		if !(mainIdx >= 0 && mainIdx < branchIdx && branchIdx < archiveIdx) {
+			t.Errorf("want [main] < [branch:feat/other] < [archive] ordering, got indices %d, %d, %d:\n%s",
+				mainIdx, branchIdx, archiveIdx, body)
+		}
+	})
+}
+
+// TestShow_JSON_SchemaKeysAndValues pins SPEC section sec-3-2's NORMATIVE
+// --json schema for a 2-decision fixture: exact key set (no more, no fewer —
+// a future rename/add/drop of a key breaks this test) and correct values,
+// including the alternatives/implications arrays parsed out of the
+// **Alternatives considered:**/**Implications:** markdown sections.
+func TestShow_JSON_SchemaKeysAndValues(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - First decision\n\n"+
+				"**Reasoning:** Because reasons\n\n"+
+				"**Alternatives considered:** Option A, Option B\n\n"+
+				"**Implications:**\n- Impact one\n- Impact two\n\n---\n\n"+
+				"## 2026-06-02 11:15 - Second decision\n\n"+
+				"**Reasoning:** Another reason\n\n---\n\n")
+
+		body := runShowCmd(t, "--json")
+
+		var doc struct {
+			Decisions []map[string]any `json:"decisions"`
+		}
+		if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("--json output did not parse as JSON: %v\nbody:\n%s", err, body)
+		}
+		if len(doc.Decisions) != 2 {
+			t.Fatalf("want 2 decisions, got %d: %v", len(doc.Decisions), doc.Decisions)
+		}
+
+		wantKeys := []string{"title", "timestamp", "reasoning", "alternatives", "implications", "source"}
+		for _, entry := range doc.Decisions {
+			if len(entry) != len(wantKeys) {
+				t.Errorf("entry has %d keys, want %d (NORMATIVE schema): %v", len(entry), len(wantKeys), entry)
+			}
+			for _, k := range wantKeys {
+				if _, ok := entry[k]; !ok {
+					t.Errorf("entry missing NORMATIVE key %q: %v", k, entry)
+				}
+			}
+		}
+
+		first := doc.Decisions[0]
+		if first["title"] != "First decision" {
+			t.Errorf("title = %v, want %q", first["title"], "First decision")
+		}
+		if first["timestamp"] != "2026-06-01 10:00" {
+			t.Errorf("timestamp = %v, want %q", first["timestamp"], "2026-06-01 10:00")
+		}
+		if first["reasoning"] != "Because reasons" {
+			t.Errorf("reasoning = %v, want %q", first["reasoning"], "Because reasons")
+		}
+		if first["source"] != "main" {
+			t.Errorf("source = %v, want %q", first["source"], "main")
+		}
+		if alts, ok := first["alternatives"].([]any); !ok || len(alts) != 2 || alts[0] != "Option A" || alts[1] != "Option B" {
+			t.Errorf("alternatives = %v, want [Option A, Option B]", first["alternatives"])
+		}
+		if impls, ok := first["implications"].([]any); !ok || len(impls) != 2 || impls[0] != "Impact one" || impls[1] != "Impact two" {
+			t.Errorf("implications = %v, want [Impact one, Impact two]", first["implications"])
+		}
+
+		second := doc.Decisions[1]
+		if second["title"] != "Second decision" || second["reasoning"] != "Another reason" {
+			t.Errorf("second entry mismatch: %v", second)
+		}
+		if secondAlts, ok := second["alternatives"].([]any); !ok || len(secondAlts) != 0 {
+			t.Errorf("second.alternatives = %v, want empty array (present, not null, not omitted)", second["alternatives"])
+		}
+	})
+}
+
+// TestShow_JSON_MachineCleanOutput: --json's stdout must be the bare JSON
+// document and nothing else — no ok trailer, no banner — so it is pipeable
+// into `jq` unmodified.
+func TestShow_JSON_MachineCleanOutput(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - Only decision\n")
+
+		body := runShowCmd(t, "--json")
+		trimmed := strings.TrimSpace(body)
+		if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
+			t.Fatalf("--json output is not a bare JSON document:\n%s", body)
+		}
+		if strings.Contains(body, "ok show") {
+			t.Errorf("--json output leaked the ok trailer:\n%s", body)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("json.Unmarshal failed on the full body (must be pure JSON): %v", err)
+		}
+	})
+}
+
+// TestShow_JSON_All_SourceValues: under --all --json, every decision's
+// "source" value matches SPEC section sec-3-2's grammar exactly:
+// "main" | "archive" | "branch:<name>".
+func TestShow_JSON_All_SourceValues(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-03 09:00 - Main decision\n")
+		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__widget.md"),
+			"## 2026-06-02 08:00 - Branch decision\n")
+		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
+			"## 2025-01-01 07:00 - Archived decision\n")
+
+		body := runShowCmd(t, "--all", "--json")
+		var doc struct {
+			Decisions []map[string]any `json:"decisions"`
+		}
+		if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("--all --json output did not parse: %v\n%s", err, body)
+		}
+		got := map[string]bool{}
+		for _, e := range doc.Decisions {
+			got[e["source"].(string)] = true
+		}
+		for _, want := range []string{"main", "branch:feat/widget", "archive"} {
+			if !got[want] {
+				t.Errorf("missing source %q; got sources %v", want, got)
+			}
+		}
+	})
+}
+
+// TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema: --brief --json keeps the
+// FULL NORMATIVE key set (never drops a key) but zeroes
+// reasoning/alternatives/implications ("" / [] / []) rather than parsing
+// them out of the entry body — the documented --brief+--json precedence.
+func TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		mustMkdir(t, filepath.Join(d, "docs"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - First decision\n\n"+
+				"**Reasoning:** Because reasons\n\n"+
+				"**Alternatives considered:** Option A, Option B\n\n"+
+				"**Implications:**\n- Impact one\n\n---\n\n")
+
+		body := runShowCmd(t, "--brief", "--json")
+		var doc struct {
+			Decisions []map[string]any `json:"decisions"`
+		}
+		if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("--brief --json output did not parse: %v\n%s", err, body)
+		}
+		if len(doc.Decisions) != 1 {
+			t.Fatalf("want 1 decision, got %d", len(doc.Decisions))
+		}
+		e := doc.Decisions[0]
+		for _, k := range []string{"title", "timestamp", "reasoning", "alternatives", "implications", "source"} {
+			if _, ok := e[k]; !ok {
+				t.Errorf("--brief --json dropped NORMATIVE key %q: %v", k, e)
+			}
+		}
+		if e["title"] != "First decision" {
+			t.Errorf("title = %v, want %q (title/timestamp survive --brief)", e["title"], "First decision")
+		}
+		if e["reasoning"] != "" {
+			t.Errorf("reasoning = %v, want zeroed \"\" under --brief", e["reasoning"])
+		}
+		if alts, ok := e["alternatives"].([]any); !ok || len(alts) != 0 {
+			t.Errorf("alternatives = %v, want zeroed [] under --brief", e["alternatives"])
+		}
+		if impls, ok := e["implications"].([]any); !ok || len(impls) != 0 {
+			t.Errorf("implications = %v, want zeroed [] under --brief", e["implications"])
+		}
 	})
 }

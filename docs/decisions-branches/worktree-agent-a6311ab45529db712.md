@@ -1,0 +1,14 @@
+← back to [docs/timeline.md](../timeline.md)
+
+## 2026-07-28 00:57 - Implement SPEC §3.2's logmind show gaps: --all branch-file merge, --brief, --json
+
+**Reasoning:** SPEC §3.2 specified logmind show [--all] [--brief] [--json], but the Go binary only had --all, and --all's implementation only appended the archive, never docs/decisions-branches/*.md, contradicting its own doc comment ('include archive and every branch decisions file'). --brief and --json were entirely unimplemented despite --json having a NORMATIVE wire schema. Implemented all three: --all now walks every OTHER docs/decisions-branches/*.md file (excluding the current branch's own file, already the primary body) via a new listBranchSources/allExtraSources helper built on the existing decisions.ListBranchFiles primitive, appended under BRANCH DECISIONS banners before the existing archive banner. --brief prints title+timestamp only, grouped by [source] tag under --all. --json emits the SPEC's exact schema ({"decisions":[{title,timestamp,reasoning,alternatives,implications,source}]}) via a new showJSONEntry/showJSONOutput struct pair, reusing decisions.SplitRaw/SplitRawBytes (added by #249) to get per-entry raw byte ranges rather than writing a new file parser; a new parseDecisionBody line-scanner (no existing parser extracted reasoning/alternatives/implications, so this part is genuinely new) recovers those sub-fields from buildDecisionEntry's known markdown layout. --json is unconditionally machine-clean (JSON only, no ok trailer, ignores --quiet). --brief+--json keeps the full NORMATIVE key set but zeroes reasoning/alternatives/implications rather than parsing them, honoring --brief's contract without ever dropping a schema key.
+
+**Alternatives considered:** Export decisions.branchLabelFromFilename and reuse it directly instead of duplicating a 2-line reverse-sanitize helper in show.go — rejected to avoid growing internal/decisions' public API for one call site; the duplication is small, documented, and low-risk., Have --brief silently drop reasoning/alternatives/implications keys from the JSON when combined with --json — rejected because ruling #1 (SPEC schema is NORMATIVE) says never drop keys; zeroing content instead of omitting keys satisfies both --brief's contract and schema fidelity.
+
+**Implications:**
+- internal/cli/quiet_test.go needed a one-line positional-arg fix (runShow gained brief/json params) to keep the build green — no behavior change there, just call-site arity.
+- docs/decisions-branches/*.md files with commas embedded inside an alternative's own text will over-split on --json's alternatives array, since buildDecisionEntry itself joins alternatives with ', ' losslessly-in-appearance-only; this is a pre-existing storage-format limitation, not a bug introduced here — documented in parseDecisionBody's doc comment.
+
+---
+

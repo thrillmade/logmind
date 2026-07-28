@@ -335,7 +335,7 @@ func TestQuiet_Log_ErrorToStderr(t *testing.T) {
 func TestQuiet_Show_ErrorToStderr(t *testing.T) {
 	cwd := t.TempDir() // no docs/ → error path
 	var out, errBuf bytes.Buffer
-	if err := runShow(cwd, false, true, &out, &errBuf); err == nil {
+	if err := runShow(cwd, false, false, false, true, &out, &errBuf); err == nil {
 		t.Fatal("expected ErrSilent when docs/ missing")
 	}
 	if out.Len() != 0 {
