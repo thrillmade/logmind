@@ -43,8 +43,10 @@ func initGitRepo(t *testing.T, root string) {
 	runGit("config", "user.email", "test@example.com")
 	runGit("config", "user.name", "Test")
 	runGit("config", "commit.gpgsign", "false")
-	// gc.auto=0 — see initLogTestGitRepo (log_test.go) for why.
+	// Both keys — see initLogTestGitRepo (log_test.go). maintenance.auto is
+	// the actual spawn gate; gc.auto alone does not suppress it.
 	runGit("config", "gc.auto", "0")
+	runGit("config", "maintenance.auto", "false")
 	runGit("remote", "add", "origin", "https://github.com/thrillmade/logmind.git")
 	// Seed a commit so HEAD exists.
 	dummy := filepath.Join(root, ".seed")
