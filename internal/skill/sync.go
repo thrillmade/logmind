@@ -28,11 +28,22 @@ package skill
 // `.claude/skills/<name>/` are skipped with a warning rather than
 // erroring out — the review file is the source of truth and may cite
 // skills installed elsewhere (or removed since the review was written).
+//
+// This file also implements the three SPEC §3.9 flags the above loop
+// shipped without: --since (ParseSinceDuration, plus the `Since` field
+// on SyncOptions), --update-provenance (UpdateProvenance), and
+// --write-drafts (WriteSkillDrafts). Each is a separate, additive
+// entry point — none of them replace or gate the default Sync() path
+// above, which is why a bare `logmind sync` (no flags) is untouched by
+// their presence. See each function's doc comment for why it's a
+// distinct code path rather than a rename/extension of Sync().
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,6 +53,8 @@ import (
 	"time"
 
 	"github.com/thrillmade/logmind/internal/atomicio"
+	"github.com/thrillmade/logmind/internal/decisions"
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
 // reviewSHARE matches the `<!-- review-sha: <40 hex chars> -->` comment
@@ -209,6 +222,13 @@ type SyncOptions struct {
 	// or skills we couldn't update. Nil silences warnings — useful
 	// for tests that pin success cases and don't want stderr noise.
 	Warn func(string)
+	// Since, when non-zero, restricts the docs/reviews/PR-*.md scan to
+	// files whose mtime falls within [Now-Since, Now] — SPEC §3.9's
+	// "limit scan to entries newer than <duration>". Zero (the
+	// SyncOptions default) means "no filtering", which is exactly
+	// today's unbounded-scan behaviour — so callers that never set
+	// Since see byte-identical output to before this field existed.
+	Since time.Duration
 }
 
 // SyncSummary captures what Sync did so the CLI layer can render a
@@ -271,6 +291,7 @@ func Sync(repoRoot string, opts SyncOptions) (SyncSummary, error) {
 		now = time.Now()
 	}
 	today := now.UTC().Format("2006-01-02")
+	cutoff := sinceCutoff(now, opts.Since)
 
 	reviewsDir := filepath.Join(repoRoot, "docs", "reviews")
 	entries, err := os.ReadDir(reviewsDir)
@@ -306,6 +327,24 @@ func Sync(repoRoot string, opts SyncOptions) (SyncSummary, error) {
 		if !prFilenameRE.MatchString(name) {
 			// Quiet: docs/reviews/README.md or similar is allowed.
 			continue
+		}
+		if !cutoff.IsZero() {
+			// --since: a file outside the window is outside the SCAN,
+			// per SPEC §3.9 — it's not merely excluded from the result,
+			// it's never opened. mtime is the only recency signal a
+			// PR-<n>.md file carries (§1.8.1's template has no embedded
+			// date field), so we use it as-is. A stat failure here is
+			// surprising enough (the entry just came from ReadDir) that
+			// we warn and skip rather than silently including it, which
+			// would quietly widen the window the caller asked for.
+			info, ierr := e.Info()
+			if ierr != nil {
+				warn(fmt.Sprintf("skipping %s: stat: %v", name, ierr))
+				continue
+			}
+			if info.ModTime().Before(cutoff) {
+				continue
+			}
 		}
 		summary.ReviewsScanned++
 		path := filepath.Join(reviewsDir, name)
@@ -685,4 +724,667 @@ func FormatSummary(w io.Writer, s SyncSummary, dryRun bool) {
 		fmt.Fprintf(w, "  - %s: %d → %d%s\n",
 			u.Name, u.PreviousCount, u.NewCount, shasPart)
 	}
+}
+
+// --- --since ---------------------------------------------------------
+//
+// SPEC §3.9: `logmind sync [--since <duration>] ...` — "limit scan to
+// entries newer than <duration> (e.g. 7d, 30d)". Go's time.ParseDuration
+// has no "d" (day) unit, so the shorthand SPEC actually uses (`7d`,
+// `30d`) isn't a valid Go duration string on its own. We handle the
+// day-count form explicitly and fall back to time.ParseDuration for
+// everything else (`24h`, `90m`, `1h30m`, ...) so a caller who happens
+// to already think in Go-duration syntax isn't punished for it.
+//
+// sinceDurationRE deliberately does NOT accept w/m/y suffixes the way
+// `logmind skill suggest --since` does (internal/cli/skill.go's
+// sinceRE): "m" would collide with Go's own duration unit for minutes,
+// and the SPEC text for `sync` only specifies day-shorthand examples.
+// Silently guessing "m" means "month" here — when time.ParseDuration
+// would otherwise have parsed "5m" as five minutes — is exactly the
+// kind of ambiguity that produces a flag which lies about what it did.
+var sinceDurationRE = regexp.MustCompile(`^(\d+)d$`)
+
+// ParseSinceDuration parses a `--since` value per SPEC §3.9. Malformed
+// input (empty string, non-positive count, unrecognized unit, garbage)
+// is a hard error — never silently normalized to zero. A `--since`
+// value that's silently ignored would make `logmind sync --since 7d`
+// quietly scan the entire history while claiming to have honored the
+// 7-day window; that's the lying-flag failure mode this build must
+// avoid (see PR #247, which deleted five flags for exactly this
+// reason).
+func ParseSinceDuration(s string) (time.Duration, error) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return 0, fmt.Errorf("--since: empty duration (want e.g. \"7d\", \"30d\", \"24h\")")
+	}
+	if m := sinceDurationRE.FindStringSubmatch(trimmed); m != nil {
+		days, err := strconv.Atoi(m[1])
+		if err != nil || days <= 0 {
+			return 0, fmt.Errorf("--since %q: day count must be a positive integer", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(trimmed)
+	if err != nil {
+		return 0, fmt.Errorf("--since %q: not a valid duration (want e.g. \"7d\", \"30d\", \"24h\"): %w", s, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("--since %q: duration must be positive", s)
+	}
+	return d, nil
+}
+
+// sinceCutoff turns a (now, since) pair into the absolute instant a
+// scan should stop at. Zero Duration means "no filtering", represented
+// by the zero time.Time so callers can test cutoff.IsZero() rather than
+// re-deriving the "was Since even set" question.
+func sinceCutoff(now time.Time, since time.Duration) time.Time {
+	if since <= 0 {
+		return time.Time{}
+	}
+	return now.Add(-since)
+}
+
+// --- --update-provenance ----------------------------------------------
+//
+// UpdateProvenance implements the SPEC §3.9 / §1.11 "refreshed
+// PROVENANCE.md" surface. Unlike the legacy Sync() above (which folds
+// docs/reviews/PR-*.md citations into a pre-existing, non-SPEC
+// `<!-- logmind:provenance v1 -->` skeleton — see provenance.go — this
+// writes the NORMATIVE §1.11.1 template byte-for-byte, sourced from all
+// three surfaces §3.9 names:
+//
+//   - `.claude/skills/.clud-bug.json` `usage[<slug>].citations` (§1.12)
+//   - `docs/decisions.md` + `docs/decisions-branches/*.md` (§1.3/§1.4),
+//     matched against each skill's slug to build "Derived from
+//     decisions"
+//   - docs/reviews/PR-*.md is deliberately NOT re-read here: its
+//     citation signal is already the legacy Sync() path above, and
+//     folding it into a *second*, differently-shaped counter here would
+//     just create two disagreeing numbers for the same thing. The
+//     `.clud-bug.json` usage counters are the SPEC's own primary
+//     citation source for PROVENANCE.md (§1.11.1 sources `usage[<slug>]
+//     .citations` explicitly); docs/reviews/PR-*.md is the legacy
+//     bridge Sync() was built around before that JSON surface existed.
+//
+// This is a genuinely additive code path, gated entirely behind
+// --update-provenance: bare `logmind sync` never calls this function,
+// so its default-no-flags behaviour (the legacy skeleton format) is
+// untouched.
+type ProvenanceOptions struct {
+	// DryRun: compute the refresh but don't write PROVENANCE.md.
+	DryRun bool
+	// Now is the clock used for "Last refined" and --since. Zero means
+	// time.Now().
+	Now time.Time
+	// Since restricts which decision entries count toward "Derived
+	// from decisions" (by entry date) and which `.clud-bug.json` usage
+	// counters count toward "Cited by clud-bug" (by last_cited) to the
+	// [Now-Since, Now] window. Zero means unrestricted — the full
+	// history.
+	Since time.Duration
+	// Warn receives one-line diagnostics. Nil silences them.
+	Warn func(string)
+}
+
+// ProvenanceUpdate is the per-skill result of a refresh, for CLI
+// reporting.
+type ProvenanceUpdate struct {
+	Name          string
+	PrevCitations int
+	NewCitations  int
+	DecisionRefs  int
+	// Migrated is true when the skill had no prior SPEC §1.11.1
+	// PROVENANCE.md (either none at all, or the pre-existing
+	// non-SPEC `<!-- logmind:provenance v1 -->` skeleton) and this run
+	// wrote the first conformant one.
+	Migrated bool
+}
+
+// ProvenanceSummary captures what UpdateProvenance did.
+type ProvenanceSummary struct {
+	SkillsScanned   int
+	SkillsRefreshed int
+	Updates         []ProvenanceUpdate
+}
+
+// cludBugUsageEntry mirrors the `usage[<slug>]` object in SPEC §1.12.1.
+// We only need the two fields PROVENANCE.md's template surfaces;
+// unknown/absent fields (this repo's own `.claude/skills/.clud-bug.json`
+// is schema v1 and has no `usage` block at all) round-trip as zero
+// values rather than erroring, since a manifest that predates a field
+// is not malformed — it's just older.
+type cludBugUsageEntry struct {
+	Citations int    `json:"citations"`
+	LastCited string `json:"last_cited"`
+}
+
+// cludBugManifest is the subset of SPEC §1.12.1's `.clud-bug.json`
+// schema UpdateProvenance reads.
+type cludBugManifest struct {
+	Usage map[string]cludBugUsageEntry `json:"usage"`
+}
+
+// loadCludBugManifest reads `.claude/skills/.clud-bug.json`. A missing
+// file is not an error — a repo that hasn't run clud-bug yet simply has
+// zero citations for every skill.
+func loadCludBugManifest(repoRoot string) (cludBugManifest, error) {
+	path := filepath.Join(repoRoot, ".claude", "skills", ".clud-bug.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cludBugManifest{}, nil
+		}
+		return cludBugManifest{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	var m cludBugManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return cludBugManifest{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return m, nil
+}
+
+// listSkillDirs returns the sorted names of every directory under
+// SkillsDir(repoRoot) that has a SKILL.md — i.e., every installed
+// skill, regardless of whether `.clud-bug.json` also lists it in
+// `installed[]` (a repo's clud-bug manifest can drift from the skills
+// actually on disk; PROVENANCE.md is a per-skill file, so we drive off
+// the filesystem, the same source loadExistingSkillNames in suggest.go
+// uses).
+func listSkillDirs(repoRoot string) []string {
+	skillsDir := SkillsDir(repoRoot)
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if st, err := os.Stat(filepath.Join(skillsDir, e.Name(), "SKILL.md")); err == nil && st.Mode().IsRegular() {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// skillFrontmatterSourceRE matches the `source:` key inside a SKILL.md
+// frontmatter block (SPEC §1.10.1).
+var skillFrontmatterSourceRE = regexp.MustCompile(`(?m)^source:\s*(\S+)\s*$`)
+
+// readSkillSource returns the skill's own `source:` frontmatter value
+// (SPEC §1.10.1: manual | logmind-derived | skills-sh | clud-bug-baseline)
+// for use as PROVENANCE.md's `**Source:**` field. Falls back to
+// "manual" when the SKILL.md is unreadable or doesn't declare one —
+// every real SKILL.md in this repo predates the `source:` key (the
+// v0.4.0 basicTemplate in scaffold.go doesn't emit it either), so
+// "manual" (the most common real-world case: a human wrote it) is a
+// more honest default than leaving the field blank.
+func readSkillSource(repoRoot, name string) string {
+	data, err := os.ReadFile(MDPath(repoRoot, name))
+	if err != nil {
+		return "manual"
+	}
+	fm := extractFrontmatter(string(data))
+	if m := skillFrontmatterSourceRE.FindStringSubmatch(fm); m != nil {
+		return m[1]
+	}
+	return "manual"
+}
+
+// extractFrontmatter returns the content between the opening and
+// closing `---` fences of a SKILL.md, or "" when the file doesn't open
+// with a frontmatter block. Scoping the source-field regex to just this
+// slice (rather than the whole file) avoids a false match on the word
+// "source" appearing in prose below the fence.
+func extractFrontmatter(body string) string {
+	if !strings.HasPrefix(body, "---\n") {
+		return ""
+	}
+	rest := body[len("---\n"):]
+	end := strings.Index(rest, "\n---")
+	if end == -1 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// warnWriter adapts a `func(string)` warn callback to io.Writer so it
+// can be handed to APIs (like internal/decisions.Collect) that want a
+// writer for diagnostics.
+type warnWriter struct {
+	warn func(string)
+}
+
+func (w warnWriter) Write(p []byte) (int, error) {
+	if w.warn != nil {
+		if s := strings.TrimRight(string(p), "\n"); s != "" {
+			w.warn(s)
+		}
+	}
+	return len(p), nil
+}
+
+// decisionRefsForSkill scans docs/decisions.md + docs/decisions-branches/
+// *.md + docs/decisions-archive.md (via internal/decisions.Collect, the
+// same multi-source reader `logmind timeline` uses) for entries whose
+// title mentions the skill by name, and returns SPEC §1.11.1 "Derived
+// from decisions" anchor lines (`docs/<file>#<title-slug>`), sorted for
+// stable output.
+//
+// Matching heuristic: case-insensitive substring match of the skill's
+// slug (`avoid-naked-fetch`) OR its space-separated form
+// (`avoid naked fetch`) against the decision's title. This is a
+// best-effort heuristic — the SPEC only says the list is "computed from
+// docs/decisions*.md heading anchors" without specifying a match rule —
+// but it directly matches how a human would title a decision that
+// introduced or refined a named skill ("Add avoid-naked-fetch skill",
+// "Refine the avoid naked fetch guidance", ...), and it errs toward
+// under-matching (an honest empty list) rather than over-matching
+// (fabricating provenance).
+//
+// The anchor slug uses internal/timeline.Slugify on the title alone
+// (not the full "YYYY-MM-DD HH:MM - title" heading line) to match the
+// SPEC template's literal `<title-slug>` placeholder name.
+func decisionRefsForSkill(repoRoot, skillName string, cutoff time.Time, warn func(string)) []string {
+	entries, err := decisions.Collect(filepath.Join(repoRoot, "docs"), warnWriter{warn})
+	if err != nil {
+		if warn != nil {
+			warn(fmt.Sprintf("derived-from-decisions: %v", err))
+		}
+		return nil
+	}
+	needleHyphen := strings.ToLower(skillName)
+	needleSpaced := strings.ToLower(strings.ReplaceAll(skillName, "-", " "))
+
+	seen := map[string]struct{}{}
+	var refs []string
+	for _, e := range entries {
+		if !cutoff.IsZero() && e.Date.Before(cutoff) {
+			continue
+		}
+		titleLower := strings.ToLower(e.Title)
+		if !strings.Contains(titleLower, needleHyphen) && !strings.Contains(titleLower, needleSpaced) {
+			continue
+		}
+		anchor := fmt.Sprintf("docs/%s#%s", e.SourcePath, timeline.Slugify(e.Title))
+		if _, dup := seen[anchor]; dup {
+			continue
+		}
+		seen[anchor] = struct{}{}
+		refs = append(refs, anchor)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+// provenanceSpecState is what parseSpecProvenance extracts from an
+// existing PROVENANCE.md that's already in the SPEC §1.11.1 format.
+type provenanceSpecState struct {
+	IsSpecFormat bool
+	Source       string
+	Citations    int
+	DecisionRefs []string
+	History      []string
+}
+
+var (
+	specMarkerRE     = regexp.MustCompile(`<!--\s*maintained-by:\s*logmind sync\s*-->`)
+	specSourceRE     = regexp.MustCompile(`^\*\*Source:\*\*\s*(.*)$`)
+	specCitationsRE  = regexp.MustCompile(`^\*\*Cited by clud-bug:\*\*\s*(\d+)\s+times?\s*$`)
+	specDerivedHdrRE = regexp.MustCompile(`^\*\*Derived from decisions:\*\*\s*$`)
+	specHistoryHdrRE = regexp.MustCompile(`^\*\*Refinement history:\*\*\s*$`)
+	specBulletRE     = regexp.MustCompile(`^-\s+(.*)$`)
+)
+
+// parseSpecProvenance reads an existing PROVENANCE.md body. Files that
+// don't carry the `<!-- maintained-by: logmind sync -->` marker —
+// because they're the pre-existing `<!-- logmind:provenance v1 -->`
+// skeleton (provenance.go), or because no file exists yet — report
+// IsSpecFormat=false and every other field at its zero value, which
+// UpdateProvenance treats as "first SPEC-conformant refresh" (a
+// migration, not an update).
+func parseSpecProvenance(body string) provenanceSpecState {
+	st := provenanceSpecState{}
+	if !specMarkerRE.MatchString(body) {
+		return st
+	}
+	st.IsSpecFormat = true
+	section := ""
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		switch {
+		case specSourceRE.MatchString(line):
+			st.Source = specSourceRE.FindStringSubmatch(line)[1]
+			section = ""
+		case specCitationsRE.MatchString(line):
+			n, _ := strconv.Atoi(specCitationsRE.FindStringSubmatch(line)[1])
+			st.Citations = n
+			section = ""
+		case specDerivedHdrRE.MatchString(line):
+			section = "derived"
+		case specHistoryHdrRE.MatchString(line):
+			section = "history"
+		case section == "derived" && specBulletRE.MatchString(line):
+			st.DecisionRefs = append(st.DecisionRefs, specBulletRE.FindStringSubmatch(line)[1])
+		case section == "history" && specBulletRE.MatchString(line):
+			st.History = append(st.History, specBulletRE.FindStringSubmatch(line)[1])
+		}
+	}
+	return st
+}
+
+// equalStringSlices reports whether a and b hold the same elements in
+// the same order. Both DecisionRefs inputs to this comparison are
+// always sorted before being written, so order-sensitivity here doesn't
+// cause spurious "changed" diffs across re-runs.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// diffProvenance decides whether a refresh actually changes anything
+// worth writing, and if so, the one-line refinement-history summary to
+// append. Re-running UpdateProvenance with no new citations, no new
+// matching decisions, and no source change is a no-op — same
+// idempotency discipline as the legacy Sync() above.
+func diffProvenance(prev provenanceSpecState, citations int, refs []string, source string) (changed bool, summary string) {
+	if !prev.IsSpecFormat {
+		return true, "Migrated to SPEC §1.11.1 provenance format via `logmind sync --update-provenance`"
+	}
+	var parts []string
+	if prev.Citations != citations {
+		parts = append(parts, fmt.Sprintf("cited-by-clud-bug %d → %d", prev.Citations, citations))
+	}
+	if !equalStringSlices(prev.DecisionRefs, refs) {
+		parts = append(parts, fmt.Sprintf("derived-from-decisions %d → %d entries", len(prev.DecisionRefs), len(refs)))
+	}
+	if prev.Source != source {
+		parts = append(parts, fmt.Sprintf("source %q → %q", prev.Source, source))
+	}
+	if len(parts) == 0 {
+		return false, ""
+	}
+	return true, strings.Join(parts, "; ")
+}
+
+// renderProvenanceMD renders the SPEC §1.11.1 NORMATIVE template
+// byte-for-byte.
+func renderProvenanceMD(name, source string, citations int, lastRefined string, refs, history []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Provenance for %s\n", name)
+	b.WriteString("<!-- maintained-by: logmind sync -->\n\n")
+	fmt.Fprintf(&b, "**Source:** %s\n", source)
+	fmt.Fprintf(&b, "**Last refined:** %s\n", lastRefined)
+	fmt.Fprintf(&b, "**Cited by clud-bug:** %d times\n\n", citations)
+	b.WriteString("**Derived from decisions:**\n")
+	for _, r := range refs {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
+	b.WriteString("\n**Refinement history:**\n")
+	for _, h := range history {
+		fmt.Fprintf(&b, "- %s\n", h)
+	}
+	return b.String()
+}
+
+// UpdateProvenance refreshes every installed skill's PROVENANCE.md into
+// the SPEC §1.11.1 format. See the package doc comment above this type
+// block for the source-reconciliation design.
+func UpdateProvenance(repoRoot string, opts ProvenanceOptions) (ProvenanceSummary, error) {
+	warn := opts.Warn
+	if warn == nil {
+		warn = func(string) {}
+	}
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	today := now.UTC().Format("2006-01-02")
+	cutoff := sinceCutoff(now, opts.Since)
+
+	manifest, err := loadCludBugManifest(repoRoot)
+	if err != nil {
+		return ProvenanceSummary{}, err
+	}
+
+	names := listSkillDirs(repoRoot)
+	summary := ProvenanceSummary{}
+	for _, name := range names {
+		summary.SkillsScanned++
+
+		citations := 0
+		if u, ok := manifest.Usage[name]; ok {
+			switch {
+			case cutoff.IsZero():
+				citations = u.Citations
+			case u.LastCited != "":
+				if lc, perr := time.Parse(time.RFC3339, u.LastCited); perr == nil && !lc.Before(cutoff) {
+					citations = u.Citations
+				}
+				// Parseable-but-stale, or unparseable, both fall through
+				// to citations staying 0: --since asked us to limit the
+				// scan, and we can't honestly claim a citation count is
+				// "newer than <duration>" without a usable timestamp.
+			}
+		}
+
+		refs := decisionRefsForSkill(repoRoot, name, cutoff, warn)
+		source := readSkillSource(repoRoot, name)
+
+		provPath := filepath.Join(SkillDir(repoRoot, name), "PROVENANCE.md")
+		existing, readErr := os.ReadFile(provPath)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			warn(fmt.Sprintf("skill %q: read %s: %v", name, provPath, readErr))
+			continue
+		}
+		prev := parseSpecProvenance(string(existing))
+
+		changed, historyNote := diffProvenance(prev, citations, refs, source)
+		if !changed {
+			continue
+		}
+		history := append(append([]string{}, prev.History...), fmt.Sprintf("%s: %s", today, historyNote))
+		rendered := renderProvenanceMD(name, source, citations, today, refs, history)
+
+		if !opts.DryRun {
+			if err := atomicWriteFile(provPath, []byte(rendered), 0o644); err != nil {
+				warn(fmt.Sprintf("skill %q: write %s: %v", name, provPath, err))
+				continue
+			}
+		}
+
+		summary.SkillsRefreshed++
+		summary.Updates = append(summary.Updates, ProvenanceUpdate{
+			Name:          name,
+			PrevCitations: prev.Citations,
+			NewCitations:  citations,
+			DecisionRefs:  len(refs),
+			Migrated:      !prev.IsSpecFormat,
+		})
+	}
+	return summary, nil
+}
+
+// FormatProvenanceSummary renders a human-readable report of an
+// UpdateProvenance run.
+func FormatProvenanceSummary(w io.Writer, s ProvenanceSummary, dryRun bool) {
+	prefix := ""
+	if dryRun {
+		prefix = "(dry-run) "
+	}
+	fmt.Fprintf(w, "%s%d skill(s) refreshed (%d scanned)\n", prefix, s.SkillsRefreshed, s.SkillsScanned)
+	for _, u := range s.Updates {
+		tag := ""
+		if u.Migrated {
+			tag = " [migrated to SPEC §1.11.1]"
+		}
+		fmt.Fprintf(w, "  - %s: cited-by-clud-bug %d → %d, %d decision ref(s)%s\n",
+			u.Name, u.PrevCitations, u.NewCitations, u.DecisionRefs, tag)
+	}
+	fmt.Fprintf(w, "ok sync-provenance: %s%d skill(s) refreshed/%d scanned\n",
+		prefix, s.SkillsRefreshed, s.SkillsScanned)
+}
+
+// --- --write-drafts ----------------------------------------------------
+//
+// WriteSkillDrafts implements the SPEC §3.9 / §1.9 "skill candidate
+// drafts under docs/skills-derived/" surface. It reuses
+// SuggestFromDecisions (suggest.go) — the same decision-pattern
+// heuristic `logmind skill suggest` uses — rather than re-implementing
+// pattern detection, since §1.9 already names both `logmind skill
+// suggest --write-drafts` and `logmind sync --write-drafts` as
+// producers of the same file shape and the SPEC gives no reason to
+// expect them to disagree on WHICH patterns are skill-worthy.
+//
+// It does NOT reuse suggest_llm.go's WriteDrafts/FormatIssueDraft: those
+// render a GH-issue-body (no frontmatter at all) into an
+// arbitrary caller-chosen directory — the shape `logmind skill suggest
+// --write-drafts <dir>` promises. SPEC §1.9 requires a different, fixed
+// shape: Markdown with YAML frontmatter setting `source: logmind-derived`
+// and `status: candidate`, at the fixed path
+// docs/skills-derived/<name>.md. Reusing the issue-body renderer here
+// would produce a file at the right path with the wrong contents — the
+// same "flag that doesn't do what it says" failure this build is
+// required to avoid, just relocated from "doesn't write" to "writes the
+// wrong thing".
+const (
+	// syncDraftsDefaultSinceDays mirrors `logmind skill suggest`'s own
+	// --since default (internal/cli/skill.go newSkillSuggestCmd) so the
+	// two producers of docs/skills-derived/*.md agree on "recent"
+	// absent an explicit --since override.
+	syncDraftsDefaultSinceDays = 30
+	// syncDraftsMinDecisions mirrors `logmind skill suggest`'s
+	// --min-decisions default.
+	syncDraftsMinDecisions = 3
+	// syncDraftsTopN mirrors `logmind skill suggest`'s --top default.
+	syncDraftsTopN = 5
+)
+
+// DraftOptions controls WriteSkillDrafts.
+type DraftOptions struct {
+	// DryRun: compute the candidate list but don't write files.
+	DryRun bool
+	// Now is the clock used for --since. Zero means time.Now().
+	Now time.Time
+	// Since restricts the decision-log lookback window. Zero means the
+	// syncDraftsDefaultSinceDays fallback (30d), matching `logmind
+	// skill suggest`'s own default.
+	Since time.Duration
+	// Warn receives one-line diagnostics. Nil silences them.
+	Warn func(string)
+}
+
+// DraftSummary captures what WriteSkillDrafts did.
+type DraftSummary struct {
+	CandidatesConsidered int
+	DraftsWritten        []string // skill slugs, in the order suggested
+}
+
+// draftsDir is the SPEC §1.9 canonical location for skill-candidate
+// drafts.
+func draftsDir(repoRoot string) string {
+	return filepath.Join(repoRoot, "docs", "skills-derived")
+}
+
+// renderSkillDraftMD renders a SPEC §1.9/§1.10.1-conformant draft: YAML
+// frontmatter (source: logmind-derived, status: candidate — the two
+// keys §1.9 says a draft's frontmatter MUST set) followed by a
+// human-readable body carrying the same evidence
+// `logmind skill suggest` shows on stdout.
+func renderSkillDraftMD(s Suggestion) string {
+	// Frontmatter values are single-line YAML scalars; draft_description
+	// is generated text (not user input) but collapsing defensively
+	// costs nothing and avoids ever emitting frontmatter that doesn't
+	// parse.
+	desc := strings.ReplaceAll(strings.TrimSpace(s.DraftDescription), "\n", " ")
+
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "name: %s\n", s.Slug)
+	fmt.Fprintf(&b, "description: %s\n", desc)
+	b.WriteString("source: logmind-derived\n")
+	b.WriteString("status: candidate\n")
+	b.WriteString("---\n\n")
+	fmt.Fprintf(&b, "# %s\n\n", s.Slug)
+	fmt.Fprintf(&b, "Trigger: when working on `%s` — pattern emerged in %d recent decisions.\n\n",
+		s.Phrase, s.DecisionCount)
+	b.WriteString("## Evidence (auto-extracted from decision log)\n\n")
+	for _, e := range s.Evidence {
+		fmt.Fprintf(&b, "- `%s`: %s\n", e.File, e.Snippet)
+	}
+	b.WriteString("\n_Generated by `logmind sync --write-drafts` (SPEC §1.9). This is a " +
+		"candidate awaiting human review — promote it into `.claude/skills/<name>/` " +
+		"only after editing the trigger and body; tools MUST NOT load draft skills " +
+		"as active skills._\n")
+	return b.String()
+}
+
+// WriteSkillDrafts scans recent decisions for skill-worthy patterns and
+// writes one docs/skills-derived/<slug>.md per candidate.
+func WriteSkillDrafts(repoRoot string, opts DraftOptions) (DraftSummary, error) {
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	sinceDays := syncDraftsDefaultSinceDays
+	if opts.Since > 0 {
+		sinceDays = int(math.Ceil(opts.Since.Hours() / 24))
+		if sinceDays < 1 {
+			sinceDays = 1
+		}
+	}
+
+	suggestions := SuggestFromDecisions(repoRoot, sinceDays, syncDraftsMinDecisions, syncDraftsTopN, now)
+	summary := DraftSummary{CandidatesConsidered: len(suggestions)}
+	if len(suggestions) == 0 {
+		return summary, nil
+	}
+
+	if !opts.DryRun {
+		if err := os.MkdirAll(draftsDir(repoRoot), 0o755); err != nil {
+			return summary, fmt.Errorf("mkdir %s: %w", draftsDir(repoRoot), err)
+		}
+	}
+
+	for _, s := range suggestions {
+		path := filepath.Join(draftsDir(repoRoot), s.Slug+".md")
+		body := renderSkillDraftMD(s)
+		if !opts.DryRun {
+			if err := atomicWriteFile(path, []byte(body), 0o644); err != nil {
+				if opts.Warn != nil {
+					opts.Warn(fmt.Sprintf("draft %q: write %s: %v", s.Slug, path, err))
+				}
+				continue
+			}
+		}
+		summary.DraftsWritten = append(summary.DraftsWritten, s.Slug)
+	}
+	return summary, nil
+}
+
+// FormatDraftSummary renders a human-readable report of a
+// WriteSkillDrafts run.
+func FormatDraftSummary(w io.Writer, s DraftSummary, dryRun bool) {
+	prefix := ""
+	if dryRun {
+		prefix = "(dry-run) "
+	}
+	fmt.Fprintf(w, "%s%d draft(s) written (%d candidate(s) considered)\n",
+		prefix, len(s.DraftsWritten), s.CandidatesConsidered)
+	for _, slug := range s.DraftsWritten {
+		fmt.Fprintf(w, "  - docs/skills-derived/%s.md\n", slug)
+	}
+	fmt.Fprintf(w, "ok sync-drafts: %s%d draft(s) written/%d candidate(s)\n",
+		prefix, len(s.DraftsWritten), s.CandidatesConsidered)
 }

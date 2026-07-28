@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -697,5 +698,459 @@ func TestSync_SHAcase_Canonicalised(t *testing.T) {
 	body, _ := os.ReadFile(provPath)
 	if !strings.Contains(string(body), "cited-by-clud-bug: 2") {
 		t.Errorf("counter should still be 2; body:\n%s", body)
+	}
+}
+
+// --- ParseSinceDuration --------------------------------------------------
+
+// TestParseSinceDuration_Valid pins the accepted shapes: SPEC §3.9's own
+// `<N>d` shorthand, plus a fallback to time.ParseDuration for ordinary
+// Go duration strings.
+func TestParseSinceDuration_Valid(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"7d", 7 * 24 * time.Hour},
+		{"30d", 30 * 24 * time.Hour},
+		{"1d", 24 * time.Hour},
+		{"365d", 365 * 24 * time.Hour},
+		{"24h", 24 * time.Hour},
+		{"90m", 90 * time.Minute},
+		{"1h30m", 90 * time.Minute},
+	}
+	for _, c := range cases {
+		got, err := ParseSinceDuration(c.in)
+		if err != nil {
+			t.Errorf("ParseSinceDuration(%q): unexpected error: %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("ParseSinceDuration(%q) = %v; want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestParseSinceDuration_Malformed pins the rejection path. A malformed
+// --since MUST error rather than silently resolve to zero (which would
+// mean "scan everything" while claiming to have honored the window —
+// the exact lying-flag failure mode this build must avoid).
+func TestParseSinceDuration_Malformed(t *testing.T) {
+	cases := []string{
+		"", "   ", "0d", "-5d", "7dd", "7 d", "7days", "garbage",
+		"d7", "-24h", "0h", "7w", "1y", "d",
+	}
+	for _, in := range cases {
+		if _, err := ParseSinceDuration(in); err == nil {
+			t.Errorf("ParseSinceDuration(%q): expected error, got nil", in)
+		}
+	}
+}
+
+// --- Sync: --since --------------------------------------------------------
+
+// TestSync_Since_ExcludesOldReviews: a review file backdated outside the
+// --since window is excluded from the scan entirely — it doesn't count
+// toward ReviewsScanned and its citations never reach PROVENANCE.md.
+func TestSync_Since_ExcludesOldReviews(t *testing.T) {
+	dir := t.TempDir()
+	provPath := scaffoldSkillWithProvenance(t, dir, "since-skill")
+
+	oldSHA := strings.Repeat("a", 40)
+	newSHA := strings.Repeat("b", 40)
+	writeReview(t, dir, "PR-1.md", reviewWith(oldSHA, []string{"since-skill (2 findings)"}))
+	writeReview(t, dir, "PR-2.md", reviewWith(newSHA, []string{"since-skill (5 findings)"}))
+
+	oldTime := fixedNow.Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "docs", "reviews", "PR-1.md"), oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes PR-1: %v", err)
+	}
+	if err := os.Chtimes(filepath.Join(dir, "docs", "reviews", "PR-2.md"), fixedNow, fixedNow); err != nil {
+		t.Fatalf("chtimes PR-2: %v", err)
+	}
+
+	got, err := Sync(dir, SyncOptions{Now: fixedNow, Since: 7 * 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got.ReviewsScanned != 1 {
+		t.Errorf("ReviewsScanned = %d; want 1 (old review excluded by --since)", got.ReviewsScanned)
+	}
+	if got.CitationsAdded != 5 {
+		t.Errorf("CitationsAdded = %d; want 5 (only PR-2's citations)", got.CitationsAdded)
+	}
+
+	body, _ := os.ReadFile(provPath)
+	if strings.Contains(string(body), oldSHA) {
+		t.Errorf("old SHA must not be recorded when excluded by --since; body:\n%s", body)
+	}
+	if !strings.Contains(string(body), newSHA) {
+		t.Errorf("new SHA missing; body:\n%s", body)
+	}
+}
+
+// TestSync_Since_Zero_IsUnbounded: the zero value of Since (what every
+// pre-existing caller passes) must behave exactly like the pre-flag
+// code path — a backdated review is still picked up.
+func TestSync_Since_Zero_IsUnbounded(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldSkillWithProvenance(t, dir, "unbounded-skill")
+	sha := strings.Repeat("c", 40)
+	writeReview(t, dir, "PR-1.md", reviewWith(sha, []string{"unbounded-skill (1 findings)"}))
+	oldTime := fixedNow.Add(-3650 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "docs", "reviews", "PR-1.md"), oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	got, err := Sync(dir, SyncOptions{Now: fixedNow})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got.ReviewsScanned != 1 || got.CitationsAdded != 1 {
+		t.Errorf("Since=0 must not filter anything; got %+v", got)
+	}
+}
+
+// --- UpdateProvenance -------------------------------------------------
+
+// writeCludBugManifest drops a minimal SPEC §1.12.1-shaped
+// .claude/skills/.clud-bug.json under root.
+func writeCludBugManifest(t *testing.T, root string, usage map[string]cludBugUsageEntry) {
+	t.Helper()
+	dir := filepath.Join(root, ".claude", "skills")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir .claude/skills: %v", err)
+	}
+	m := cludBugManifest{Usage: usage}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".clud-bug.json"), data, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
+
+// scaffoldPlainSkill creates just .claude/skills/<name>/SKILL.md — no
+// PROVENANCE.md at all — the "brand new skill" starting state for
+// UpdateProvenance tests.
+func scaffoldPlainSkill(t *testing.T, root, name string) {
+	t.Helper()
+	if _, err := ScaffoldBasic(root, name, "desc"); err != nil {
+		t.Fatalf("scaffold %s: %v", name, err)
+	}
+}
+
+// TestUpdateProvenance_FreshSkill_NoPriorFile: a skill with no
+// PROVENANCE.md at all gets the SPEC §1.11.1 template written from
+// scratch, reported as Migrated.
+func TestUpdateProvenance_FreshSkill_NoPriorFile(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldPlainSkill(t, dir, "fresh-skill")
+
+	got, err := UpdateProvenance(dir, ProvenanceOptions{Now: fixedNow})
+	if err != nil {
+		t.Fatalf("UpdateProvenance: %v", err)
+	}
+	if got.SkillsScanned != 1 || got.SkillsRefreshed != 1 {
+		t.Fatalf("unexpected summary: %+v", got)
+	}
+	if !got.Updates[0].Migrated {
+		t.Errorf("expected Migrated=true for a brand-new file; got %+v", got.Updates[0])
+	}
+
+	body, err := os.ReadFile(filepath.Join(SkillDir(dir, "fresh-skill"), "PROVENANCE.md"))
+	if err != nil {
+		t.Fatalf("read PROVENANCE.md: %v", err)
+	}
+	got0 := string(body)
+	for _, want := range []string{
+		"# Provenance for fresh-skill\n",
+		"<!-- maintained-by: logmind sync -->\n",
+		"**Source:** manual\n",
+		"**Last refined:** 2026-06-03\n",
+		"**Cited by clud-bug:** 0 times\n",
+		"**Derived from decisions:**\n",
+		"**Refinement history:**\n",
+	} {
+		if !strings.Contains(got0, want) {
+			t.Errorf("PROVENANCE.md missing %q; body:\n%s", want, got0)
+		}
+	}
+}
+
+// TestUpdateProvenance_MigratesLegacySkeleton: a skill that already has
+// the pre-existing non-SPEC `<!-- logmind:provenance v1 -->` skeleton
+// (provenance.go) gets replaced with the SPEC §1.11.1 format, not
+// merged with it — the two formats share no fields worth carrying over
+// (the legacy skeleton's cited-by-clud-bug counter is sourced from
+// docs/reviews/PR-*.md, a different source than this function reads).
+func TestUpdateProvenance_MigratesLegacySkeleton(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldSkillWithProvenance(t, dir, "legacy-skill")
+
+	got, err := UpdateProvenance(dir, ProvenanceOptions{Now: fixedNow})
+	if err != nil {
+		t.Fatalf("UpdateProvenance: %v", err)
+	}
+	if got.SkillsRefreshed != 1 || !got.Updates[0].Migrated {
+		t.Fatalf("expected one migrated refresh; got %+v", got)
+	}
+	body, _ := os.ReadFile(filepath.Join(SkillDir(dir, "legacy-skill"), "PROVENANCE.md"))
+	if strings.Contains(string(body), "logmind:provenance v1") {
+		t.Errorf("legacy marker should be gone after migration; body:\n%s", body)
+	}
+	if !strings.Contains(string(body), "<!-- maintained-by: logmind sync -->") {
+		t.Errorf("missing SPEC marker after migration; body:\n%s", body)
+	}
+}
+
+// TestUpdateProvenance_ReadsCludBugUsage: the citation count comes from
+// .claude/skills/.clud-bug.json's usage[<slug>].citations field, per
+// SPEC §1.11.1 / §1.12.
+func TestUpdateProvenance_ReadsCludBugUsage(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldPlainSkill(t, dir, "cited-skill")
+	writeCludBugManifest(t, dir, map[string]cludBugUsageEntry{
+		"cited-skill": {Citations: 7, LastCited: "2026-06-01T00:00:00Z"},
+	})
+
+	got, err := UpdateProvenance(dir, ProvenanceOptions{Now: fixedNow})
+	if err != nil {
+		t.Fatalf("UpdateProvenance: %v", err)
+	}
+	if got.Updates[0].NewCitations != 7 {
+		t.Fatalf("NewCitations = %d; want 7", got.Updates[0].NewCitations)
+	}
+	body, _ := os.ReadFile(filepath.Join(SkillDir(dir, "cited-skill"), "PROVENANCE.md"))
+	if !strings.Contains(string(body), "**Cited by clud-bug:** 7 times") {
+		t.Errorf("citation count missing from body:\n%s", body)
+	}
+}
+
+// TestUpdateProvenance_DerivedFromDecisions: a decision entry whose
+// title mentions the skill by name (hyphenated slug form) surfaces as a
+// SPEC §1.11.1 "Derived from decisions" anchor line.
+func TestUpdateProvenance_DerivedFromDecisions(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldPlainSkill(t, dir, "avoid-naked-fetch")
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	body := "# Decisions\n\n" +
+		"## 2026-05-15 10:00 - Add avoid-naked-fetch skill\n\n" +
+		"**Reasoning:** codify the timeout convention.\n\n" +
+		"---\n"
+	if err := os.WriteFile(filepath.Join(docsDir, "decisions.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write decisions.md: %v", err)
+	}
+
+	got, err := UpdateProvenance(dir, ProvenanceOptions{Now: fixedNow})
+	if err != nil {
+		t.Fatalf("UpdateProvenance: %v", err)
+	}
+	if got.Updates[0].DecisionRefs != 1 {
+		t.Fatalf("DecisionRefs = %d; want 1; got %+v", got.Updates[0].DecisionRefs, got.Updates[0])
+	}
+	provBody, _ := os.ReadFile(filepath.Join(SkillDir(dir, "avoid-naked-fetch"), "PROVENANCE.md"))
+	if !strings.Contains(string(provBody), "docs/decisions.md#add-avoid-naked-fetch-skill") {
+		t.Errorf("expected decision anchor line; body:\n%s", provBody)
+	}
+}
+
+// TestUpdateProvenance_Idempotent: re-running with no new signal is a
+// no-op — SkillsRefreshed is 0 on the second pass and the file is
+// byte-identical.
+func TestUpdateProvenance_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldPlainSkill(t, dir, "steady-skill")
+	writeCludBugManifest(t, dir, map[string]cludBugUsageEntry{
+		"steady-skill": {Citations: 2, LastCited: "2026-06-01T00:00:00Z"},
+	})
+
+	if _, err := UpdateProvenance(dir, ProvenanceOptions{Now: fixedNow}); err != nil {
+		t.Fatalf("first UpdateProvenance: %v", err)
+	}
+	provPath := filepath.Join(SkillDir(dir, "steady-skill"), "PROVENANCE.md")
+	before, err := os.ReadFile(provPath)
+	if err != nil {
+		t.Fatalf("read after first run: %v", err)
+	}
+
+	later := fixedNow.Add(24 * time.Hour)
+	got, err := UpdateProvenance(dir, ProvenanceOptions{Now: later})
+	if err != nil {
+		t.Fatalf("second UpdateProvenance: %v", err)
+	}
+	if got.SkillsRefreshed != 0 {
+		t.Errorf("re-run with no new signal must be a no-op; got %+v", got)
+	}
+	after, err := os.ReadFile(provPath)
+	if err != nil {
+		t.Fatalf("read after second run: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("unchanged re-run must leave the file byte-identical.\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestUpdateProvenance_DryRun_WritesNothing: --dry-run reports what
+// would change but never touches disk.
+func TestUpdateProvenance_DryRun_WritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldPlainSkill(t, dir, "dry-prov-skill")
+	provPath := filepath.Join(SkillDir(dir, "dry-prov-skill"), "PROVENANCE.md")
+
+	got, err := UpdateProvenance(dir, ProvenanceOptions{Now: fixedNow, DryRun: true})
+	if err != nil {
+		t.Fatalf("UpdateProvenance: %v", err)
+	}
+	if got.SkillsRefreshed != 1 {
+		t.Errorf("dry-run summary should still report the would-be refresh; got %+v", got)
+	}
+	if _, err := os.Stat(provPath); !os.IsNotExist(err) {
+		t.Errorf("dry-run must not create PROVENANCE.md; stat err = %v", err)
+	}
+}
+
+// TestUpdateProvenance_Since_ExcludesStaleUsageAndOldDecisions: --since
+// filters BOTH the usage-counter recency check (usage[<slug>].last_cited)
+// and the decision-entry date filter. A skill whose only citation
+// evidence is outside the window shows 0 citations for this run, and a
+// decision entry outside the window doesn't appear in "Derived from
+// decisions".
+func TestUpdateProvenance_Since_ExcludesStaleUsageAndOldDecisions(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldPlainSkill(t, dir, "stale-skill")
+	writeCludBugManifest(t, dir, map[string]cludBugUsageEntry{
+		"stale-skill": {Citations: 9, LastCited: "2025-01-01T00:00:00Z"}, // ancient
+	})
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	body := "# Decisions\n\n" +
+		"## 2025-01-02 10:00 - Old note about stale-skill\n\n" +
+		"**Reasoning:** ancient.\n\n" +
+		"---\n"
+	if err := os.WriteFile(filepath.Join(docsDir, "decisions.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write decisions.md: %v", err)
+	}
+
+	got, err := UpdateProvenance(dir, ProvenanceOptions{Now: fixedNow, Since: 30 * 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("UpdateProvenance: %v", err)
+	}
+	if got.SkillsRefreshed != 1 {
+		// Even "nothing recent" is a meaningful first-write (Migrated),
+		// so a refresh still happens — it should just show zeros.
+		t.Fatalf("expected one refresh (fresh file, zeroed by --since); got %+v", got)
+	}
+	if got.Updates[0].NewCitations != 0 {
+		t.Errorf("NewCitations = %d; want 0 (stale last_cited excluded by --since)", got.Updates[0].NewCitations)
+	}
+	if got.Updates[0].DecisionRefs != 0 {
+		t.Errorf("DecisionRefs = %d; want 0 (old decision excluded by --since)", got.Updates[0].DecisionRefs)
+	}
+}
+
+// --- WriteSkillDrafts ---------------------------------------------------
+
+// decisionsBodyForDrafts builds three dated entries citing the same
+// kebab-case token, matching the fixture shape
+// TestSuggestFromDecisions_FindsPattern already pins in suggest_test.go
+// — WriteSkillDrafts is a thin wrapper around SuggestFromDecisions, so
+// reusing that fixture shape keeps the two tests honest about testing
+// the same underlying heuristic.
+func decisionsBodyForDrafts() string {
+	return "# Decisions\n\n" +
+		"## 2026-05-15 - first\n\n**Date**: 2026-05-15\n\n" +
+		"We standardized on cache-invalidation everywhere.\n\n" +
+		"## 2026-05-20 - second\n\n**Date**: 2026-05-20\n\n" +
+		"More cache-invalidation work landed.\n\n" +
+		"## 2026-05-25 - third\n\n**Date**: 2026-05-25\n\n" +
+		"cache-invalidation again, third time.\n"
+}
+
+// TestWriteSkillDrafts_WritesConformantFrontmatter: the SPEC §1.9
+// frontmatter contract (`source: logmind-derived`, `status: candidate`)
+// is honored, and the file lands at the SPEC path
+// docs/skills-derived/<name>.md.
+func TestWriteSkillDrafts_WritesConformantFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "decisions.md"), []byte(decisionsBodyForDrafts()), 0o644); err != nil {
+		t.Fatalf("write decisions.md: %v", err)
+	}
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	summary, err := WriteSkillDrafts(dir, DraftOptions{Now: now})
+	if err != nil {
+		t.Fatalf("WriteSkillDrafts: %v", err)
+	}
+	if summary.CandidatesConsidered != 1 {
+		t.Fatalf("CandidatesConsidered = %d; want 1; summary=%+v", summary.CandidatesConsidered, summary)
+	}
+	if len(summary.DraftsWritten) != 1 || summary.DraftsWritten[0] != "cache-invalidation" {
+		t.Fatalf("DraftsWritten = %v; want [cache-invalidation]", summary.DraftsWritten)
+	}
+
+	path := filepath.Join(dir, "docs", "skills-derived", "cache-invalidation.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read draft: %v", err)
+	}
+	got := string(body)
+	if !strings.HasPrefix(got, "---\nname: cache-invalidation\n") {
+		t.Errorf("frontmatter doesn't open as expected; body starts:\n%s", got[:80])
+	}
+	if !strings.Contains(got, "\nsource: logmind-derived\n") {
+		t.Errorf("missing source: logmind-derived; body:\n%s", got)
+	}
+	if !strings.Contains(got, "\nstatus: candidate\n") {
+		t.Errorf("missing status: candidate; body:\n%s", got)
+	}
+}
+
+// TestWriteSkillDrafts_DryRun_WritesNothing: --dry-run must not create
+// docs/skills-derived/ at all, even though the summary still reports
+// what would have been written.
+func TestWriteSkillDrafts_DryRun_WritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "decisions.md"), []byte(decisionsBodyForDrafts()), 0o644); err != nil {
+		t.Fatalf("write decisions.md: %v", err)
+	}
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	summary, err := WriteSkillDrafts(dir, DraftOptions{Now: now, DryRun: true})
+	if err != nil {
+		t.Fatalf("WriteSkillDrafts: %v", err)
+	}
+	if len(summary.DraftsWritten) != 1 {
+		t.Fatalf("DraftsWritten = %v; want 1 entry reported even in dry-run", summary.DraftsWritten)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "skills-derived")); !os.IsNotExist(err) {
+		t.Errorf("dry-run must not create docs/skills-derived/; stat err = %v", err)
+	}
+}
+
+// TestWriteSkillDrafts_NoCandidates: an empty/absent decision log is a
+// clean zero-work summary, not an error.
+func TestWriteSkillDrafts_NoCandidates(t *testing.T) {
+	dir := t.TempDir()
+	summary, err := WriteSkillDrafts(dir, DraftOptions{Now: time.Now()})
+	if err != nil {
+		t.Fatalf("WriteSkillDrafts: %v", err)
+	}
+	if summary.CandidatesConsidered != 0 || len(summary.DraftsWritten) != 0 {
+		t.Errorf("expected zero-work summary; got %+v", summary)
 	}
 }

@@ -3,11 +3,15 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/skill"
 )
@@ -60,7 +64,7 @@ func writeReviewForSync(t *testing.T, root, filename, sha string, citations []st
 func TestRunSync_NoReviewsDir(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	if err := runSync(dir, false, fixedNow, &stdout, &stderr); err != nil {
+	if err := runSync(dir, SyncCLIOptions{}, fixedNow, &stdout, &stderr); err != nil {
 		t.Fatalf("runSync: %v", err)
 	}
 	got := stdout.String()
@@ -82,7 +86,7 @@ func TestRunSync_AppliesCitations(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := runSync(dir, false, fixedNow, &stdout, &stderr); err != nil {
+	if err := runSync(dir, SyncCLIOptions{}, fixedNow, &stdout, &stderr); err != nil {
 		t.Fatalf("runSync: %v", err)
 	}
 	got := stdout.String()
@@ -115,7 +119,7 @@ func TestRunSync_DryRun(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := runSync(dir, true, fixedNow, &stdout, &stderr); err != nil {
+	if err := runSync(dir, SyncCLIOptions{DryRun: true}, fixedNow, &stdout, &stderr); err != nil {
 		t.Fatalf("runSync: %v", err)
 	}
 	got := stdout.String()
@@ -150,7 +154,7 @@ func TestRunSync_UnknownSkillWarning(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := runSync(dir, false, fixedNow, &stdout, &stderr); err != nil {
+	if err := runSync(dir, SyncCLIOptions{}, fixedNow, &stdout, &stderr); err != nil {
 		t.Fatalf("runSync: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "missing-skill") {
@@ -188,7 +192,7 @@ func TestRunSync_DocsButNoReviewsDir(t *testing.T) {
 		t.Fatalf("mkdir docs: %v", err)
 	}
 	var stdout, stderr bytes.Buffer
-	if err := runSync(dir, false, fixedNow, &stdout, &stderr); err != nil {
+	if err := runSync(dir, SyncCLIOptions{}, fixedNow, &stdout, &stderr); err != nil {
 		t.Fatalf("runSync: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "no skills updated") {
@@ -216,11 +220,179 @@ func TestRunSync_FilesystemError(t *testing.T) {
 	defer os.Chmod(reviewsDir, 0o755) // restore so t.TempDir cleanup works
 
 	var stdout, stderr bytes.Buffer
-	err := runSync(dir, false, fixedNow, &stdout, &stderr)
+	err := runSync(dir, SyncCLIOptions{}, fixedNow, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("expected ErrSilent on read failure; got %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Error:") {
 		t.Errorf("expected Error: line on stdout; got:\n%s", stdout.String())
 	}
+}
+
+// TestRunSync_MalformedSince: a garbage --since value is a hard error —
+// runSync must not silently fall back to "scan everything" (which is
+// what a zero-valued/ignored duration would produce).
+func TestRunSync_MalformedSince(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := runSync(dir, SyncCLIOptions{Since: "not-a-duration"}, fixedNow, &stdout, &stderr)
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("expected ErrSilent for malformed --since; got %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Error:") {
+		t.Errorf("expected Error: line on stdout; got:\n%s", stdout.String())
+	}
+}
+
+// TestNewSyncCmd_RegistersNewFlags: --since, --update-provenance, and
+// --write-drafts are all reachable on the cobra command tree (not just
+// wired internally) — a regression guard against a flag silently
+// dropping off `newSyncCmd`.
+func TestNewSyncCmd_RegistersNewFlags(t *testing.T) {
+	root := NewRootCmd()
+	var syncCmd *cobra.Command
+	for _, c := range root.Commands() {
+		if c.Use == "sync" {
+			syncCmd = c
+			break
+		}
+	}
+	if syncCmd == nil {
+		t.Fatal("sync subcommand not found")
+	}
+	for _, name := range []string{"dry-run", "since", "update-provenance", "write-drafts"} {
+		if syncCmd.Flags().Lookup(name) == nil {
+			t.Errorf("--%s not registered on `logmind sync`", name)
+		}
+	}
+}
+
+// TestRunSync_UpdateProvenance_WritesSpecFormat: --update-provenance
+// composes with the legacy default path — both run in the same
+// invocation, and the new PROVENANCE.md carries the SPEC §1.11.1
+// marker.
+func TestRunSync_UpdateProvenance_WritesSpecFormat(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldSkillForSync(t, dir, "prov-cli-skill")
+
+	var stdout, stderr bytes.Buffer
+	opts := SyncCLIOptions{UpdateProvenance: true}
+	if err := runSync(dir, opts, fixedNow, &stdout, &stderr); err != nil {
+		t.Fatalf("runSync: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "ok sync-provenance:") {
+		t.Errorf("missing ok sync-provenance line; stdout:\n%s", got)
+	}
+	body, err := os.ReadFile(filepath.Join(skill.SkillDir(dir, "prov-cli-skill"), "PROVENANCE.md"))
+	if err != nil {
+		t.Fatalf("read PROVENANCE.md: %v", err)
+	}
+	if !strings.Contains(string(body), "<!-- maintained-by: logmind sync -->") {
+		t.Errorf("PROVENANCE.md missing SPEC marker after --update-provenance; body:\n%s", body)
+	}
+}
+
+// TestRunSync_WriteDrafts_WritesSkillsDerived: --write-drafts writes
+// docs/skills-derived/<slug>.md from decision-log patterns, alongside
+// the (unconditional) legacy sync pass.
+func TestRunSync_WriteDrafts_WritesSkillsDerived(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	body := "# Decisions\n\n" +
+		"## 2026-05-15 - first\n\n**Date**: 2026-05-15\n\nadopt rate-limiting everywhere.\n\n" +
+		"## 2026-05-20 - second\n\n**Date**: 2026-05-20\n\nmore rate-limiting work.\n\n" +
+		"## 2026-05-25 - third\n\n**Date**: 2026-05-25\n\nrate-limiting again.\n"
+	if err := os.WriteFile(filepath.Join(docsDir, "decisions.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write decisions.md: %v", err)
+	}
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	var stdout, stderr bytes.Buffer
+	opts := SyncCLIOptions{WriteDrafts: true}
+	if err := runSync(dir, opts, now, &stdout, &stderr); err != nil {
+		t.Fatalf("runSync: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "ok sync-drafts:") {
+		t.Errorf("missing ok sync-drafts line; stdout:\n%s", got)
+	}
+	draftBody, err := os.ReadFile(filepath.Join(dir, "docs", "skills-derived", "rate-limiting.md"))
+	if err != nil {
+		t.Fatalf("read draft: %v", err)
+	}
+	if !strings.Contains(string(draftBody), "status: candidate") {
+		t.Errorf("draft missing status: candidate; body:\n%s", draftBody)
+	}
+}
+
+// TestRunSync_DryRun_ComposesWithNewFlags: --dry-run together with
+// --update-provenance and --write-drafts previews everything but writes
+// nothing — neither a new PROVENANCE.md nor a new docs/skills-derived/
+// file appears on disk.
+func TestRunSync_DryRun_ComposesWithNewFlags(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldSkillForSync(t, dir, "dry-compose-skill")
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	body := "# Decisions\n\n" +
+		"## 2026-05-15 - first\n\n**Date**: 2026-05-15\n\nadopt cache-warming everywhere.\n\n" +
+		"## 2026-05-20 - second\n\n**Date**: 2026-05-20\n\nmore cache-warming work.\n\n" +
+		"## 2026-05-25 - third\n\n**Date**: 2026-05-25\n\ncache-warming again.\n"
+	if err := os.WriteFile(filepath.Join(docsDir, "decisions.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write decisions.md: %v", err)
+	}
+
+	// Snapshot the entire tree before the dry-run so we can assert
+	// nothing changed, rather than checking only the paths we expect
+	// might change (which would miss an unexpected write elsewhere).
+	before := snapshotTree(t, dir)
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	var stdout, stderr bytes.Buffer
+	opts := SyncCLIOptions{DryRun: true, UpdateProvenance: true, WriteDrafts: true}
+	if err := runSync(dir, opts, now, &stdout, &stderr); err != nil {
+		t.Fatalf("runSync: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "(dry-run)") {
+		t.Errorf("expected (dry-run) marker somewhere in output; stdout:\n%s", got)
+	}
+
+	after := snapshotTree(t, dir)
+	if before != after {
+		t.Errorf("dry-run must not touch disk.\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// snapshotTree returns a stable, sorted "path\tsize\tmtime" listing for
+// every regular file under root, used to assert a dry-run left the tree
+// byte-for-byte (and file-for-file) untouched.
+func snapshotTree(t *testing.T, root string) string {
+	t.Helper()
+	var lines []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, fmt.Sprintf("%s\t%d\t%s", rel, info.Size(), info.ModTime()))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
 }
