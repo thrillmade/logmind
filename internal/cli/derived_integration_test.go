@@ -18,13 +18,10 @@
 // three-way conflict (both sides differ from the merge-base AND from each
 // other), not just a one-side-changed auto-merge.
 //
-// v2.0.0 B6: the zero-conflict invariant this test proves is now opt-in
-// (`derived_docs: {mode: integration-point}`, the default is "driver" — see
-// internal/cli/derived.go's integrationPointMode). This test explicitly
-// declares integration-point mode via writeDerivedDocsMode (log_test.go) so
-// its headline scenario keeps proving what it always proved; it is NOT
-// testing the (now default) driver-mode behavior, which has its own
-// coverage in TestLog_DriverModeCommitsDirtiedDerivedDocOnBranch.
+// The zero-conflict invariant this test proves is UNCONDITIONAL (the
+// v2.0.0 B6 `derived_docs.mode` per-repo adoption gate is gone — see
+// internal/cli/derived.go) — no config declaration is needed for this
+// scenario to hold.
 package cli
 
 import (
@@ -41,7 +38,6 @@ func TestConcurrentBranches_MergeWithoutDerivedDocConflict(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		writeDerivedDocsMode(t, d, "integration-point")
 		// Commit the scaffold (decisions.md, timeline.md, file-structure.md)
 		// on main so both branches share the same merge-base copy of the
 		// derived docs.

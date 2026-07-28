@@ -85,19 +85,6 @@ func hookVersion() string {
 	return version.Version
 }
 
-// derivedDocsIntegrationPointGrep is the shell fragment every L0 hook body
-// (BuildPostMergeBody / BuildPostRewriteBody) uses to detect this repo's
-// derived-docs adoption signal (v2.0.0 B6) WITHOUT a `logmind` subprocess —
-// git hooks already gate their whole body on `command -v logmind`, but the
-// mode check itself has to work even when that binary can't be trusted to
-// answer (or is momentarily absent) mid-hook, and reading one line out of a
-// YAML file is cheap enough to inline directly. Matches `mode:
-// integration-point`, optionally quoted, allowing leading indentation and
-// trailing whitespace — the exact shape DerivedDocsConfig.Mode's YAML tag
-// renders as. Kept as ONE shared Go constant so both hook bodies (and any
-// future one) never drift from each other on this string.
-const derivedDocsIntegrationPointGrep = `grep -Eq '^[[:space:]]*mode:[[:space:]]*"?integration-point"?[[:space:]]*$' .logmind/config.yml 2>/dev/null`
-
 // BuildPostMergeBody returns the canonical post-merge hook body for
 // the currently-running logmind binary. Byte-identical to the Python
 // v0.6.16 _build_post_merge_hook_body output when run against a
@@ -119,23 +106,19 @@ const derivedDocsIntegrationPointGrep = `grep -Eq '^[[:space:]]*mode:[[:space:]]
 // the §1.6.4 union (the sole timeline model as of v2.0.0) from the full merged
 // working tree — no hook-body edit, no HookVersionPrefix bump, no fleet-wide
 // "hook updated" churn. Branch detail pages are KEPT (never folded), so the
-// union always has its sources. The
-// server-side reconciler is the regen-timeline.yml workflow's
-// check-derived-docs job (PR #159): in a repo that has adopted
-// `derived_docs: {mode: integration-point}` it BLOCKS a PR that modifies
-// either derived doc (and passes with an explanation otherwise), and it
-// regenerates + pushes both files on every push to the default branch. We
-// deliberately add NO push-to-default trigger here: it would reintroduce
-// the GITHUB_TOKEN-stranding + self-trigger loop that server-side design
-// exists to avoid. The TestPostMergeBody_RollupInvariants guard pins
-// "regenerates the timeline, never pushes" even across a golden regen.
+// union always has its sources. The server-side reconciler is the
+// regen-timeline.yml workflow's check-derived-docs job (PR #159): it BLOCKS a
+// PR that modifies either derived doc, and regenerates + pushes both files on
+// every push to the default branch. We deliberately add NO push-to-default
+// trigger here: it would reintroduce the GITHUB_TOKEN-stranding +
+// self-trigger loop that server-side design exists to avoid. The
+// TestPostMergeBody_RollupInvariants guard pins "regenerates the timeline,
+// never pushes" even across a golden regen.
 //
-// v2.0.0 B6 adoption gate: the non-default-branch skip below fires ONLY when
-// THIS repo has opted into `derived_docs: {mode: integration-point}` (see
-// derivedDocsIntegrationPointGrep). "driver" (the default — including a repo
-// with no `derived_docs:` section at all) regenerates on every branch, the
-// exact pre-v2.0.0 behavior; that's the whole point of the adoption gate — a
-// v2 binary must never silently change a driver-mode repo's behavior.
+// Non-default-branch skip: the zero-conflict invariant is UNCONDITIONAL (the
+// v2.0.0 B6 `derived_docs.mode` per-repo adoption gate that used to guard
+// this skip is gone) — every non-default branch skips the roll-up regen
+// below, keeping the derived docs pinned to their merge-base with main.
 func BuildPostMergeBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind post-merge hook\n" +
@@ -201,15 +184,10 @@ func BuildPostMergeBody() string {
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
-		"    # v2.0.0 B6: only skip regen here when THIS repo declared\n" +
-		"    # derived_docs.mode: integration-point — the branch must then keep\n" +
-		"    # the derived docs byte-identical to its main merge-base (the\n" +
-		"    # zero-conflict invariant); main regenerates post-merge. A repo\n" +
-		"    # that hasn't adopted (mode unset or \"driver\", the default) falls\n" +
-		"    # through and regenerates on every branch — the pre-v2.0.0 behavior.\n" +
-		"    if " + derivedDocsIntegrationPointGrep + "; then\n" +
-		"      exit 0\n" +
-		"    fi\n" +
+		"    # Zero-conflict invariant (unconditional): a non-default branch\n" +
+		"    # must keep the derived docs byte-identical to its main\n" +
+		"    # merge-base; main regenerates post-merge.\n" +
+		"    exit 0\n" +
 		"  fi\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" = \"$default\" ]; then\n" +
 		"    head_sha=$(git rev-parse HEAD 2>/dev/null || true)\n" +
@@ -229,11 +207,9 @@ func BuildPostMergeBody() string {
 // for the currently-running logmind binary. See BuildPostMergeBody
 // for the byte-identical-vs-Python contract.
 //
-// v2.0.0 B6 adoption gate: same contract as BuildPostMergeBody — the
-// non-default-branch skip fires ONLY when THIS repo declared
-// `derived_docs: {mode: integration-point}` (see
-// derivedDocsIntegrationPointGrep). "driver" (the default) regenerates
-// after every rebase/amend regardless of branch, the pre-v2.0.0 behavior.
+// Non-default-branch skip: unconditional, same as BuildPostMergeBody — the
+// zero-conflict invariant applies to every repo, so a rebase/amend on a
+// non-default branch always skips the regen (and `git add`) below.
 func BuildPostRewriteBody() string {
 	return "#!/bin/sh\n" +
 		"# logmind post-rewrite hook\n" +
@@ -260,15 +236,10 @@ func BuildPostRewriteBody() string {
 		"  default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)\n" +
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
-		"  # v2.0.0 B6: only skip regen on a non-default branch when THIS repo\n" +
-		"  # declared derived_docs.mode: integration-point (invariant: branches\n" +
-		"  # never edit the derived docs under that mode). A repo that hasn't\n" +
-		"  # adopted (mode unset or \"driver\", the default) falls through to the\n" +
-		"  # regen below regardless of branch — the pre-v2.0.0 behavior.\n" +
+		"  # Zero-conflict invariant (unconditional): a non-default branch must\n" +
+		"  # keep the derived docs byte-identical to its main merge-base.\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
-		"    if " + derivedDocsIntegrationPointGrep + "; then\n" +
-		"      exit 0\n" +
-		"    fi\n" +
+		"    exit 0\n" +
 		"  fi\n" +
 		"  if [ -n \"$current\" ] && [ -d docs ]; then\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
@@ -459,9 +430,9 @@ func BuildCommitMsgBody() string {
 // internally (gitcli.Commit shells out to a literal `git commit -m
 // <message>`, no `--no-verify`). That means a warp-then-`logmind log`
 // sequence is NOT fully protected by L1 alone whenever this hook happens
-// to be installed (which `logmind init`/`doctor --fix` do automatically
-// the moment a repo adopts `derived_docs: {mode: integration-point}` — see
-// init.go): L1 runs first and correctly leaves the warp-staged repair
+// to be installed (unconditional — `logmind init`/`doctor --fix` do this
+// automatically the moment git is enabled; see init.go): L1 runs first
+// and correctly leaves the warp-staged repair
 // alone, `git add -A` stages the rest, and then `logmind log`'s own `git
 // commit` invocation triggers THIS hook, which restores unconditionally to
 // HEAD and undoes what L1 just preserved — same bug, reached through the

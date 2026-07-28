@@ -44,15 +44,14 @@
 //   - LOGMIND_AUTO_REGEN_PAT secret probe (queries GitHub repo settings).
 //
 //   - check_stale_derived_docs_warning (a branch-drift warning). Still
-//     unimplemented, and NOT obsolete. Under `derived_docs: {mode:
-//     integration-point}` the L1 restore in internal/cli/log.go's
-//     commitDecision makes the common case rare — but it only discards an
-//     UNCOMMITTED regen before staging. It cannot detect a branch whose
-//     derived docs ALREADY diverged from the merge-base in a landed commit
-//     (an older binary regenerating on a branch, a raw `git commit
-//     --no-verify`, or a hand edit). Those are exactly the cases the CI gate
-//     exists to catch, and a local probe would catch them sooner. Keep it on
-//     the list.
+//     unimplemented, and NOT obsolete. The (unconditional) L1 restore in
+//     internal/cli/log.go's commitDecision makes the common case rare — but
+//     it only discards an UNCOMMITTED regen before staging. It cannot
+//     detect a branch whose derived docs ALREADY diverged from the
+//     merge-base in a landed commit (an older binary regenerating on a
+//     branch, a raw `git commit --no-verify`, or a hand edit). Those are
+//     exactly the cases the CI gate exists to catch, and a local probe
+//     would catch them sooner. Keep it on the list.
 package doctor
 
 import (
@@ -151,16 +150,6 @@ type StatusReport struct {
 	// spec_file is unset. Like SummariesNeeded, this NEVER affects Overall —
 	// the spec fold-in is a nice-to-have, not a gate.
 	SpecAdvisories []string `json:"spec_advisories"`
-
-	// DerivedDocsAdvisories is an ADVISORY list (v2.0.0 B6, the derived-docs
-	// adoption gate's version floor) reporting: a repo that declared
-	// `derived_docs: {mode: integration-point}` without a `min_binary`
-	// floor, or one whose declared floor the RUNNING binary doesn't
-	// satisfy (internal/version.SatisfiesMin). Empty for a "driver"-mode
-	// repo (the default) — there's nothing to warn about until a repo
-	// opts in. Like SpecAdvisories, this NEVER affects Overall: the floor
-	// is a nudge for contributors to upgrade, not a hard gate.
-	DerivedDocsAdvisories []string `json:"derived_docs_advisories"`
 }
 
 // ToJSON serialises the report with 2-space indent, matching Python's
@@ -226,14 +215,13 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 	}
 
 	return StatusReport{
-		ProjectRoot:           projectRoot,
-		Tools:                 tools,
-		Overall:               overall,
-		NetworkUsed:           false,
-		Suggestions:           suggestions,
-		SummariesNeeded:       collectSummariesNeeded(projectRoot),
-		SpecAdvisories:        collectSpecAdvisories(projectRoot),
-		DerivedDocsAdvisories: collectDerivedDocsAdvisories(projectRoot),
+		ProjectRoot:     projectRoot,
+		Tools:           tools,
+		Overall:         overall,
+		NetworkUsed:     false,
+		Suggestions:     suggestions,
+		SummariesNeeded: collectSummariesNeeded(projectRoot),
+		SpecAdvisories:  collectSpecAdvisories(projectRoot),
 	}
 }
 
@@ -335,44 +323,6 @@ func collectSpecAdvisories(projectRoot string) []string {
 	if strings.TrimSpace(string(data)) == "" {
 		return []string{
 			"context.spec_file (" + rel + ") is empty — add content, or unset context.spec_file.",
-		}
-	}
-	return nil
-}
-
-// collectDerivedDocsAdvisories returns the ADVISORY list (v2.0.0 B6) for
-// the derived-docs adoption gate's version floor. Nil for a "driver"-mode
-// repo (the default) — there's nothing to check until a repo declares
-// `derived_docs: {mode: integration-point}`. Two conditions, checked in
-// order (at most one fires — MinBinary is either set or it isn't):
-//
-//   - integration-point mode declared WITHOUT a min_binary floor — a repo
-//     that opted in gets no version-drift warning until it sets one.
-//   - a declared floor the RUNNING binary doesn't satisfy
-//     (internal/version.SatisfiesMin) — the repo expects contributors on
-//     at least this version.
-//
-// Like SpecAdvisories/SummariesNeeded, this NEVER affects Overall: it's a
-// nudge for contributors to upgrade, not a hard gate — doctor makes no
-// network calls and has no way to KNOW a contributor is stuck; it can only
-// compare the binary actually running it against the repo's own
-// declaration.
-func collectDerivedDocsAdvisories(projectRoot string) []string {
-	cfg, err := config.Load(projectRoot)
-	if err != nil {
-		return nil
-	}
-	if cfg.DerivedDocs.Mode != "integration-point" {
-		return nil
-	}
-	if cfg.DerivedDocs.MinBinary == "" {
-		return []string{
-			`derived_docs.mode is "integration-point" but derived_docs.min_binary is unset — set it (e.g. "2.0.0") in .logmind/config.yml so ` + "`logmind doctor`" + ` can warn contributors running an older binary.`,
-		}
-	}
-	if !version.SatisfiesMin(version.Version, cfg.DerivedDocs.MinBinary) {
-		return []string{
-			fmt.Sprintf("running logmind %s is older than this repo's declared derived_docs.min_binary (%s) — upgrade before relying on integration-point mode's guarantees.", version.Version, cfg.DerivedDocs.MinBinary),
 		}
 	}
 	return nil
@@ -1020,13 +970,6 @@ func RenderStatus(r StatusReport) string {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("Canonical spec file (%d):", len(r.SpecAdvisories)))
 		for _, s := range r.SpecAdvisories {
-			lines = append(lines, fmt.Sprintf("  • %s", s))
-		}
-	}
-	if len(r.DerivedDocsAdvisories) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, fmt.Sprintf("Derived-docs version floor (%d):", len(r.DerivedDocsAdvisories)))
-		for _, s := range r.DerivedDocsAdvisories {
 			lines = append(lines, fmt.Sprintf("  • %s", s))
 		}
 	}

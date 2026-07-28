@@ -20,25 +20,6 @@ git:
   # Lines-changed threshold shared with `logmind check-decisions --threshold`.
   commit_line_threshold: 20
 
-# Derived-docs pin-preservation adoption (v2.0.0). See docs/plan.md's
-# "Derived docs" section for the full L0-L3 design.
-derived_docs:
-  # "driver" (default) reproduces logmind's pre-v2.0.0 behavior:
-  # docs/timeline.md + docs/file-structure.md regenerate on every branch,
-  # and nothing restores or blocks a branch-local edit to them.
-  #
-  # "integration-point" opts INTO the zero-conflict invariant: those two
-  # files regenerate ONLY on the default branch; on any other branch they
-  # are restored to their committed (HEAD) content before a commit can
-  # carry a change to them (pre-commit hook + Claude Code harness), and a
-  # blocking CI gate rejects a PR that edited them anyway.
-  mode: driver
-
-  # SHOULD be set (e.g. "2.0.0") when mode is integration-point — `logmind
-  # doctor` warns when the running binary is older than this floor. Ignored
-  # when mode is driver.
-  min_binary: ""
-
 # Decision management
 decisions:
   # Maximum number of recent decisions to keep in decisions.md

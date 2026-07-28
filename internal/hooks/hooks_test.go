@@ -182,22 +182,17 @@ func TestPostMergeBody_RollupInvariants(t *testing.T) {
 	}
 }
 
-// TestPostMergeBody_IntegrationPointModeSkipsFeatureBranchRegen pins the
-// v2.0.0 B6 adoption gate for the post-merge hook: on a non-default branch,
-// the hook exits BEFORE the roll-up regen ONLY when THIS repo declared
-// `derived_docs: {mode: integration-point}` (detected via
-// derivedDocsIntegrationPointGrep against .logmind/config.yml). "driver"
-// (the default) falls through and regenerates regardless of branch — see
-// TestPostMergeBody_DriverModeNoLongerUnconditionallySkipsNonDefaultBranch
-// for the companion proof that the old unconditional skip is gone.
-//
-// Approach: same as the post-rewrite sibling test — no in-package helper
-// fires a real post-merge hook against a live .logmind/config.yml, so this
-// asserts on the BODY STRING. It proves the gate structurally: the
-// mode-check's `exit 0` sits INSIDE the non-default-branch guard, strictly
-// BEFORE the roll-up regen block (itself guarded only by `[ -d docs ]`, no
-// branch condition — see the sibling test below).
-func TestPostMergeBody_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.T) {
+// TestPostMergeBody_NonDefaultBranchAlwaysSkipsRegen pins the post-B6
+// contract for the post-merge hook, now that the v2.0.0 B6
+// `derived_docs.mode` per-repo adoption gate is gone: the zero-conflict
+// invariant is UNCONDITIONAL, so on a non-default branch the hook exits
+// BEFORE the roll-up regen for EVERY repo — no `.logmind/config.yml` grep,
+// no "driver" escape hatch. Replaces the old
+// IntegrationPointModeSkipsFeatureBranchRegen /
+// DriverModeNoLongerUnconditionallySkipsNonDefaultBranch pair, which pinned
+// the now-removed per-repo gate and its (also now-removed) "driver mode
+// still regenerates" companion behavior.
+func TestPostMergeBody_NonDefaultBranchAlwaysSkipsRegen(t *testing.T) {
 	body := BuildPostMergeBody()
 
 	const branchGuard = `if [ -n "$current" ] && [ "$current" != "$default" ]; then`
@@ -206,27 +201,28 @@ func TestPostMergeBody_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.T)
 		t.Fatalf("post-merge body missing the non-default-branch guard %q", branchGuard)
 	}
 
-	modeCheck := "if " + derivedDocsIntegrationPointGrep + "; then"
-	mci := strings.Index(body, modeCheck)
-	if mci < 0 {
-		t.Fatalf("post-merge body missing the integration-point mode check %q", modeCheck)
-	}
-	if mci < bgi {
-		t.Errorf("mode check appears BEFORE the non-default-branch guard %q — it must be nested inside it", branchGuard)
-	}
-	// No bare `exit 0` between the guard opening and the mode check — that
-	// would be the OLD unconditional skip lingering alongside the new gate.
-	between := body[bgi:mci]
-	if strings.Contains(between, "exit 0") {
-		t.Errorf("post-merge body has an exit 0 between the branch guard and the mode check — the old unconditional skip must be fully replaced, not just supplemented")
-	}
-
-	exitRel := strings.Index(body[mci:], "exit 0")
+	// The branch guard's own `exit 0` — unconditional, no nested adoption
+	// check gating it anymore.
+	exitRel := strings.Index(body[bgi:], "exit 0")
 	if exitRel < 0 {
-		t.Fatalf("post-merge body's mode check has no exit 0")
+		t.Fatalf("post-merge body's non-default-branch guard has no exit 0")
 	}
-	exitIdx := mci + exitRel
+	exitIdx := bgi + exitRel
 
+	// The adoption signal is gone: no mention of integration-point mode, no
+	// grep against .logmind/config.yml left to check it.
+	if strings.Contains(body, "integration-point") {
+		t.Errorf("post-merge body must not mention integration-point mode — the v2.0.0 B6 adoption gate is gone")
+	}
+	if strings.Contains(body, "grep") {
+		t.Errorf("post-merge body must not grep .logmind/config.yml for an adoption signal — the invariant is unconditional")
+	}
+
+	const finalGuard = `if [ -d docs ]; then`
+	fgi := strings.LastIndex(body, finalGuard)
+	if fgi < 0 {
+		t.Fatalf("post-merge body missing the final regen guard %q", finalGuard)
+	}
 	for _, action := range []string{
 		"logmind timeline --write docs/timeline.md",
 		"logmind file-structure --write docs/file-structure.md",
@@ -235,66 +231,28 @@ func TestPostMergeBody_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.T)
 			t.Errorf("action %q appears %d time(s); want exactly 1", action, n)
 			continue
 		}
-		if strings.Index(body, action) < exitIdx {
-			t.Errorf("action %q appears BEFORE the integration-point mode's exit 0", action)
+		idx := strings.Index(body, action)
+		if idx < exitIdx {
+			t.Errorf("action %q appears BEFORE the non-default-branch guard's exit 0", action)
 		}
-	}
-}
-
-// TestPostMergeBody_DriverModeNoLongerUnconditionallySkipsNonDefaultBranch
-// pins the inversion ruling 3 requires: the roll-up regen actions
-// (BuildPostMergeBody's final `[ -d docs ]` block) must NOT be nested
-// inside any `current != default` OR `current == default` branch
-// condition — driver mode (the default) regenerates after every local
-// merge regardless of branch, matching the pre-v2.0.0 behavior. Only the
-// integration-point mode check (pinned above) may skip it, and only via
-// its own explicit `exit 0`.
-func TestPostMergeBody_DriverModeNoLongerUnconditionallySkipsNonDefaultBranch(t *testing.T) {
-	body := BuildPostMergeBody()
-	const finalGuard = `if [ -d docs ]; then`
-	fgi := strings.LastIndex(body, finalGuard)
-	if fgi < 0 {
-		t.Fatalf("post-merge body missing the final regen guard %q", finalGuard)
-	}
-	// The two roll-up regen calls must sit inside THIS `[ -d docs ]` guard —
-	// not additionally re-gated on a branch-equality condition. We already
-	// proved (in the sibling test) that reaching this point at all requires
-	// falling through both the non-default-branch mode check AND the
-	// default-branch fast-forward check without hitting either `exit 0`; the
-	// only condition left immediately guarding the actions is `-d docs`.
-	for _, action := range []string{
-		"logmind timeline --write docs/timeline.md",
-		"logmind file-structure --write docs/file-structure.md",
-	} {
-		idx := strings.LastIndex(body, action)
+		// Also confirm it sits inside the final `[ -d docs ]` guard — not
+		// additionally re-gated on a `current == default` equality check.
 		if idx < fgi {
 			t.Errorf("action %q does not appear after the final `[ -d docs ]` guard %q", action, finalGuard)
 		}
 	}
 }
 
-// TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen pins the
-// v2.0.0 derived-docs-on-main invariant for the post-rewrite hook, UPDATED
-// for the B6 adoption gate: a rebase/amend on a non-default branch skips
-// the regen (and `git add`) of docs/timeline.md + docs/file-structure.md
-// ONLY when THIS repo declared `derived_docs: {mode: integration-point}`
-// (detected via derivedDocsIntegrationPointGrep against
-// .logmind/config.yml). "driver" (the default) regenerates regardless of
-// branch — the exact pre-v2.0.0 behavior; see
-// TestPostRewriteHook_DriverModeNoLongerGatesOnBranch for the companion
-// proof that the OLD unconditional branch guard is gone.
-//
-// Approach: the hooks package has no in-test helper to install + fire a real
-// post-rewrite hook against a live .logmind/config.yml (the
-// initRepoWithLogmind / installHooks / isStagedOrDirty helpers the plan
-// sketches live in internal/cli), and the task forbids inventing
-// duplicates — so this asserts on the BODY STRING instead. It proves the
-// gate structurally: the mode-check's `exit 0` sits INSIDE the
-// non-default-branch guard, and strictly BEFORE the (now
-// branch-unconditional) regen/add actions — so an interpreter reading
-// top-to-bottom exits before ever reaching those actions when (current !=
-// default) AND the repo's config matches integration-point mode.
-func TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.T) {
+// TestPostRewriteHook_NonDefaultBranchAlwaysSkipsRegen pins the post-B6
+// contract for the post-rewrite hook, now that the v2.0.0 B6
+// `derived_docs.mode` per-repo adoption gate is gone: a rebase/amend on a
+// non-default branch skips the regen (and `git add`) of docs/timeline.md +
+// docs/file-structure.md for EVERY repo — no `.logmind/config.yml` grep, no
+// "driver" escape hatch. Replaces the old
+// IntegrationPointModeSkipsFeatureBranchRegen / DriverModeNoLongerGatesOnBranch
+// pair, which pinned the now-removed per-repo gate and its (also
+// now-removed) "driver mode still regenerates" companion behavior.
+func TestPostRewriteHook_NonDefaultBranchAlwaysSkipsRegen(t *testing.T) {
 	body := BuildPostRewriteBody()
 
 	// The branch-detection the non-default-branch guard depends on (mirrors
@@ -315,25 +273,30 @@ func TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.
 		t.Fatalf("post-rewrite body missing the non-default-branch guard %q", branchGuard)
 	}
 
-	modeCheck := "if " + derivedDocsIntegrationPointGrep + "; then"
-	mci := strings.Index(body, modeCheck)
-	if mci < 0 {
-		t.Fatalf("post-rewrite body missing the integration-point mode check %q", modeCheck)
-	}
-	if mci < bgi {
-		t.Errorf("mode check appears BEFORE the non-default-branch guard %q — it must be nested inside it", branchGuard)
-	}
-
-	exitRel := strings.Index(body[mci:], "exit 0")
+	// The branch guard's own `exit 0` — unconditional, no nested adoption
+	// check gating it anymore.
+	exitRel := strings.Index(body[bgi:], "exit 0")
 	if exitRel < 0 {
-		t.Fatalf("post-rewrite body's mode check has no exit 0")
+		t.Fatalf("post-rewrite body's non-default-branch guard has no exit 0")
 	}
-	exitIdx := mci + exitRel
+	exitIdx := bgi + exitRel
+
+	// The adoption signal is gone: no mention of integration-point mode, no
+	// grep against .logmind/config.yml left to check it, and the OLD
+	// unconditional `current == default` guard around the regen/add actions
+	// stays gone too (it was removed well before this gate existed).
+	if strings.Contains(body, "integration-point") {
+		t.Errorf("post-rewrite body must not mention integration-point mode — the v2.0.0 B6 adoption gate is gone")
+	}
+	if strings.Contains(body, "grep") {
+		t.Errorf("post-rewrite body must not grep .logmind/config.yml for an adoption signal — the invariant is unconditional")
+	}
+	if strings.Contains(body, `[ "$current" = "$default" ]`) {
+		t.Errorf("post-rewrite body must not gate the regen on current==default — every branch but the non-default one must regenerate")
+	}
 
 	// Every regen / stage action must appear EXACTLY ONCE and ONLY AFTER the
-	// mode check's exit 0 — so a non-default branch in integration-point
-	// mode exits before ever reaching these actions, while driver mode (no
-	// grep match) falls through to them regardless of branch.
+	// branch guard's exit 0.
 	for _, action := range []string{
 		"logmind timeline --write docs/timeline.md",
 		"logmind file-structure --write docs/file-structure.md",
@@ -344,23 +307,8 @@ func TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen(t *testing.
 			continue
 		}
 		if strings.Index(body, action) < exitIdx {
-			t.Errorf("action %q appears BEFORE the integration-point mode's exit 0", action)
+			t.Errorf("action %q appears BEFORE the non-default-branch guard's exit 0", action)
 		}
-	}
-}
-
-// TestPostRewriteHook_DriverModeNoLongerGatesOnBranch pins the inversion
-// ruling 3 requires: the OLD unconditional `current == default` guard
-// around the regen/add actions must be GONE. Driver mode (the default —
-// including a repo with no `derived_docs:` section at all) must regenerate
-// on every branch after a rebase/amend, matching the pre-v2.0.0 behavior;
-// only an explicit integration-point-mode grep match (pinned by
-// TestPostRewriteHook_IntegrationPointModeSkipsFeatureBranchRegen above)
-// may skip it.
-func TestPostRewriteHook_DriverModeNoLongerGatesOnBranch(t *testing.T) {
-	body := BuildPostRewriteBody()
-	if strings.Contains(body, `[ "$current" = "$default" ]`) {
-		t.Errorf("post-rewrite body still gates the regen on current==default — driver mode must regenerate on every branch regardless of default-branch equality")
 	}
 }
 

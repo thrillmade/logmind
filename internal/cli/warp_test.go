@@ -1,18 +1,22 @@
 // warp_test.go — exercises `logmind warp`: the read-only refresh of the two
 // derived docs (docs/timeline.md, docs/file-structure.md) from the default
 // branch, plus (v2.0.0 4b-ter) the merge-base repair step that moved here
-// from the commit-path surfaces. Coverage:
+// from the commit-path surfaces. The repair is UNCONDITIONAL (the v2.0.0 B6
+// `derived_docs.mode` per-repo adoption gate that used to make it a no-op
+// for an "unadopted" repo is gone) — every call on a non-default branch
+// repairs to the merge-base, preferring that over origin's raw tip when the
+// two disagree. Coverage:
 //
 //   - the refreshed working-tree copy matches origin/<default>'s content
-//   - the refresh is NEVER staged (git status stays clean for the path), in
-//     driver mode — the default, and every fixture in this file except
-//     TestWarp_RepairsAlreadyDivergedBranch
+//     when the branch hasn't fallen behind (so the plain read-refresh and
+//     the repair converge on the same content)
 //   - a non-repo cwd is a no-op, not an error
 //   - never commits, even across repeated calls
-//   - in integration-point mode, on a non-default branch, repairs an
-//     already-diverged HEAD to the merge-base with the default branch
-//     (staging the fix), preferring the repair over origin's raw tip when
-//     the two disagree
+//   - on a non-default branch, repairs an already-diverged HEAD to the
+//     merge-base with the default branch (staging the fix), preferring the
+//     repair over origin's raw tip when the two disagree — regardless of
+//     any `.logmind/config.yml` content, including a leftover legacy
+//     `derived_docs:` section
 package cli
 
 import (
@@ -74,11 +78,18 @@ func isStaged(t *testing.T, dir, relPath string) bool {
 	return false
 }
 
+// TestWarp_RefreshesFromOriginUncommitted branches directly off the
+// freshly-fetched origin/main tip, so this branch's merge-base WITH
+// origin/main IS that tip — the (unconditional) repair step then converges
+// with the plain read-refresh instead of overwriting it with older
+// merge-base content, keeping this assertion meaningful. (A branch that has
+// instead fallen BEHIND main is covered by TestWarp_RepairsAlreadyDivergedBranch
+// below, where the repair's merge-base content is what wins.)
 func TestWarp_RefreshesFromOriginUncommitted(t *testing.T) {
 	origin, repo := initClonePair(t)
 	commitOn(t, origin, "docs/timeline.md", "MAIN-FRESH\n")
-	runGitIn(t, repo, "fetch", "origin", "main") // pre-fetch so ShowFile sees it
-	runGitIn(t, repo, "checkout", "-b", "feat/w")
+	runGitIn(t, repo, "fetch", "origin", "main")
+	runGitIn(t, repo, "checkout", "-b", "feat/w", "origin/main")
 
 	if err := runWarp(repo, io.Discard, io.Discard); err != nil {
 		t.Fatalf("warp: %v", err)
@@ -86,13 +97,15 @@ func TestWarp_RefreshesFromOriginUncommitted(t *testing.T) {
 	if readFileStr(t, filepath.Join(repo, "docs", "timeline.md")) != "MAIN-FRESH\n" {
 		t.Fatal("warp must refresh the working copy from origin/main")
 	}
+	// feat/w's own HEAD already IS origin/main's tip, so the repair's
+	// merge-base restore is a true no-op here: nothing to stage.
 	if isStaged(t, repo, "docs/timeline.md") {
-		t.Fatal("warp must NOT stage the refreshed docs")
+		t.Fatal("warp must not stage a doc that already matches its merge-base")
 	}
 }
 
-// TestWarp_DoesNotCommit: beyond not staging, warp must leave HEAD untouched
-// — no new commit appears after a refresh.
+// TestWarp_DoesNotCommit: warp must leave HEAD untouched — no new commit
+// appears after a refresh, even once the (unconditional) repair step runs.
 func TestWarp_DoesNotCommit(t *testing.T) {
 	origin, repo := initClonePair(t)
 	commitOn(t, origin, "docs/timeline.md", "MAIN-FRESH-2\n")
@@ -109,28 +122,42 @@ func TestWarp_DoesNotCommit(t *testing.T) {
 	if before != after {
 		t.Fatalf("warp must not create a commit: HEAD moved from %q to %q", before, after)
 	}
-	// The working tree overall must still report the doc as modified
-	// (unstaged) relative to HEAD, since HEAD did not move.
+	// feat/w2 forked BEFORE origin's advance, so its merge-base with
+	// origin/main is its own (unchanged) HEAD content. The repair restores
+	// exactly that, so the working tree ends up clean — NOT carrying
+	// origin's newer, not-yet-merged tip content.
 	status := runGitOut(t, repo, "status", "--porcelain", "--", "docs/timeline.md")
-	if !strings.HasPrefix(status, " M") {
-		t.Fatalf("expected docs/timeline.md to show as an unstaged modification; got %q", status)
+	if status != "" {
+		t.Fatalf("expected docs/timeline.md clean after the repair restores the branch's own merge-base content; got %q", status)
 	}
 }
 
 // TestWarp_FetchesFromOrigin: unlike a pre-fetch-only refresh, runWarp itself
 // performs the `git fetch origin <default>` — so calling it WITHOUT a manual
-// fetch first still picks up content committed on origin after the clone.
+// fetch first still updates refs/remotes/origin/<default> to origin's
+// latest. Asserted via the ref itself (not file content): this branch
+// forked BEFORE origin's advance, so the repair step restores
+// docs/timeline.md to the OLDER merge-base content, not origin's fresher
+// tip — the fetch's effect is only observable on the ref.
 func TestWarp_FetchesFromOrigin(t *testing.T) {
 	origin, repo := initClonePair(t)
 	commitOn(t, origin, "docs/timeline.md", "MAIN-VIA-WARP-FETCH\n")
 	runGitIn(t, repo, "checkout", "-b", "feat/w3")
 	// Deliberately NOT fetching manually — runWarp must do it.
 
+	before := strings.TrimSpace(runGitOut(t, repo, "rev-parse", "refs/remotes/origin/main"))
+
 	if err := runWarp(repo, io.Discard, io.Discard); err != nil {
 		t.Fatalf("warp: %v", err)
 	}
-	if readFileStr(t, filepath.Join(repo, "docs", "timeline.md")) != "MAIN-VIA-WARP-FETCH\n" {
-		t.Fatal("warp must fetch origin itself, not rely on a pre-existing fetch")
+
+	after := strings.TrimSpace(runGitOut(t, repo, "rev-parse", "refs/remotes/origin/main"))
+	if before == after {
+		t.Fatal("warp must fetch origin itself, not rely on a pre-existing fetch (refs/remotes/origin/main did not move)")
+	}
+	originTip := strings.TrimSpace(runGitOut(t, origin, "rev-parse", "HEAD"))
+	if after != originTip {
+		t.Fatalf("refs/remotes/origin/main = %q after warp; want origin's tip %q", after, originTip)
 	}
 }
 
@@ -167,32 +194,23 @@ func TestWarp_ReportsDecisionCommitsAhead(t *testing.T) {
 // merge-base repair capability now lives here, not on the commit-path
 // surfaces (logmind log's L1, the pre-commit hook's L2a, the harness's
 // L2b — see their doc comments in log.go/hooks.go/guard_commit.go for the
-// staleness reasoning that moved it). Scenario: main gains the
-// integration-point adoption commit; a feature branch is cut from it; then,
-// simulating an old binary's local regen (or a hand edit) landing BEFORE any
-// guard existed, a commit ALREADY on that branch's HEAD carries a diverged
-// copy of docs/timeline.md. Meanwhile origin's main ALSO advances past the
-// branch's fork point. `logmind warp` must fetch, then land the TRUE
-// common-ancestor (merge-base) content — neither the branch's stale diverged
-// copy NOR (per the CTO ruling: prefer the repair over raw freshness)
-// origin's newer tip.
+// staleness reasoning that moved it). Scenario: simulating an old binary's
+// local regen (or a hand edit) landing BEFORE any guard existed, a commit
+// ALREADY on a feature branch's HEAD carries a diverged copy of
+// docs/timeline.md. Meanwhile origin's main ALSO advances past the branch's
+// fork point (the repo's initial clone-point commit — see initClonePair).
+// `logmind warp` must fetch, then land the TRUE common-ancestor (merge-base)
+// content — neither the branch's stale diverged copy NOR (per the CTO
+// ruling: prefer the repair over raw freshness) origin's newer tip. No
+// `.logmind/config.yml` is written at all: the repair is unconditional.
 func TestWarp_RepairsAlreadyDivergedBranch(t *testing.T) {
 	origin, repo := initClonePair(t)
-
-	// Adopt integration-point mode on repo's main — this commit is the fork
-	// point both origin's later advance and the feature branch below share.
-	if err := os.MkdirAll(filepath.Join(repo, ".logmind"), 0o755); err != nil {
-		t.Fatalf("mkdir .logmind: %v", err)
-	}
-	writeDerivedDocsMode(t, repo, "integration-point")
-	commitAll(t, repo, "adopt integration-point mode")
 	forkContent := readFileStr(t, filepath.Join(repo, "docs", "timeline.md"))
 
-	// origin's main advances independently of repo's mode-adoption commit
-	// (which never reached origin) — simulating other work landing on main
-	// after this repo forked. The merge-base between this new origin tip and
-	// the feature branch below is therefore the ORIGINAL clone-point commit,
-	// not this fresher one.
+	// origin's main advances independently of repo's clone point —
+	// simulating other work landing on main after this repo forked. The
+	// merge-base between this new origin tip and the feature branch below
+	// is therefore the ORIGINAL clone-point commit, not this fresher one.
 	commitOn(t, origin, "docs/timeline.md", "MAIN-ADVANCED-FRESH\n")
 
 	runGitIn(t, repo, "checkout", "-b", "feat/already-diverged")
@@ -233,20 +251,30 @@ func TestWarp_RepairsAlreadyDivergedBranch(t *testing.T) {
 	}
 }
 
-// TestWarp_DriverModeSkipsRepair: the repair step is gated on
-// integrationPointMode, matching L1/L2a/L2b's own gate — a driver-mode repo
-// (implicit default: no `.logmind/config.yml` at all, same as every other
-// warp fixture in this file) has no merge-base invariant to repair, so a
-// diverged branch's HEAD content is left exactly as the plain read-refresh
-// loop would leave it: origin's freshest tip, unmodified by any repair pass.
-func TestWarp_DriverModeSkipsRepair(t *testing.T) {
+// TestWarp_RepairsRegardlessOfLegacyConfig pins the removal of the v2.0.0 B6
+// `derived_docs.mode` adoption gate from warp's repair step: a leftover
+// `derived_docs: {mode: driver}` section in .logmind/config.yml (from a
+// repo that predates the gate's removal — the key is now unknown to
+// config.Config and silently ignored) must NOT suppress the repair. There
+// is no gate left to key off of, so this behaves identically to
+// TestWarp_RepairsAlreadyDivergedBranch (no config at all).
+func TestWarp_RepairsRegardlessOfLegacyConfig(t *testing.T) {
 	origin, repo := initClonePair(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".logmind"), 0o755); err != nil {
+		t.Fatalf("mkdir .logmind: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".logmind", "config.yml"), []byte("derived_docs:\n  mode: driver\n"), 0o644); err != nil {
+		t.Fatalf("write legacy config.yml: %v", err)
+	}
+	commitAll(t, repo, "leftover legacy derived_docs config")
+	forkContent := readFileStr(t, filepath.Join(repo, "docs", "timeline.md"))
+
 	commitOn(t, origin, "docs/timeline.md", "MAIN-FRESH-DRIVER\n")
 
 	runGitIn(t, repo, "checkout", "-b", "feat/driver-diverged")
-	stale := "STALE ON A DRIVER-MODE BRANCH\n"
+	stale := "STALE ON A LEGACY-CONFIG BRANCH\n"
 	mustWriteUnder(t, repo, "docs/timeline.md", stale)
-	commitAll(t, repo, "driver-mode branch-local edit (never restored)")
+	commitAll(t, repo, "pre-existing divergence despite legacy driver config")
 
 	var out strings.Builder
 	if err := runWarp(repo, &out, io.Discard); err != nil {
@@ -254,14 +282,14 @@ func TestWarp_DriverModeSkipsRepair(t *testing.T) {
 	}
 
 	got := readFileStr(t, filepath.Join(repo, "docs", "timeline.md"))
-	if got != "MAIN-FRESH-DRIVER\n" {
-		t.Fatalf("driver mode: expected the plain read-refresh (origin's tip), got %q", got)
+	if got != forkContent {
+		t.Fatalf("legacy derived_docs.mode: driver config must not suppress the repair: got %q; want the merge-base content %q", got, forkContent)
 	}
-	if strings.Contains(out.String(), "repaired derived doc(s)") {
-		t.Fatalf("driver mode must never repair; unexpected repair note in stdout: %q", out.String())
+	if !strings.Contains(out.String(), "repaired derived doc(s) to merge-base") {
+		t.Fatalf("expected the repair note in stdout; got %q", out.String())
 	}
-	if isStaged(t, repo, "docs/timeline.md") {
-		t.Fatalf("driver mode must never stage the refreshed docs")
+	if !isStaged(t, repo, "docs/timeline.md") {
+		t.Fatalf("expected the repaired docs/timeline.md to be staged")
 	}
 }
 

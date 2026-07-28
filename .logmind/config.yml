@@ -3,9 +3,6 @@ git:
   auto_push: true
   commit_message_template: 'logmind: {decision}'
   auto_rebase: false
-derived_docs:
-  mode: integration-point
-  min_binary: "2.0.0"
 decisions:
   max_recent: 20
   branch_aware: true

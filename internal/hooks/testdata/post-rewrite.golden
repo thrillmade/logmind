@@ -23,15 +23,10 @@ if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
   default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
   default=${default#origin/}
   [ -z "$default" ] && default=main
-  # v2.0.0 B6: only skip regen on a non-default branch when THIS repo
-  # declared derived_docs.mode: integration-point (invariant: branches
-  # never edit the derived docs under that mode). A repo that hasn't
-  # adopted (mode unset or "driver", the default) falls through to the
-  # regen below regardless of branch — the pre-v2.0.0 behavior.
+  # Zero-conflict invariant (unconditional): a non-default branch must
+  # keep the derived docs byte-identical to its main merge-base.
   if [ -n "$current" ] && [ "$current" != "$default" ]; then
-    if grep -Eq '^[[:space:]]*mode:[[:space:]]*"?integration-point"?[[:space:]]*$' .logmind/config.yml 2>/dev/null; then
-      exit 0
-    fi
+    exit 0
   fi
   if [ -n "$current" ] && [ -d docs ]; then
     logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true

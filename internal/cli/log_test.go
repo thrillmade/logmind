@@ -1062,99 +1062,47 @@ func TestLog_SelfHeal_StderrTTY_StdinDeadPipe_DoesNotHang(t *testing.T) {
 }
 
 // TestLog_DoesNotCommitDirtiedDerivedDocOnBranch pins the L1 zero-conflict
-// guard (derived-docs-on-main plan, Task 3), UPDATED for the v2.0.0 B6
-// adoption gate: docs/timeline.md and docs/file-structure.md are
-// purely-derived, main-only artifacts ONLY under
-// `derived_docs: {mode: integration-point}`. With that declared,
-// `commitDecision` restores them to HEAD before staging so neither a stray
-// hook regen nor `git add -A` can sweep a branch-local edit into the
-// decision commit — which would diverge the branch from main and cause a
-// future merge conflict. Here we simulate that stray edit by hand-dirtying
-// the already-committed docs/timeline.md, then assert the resulting commit
-// does NOT carry it and the working tree is restored to HEAD's content. See
-// TestLog_DriverModeCommitsDirtiedDerivedDocOnBranch below for the (now
-// default) driver-mode case where the dirtied doc rides through.
+// guard (derived-docs-on-main plan, Task 3), UPDATED for the removal of the
+// v2.0.0 B6 `derived_docs.mode` adoption gate: docs/timeline.md and
+// docs/file-structure.md are purely-derived, main-only artifacts
+// UNCONDITIONALLY — `commitDecision` restores them to HEAD before staging so
+// neither a stray hook regen nor `git add -A` can sweep a branch-local edit
+// into the decision commit, for every repo, regardless of
+// `.logmind/config.yml` content. Here we simulate that stray edit by
+// hand-dirtying the already-committed docs/timeline.md, then assert the
+// resulting commit does NOT carry it and the working tree is restored to
+// HEAD's content. Runs under three config shapes — no config at all, and
+// two now-meaningless leftover `derived_docs:` sections from a
+// pre-removal repo — proving the restore no longer depends on any adoption
+// signal.
 func TestLog_DoesNotCommitDirtiedDerivedDocOnBranch(t *testing.T) {
-	withTempCwd(t, func(d string) {
-		initLogTestGitRepo(t, d)
-		scaffoldDocs(t)
-		writeDerivedDocsMode(t, d, "integration-point")
-		// Commit the scaffold (including docs/timeline.md) on main FIRST so
-		// there is a HEAD copy for the branch to diverge from and later be
-		// restored to.
-		commitAll(t, d, "initial")
-		runGitIn(t, d, "checkout", "-b", "feat/y")
-
-		timelinePath := filepath.Join(d, "docs", "timeline.md")
-		headTimeline := readFileStr(t, timelinePath)
-
-		// Simulate a stray hook/manual regen dirtying the derived doc on the
-		// branch — this must never reach the commit.
-		if err := os.WriteFile(timelinePath, []byte("STALE BRANCH EDIT\n"), 0o644); err != nil {
-			t.Fatalf("dirty docs/timeline.md: %v", err)
-		}
-
-		withFakeTTY(t, false, func() {
-			f := &logFlags{stage: "all"}
-			var out, errBuf bytes.Buffer
-			if err := runLog(d, "Decide something", f, false, strings.NewReader(""), &out, &errBuf); err != nil {
-				t.Fatalf("runLog: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errBuf.String())
-			}
-		})
-
-		// The commit must not carry the derived-doc edit.
-		names, _, err := gitcli.RunCaptured(d, "show", "--name-only", "--format=", "HEAD")
-		if err != nil {
-			t.Fatalf("git show --name-only HEAD: %v", err)
-		}
-		if strings.Contains(names, "docs/timeline.md") {
-			t.Fatalf("commit must NOT include docs/timeline.md on a branch (invariant); commit files:\n%s", names)
-		}
-
-		// And the working tree copy is back to committed (HEAD) content —
-		// which is also the pre-dirty content, since HEAD didn't move for
-		// this file.
-		head, ok := gitcli.ShowFile(d, "HEAD", "docs/timeline.md")
-		if !ok {
-			t.Fatalf("ShowFile HEAD:docs/timeline.md failed")
-		}
-		if head != headTimeline {
-			t.Fatalf("HEAD:docs/timeline.md changed unexpectedly; want original scaffold content")
-		}
-		if got := readFileStr(t, timelinePath); got != head {
-			t.Fatalf("working-tree docs/timeline.md must be restored to HEAD content; got %q want %q", got, head)
-		}
-	})
-}
-
-// TestLog_DriverModeCommitsDirtiedDerivedDocOnBranch is the inversion
-// companion: in "driver" mode — BOTH the implicit default (the config.yml
-// `logmind init` scaffolds, with no `derived_docs:` section at all) and an
-// EXPLICIT `derived_docs: {mode: driver}` — `logmind log` must NOT restore
-// docs/timeline.md on a non-default branch. A branch-local edit rides into
-// the decision commit unmodified, matching the pre-v2.0.0 behavior: a
-// driver-mode repo's derived docs are free to diverge per branch.
-func TestLog_DriverModeCommitsDirtiedDerivedDocOnBranch(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		mode string // "" leaves the config.yml `logmind init` scaffolds untouched
+		name       string
+		configBody string // "" == no .logmind/config.yml section written at all
 	}{
-		{name: "implicit default (config.yml as scaffolded)"},
-		{name: "explicit driver mode", mode: "driver"},
+		{name: "no config"},
+		{name: "legacy derived_docs.mode: driver (now ignored)", configBody: "derived_docs:\n  mode: driver\n"},
+		{name: "legacy derived_docs.mode: integration-point (now ignored)", configBody: "derived_docs:\n  mode: integration-point\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withTempCwd(t, func(d string) {
 				initLogTestGitRepo(t, d)
 				scaffoldDocs(t)
-				if tc.mode != "" {
-					writeDerivedDocsMode(t, d, tc.mode)
+				if tc.configBody != "" {
+					writeLegacyDerivedDocsConfig(t, d, tc.configBody)
 				}
+				// Commit the scaffold (including docs/timeline.md) on main FIRST
+				// so there is a HEAD copy for the branch to diverge from and
+				// later be restored to.
 				commitAll(t, d, "initial")
 				runGitIn(t, d, "checkout", "-b", "feat/y")
 
 				timelinePath := filepath.Join(d, "docs", "timeline.md")
-				dirty := "STALE BRANCH EDIT\n"
-				if err := os.WriteFile(timelinePath, []byte(dirty), 0o644); err != nil {
+				headTimeline := readFileStr(t, timelinePath)
+
+				// Simulate a stray hook/manual regen dirtying the derived doc on
+				// the branch — this must never reach the commit.
+				if err := os.WriteFile(timelinePath, []byte("STALE BRANCH EDIT\n"), 0o644); err != nil {
 					t.Fatalf("dirty docs/timeline.md: %v", err)
 				}
 
@@ -1166,33 +1114,41 @@ func TestLog_DriverModeCommitsDirtiedDerivedDocOnBranch(t *testing.T) {
 					}
 				})
 
-				// Driver mode: the commit DOES carry the dirtied derived doc —
-				// nothing restores it.
+				// The commit must not carry the derived-doc edit.
 				names, _, err := gitcli.RunCaptured(d, "show", "--name-only", "--format=", "HEAD")
 				if err != nil {
 					t.Fatalf("git show --name-only HEAD: %v", err)
 				}
-				if !strings.Contains(names, "docs/timeline.md") {
-					t.Fatalf("expected docs/timeline.md in the commit (driver mode never restores); commit files:\n%s", names)
+				if strings.Contains(names, "docs/timeline.md") {
+					t.Fatalf("commit must NOT include docs/timeline.md on a branch (invariant); commit files:\n%s", names)
 				}
+
+				// And the working tree copy is back to committed (HEAD) content —
+				// which is also the pre-dirty content, since HEAD didn't move for
+				// this file.
 				head, ok := gitcli.ShowFile(d, "HEAD", "docs/timeline.md")
 				if !ok {
 					t.Fatalf("ShowFile HEAD:docs/timeline.md failed")
 				}
-				if head != dirty {
-					t.Fatalf("HEAD:docs/timeline.md = %q; want the dirtied content %q (driver mode never restores)", head, dirty)
+				if head != headTimeline {
+					t.Fatalf("HEAD:docs/timeline.md changed unexpectedly; want original scaffold content")
+				}
+				if got := readFileStr(t, timelinePath); got != head {
+					t.Fatalf("working-tree docs/timeline.md must be restored to HEAD content; got %q want %q", got, head)
 				}
 			})
 		})
 	}
 }
 
-// writeDerivedDocsMode overwrites .logmind/config.yml under d with a
-// `derived_docs: {mode: <mode>}` section — the v2.0.0 B6 adoption signal.
-func writeDerivedDocsMode(t *testing.T, d, mode string) {
+// writeLegacyDerivedDocsConfig overwrites .logmind/config.yml under d with
+// body — used only to prove a leftover `derived_docs:` section (from a repo
+// that predates the v2.0.0 B6 adoption gate's removal) is silently ignored
+// by config.Config's YAML unmarshal and has no effect on the now-
+// unconditional zero-conflict invariant.
+func writeLegacyDerivedDocsConfig(t *testing.T, d, body string) {
 	t.Helper()
 	cfgPath := filepath.Join(d, ".logmind", "config.yml")
-	body := "derived_docs:\n  mode: " + mode + "\n"
 	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("write config.yml: %v", err)
 	}
