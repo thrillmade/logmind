@@ -100,10 +100,9 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return err
 	}
 	res, refreshErr := applyRefresh(cwd, refreshOpts{
-		githubActions:               true,
-		git:                         true,
-		claudeAgentEnabled:          claudeAgentEnabledFromConfig(cwd),
-		derivedDocsIntegrationPoint: integrationPointMode(cwd),
+		githubActions:      true,
+		git:                true,
+		claudeAgentEnabled: claudeAgentEnabledFromConfig(cwd),
 	})
 	if refreshErr != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "error: doctor --fix:", refreshErr)

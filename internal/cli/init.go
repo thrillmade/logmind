@@ -242,14 +242,11 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Warning: commit-msg hook install failed:", err)
 		}
 		// L2a of the derived-docs pin-preservation design (see
-		// internal/cli/derived.go). Gated on derived_docs.mode ==
-		// "integration-point" (default "driver" — install ONLY on explicit
-		// opt-in) — the config.yml written just above already has the
-		// key, so this reads the real, just-scaffolded value.
-		if integrationPointMode(cwd) {
-			if _, err := hooks.InstallPreCommit(cwd); err != nil {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Warning: pre-commit hook install failed:", err)
-			}
+		// internal/cli/derived.go). Unconditional, alongside the other three
+		// git hooks above — the v2.0.0 B6 `derived_docs.mode` adoption gate
+		// that used to install this hook only on explicit opt-in is gone.
+		if _, err := hooks.InstallPreCommit(cwd); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Warning: pre-commit hook install failed:", err)
 		}
 	}
 
@@ -356,10 +353,9 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 	}
 
 	res, err := applyRefresh(cwd, refreshOpts{
-		githubActions:               f.githubActions,
-		git:                         true,
-		claudeAgentEnabled:          claudeAgentEnabled,
-		derivedDocsIntegrationPoint: integrationPointMode(cwd),
+		githubActions:      f.githubActions,
+		git:                true,
+		claudeAgentEnabled: claudeAgentEnabled,
 	})
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: refresh failed:", err)

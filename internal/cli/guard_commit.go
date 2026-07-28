@@ -299,12 +299,10 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 	repoRoot, enforce, threshold := resolveRepoAndConfig(evalCwd, thresholdFlag, thresholdExplicit)
 
 	// L2b — harness-layer restore (v2.0.0 derived-docs pin-preservation; see
-	// internal/cli/derived.go). ONLY runs when this repo has opted into
-	// `derived_docs: {mode: integration-point}` — see
-	// internal/cli/derived.go's integrationPointMode; "driver" (the
-	// default) never restores here. Deliberately runs BEFORE the
-	// enforce_commits off-ramp below and independent of its outcome:
-	// pin-preservation (derived_docs.mode) and commit enforcement
+	// internal/cli/derived.go). Unconditional — every repo gets it, not just
+	// ones that opted in (the v2.0.0 B6 `derived_docs.mode` adoption gate is
+	// gone). Deliberately runs BEFORE the enforce_commits off-ramp below and
+	// independent of its outcome: pin-preservation and commit enforcement
 	// (git.enforce_commits) are separate knobs, and a repo that opted OUT
 	// of enforcement may still want the zero-conflict invariant protected.
 	//
@@ -364,7 +362,7 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 	// slips through — L3, the CI gate, is the backstop). See
 	// TestRunGuardCommit_Harness_SkipsAlreadyStagedDerivedDoc
 	// (guard_commit_test.go) for the regression pin.
-	if integrationPointMode(repoRoot) && onNonDefaultBranch(repoRoot) {
+	if onNonDefaultBranch(repoRoot) {
 		_ = gitcli.RestorePathsToHead(repoRoot, unstagedDerivedDocPaths(repoRoot, derivedDocPaths)...)
 	}
 

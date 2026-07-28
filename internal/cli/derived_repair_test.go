@@ -77,7 +77,6 @@ func TestLog_PreservesManuallyStagedRepairOfDivergedBranch(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		writeDerivedDocsMode(t, d, "integration-point")
 		commitAll(t, d, "initial scaffold")
 
 		timelinePath := filepath.Join(d, "docs", "timeline.md")
@@ -163,7 +162,6 @@ func TestLog_CommitPathDoesNotDependOnOriginRef(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		writeDerivedDocsMode(t, d, "integration-point")
 		commitAll(t, d, "initial scaffold")
 
 		timelinePath := filepath.Join(d, "docs", "timeline.md")
@@ -238,28 +236,25 @@ func TestLog_CommitPathDoesNotDependOnOriginRef(t *testing.T) {
 // NOT covered here: this fixture (via initClonePairScaffolded → scaffoldDocs
 // → `logmind init --no-git`) never installs a REAL `.git/hooks/pre-commit`
 // script, so it can't exercise L2a. A repo that DOES have the pre-commit
-// hook installed (the default the moment integration-point mode is
-// adopted) still routes `logmind log`'s own `git commit` through that real
-// hook, which restores unconditionally and can undo this same repair on
-// that path — see commitDecision's doc comment (log.go) and
-// BuildPreCommitBody's (internal/hooks/hooks.go) for that separate,
-// currently-unresolved coupling.
+// hook installed (unconditional, the default the moment git is enabled)
+// still routes `logmind log`'s own `git commit` through that real hook,
+// which restores unconditionally and can undo this same repair on that
+// path — see commitDecision's doc comment (log.go) and BuildPreCommitBody's
+// (internal/hooks/hooks.go) for that separate, currently-unresolved
+// coupling.
 func TestWarpThenLog_PreservesRepairAcrossCommit(t *testing.T) {
 	origin, repo := initClonePairScaffolded(t)
 
-	// Adopt integration-point mode on repo's main — this commit is the fork
+	// repo's scaffold commit (from initClonePairScaffolded) is the fork
 	// point both origin's later advance and the feature branch below share.
-	// docs/timeline.md itself is untouched by this commit, so its content
-	// right now IS the true merge-base content computed below.
-	writeDerivedDocsMode(t, repo, "integration-point")
-	commitAll(t, repo, "adopt integration-point mode")
+	// docs/timeline.md itself is untouched after that commit, so its
+	// content right now IS the true merge-base content computed below.
 	forkContent := readFileStr(t, filepath.Join(repo, "docs", "timeline.md"))
 
-	// origin's main advances independently of repo's mode-adoption commit
-	// (which never reached origin) — simulating other work landing on main
-	// after this repo forked. The merge-base between this new origin tip
-	// and the feature branch below is therefore the fork-point commit
-	// above, not this fresher one.
+	// origin's main advances independently of repo's local clone —
+	// simulating other work landing on main after this repo forked. The
+	// merge-base between this new origin tip and the feature branch below
+	// is therefore the fork-point commit above, not this fresher one.
 	commitOn(t, origin, "docs/timeline.md", "MAIN-ADVANCED-FRESH\n")
 
 	runGitIn(t, repo, "checkout", "-b", "feat/warp-then-log")

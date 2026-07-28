@@ -58,62 +58,78 @@ func TestRunGuardCommit_Harness_AllowsSmallChange(t *testing.T) {
 	}
 }
 
-// TestRunGuardCommit_Harness_RestoresDerivedDocsOnNonDefaultBranch_IntegrationPointMode
-// is the L2b proof, UPDATED for the B6 adoption gate: with
-// `derived_docs: {mode: integration-point}` explicitly declared, the
-// harness layer restores docs/timeline.md to its committed (HEAD) content
-// on a non-default branch — BEFORE evaluating the allow/block decision —
-// the same restore L1 (`logmind log`) and L2a (the pre-commit git hook)
-// perform, but running BEFORE git itself. That's what lets this layer
-// catch `git commit --no-verify` (which skips every git hook, including
-// L2a) and work in a fresh clone (git hooks aren't cloned;
-// .claude/settings.json, which invokes this binary, is). See the
-// DriverMode sibling test below for the (now default) non-restoring case.
-func TestRunGuardCommit_Harness_RestoresDerivedDocsOnNonDefaultBranch_IntegrationPointMode(t *testing.T) {
-	repo := initRepo(t)
-	docsDir := filepath.Join(repo, "docs")
-	if err := os.MkdirAll(docsDir, 0o755); err != nil {
-		t.Fatalf("mkdir docs: %v", err)
-	}
-	timelinePath := filepath.Join(docsDir, "timeline.md")
-	original := "# Timeline\n\noriginal\n"
-	if err := os.WriteFile(timelinePath, []byte(original), 0o644); err != nil {
-		t.Fatalf("write timeline.md: %v", err)
-	}
-	writeGuardCommitConfig(t, repo, "derived_docs:\n  mode: integration-point\n")
-	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "add docs"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	runGitIn(t, repo, "checkout", "-b", "feat/restore-test")
+// TestRunGuardCommit_Harness_RestoresDerivedDocsOnNonDefaultBranch is the
+// L2b proof, UPDATED for the removal of the v2.0.0 B6
+// `derived_docs.mode` adoption gate: the harness layer restores
+// docs/timeline.md to its committed (HEAD) content on a non-default branch
+// — BEFORE evaluating the allow/block decision — the same restore L1
+// (`logmind log`) and L2a (the pre-commit git hook) perform, but running
+// BEFORE git itself. That's what lets this layer catch `git commit
+// --no-verify` (which skips every git hook, including L2a) and work in a
+// fresh clone (git hooks aren't cloned; .claude/settings.json, which
+// invokes this binary, is). Runs the same restore under three config
+// shapes — no `.logmind/config.yml` at all, and two now-meaningless
+// leftover `derived_docs:` sections from a pre-removal repo — proving the
+// restore is UNCONDITIONAL: any config content (or its absence) yields the
+// identical outcome, since there is no gate left to key off of.
+func TestRunGuardCommit_Harness_RestoresDerivedDocsOnNonDefaultBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		configBody string // "" == no .logmind/config.yml written at all
+	}{
+		{name: "no config"},
+		{name: "legacy derived_docs.mode: driver (now ignored)", configBody: "derived_docs:\n  mode: driver\n"},
+		{name: "legacy derived_docs.mode: integration-point (now ignored)", configBody: "derived_docs:\n  mode: integration-point\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			docsDir := filepath.Join(repo, "docs")
+			if err := os.MkdirAll(docsDir, 0o755); err != nil {
+				t.Fatalf("mkdir docs: %v", err)
+			}
+			timelinePath := filepath.Join(docsDir, "timeline.md")
+			original := "# Timeline\n\noriginal\n"
+			if err := os.WriteFile(timelinePath, []byte(original), 0o644); err != nil {
+				t.Fatalf("write timeline.md: %v", err)
+			}
+			if tc.configBody != "" {
+				writeGuardCommitConfig(t, repo, tc.configBody)
+			}
+			for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "add docs"}} {
+				cmd := exec.Command("git", args...)
+				cmd.Dir = repo
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+			}
+			runGitIn(t, repo, "checkout", "-b", "feat/restore-test")
 
-	// Dirty docs/timeline.md — simulates `logmind warp` (or any stray
-	// write) pulling in a different copy.
-	dirty := "# Timeline\n\nDIRTY\n"
-	if err := os.WriteFile(timelinePath, []byte(dirty), 0o644); err != nil {
-		t.Fatalf("dirty timeline.md: %v", err)
-	}
+			// Dirty docs/timeline.md — simulates `logmind warp` (or any stray
+			// write) pulling in a different copy.
+			dirty := "# Timeline\n\nDIRTY\n"
+			if err := os.WriteFile(timelinePath, []byte(dirty), 0o644); err != nil {
+				t.Fatalf("dirty timeline.md: %v", err)
+			}
 
-	payload := harnessJSON(t, "Bash", `git commit -am x`, repo)
-	var stdout, stderr bytes.Buffer
-	exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
-		strings.NewReader(payload), &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("runGuardCommit: %v", err)
-	}
-	if exitCode != 0 {
-		t.Fatalf("exitCode = %d; want 0 (restored file leaves nothing substantive to block)", exitCode)
-	}
+			payload := harnessJSON(t, "Bash", `git commit -am x`, repo)
+			var stdout, stderr bytes.Buffer
+			exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
+				strings.NewReader(payload), &stdout, &stderr)
+			if err != nil {
+				t.Fatalf("runGuardCommit: %v", err)
+			}
+			if exitCode != 0 {
+				t.Fatalf("exitCode = %d; want 0 (restored file leaves nothing substantive to block)", exitCode)
+			}
 
-	got, err := os.ReadFile(timelinePath)
-	if err != nil {
-		t.Fatalf("read timeline.md: %v", err)
-	}
-	if string(got) != original {
-		t.Fatalf("docs/timeline.md not restored by the harness layer\nwant %q\ngot %q", original, string(got))
+			got, err := os.ReadFile(timelinePath)
+			if err != nil {
+				t.Fatalf("read timeline.md: %v", err)
+			}
+			if string(got) != original {
+				t.Fatalf("docs/timeline.md not restored by the harness layer\nwant %q\ngot %q", original, string(got))
+			}
+		})
 	}
 }
 
@@ -141,7 +157,6 @@ func TestRunGuardCommit_Harness_SkipsAlreadyStagedDerivedDoc(t *testing.T) {
 	if err := os.WriteFile(timelinePath, []byte(original), 0o644); err != nil {
 		t.Fatalf("write timeline.md: %v", err)
 	}
-	writeGuardCommitConfig(t, repo, "derived_docs:\n  mode: integration-point\n")
 	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "add docs"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
@@ -172,67 +187,6 @@ func TestRunGuardCommit_Harness_SkipsAlreadyStagedDerivedDoc(t *testing.T) {
 	}
 	if string(got) != repaired {
 		t.Fatalf("harness restored an ALREADY-STAGED derived doc (undid the simulated warp repair)\nwant (preserved) %q\ngot %q", repaired, string(got))
-	}
-}
-
-// TestRunGuardCommit_Harness_DriverModeSkipsRestore: driver mode — both the
-// implicit default (no .logmind/config.yml at all) and an EXPLICIT
-// `derived_docs: {mode: driver}` — disables the harness-layer restore too,
-// not just L2a's pre-commit hook install (see the cli/init_test.go
-// counterpart for that half) — so a dirtied derived doc rides through
-// untouched. This is the v2.0.0 B6 inversion: pin-preservation used to be
-// unconditional-by-default (git.pin_derived_docs: true); now it's
-// opt-in-by-default (derived_docs.mode: driver).
-func TestRunGuardCommit_Harness_DriverModeSkipsRestore(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		configBody string // "" == no .logmind/config.yml written at all
-	}{
-		{name: "implicit default (no config)", configBody: ""},
-		{name: "explicit driver mode", configBody: "derived_docs:\n  mode: driver\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := initRepo(t)
-			docsDir := filepath.Join(repo, "docs")
-			if err := os.MkdirAll(docsDir, 0o755); err != nil {
-				t.Fatalf("mkdir docs: %v", err)
-			}
-			timelinePath := filepath.Join(docsDir, "timeline.md")
-			if err := os.WriteFile(timelinePath, []byte("# Timeline\n\noriginal\n"), 0o644); err != nil {
-				t.Fatalf("write timeline.md: %v", err)
-			}
-			if tc.configBody != "" {
-				writeGuardCommitConfig(t, repo, tc.configBody)
-			}
-			for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "add docs"}} {
-				cmd := exec.Command("git", args...)
-				cmd.Dir = repo
-				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("git %v: %v\n%s", args, err, out)
-				}
-			}
-			runGitIn(t, repo, "checkout", "-b", "feat/restore-test")
-
-			dirty := "# Timeline\n\nDIRTY\n"
-			if err := os.WriteFile(timelinePath, []byte(dirty), 0o644); err != nil {
-				t.Fatalf("dirty timeline.md: %v", err)
-			}
-
-			payload := harnessJSON(t, "Bash", `git commit -am x`, repo)
-			var stdout, stderr bytes.Buffer
-			if _, err := runGuardCommit(repo, "harness", "", 20, true, false,
-				strings.NewReader(payload), &stdout, &stderr); err != nil {
-				t.Fatalf("runGuardCommit: %v", err)
-			}
-
-			got, err := os.ReadFile(timelinePath)
-			if err != nil {
-				t.Fatalf("read timeline.md: %v", err)
-			}
-			if string(got) != dirty {
-				t.Fatalf("docs/timeline.md was restored despite driver mode\nwant %q (untouched)\ngot %q", dirty, string(got))
-			}
-		})
 	}
 }
 

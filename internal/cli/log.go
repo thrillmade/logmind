@@ -965,20 +965,18 @@ func nudgeBranchSummary(target string, forceNonInteractive, stdinOK bool, lines 
 // Commit message uses cfg.Git.CommitMessageTemplate with `{decision}`
 // substituted for the summary. Default is `logmind: <summary>`.
 func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config.Config) error {
-	// Zero-conflict invariant (v2.0.0) — INTEGRATION-POINT MODE ONLY (v2.0.0
-	// B6): docs/timeline.md + docs/file-structure.md are purely-derived,
-	// main-only artifacts under `derived_docs: {mode: integration-point}`.
-	// On a non-default branch, restore them to their committed (HEAD)
-	// content BEFORE staging so neither a stray hook regen nor `git add -A`
-	// can sweep a branch-local edit into this commit — which would diverge
-	// the branch from main and cause a future merge conflict. Lossless:
-	// they regenerate deterministically from the decision files (which ARE
-	// committed, per-branch, and never conflict). On the default branch
-	// this is intentionally skipped — main is where the derived docs SHOULD
-	// be current. In "driver" mode (the default) this restore never fires
-	// at all — a driver-mode repo's derived docs are free to regenerate on
-	// every branch, matching the pre-v2.0.0 behavior; see
-	// internal/cli/derived.go's integrationPointMode.
+	// Zero-conflict invariant (v2.0.0): docs/timeline.md +
+	// docs/file-structure.md are purely-derived, main-only artifacts (see
+	// internal/cli/derived.go). On a non-default branch, restore them to
+	// their committed (HEAD) content BEFORE staging so neither a stray hook
+	// regen nor `git add -A` can sweep a branch-local edit into this commit
+	// — which would diverge the branch from main and cause a future merge
+	// conflict. Lossless: they regenerate deterministically from the
+	// decision files (which ARE committed, per-branch, and never conflict).
+	// On the default branch this is intentionally skipped — main is where
+	// the derived docs SHOULD be current. Unconditional as of the removal
+	// of the v2.0.0 B6 `derived_docs.mode` adoption gate — every repo gets
+	// this restore, not just ones that opted in.
 	//
 	// Restore target is HEAD, NOT the merge-base with the default branch
 	// (v2.0.0 4b-ter reversal of the short-lived 4b-bis "repair-path fix"):
@@ -1042,14 +1040,15 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// full reasoning.) IMPORTANT CAVEAT: L2a is a REAL `.git/hooks/pre-commit`
 	// script, so it fires for EVERY `git commit` in this repo — including
 	// the one THIS function's own gitcli.Commit call makes a few lines
-	// below. A repo with the hook installed (the default the moment
-	// integration-point mode is adopted — see init.go) therefore still runs
-	// L2a's unconditional restore-to-HEAD on this exact commit, AFTER this
-	// function's own restore already (correctly) left a warp-staged repair
-	// alone — undoing it right back. Closing THAT coupling is unresolved,
-	// out-of-scope follow-up work (it needs a signal from this call site to
-	// L2a, e.g. an environment variable set only around this specific `git
-	// commit`, that a POSIX-sh hook could check for and stand down on); see
+	// below. A repo with the hook installed (unconditional, the moment
+	// `logmind init`/`doctor --fix` runs with git enabled — see init.go)
+	// therefore still runs L2a's unconditional restore-to-HEAD on this exact
+	// commit, AFTER this function's own restore already (correctly) left a
+	// warp-staged repair alone — undoing it right back. Closing THAT
+	// coupling is unresolved, out-of-scope follow-up work (it needs a signal
+	// from this call site to L2a, e.g. an environment variable set only
+	// around this specific `git commit`, that a POSIX-sh hook could check
+	// for and stand down on); see
 	// BuildPreCommitBody's doc comment (internal/hooks/hooks.go) for the
 	// full account. Everything this comment block otherwise describes is
 	// still correct and tested (TestWarpThenLog_PreservesRepairAcrossCommit
@@ -1082,7 +1081,7 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// re-affirm. See TestLog_DoesNotCommitDirtiedDerivedDocOnBranch for
 	// proof L1's original job — reverting an UNSTAGED dirty derived doc —
 	// still holds unchanged.
-	if onNonDefaultBranch(cwd) && integrationPointMode(cwd) {
+	if onNonDefaultBranch(cwd) {
 		_ = gitcli.RestorePathsToHead(cwd, unstagedDerivedDocPaths(cwd, derivedDocPaths)...)
 	}
 

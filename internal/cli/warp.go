@@ -27,11 +27,10 @@ merge-base with main so that merges never conflict. Your branch's own
 decisions live in docs/decisions-branches/<branch>.md (committed, per-branch,
 conflict-free).
 
-In a repo that has opted into ` + "`derived_docs: {mode: integration-point}`" + ` (see
-'logmind doctor'), warp is also the repair surface for a branch that has
-ALREADY diverged from that invariant (e.g. an old binary's local regen, or a
-hand edit, landed in a past commit): after fetching, it restores both files
-to their merge-base-with-default content in BOTH the index and the working
+warp is also the repair surface for a branch that has ALREADY diverged from
+the zero-conflict invariant (e.g. an old binary's local regen, or a hand
+edit, landed in a past commit): after fetching, it restores both files to
+their merge-base-with-default content in BOTH the index and the working
 tree — i.e. it deliberately STAGES the repair. That's not a side effect to
 apologize for: staging is what lets the repair ride into your NEXT commit
 instead of silently vanishing. 'logmind log' recognizes an already-staged
@@ -39,11 +38,11 @@ derived doc as YOUR deliberate fix and leaves it alone (rather than
 reverting it back to the branch's own possibly-still-divergent HEAD
 content) — but ONLY if this repo has no pre-commit hook installed, or the
 installed one predates this fix: a repo with the hook installed (the
-default the moment integration-point mode is adopted; see 'logmind
-doctor') still routes 'logmind log's own commit THROUGH that hook, which —
-being a plain POSIX-sh script with no fetch and no reliable way to tell
-"warp staged this on purpose" apart from "git add -a swept up an
-accidental dirty copy" — restores to HEAD unconditionally and can still
+default the moment 'logmind init'/'doctor --fix' runs with git enabled;
+see 'logmind doctor') still routes 'logmind log's own commit THROUGH that
+hook, which — being a plain POSIX-sh script with no fetch and no reliable
+way to tell "warp staged this on purpose" apart from "git add -a swept up
+an accidental dirty copy" — restores to HEAD unconditionally and can still
 undo the repair on that path. This coupling is a known, currently
 UNRESOLVED gap (see BuildPreCommitBody's doc comment, internal/hooks/
 hooks.go); a raw 'git commit' instead of 'logmind log' hits the exact same
@@ -99,10 +98,10 @@ func runWarp(cwd string, stdout, stderr io.Writer) error {
 	// compute a TRUSTWORTHY merge-base and self-heal a branch whose HEAD
 	// already carries a diverged copy of these two files.
 	//
-	// Gated on integrationPointMode: driver-mode repos (the default) have no
-	// merge-base invariant to repair, so this step is a pure no-op there —
-	// warp keeps its original, unconditional read-refresh-from-origin's-tip
-	// behavior for those repos, unchanged.
+	// Unconditional, like the rest of the zero-conflict invariant — the
+	// v2.0.0 B6 `derived_docs.mode` adoption gate that used to make this
+	// step a no-op for an "unadopted" repo is gone; every non-default
+	// branch gets the repair.
 	//
 	// Interaction with the read-refresh loop above: that loop just wrote
 	// origin/<default>'s TIP content (freshest — good for a human/agent
@@ -138,12 +137,12 @@ func runWarp(cwd string, stdout, stderr io.Writer) error {
 	// the pre-commit git hook (L2a) can't safely make the same distinction
 	// (see BuildPreCommitBody's doc comment, internal/hooks/hooks.go) and
 	// restores unconditionally — and since it is a REAL git hook, it also
-	// fires during `logmind log`'s OWN commit if installed (the default for
-	// an integration-point-mode repo), not just on a raw `git commit`. This
-	// repair can still be undone on that path; closing it is unresolved
-	// follow-up work, not part of this fix.
+	// fires during `logmind log`'s OWN commit if installed (unconditional,
+	// the default the moment git is enabled), not just on a raw `git
+	// commit`. This repair can still be undone on that path; closing it is
+	// unresolved follow-up work, not part of this fix.
 	repaired := false
-	if onNonDefaultBranch(cwd) && integrationPointMode(cwd) {
+	if onNonDefaultBranch(cwd) {
 		mergeBase := gitcli.DefaultBranchMergeBase(cwd)
 		// RestorePathsToRef is per-path best-effort: it attempts EVERY path
 		// in derivedDocPaths regardless of an earlier one erroring, and

@@ -4,10 +4,10 @@ import "testing"
 
 // TestSatisfiesMin_DevPrereleaseSatisfiesItsOwnFloor pins the deliberate
 // departure from strict semver precedence (see SatisfiesMin's doc comment):
-// this repo's own dogfood binary reports "2.0.0-dev" and adopts
-// `derived_docs: {mode: integration-point, min_binary: "2.0.0"}" — the
-// prerelease suffix must be stripped before comparing, or logmind's own
-// local builds would perpetually warn about themselves.
+// this repo's own dogfood binary reports "2.0.0-dev" — a caller comparing
+// that against a "2.0.0" floor must have the prerelease suffix stripped
+// before comparing, or a self-referential version check would perpetually
+// warn about itself.
 func TestSatisfiesMin_DevPrereleaseSatisfiesItsOwnFloor(t *testing.T) {
 	if !SatisfiesMin("2.0.0-dev", "2.0.0") {
 		t.Errorf("SatisfiesMin(%q, %q) = false; want true (prerelease suffix stripped before compare)", "2.0.0-dev", "2.0.0")

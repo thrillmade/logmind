@@ -6,11 +6,10 @@ name: logmind / check-derived-docs
 # branch's real decisions live in docs/decisions-branches/<branch>.md; timeline
 # and file-structure regenerate on main after merge.
 #
-# v9 (B6 adoption gate): the blocking check only applies to a repo that
-# declared `derived_docs: {mode: integration-point}` in .logmind/config.yml.
-# A repo that hasn't adopted it (mode unset or "driver", the default) PASSES
-# with an explanatory message instead — this workflow must never block a PR
-# in a repo whose derived docs are still free to diverge per branch.
+# v10: the zero-conflict invariant is now UNCONDITIONAL for every repo running
+# this workflow — v9's per-repo `derived_docs.mode: integration-point`
+# adoption gate (and its "hasn't opted in → pass" escape) is removed. The
+# blocking check always applies; there is no way to opt out from within a PR.
 
 on:
   pull_request:
@@ -31,36 +30,17 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      # NO checkout, deliberately. This job reads ONLY the base ref (via the
-      # API) and the PR's file list — never the PR's own content. See below.
+      # NO checkout, deliberately. This job only needs the PR's file list —
+      # never the PR's own content — via `gh pr diff`. A checkout on a
+      # pull_request event lands refs/pull/N/merge (the PR's own content);
+      # staying checkout-free means there is nothing here for a PR to
+      # influence about its own gate.
       - name: Assert the branch did not edit the derived docs
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          # B6 adoption gate: this repo must have explicitly opted into the
-          # zero-conflict invariant. Unadopted (mode unset or "driver", the
-          # default) → pass with an explanatory message; never block.
-          #
-          # SECURITY — the adoption signal MUST be read from the BASE ref, never
-          # from the pull request under judgement. `actions/checkout` on a
-          # pull_request event checks out refs/pull/N/merge (i.e. the PR's own
-          # content), so reading .logmind/config.yml from the workspace let a PR
-          # DISABLE THIS GATE FOR ITSELF just by setting `mode: driver` — or
-          # deleting the key — in the same PR that edits a derived doc. That is
-          # the self-referential-authority failure the SPEC's base-ref MUSTs
-          # (§1.12.1, §10.3.3) exist to prevent. Reading at base.sha makes the
-          # signal unforgeable by the PR: only a commit already ON the base
-          # branch can turn this gate on or off.
-          base_cfg=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/contents/.logmind/config.yml?ref=${BASE_SHA}" \
-            --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-          if ! printf '%s\n' "$base_cfg" | grep -Eq '^[[:space:]]*mode:[[:space:]]*"?integration-point"?[[:space:]]*$'; then
-            echo "This repo has not adopted derived_docs.mode: integration-point on the BASE branch — the derived-docs invariant isn't enforced here. Passing (see docs/plan.md's 'Derived docs' section to opt in)."
-            exit 0
-          fi
           changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
           if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|file-structure)\.md'; then
             echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md and/or docs/file-structure.md. These are DERIVED, main-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to main's version — run 'logmind warp', or 'git checkout origin/main -- docs/timeline.md docs/file-structure.md' — then commit. Their real content regenerates on main after merge."
@@ -118,19 +98,21 @@ jobs:
             exit 0
           fi
           if [ -z "${STEWARD_TOKEN:-}" ]; then
-            echo "::warning title=Derived docs stale on main::Could not mint a steward token; cannot push the regen. main is momentarily stale until the next push or a manual regen. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
+            echo "::warning title=Derived docs stale on main::Could not mint a steward token; cannot push the regen. This will keep failing on every run until the skdd-steward[bot] App credentials (THRILLMADE_ORCHESTRATOR_APP_ID / THRILLMADE_ORCHESTRATOR_PRIVATE_KEY) are fixed — it will NOT self-heal on the next merge. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
             exit 0
           fi
           git config user.name "skdd-steward[bot]"
           git config user.email "skdd-steward[bot]@users.noreply.github.com"
           git add docs/timeline.md docs/file-structure.md
           git commit -m "[skip-logmind] chore: regen derived docs"
-          # Degrade, never fail: a rejected push (missing ruleset bypass, or a
-          # race with another push to main) leaves main's derived docs stale for
-          # one cycle — a freshness gap, never a conflict risk — and the next
-          # merge regenerates them. Failing the job here would red-light main
-          # for something that is by construction harmless.
+          # Degrade, never fail: a rejected push leaves main's derived docs
+          # stale — a freshness gap, never a conflict risk — rather than
+          # red-lighting main for something that is by construction harmless.
+          # When the cause is a missing ruleset bypass (GH013, a policy
+          # refusal), this is NOT transient: every future push hits the same
+          # refusal until a human adds the identity to the bypass list — see
+          # the warning message below and docs/orchestrator-app.md.
           if ! git push "https://x-access-token:${STEWARD_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"; then
-            echo "::warning title=Derived-doc regen could not be pushed to main::The push was rejected (most likely the steward App lacks a ruleset bypass for 'changes must be made through a pull request', or another push won a race). main's derived docs are stale by one cycle and will be regenerated on the next merge. No conflict risk."
+            echo "::warning title=Derived-doc regen could not be pushed to main::The push was rejected — most likely GH013: the skdd-steward[bot] identity is missing from the 'main' ruleset's bypass list for 'changes must be made through a pull request'. This is a POLICY refusal, not a token-scope problem, so it will NOT self-heal on the next merge — every future push hits the same refusal until the identity is added to the bypass list (see docs/orchestrator-app.md). No conflict risk — branches never modify the derived docs, so nothing can conflict on them."
             exit 0
           fi
