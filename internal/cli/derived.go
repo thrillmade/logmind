@@ -61,3 +61,50 @@ func unstagedDerivedDocPaths(repoRoot string, paths []string) []string {
 	}
 	return out
 }
+
+// divergedDerivedDocPaths filters paths down to the ones whose COMMITTED
+// content actually differs from the merge-base pin — i.e. the ones a repair
+// has something to fix. Used by runWarp (warp.go) to decide whether to
+// repair at all.
+//
+// Why this exists: v2.0.0's unconditional-invariant change deleted the
+// `derived_docs.mode` gate, and that gate's `if` was carrying TWO conditions
+// that looked like one — "has this repo adopted the mode" (correctly deleted)
+// and "does this branch actually need repairing" (should never have been).
+// Losing the second made warp repair every branch, healthy or not, which
+// silently discarded the read-refresh warp performs in the same command: it
+// reported "refreshed N derived doc(s) from origin/main" and then overwrote
+// them back to the merge-base one statement later.
+//
+// The deeper reason it must be conditional is the §0.4.1.2 handoff. A repair
+// surface signals "this modification is deliberate" by STAGING its output,
+// and the commit-path surfaces (L1, L2b) leave staged docs alone on that
+// basis. If repair fires on every branch, that signal is asserted
+// everywhere — and a signal that always fires carries no information. Repair
+// has to be rare for "deliberate" to mean anything.
+//
+// Compares HEAD against mergeBase rather than the working tree, because it
+// is the COMMITTED copy the invariant constrains: a branch violates the pin
+// by committing a change to these files, not by having one on disk. That
+// also makes this correct in warp's exact situation — the read-refresh has
+// already written main's tip content into the working tree by the time this
+// runs, so a working-tree comparison would see the refresh itself as
+// divergence and "repair" it away, reintroducing the bug this fixes.
+//
+// gitcli.DefaultBranchMergeBase falls back to "HEAD" when it cannot compute a
+// trustworthy base (no remote-tracking ref). That degrades correctly here
+// with no special case: HEAD compared against HEAD yields no divergence, so
+// no repair runs — the conservative outcome when we cannot tell.
+func divergedDerivedDocPaths(repoRoot, mergeBase string, paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		head, headOK := gitcli.ShowFile(repoRoot, "HEAD", p)
+		base, baseOK := gitcli.ShowFile(repoRoot, mergeBase, p)
+		// A path tracked at one ref but not the other has diverged. Both
+		// missing (a repo that never scaffolded that doc) has not.
+		if headOK != baseOK || (headOK && head != base) {
+			out = append(out, p)
+		}
+	}
+	return out
+}

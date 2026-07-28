@@ -1,21 +1,26 @@
 // warp_test.go — exercises `logmind warp`: the read-only refresh of the two
 // derived docs (docs/timeline.md, docs/file-structure.md) from the default
 // branch, plus (v2.0.0 4b-ter) the merge-base repair step that moved here
-// from the commit-path surfaces. The repair is UNCONDITIONAL (the v2.0.0 B6
-// `derived_docs.mode` per-repo adoption gate that used to make it a no-op
-// for an "unadopted" repo is gone) — every call on a non-default branch
-// repairs to the merge-base, preferring that over origin's raw tip when the
-// two disagree. Coverage:
+// from the commit-path surfaces.
+//
+// The repair applies to EVERY repo — the v2.0.0 B6 `derived_docs.mode`
+// per-repo adoption gate is gone — but it fires only where the branch has
+// ACTUALLY DIVERGED (divergedDerivedDocPaths, derived.go). Those are two
+// different conditions that once shared one `if`; collapsing them made warp
+// repair healthy branches and silently overwrite the refresh it had just
+// announced in the same command. Coverage:
 //
 //   - the refreshed working-tree copy matches origin/<default>'s content
-//     when the branch hasn't fallen behind (so the plain read-refresh and
-//     the repair converge on the same content)
+//     when the branch hasn't fallen behind (read-refresh and repair converge)
+//   - a healthy branch KEEPS the refresh when main has advanced past its
+//     fork point — nothing diverged, so nothing is repaired or staged
 //   - a non-repo cwd is a no-op, not an error
-//   - never commits, even across repeated calls
+//   - never commits, even across repeated calls — the refresh is left
+//     modified-but-unstaged in the working tree, which is the contract
 //   - on a non-default branch, repairs an already-diverged HEAD to the
-//     merge-base with the default branch (staging the fix), preferring the
-//     repair over origin's raw tip when the two disagree — regardless of
-//     any `.logmind/config.yml` content, including a leftover legacy
+//     merge-base with the default branch (staging the fix, which is the
+//     §0.4.1.2 "deliberate" signal) — regardless of any
+//     `.logmind/config.yml` content, including a leftover legacy
 //     `derived_docs:` section
 package cli
 
@@ -122,23 +127,36 @@ func TestWarp_DoesNotCommit(t *testing.T) {
 	if before != after {
 		t.Fatalf("warp must not create a commit: HEAD moved from %q to %q", before, after)
 	}
-	// feat/w2 forked BEFORE origin's advance, so its merge-base with
-	// origin/main is its own (unchanged) HEAD content. The repair restores
-	// exactly that, so the working tree ends up clean — NOT carrying
-	// origin's newer, not-yet-merged tip content.
+	// feat/w2 forked BEFORE origin's advance and never touched the derived
+	// docs, so there is nothing to repair — the refresh survives and leaves
+	// origin's newer content in the WORKING TREE, uncommitted. That is
+	// warp's documented contract ("refresh ... read-only — not committed"),
+	// and it is the whole reason the command exists.
+	//
+	// This assertion previously demanded a CLEAN tree, which was only true
+	// while the repair fired unconditionally and overwrote the refresh it
+	// had just announced. Inverted here rather than deleted: a clean tree
+	// now means the refresh was silently discarded, which is the regression
+	// TestWarp_HealthyBranch_KeepsRefreshWhenMainAdvanced exists to catch.
 	status := runGitOut(t, repo, "status", "--porcelain", "--", "docs/timeline.md")
-	if status != "" {
-		t.Fatalf("expected docs/timeline.md clean after the repair restores the branch's own merge-base content; got %q", status)
+	if status == "" {
+		t.Fatal("expected docs/timeline.md to carry the uncommitted refresh; a clean tree means warp discarded it")
+	}
+	// Uncommitted means UNSTAGED — a leading space in the porcelain XY pair.
+	// Staging is the §0.4.1.2 "deliberate repair" signal and must not be
+	// asserted on a branch with nothing to repair.
+	if strings.HasPrefix(status, " ") == false {
+		t.Fatalf("refresh must be left unstaged; porcelain status = %q", status)
 	}
 }
 
 // TestWarp_FetchesFromOrigin: unlike a pre-fetch-only refresh, runWarp itself
 // performs the `git fetch origin <default>` — so calling it WITHOUT a manual
 // fetch first still updates refs/remotes/origin/<default> to origin's
-// latest. Asserted via the ref itself (not file content): this branch
-// forked BEFORE origin's advance, so the repair step restores
-// docs/timeline.md to the OLDER merge-base content, not origin's fresher
-// tip — the fetch's effect is only observable on the ref.
+// latest. Asserted via the ref itself rather than file content, so the
+// assertion stays about the FETCH and doesn't silently double as a check on
+// refresh-vs-repair precedence (which is covered directly by
+// TestWarp_HealthyBranch_KeepsRefreshWhenMainAdvanced).
 func TestWarp_FetchesFromOrigin(t *testing.T) {
 	origin, repo := initClonePair(t)
 	commitOn(t, origin, "docs/timeline.md", "MAIN-VIA-WARP-FETCH\n")
@@ -303,5 +321,46 @@ func TestWarp_HelpRegistered(t *testing.T) {
 	}
 	if cmd.Use != "warp" {
 		t.Fatalf("unexpected command found: %q", cmd.Use)
+	}
+}
+
+// TestWarp_HealthyBranch_KeepsRefreshWhenMainAdvanced pins the fix for a
+// regression v2.0.0's unconditional-invariant change introduced.
+//
+// Deleting the `derived_docs.mode` gate removed TWO conditions that shared one
+// `if`: "has this repo adopted the mode" (correctly deleted) and "does this
+// branch actually need repairing" (should not have been). Losing the second
+// made the repair fire on every branch — including healthy ones — where it
+// overwrote the read-refresh warp performs earlier in the SAME command. warp
+// printed "refreshed N derived doc(s) from origin/main" and then discarded
+// them one statement later.
+//
+// The existing TestWarp_RefreshesFromOriginUncommitted does NOT catch this:
+// it branches directly off origin/main, so the merge-base IS origin's tip and
+// refresh and repair agree by construction. The bug only shows when main
+// advances AFTER the fork point, which is the ordinary case for any branch
+// open longer than one merge.
+func TestWarp_HealthyBranch_KeepsRefreshWhenMainAdvanced(t *testing.T) {
+	origin, repo := initClonePair(t)
+	runGitIn(t, repo, "fetch", "origin", "main")
+	runGitIn(t, repo, "checkout", "-b", "feat/w", "origin/main")
+
+	// origin advances AFTER the fork point, so merge-base != origin's tip.
+	commitOn(t, origin, "docs/timeline.md", "MAIN-ADVANCED\n")
+
+	if err := runWarp(repo, io.Discard, io.Discard); err != nil {
+		t.Fatalf("warp: %v", err)
+	}
+
+	// feat/w never touched the derived docs, so there is nothing to repair
+	// and the refresh must survive. Before the fix this read ORIGIN-INITIAL.
+	if got := readFileStr(t, filepath.Join(repo, "docs", "timeline.md")); got != "MAIN-ADVANCED\n" {
+		t.Fatalf("warp discarded the refresh it announced: timeline.md = %q, want %q", got, "MAIN-ADVANCED\n")
+	}
+	// Nothing diverged, so nothing may be staged — staging is the §0.4.1.2
+	// "this is deliberate" signal, and asserting it on a healthy branch makes
+	// the signal meaningless.
+	if isStaged(t, repo, "docs/timeline.md") {
+		t.Fatal("warp staged a derived doc on a branch with nothing to repair")
 	}
 }
