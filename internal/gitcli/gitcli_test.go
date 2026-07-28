@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -393,5 +394,134 @@ func TestShowFile_ReadsRefContent(t *testing.T) {
 	}
 	if _, ok := ShowFile(repo, "HEAD", "missing.txt"); ok {
 		t.Fatal("ShowFile of missing path should be false")
+	}
+}
+
+// TestMergeBase_ReturnsCommonAncestor: MergeBase(repo, mainSha) resolves to a
+// non-empty SHA when ref and HEAD share history — the primitive `warp` and the
+// pulse main-compare probe both build on.
+// TestMergeBase_FalseOnUnknownRef: an unresolvable ref is best-effort
+// ("", false), not an error the caller must special-case.
+// TestRestorePathsToRef_RestoresArbitraryRefContent: RestorePathsToRef
+// discards a working-tree edit and restores an OLDER commit's content — not
+// just HEAD's — the primitive the v2.0.0 4b-bis repair-path fix relies on
+// (restoring derived docs to their merge-base with the default branch,
+// rather than to HEAD, so an already-diverged branch self-repairs).
+func TestRestorePathsToRef_RestoresArbitraryRefContent(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	v1Sha := strings.TrimSpace(revParse(t, repo, "HEAD"))
+	writeAndCommit(t, repo, "a.txt", "v2", "update a.txt")
+
+	if err := RestorePathsToRef(repo, v1Sha, "a.txt"); err != nil {
+		t.Fatalf("RestorePathsToRef: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(got) != "v1" {
+		t.Fatalf("want restored v1 (the older ref's content), got %q", string(got))
+	}
+}
+
+// TestIsPathStaged_TrueForStagedChange: `git add`ing a modified tracked
+// file makes IsPathStaged report true — this is the "deliberate" half of
+// the staged-vs-unstaged distinction internal/cli's L1/L2b restores rely
+// on (a `logmind warp` repair stages via `git checkout <ref> -- <path>`,
+// the same index-writing primitive).
+func TestIsPathStaged_TrueForStagedChange(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	runGit(t, repo, "add", "a.txt")
+	if !IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = false; want true for a staged change vs HEAD")
+	}
+}
+
+// TestIsPathStaged_FalseForUnstagedChange: a working-tree edit that was
+// never `git add`ed reports false — the "accidental" half of the
+// distinction; L1/L2b restore paths in this state.
+func TestIsPathStaged_FalseForUnstagedChange(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = true; want false for an unstaged working-tree edit")
+	}
+}
+
+// TestIsPathStaged_FalseForCleanPath: a path with no change at all (index
+// and working tree both match HEAD) reports false.
+func TestIsPathStaged_FalseForCleanPath(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	if IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = true; want false for a clean path")
+	}
+}
+
+// TestIsPathStaged_FalseAfterStagedChangeCommitted: once a staged change is
+// committed, the index and HEAD agree again — IsPathStaged must go back to
+// false, not latch true forever.
+func TestIsPathStaged_FalseAfterStagedChangeCommitted(t *testing.T) {
+	repo := initRepo(t)
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt")
+	writeAndCommit(t, repo, "a.txt", "v2", "update a.txt")
+	if IsPathStaged(repo, "a.txt") {
+		t.Fatalf("IsPathStaged = true; want false once the staged change is committed")
+	}
+}
+
+// TestIsPathStaged_FalseOutsideRepo: best-effort — a non-repo directory
+// must not panic or report a false "staged" positive.
+func TestIsPathStaged_FalseOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	if IsPathStaged(dir, "a.txt") {
+		t.Fatalf("IsPathStaged(%q) = true; want false outside a git repo", dir)
+	}
+}
+
+// TestDefaultBranchMergeBase_ResolvesLocalDefaultBranch: no origin remote —
+// DefaultBranchMergeBase falls back to the LOCAL default-branch ref and
+// resolves the actual fork point, not just HEAD.
+func TestDefaultBranchMergeBase_ResolvesLocalDefaultBranch(t *testing.T) {
+	repo := initRepo(t) // git init --initial-branch left to git's own default
+	forkSha := strings.TrimSpace(revParse(t, repo, "HEAD"))
+	runGit(t, repo, "checkout", "-b", "feat/x")
+	writeAndCommit(t, repo, "a.txt", "v1", "add a.txt on feat/x")
+
+	got := DefaultBranchMergeBase(repo)
+	if got != forkSha {
+		t.Fatalf("DefaultBranchMergeBase = %q; want the fork commit %q", got, forkSha)
+	}
+}
+
+// TestDefaultBranchMergeBase_FallsBackToHEAD_WhenUnresolvable: neither
+// `origin/<default>` nor a local `<default>`-named branch resolves (no
+// remote, and the two real local branches are named something else
+// entirely) — DefaultBranchMergeBase degrades to the literal "HEAD" rather
+// than erroring, so a caller that restores to it never breaks.
+func TestDefaultBranchMergeBase_FallsBackToHEAD_WhenUnresolvable(t *testing.T) {
+	repo := initRepo(t)
+	runGit(t, repo, "branch", "-m", "onlybranch") // rename away from main/master
+	runGit(t, repo, "checkout", "-b", "other")
+	// Two local branches now (onlybranch, other), neither named main/master,
+	// and no origin — DefaultBranch()'s step 1 (origin/HEAD) and step 2
+	// (local main/master) both miss. Whatever it falls through to next
+	// (init.defaultBranch or the hard "main" fallback) still won't match
+	// either REAL branch name here, so neither MergeBase candidate resolves.
+	def := DefaultBranch(repo)
+	if def == "onlybranch" || def == "other" {
+		t.Fatalf("test setup: DefaultBranch resolved to a real local branch (%q); need a name that resolves to neither", def)
+	}
+
+	if got := DefaultBranchMergeBase(repo); got != "HEAD" {
+		t.Fatalf("DefaultBranchMergeBase = %q; want the \"HEAD\" fallback", got)
 	}
 }

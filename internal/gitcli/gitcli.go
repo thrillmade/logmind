@@ -565,14 +565,128 @@ func ShowFile(repoRoot, ref, path string) (string, bool) {
 // errors for that path only and is skipped; the first error (if any) is returned
 // for logging but callers generally ignore it (the derived docs are purely
 // generated, so a failed restore just leaves the pre-existing state).
+//
+// A thin wrapper over RestorePathsToRef(repoRoot, "HEAD", paths...) — kept as
+// its own named function because "HEAD" is meaningful, reusable shorthand
+// wherever the caller genuinely wants the committed tip, as opposed to the
+// derived-docs pin target (DefaultBranchMergeBase), which is a DIFFERENT ref
+// on a diverged branch — see that function's doc comment for why.
 func RestorePathsToHead(repoRoot string, paths ...string) error {
+	return RestorePathsToRef(repoRoot, "HEAD", paths...)
+}
+
+// RestorePathsToRef restores each path to ref's content in BOTH the index and
+// the working tree (`git checkout <ref> -- <path>`), discarding any staged or
+// unstaged change. Per-path and best-effort: a path untracked at ref errors
+// for that path only and is skipped; the first error (if any) is returned for
+// logging but callers generally ignore it.
+func RestorePathsToRef(repoRoot, ref string, paths ...string) error {
 	var firstErr error
 	for _, p := range paths {
-		if _, _, err := RunCaptured(repoRoot, "checkout", "HEAD", "--", p); err != nil && firstErr == nil {
+		if _, _, err := RunCaptured(repoRoot, "checkout", ref, "--", p); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
+}
+
+// IsPathStaged reports whether path currently differs between the index and
+// HEAD — i.e. whether it has a STAGED change (`git diff --cached --quiet --
+// <path>` exits 1, meaning a difference exists).
+//
+// This is the signal commitDecision's L1 restore (internal/cli/log.go) and
+// guardCommitHarness's L2b restore (internal/cli/guard_commit.go) use to
+// distinguish a DELIBERATE staged change to a derived doc — chiefly
+// `logmind warp`'s merge-base repair, which stages the fix so it survives
+// into the caller's next commit (see runWarp, internal/cli/warp.go) — from
+// an ACCIDENTAL unstaged dirty working tree (a stray hook regen, a hand
+// edit nobody `git add`ed yet). Both callers restore only the paths this
+// reports NOT staged, leaving an already-staged path alone.
+//
+// Best-effort like every other helper in this package, and conservative in
+// the direction that matters for those callers: only a confirmed exit-code
+// of exactly 1 ("yes, the index differs from HEAD for this path") reports
+// true. Every other outcome — no difference (exit 0), a missing git
+// binary, an unborn HEAD, a bad pathspec, any other failure — reports
+// false. Callers use `true` to SKIP a restore, so a false negative here
+// just falls back to "restore it" (the pre-existing, unconditional
+// behavior), never a new way to silently let a genuinely accidental dirty
+// copy through.
+func IsPathStaged(repoRoot, path string) bool {
+	cmd := exec.Command("git", "diff", "--cached", "--quiet", "--", path)
+	cmd.Dir = repoRoot
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+	err := cmd.Run()
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode() == 1
+	}
+	return false
+}
+
+// DefaultBranchMergeBase resolves the ref the derived-docs pin-preservation
+// restore (commitDecision's L1, guardCommitHarness's L2b — see
+// internal/cli/derived.go) should target: the merge-base between HEAD and the
+// best LOCALLY known ref for repoRoot's default branch. The invariant those
+// callers enforce is defined in terms of the merge-base ("byte-identical to
+// its merge-base with the default branch"), so restoring TO the merge-base —
+// rather than to HEAD — is the more correct implementation, and it is
+// SELF-REPAIRING: a branch whose HEAD already carries a diverged copy of the
+// derived docs (an old binary regenerated them locally and committed, or a
+// hand edit landed) gets corrected back to the invariant's own definition
+// instead of having the diverged HEAD copy silently re-affirmed on every
+// subsequent `logmind log`.
+//
+// Resolution order:
+//
+//  1. merge-base(origin/<default>, HEAD) — the canonical, up-to-date view a
+//     `git fetch` would have populated; the same base CI's derived-docs gate
+//     effectively diffs against.
+//  2. merge-base(<default>, HEAD) — a local branch of the same name, for a
+//     repo with no origin tracking ref (no remote, or origin/HEAD unset).
+//  3. "HEAD" — neither resolves (shallow clone, detached HEAD, a fresh
+//     single-branch repo with no fork point to diff against). HEAD is always
+//     well-defined, and it changes nothing for the common, UNDIVERGED case:
+//     when the branch has never touched these files, HEAD's content for them
+//     already equals the merge-base's, so this fallback is a genuine no-op
+//     there — it only matters (and only helps) on a branch that actually
+//     diverged.
+//
+// Pure LOCAL computation — no `git fetch` — so this stays safe to call from
+// `logmind log`'s network-free hot path. If origin/<default> is stale (the
+// caller never ran `logmind warp` / `git fetch`), the merge-base is computed
+// against whatever was last fetched — still strictly better than blindly
+// trusting the branch's own possibly-diverged HEAD, which is the bug this
+// exists to fix.
+func DefaultBranchMergeBase(repoRoot string) string {
+	def := DefaultBranch(repoRoot)
+	for _, ref := range []string{"origin/" + def, def} {
+		if sha, ok := MergeBase(repoRoot, ref); ok {
+			return sha
+		}
+	}
+	return "HEAD"
+}
+
+// MergeBase returns the merge-base commit SHA of ref and HEAD. Best-effort:
+// ("", false) on any error (ref missing, no common ancestor, not a repo).
+//
+// This was briefly deleted as unused — the derived-docs gate settled on
+// `gh pr diff` for its branch-vs-base comparison, which needed no local
+// merge-base. DefaultBranchMergeBase above makes it live again: the
+// zero-conflict invariant is DEFINED against the merge-base, so the local
+// restore path has to be able to compute one.
+func MergeBase(repoRoot, ref string) (string, bool) {
+	out, _, err := RunCaptured(repoRoot, "merge-base", ref, "HEAD")
+	if err != nil {
+		return "", false
+	}
+	sha := strings.TrimSpace(out)
+	return sha, sha != ""
 }
 
 // AddPaths runs `git add <path>...` against repoRoot. Returns a

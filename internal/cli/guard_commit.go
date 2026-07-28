@@ -323,8 +323,49 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 	// regenerate deterministically from the committed decision files, so
 	// there's nothing to protect by surfacing a failure here, and doing so
 	// must never perturb the allow/block decision below.
+	//
+	// Restore target is HEAD, NOT the merge-base with the default branch
+	// (v2.0.0 4b-ter reversal — same staleness reasoning as commitDecision's
+	// L1 in log.go): the merge-base target depends on a freshly-fetched
+	// refs/remotes/origin/<default>, which nothing on this harness-intercept
+	// path ever refreshes, so it can be arbitrarily stale and would restore
+	// to — and then let the commit carry — an OLDER snapshot than the
+	// branch's true merge-base. Restoring to HEAD needs no such freshness:
+	// it only depends on already-committed local state, so it's correct
+	// offline and always. This surface's job is narrower than "repair a
+	// diverged branch" — it only keeps an ALREADY-clean branch clean by
+	// stopping a stray dirty working-tree copy from riding into the commit.
+	// Repairing an already-diverged branch needs a trustworthy, just-fetched
+	// origin/<default> — that's `logmind warp`'s job now (see runWarp in
+	// warp.go), the one surface that fetches before it restores.
+	//
+	// v2.0.0 4b-quater — same "skip an already-staged path" filter as
+	// commitDecision's L1 (log.go), and for the same reason: `logmind
+	// warp`'s merge-base repair deliberately STAGES the two derived docs so
+	// the fix survives into the caller's next commit. This layer guards a
+	// DIFFERENT trigger than L1 — a literal `git commit` (bare, `-am`,
+	// `--no-verify`, or inside a compound `&&`/`;` command) run directly via
+	// the Bash tool, NOT a `logmind log` invocation (guardcommit.
+	// InvokesGitCommit only matches a `git`-basename command whose
+	// subcommand is `commit`; `logmind log ...` as a Bash-tool string never
+	// matches it, so this layer never even fires for it — see
+	// invokes_git_commit.go). Concretely: an agent that runs `logmind warp`
+	// and then commits with a raw `git commit -am ...` Bash call (instead of
+	// `logmind log`) hits THIS restore, not L1's — so without this same
+	// filter here, that sequence would still silently undo warp's repair
+	// even after L1 was fixed, just via a different trigger command. This
+	// layer fires BEFORE the pending Bash command runs at all (see above),
+	// so — same as L1 — the only way a derived doc can already be staged
+	// when this check runs is a prior, SEPARATE action (chiefly `warp`),
+	// never something the pending command itself has done yet. See
+	// commitDecision's doc comment (log.go) for the full write-up of the
+	// rule ("unstaged means accidental, staged means intentional") and the
+	// accepted trade-off it carries (a hand-staged divergent doc now also
+	// slips through — L3, the CI gate, is the backstop). See
+	// TestRunGuardCommit_Harness_SkipsAlreadyStagedDerivedDoc
+	// (guard_commit_test.go) for the regression pin.
 	if integrationPointMode(repoRoot) && onNonDefaultBranch(repoRoot) {
-		_ = gitcli.RestorePathsToHead(repoRoot, derivedDocPaths...)
+		_ = gitcli.RestorePathsToHead(repoRoot, unstagedDerivedDocPaths(repoRoot, derivedDocPaths)...)
 	}
 
 	if !enforce {

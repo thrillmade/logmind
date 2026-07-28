@@ -63,13 +63,15 @@
 // carry as "out of scope"): suppresses the auto-push step. gitcli.Push
 // wraps the underlying `git push`.
 //
-// Out of scope for v1.2.0 (carried by the Python shim until v1.3.x or
-// folded into a follow-up):
+// decisions-archive rotation (SPEC §1.3.2): when appending the new entry
+// would push docs/decisions.md's count above decisions.max_recent, the
+// OLDEST entry (or entries, if more than one overflow needs migrating at
+// once) is moved verbatim to docs/decisions-archive.md before the new entry
+// is appended — see rotateDecisions / appendToArchive below. Branch decision
+// files never rotate (SPEC §1.4 — no capacity cap there).
 //
-//   - decisions-archive rotation when count > max_recent. Python
-//     handles this via _archive_oldest_decision; the Go port lands
-//     the rotation in a follow-up so v1.2.0 stays focused on the
-//     self-heal feature.
+// Out of scope for v1.2.0 (carried until v1.3.x or folded into a follow-up):
+//
 //   - `--template` flag for pre-filled reasoning/alternatives/impl
 //     (low-traffic; users craft their own entries with -r/-a/-i).
 package cli
@@ -87,6 +89,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/linkcheck"
 	"github.com/thrillmade/logmind/internal/templates"
@@ -321,6 +324,22 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 			return fmt.Errorf("read %s: %w", target, err)
 		}
 		existing = data
+	}
+
+	// SPEC §1.3.2 capacity — docs/decisions.md only. Branch files have no
+	// cap: §1.4 states plainly "Branch decision files have no capacity cap
+	// (no archive overflow)." Rotate BEFORE composing body below, so the
+	// archive gets the oldest entry (or entries) FIRST and only THEN does
+	// the new one get appended — the SPEC's own ordering: "the OLDEST entry
+	// MUST be moved verbatim to docs/decisions-archive.md ... before the new
+	// entry is appended."
+	if !isBranchFile {
+		if kept, migrated := rotateDecisions(existing, cfg.Decisions.MaxRecent); migrated != "" {
+			if err := appendToArchive(docsPath, migrated); err != nil {
+				return fmt.Errorf("archive overflow decisions: %w", err)
+			}
+			existing = kept
+		}
 	}
 
 	// Compose: header (if first-creation branch file) + the §1.6.3 timeline
@@ -591,6 +610,75 @@ func buildDecisionEntry(summary, reasoning string, alternatives, implications []
 
 	b.WriteString("---\n\n")
 	return b.String()
+}
+
+// rotateDecisions applies SPEC §1.3.2 capacity to decisionsMD's current raw
+// bytes: when adding ONE more entry (the one `logmind log` is about to
+// append) would push the count above maxRecent, it peels enough of the
+// OLDEST entries off the front — decisions.md is append-only, so the
+// oldest entry is always the first one after the header — to bring the
+// count back down to maxRecent, and returns:
+//
+//   - kept: decisionsMD with the peeled entries removed (its preamble +
+//     the remaining entries' RAW bytes, concatenated verbatim). No entry is
+//     ever re-rendered here — only the set of entries present changes.
+//   - migrated: the peeled entries' raw bytes, concatenated in FIFO
+//     (oldest-first) order, ready to append to docs/decisions-archive.md
+//     verbatim. "" means nothing needed to move.
+//
+// maxRecent <= 0 disables rotation entirely — treating 0 as "archive
+// everything currently on file" would be a destructive surprise no config
+// author setting decisions.max_recent is likely to intend, and the SPEC's
+// default is a positive 20.
+func rotateDecisions(decisionsMD []byte, maxRecent int) (kept []byte, migrated string) {
+	if maxRecent <= 0 {
+		return decisionsMD, ""
+	}
+	preamble, entries := decisions.SplitRawBytes(string(decisionsMD))
+	// +1 accounts for the new entry this call to `logmind log` is about to
+	// append on top of what's already on disk.
+	overflow := len(entries) + 1 - maxRecent
+	if overflow <= 0 {
+		return decisionsMD, ""
+	}
+	if overflow > len(entries) {
+		overflow = len(entries) // defensive: never migrate more than exists
+	}
+
+	var mig strings.Builder
+	for _, e := range entries[:overflow] {
+		mig.WriteString(e.Raw)
+	}
+
+	var keptBuf strings.Builder
+	keptBuf.WriteString(preamble)
+	for _, e := range entries[overflow:] {
+		keptBuf.WriteString(e.Raw)
+	}
+	return []byte(keptBuf.String()), mig.String()
+}
+
+// appendToArchive appends migrated (already newline-terminated, verbatim
+// entry bytes — see rotateDecisions) to docs/decisions-archive.md, creating
+// it from the standard template first if it doesn't exist yet (mirrors
+// `logmind init`'s scaffold, so a repo that somehow reaches rotation without
+// ever having run init still ends up with a valid, headed archive file
+// rather than a bare entry dump).
+//
+// Always a pure byte append — never re-sorts existing content. SPEC §1.5:
+// "Archive ordering is append-on-overflow. Tools MUST NOT re-sort the
+// archive on write."
+func appendToArchive(docsPath, migrated string) error {
+	archivePath := filepath.Join(docsPath, "decisions-archive.md")
+	existing := templates.DecisionsArchiveTemplate()
+	if pathExists(archivePath) {
+		data, err := os.ReadFile(archivePath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", archivePath, err)
+		}
+		existing = string(data)
+	}
+	return writeAtomic(archivePath, existing+migrated)
 }
 
 // buildTimelineMarker renders the §1.6.3 entry-block headline that opens a
@@ -891,8 +979,111 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// at all — a driver-mode repo's derived docs are free to regenerate on
 	// every branch, matching the pre-v2.0.0 behavior; see
 	// internal/cli/derived.go's integrationPointMode.
+	//
+	// Restore target is HEAD, NOT the merge-base with the default branch
+	// (v2.0.0 4b-ter reversal of the short-lived 4b-bis "repair-path fix"):
+	// 4b-bis pointed this restore at gitcli.DefaultBranchMergeBase to
+	// self-heal an already-diverged branch, but that target depends on
+	// refs/remotes/origin/<default> being CURRENT — and nothing on this
+	// path ever refreshes it. `logmind log` is deliberately network-free
+	// (no implicit `git fetch`), so on a clone that hasn't fetched recently,
+	// the "merge-base" computed here is stale, and this restore would
+	// silently commit an OLDER snapshot than the branch's true merge-base —
+	// actively writing WRONG bytes, and typically causing the very CI gate
+	// this restore exists to satisfy to FAIL. Restoring to HEAD has no such
+	// dependency: it only ever needs to know what's already committed
+	// locally, so it is correct offline and always. The tradeoff, accepted
+	// deliberately: this restore can no longer repair a branch whose HEAD
+	// already carries a diverged copy (an old binary's local regen, or a
+	// hand edit) — it re-affirms whatever's there instead. That's fine: L1's
+	// job is narrower than "repair" — it only has to keep an ALREADY-clean
+	// branch clean, i.e. stop divergence from ARRIVING via a stray hook
+	// regen or `git add -A` sweep. Repairing a branch that has ALREADY
+	// diverged needs a trustworthy, freshly-fetched `origin/<default>` to
+	// compute a correct merge-base against — `logmind warp` is the one
+	// surface that fetches first, so that's where the repair now lives (see
+	// runWarp in warp.go). See TestLog_CommitPathDoesNotDependOnOriginRef
+	// (derived_repair_test.go) for the regression pin: deform
+	// refs/remotes/origin/<default> and confirm a clean branch's commit is
+	// unaffected.
+	//
+	// v2.0.0 4b-quater — the L1-vs-`warp` seam, and its fix: moving the
+	// repair to `logmind warp` (above) reintroduced the exact bug that move
+	// was meant to avoid, one level up. `warp`'s repair DELIBERATELY STAGES
+	// the two derived docs (`git checkout <merge-base> -- <path>`, which
+	// writes the index too — see runWarp) so the fix rides into the
+	// caller's NEXT commit. But this restore ran unconditionally, so the
+	// remediation sequence the CI gate's own failure message tells a user
+	// to run — `logmind warp` then `logmind log` — silently no-op'd: warp
+	// repairs + stages, then THIS restore checked the path back out to
+	// HEAD's still-divergent content, undoing the repair before the `git
+	// add` below could even run, and the resulting commit captured the
+	// divergence AGAIN. Same error, same bytes, no indication the "fix"
+	// did nothing. Root cause: this restore couldn't tell a deliberate
+	// staged repair apart from an accidental unstaged dirty copy, so it
+	// undid both.
+	//
+	// The fix: restore only the paths gitcli.IsPathStaged (via
+	// unstagedDerivedDocPaths, derived.go) reports as NOT already staged.
+	// Rule, in one line: unstaged means accidental → revert it; staged
+	// means intentional → leave it alone — that's what staging means
+	// everywhere else in git. This works here specifically because this
+	// restore runs BEFORE commitDecision's OWN staging step (`git add -A` /
+	// `git add <target>`, immediately below): the only way a derived doc
+	// can already be staged at this point is a prior, SEPARATE action —
+	// chiefly `logmind warp` — never something this function itself just
+	// did. (guardCommitHarness's L2b restore in guard_commit.go shares this
+	// property — it fires before the pending Bash command even runs — and
+	// applies the identical filter. The pre-commit git hook, L2a, does NOT:
+	// it fires from `git commit` itself, AFTER whatever staged the index
+	// for THAT commit, so "already staged" there is the normal state of
+	// anything about to be committed, not a reliable intent signal — see
+	// BuildPreCommitBody's doc comment in internal/hooks/hooks.go for the
+	// full reasoning.) IMPORTANT CAVEAT: L2a is a REAL `.git/hooks/pre-commit`
+	// script, so it fires for EVERY `git commit` in this repo — including
+	// the one THIS function's own gitcli.Commit call makes a few lines
+	// below. A repo with the hook installed (the default the moment
+	// integration-point mode is adopted — see init.go) therefore still runs
+	// L2a's unconditional restore-to-HEAD on this exact commit, AFTER this
+	// function's own restore already (correctly) left a warp-staged repair
+	// alone — undoing it right back. Closing THAT coupling is unresolved,
+	// out-of-scope follow-up work (it needs a signal from this call site to
+	// L2a, e.g. an environment variable set only around this specific `git
+	// commit`, that a POSIX-sh hook could check for and stand down on); see
+	// BuildPreCommitBody's doc comment (internal/hooks/hooks.go) for the
+	// full account. Everything this comment block otherwise describes is
+	// still correct and tested (TestWarpThenLog_PreservesRepairAcrossCommit
+	// below passes) precisely because that test's fixtures — like every
+	// other fixture in this package — never install a REAL pre-commit hook;
+	// see initClonePairScaffolded / scaffoldDocs, which run `logmind init
+	// --no-git` and so skip hook installation entirely.
+	//
+	// THE TRADE-OFF, ACCEPTED DELIBERATELY: this relaxes L1. If a user
+	// hand-stages a DIVERGENT derived doc — `git add docs/timeline.md`
+	// after editing it directly, rather than trusting `logmind warp` to
+	// produce a correct one — and then runs `logmind log`, L1 now skips it
+	// and the divergence gets committed. There's no cheap way around this:
+	// the only signal available on this offline hot path is "does the
+	// index differ from HEAD", which cannot distinguish "staged because
+	// warp repaired it correctly" from "staged because a human added a bad
+	// copy" — and deliberately NOT closed with a merge-base comparison,
+	// because the merge-base is unavailable here for the exact staleness
+	// reason this restore targets HEAD instead of the merge-base in the
+	// first place (see above): computing one needs a freshly-fetched
+	// origin/<default>, which nothing on this network-free hot path ever
+	// refreshes. L3 (the CI check-derived-docs gate) remains the backstop
+	// for this residual gap, same as it always was for a genuinely
+	// diverged branch.
+	//
+	// See TestWarpThenLog_PreservesRepairAcrossCommit (derived_repair_test.go)
+	// for the regression pin: the full warp-then-log remediation sequence,
+	// asserting the resulting commit carries the merge-base content warp
+	// staged, not the divergent HEAD content this restore used to
+	// re-affirm. See TestLog_DoesNotCommitDirtiedDerivedDocOnBranch for
+	// proof L1's original job — reverting an UNSTAGED dirty derived doc —
+	// still holds unchanged.
 	if onNonDefaultBranch(cwd) && integrationPointMode(cwd) {
-		_ = gitcli.RestorePathsToHead(cwd, derivedDocPaths...)
+		_ = gitcli.RestorePathsToHead(cwd, unstagedDerivedDocPaths(cwd, derivedDocPaths)...)
 	}
 
 	if stage == "all" {

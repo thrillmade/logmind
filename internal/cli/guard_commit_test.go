@@ -117,6 +117,64 @@ func TestRunGuardCommit_Harness_RestoresDerivedDocsOnNonDefaultBranch_Integratio
 	}
 }
 
+// TestRunGuardCommit_Harness_SkipsAlreadyStagedDerivedDoc is the L2b
+// companion to TestLog_PreservesManuallyStagedRepairOfDivergedBranch and
+// TestWarpThenLog_PreservesRepairAcrossCommit (derived_repair_test.go) —
+// v2.0.0 4b-quater. Unlike the sibling test above (which dirties the
+// WORKING TREE only via os.WriteFile, simulating an accidental stray
+// write), here docs/timeline.md is explicitly `git add`ed BEFORE the
+// harness runs — simulating `logmind warp`'s merge-base repair, which
+// stages its fix via `git checkout <merge-base> -- <path>` (see runWarp,
+// warp.go). The harness's L2b restore must skip an already-staged path:
+// since this layer fires BEFORE the pending Bash command (`git commit -am
+// x`) even executes, anything already staged at check time can only be a
+// prior, deliberate action — never something the pending command itself is
+// about to do — so it is left alone rather than reverted to HEAD.
+func TestRunGuardCommit_Harness_SkipsAlreadyStagedDerivedDoc(t *testing.T) {
+	repo := initRepo(t)
+	docsDir := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	timelinePath := filepath.Join(docsDir, "timeline.md")
+	original := "# Timeline\n\noriginal\n"
+	if err := os.WriteFile(timelinePath, []byte(original), 0o644); err != nil {
+		t.Fatalf("write timeline.md: %v", err)
+	}
+	writeGuardCommitConfig(t, repo, "derived_docs:\n  mode: integration-point\n")
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "add docs"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGitIn(t, repo, "checkout", "-b", "feat/staged-repair")
+
+	// Simulate `logmind warp`'s repair: write the repaired content AND
+	// stage it — exactly what `git checkout <merge-base> -- <path>` does.
+	repaired := "# Timeline\n\nREPAIRED (simulated warp merge-base fix)\n"
+	if err := os.WriteFile(timelinePath, []byte(repaired), 0o644); err != nil {
+		t.Fatalf("write repaired timeline.md: %v", err)
+	}
+	runGitIn(t, repo, "add", "docs/timeline.md")
+
+	payload := harnessJSON(t, "Bash", `git commit -am x`, repo)
+	var stdout, stderr bytes.Buffer
+	if _, err := runGuardCommit(repo, "harness", "", 20, true, false,
+		strings.NewReader(payload), &stdout, &stderr); err != nil {
+		t.Fatalf("runGuardCommit: %v", err)
+	}
+
+	got, err := os.ReadFile(timelinePath)
+	if err != nil {
+		t.Fatalf("read timeline.md: %v", err)
+	}
+	if string(got) != repaired {
+		t.Fatalf("harness restored an ALREADY-STAGED derived doc (undid the simulated warp repair)\nwant (preserved) %q\ngot %q", repaired, string(got))
+	}
+}
+
 // TestRunGuardCommit_Harness_DriverModeSkipsRestore: driver mode — both the
 // implicit default (no .logmind/config.yml at all) and an EXPLICIT
 // `derived_docs: {mode: driver}` — disables the harness-layer restore too,

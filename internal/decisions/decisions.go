@@ -10,6 +10,11 @@
 // reads decisions.md + decisions-archive.md + decisions-branches/*.md
 // and returns a unified, source-tagged slice. The timeline subcommand
 // consumes that slice directly.
+//
+// SplitRaw / SplitRawBytes expose the same header boundaries as byte
+// ranges rather than just parsed fields — the primitive SPEC §1.3.2's
+// capacity rotation uses to relocate an overflowing entry to
+// docs/decisions-archive.md without ever re-rendering it.
 package decisions
 
 import (
@@ -99,6 +104,89 @@ func Iter(path string, stderr io.Writer) ([]Entry, error) {
 		return out, err
 	}
 	return out, nil
+}
+
+// RawEntry pairs a parsed Entry with the exact bytes of the entry block it
+// was parsed from — from its "## YYYY-MM-DD HH:MM - <title>" header line
+// through (and including) everything up to the next entry's header line, or
+// EOF for the last entry in the file. SPEC §1.3.2 requires FIFO overflow
+// migration to "preserve byte-exact entry content"; RawEntry.Raw is what
+// callers relocate verbatim between docs/decisions.md and
+// docs/decisions-archive.md — it is never re-rendered.
+type RawEntry struct {
+	Entry
+	Raw string
+}
+
+// SplitRaw reads path and calls SplitRawBytes on its content. Missing file →
+// ("", nil, nil), matching Iter's "no file, no entries, no error" contract.
+func SplitRaw(path string) (preamble string, entries []RawEntry, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil, nil
+		}
+		return "", nil, err
+	}
+	preamble, entries = SplitRawBytes(string(data))
+	return preamble, entries, nil
+}
+
+// SplitRawBytes splits already-loaded decisions-file content into a leading
+// preamble (the file's own top-of-file header block, or the whole content
+// when no entry header is found) and the entries that follow it, in on-disk
+// order. docs/decisions.md and docs/decisions-archive.md are both
+// append-only, so on-disk order is oldest-first — the FIFO overflow callers
+// need (§1.3.2: "the OLDEST entry MUST be moved ... Migration is FIFO").
+//
+// Boundaries are found by scanning line-by-line for the same decisionHeader
+// pattern Iter uses (so a header this misses, Iter misses too, and vice
+// versa): each entry runs from its "## ..." line through the byte
+// immediately before the next such line, or EOF. This deliberately does NOT
+// special-case the §1.6.3 `<!-- logmind-entry-start: ... -->` marker block
+// that opens a branch decision file: decisionHeader only ever matches a
+// literal "## " line prefix, so a marker comment can never be mistaken for a
+// decision entry — it simply rides along inside the preamble (or, on a
+// legacy file, inside whichever entry currently precedes it). Branch files
+// are never rotated (SPEC §1.4: "Branch decision files have no capacity cap
+// (no archive overflow)"), so this distinction mostly matters for callers
+// that reuse SplitRawBytes against a branch file for other purposes.
+func SplitRawBytes(content string) (preamble string, entries []RawEntry) {
+	type header struct {
+		offset int
+		entry  Entry
+	}
+	var headers []header
+	off := 0
+	for _, line := range strings.SplitAfter(content, "\n") {
+		if line == "" {
+			continue
+		}
+		trimmed := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if m := decisionHeader.FindStringSubmatch(trimmed); m != nil {
+			if t, perr := time.Parse("2006-01-02 15:04", m[1]+" "+m[2]); perr == nil {
+				headers = append(headers, header{offset: off, entry: Entry{Date: t, Title: m[3]}})
+			}
+			// Malformed date/time → skipped, same as Iter. SplitRawBytes is a
+			// structural split, not a diagnostic pass, so it doesn't repeat
+			// Iter's stderr warning here — a caller that wants that warning
+			// runs Iter too.
+		}
+		off += len(line)
+	}
+	if len(headers) == 0 {
+		return content, nil
+	}
+	preamble = content[:headers[0].offset]
+	entries = make([]RawEntry, 0, len(headers))
+	for i, h := range headers {
+		end := len(content)
+		if i+1 < len(headers) {
+			end = headers[i+1].offset
+		}
+		entries = append(entries, RawEntry{Entry: h.entry, Raw: content[h.offset:end]})
+	}
+	return preamble, entries
 }
 
 // branchLabelFromFilename reverses logger._sanitize_branch's escaping.

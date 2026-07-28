@@ -407,6 +407,79 @@ func BuildCommitMsgBody() string {
 // built, so the raw commit can never carry a derived-doc change off the
 // zero-conflict invariant.
 //
+// Restore target is HEAD, NOT the merge-base with the default branch (v2.0.0
+// 4b-ter reversal of the short-lived 4b-bis "repair-path fix" — mirrors
+// commitDecision's L1 in internal/cli/log.go). 4b-bis pointed this restore
+// at merge-base(origin/<default>, HEAD) so an already-diverged branch could
+// self-heal, but that target depends on refs/remotes/origin/<default> being
+// CURRENT, and nothing on the commit path ever runs `git fetch` to refresh
+// it — this hook runs as a pure POSIX-sh script with no logmind binary
+// required, so it has even less business trusting a remote-tracking ref
+// that may be arbitrarily stale. A stale ref meant this restore could
+// silently commit an OLDER snapshot than the branch's true merge-base,
+// actively writing WRONG bytes and typically FAILING the very CI gate this
+// hook exists to satisfy. HEAD has no such dependency: it's always
+// correct offline, using only already-committed local state. The tradeoff,
+// accepted deliberately: this hook can no longer repair a branch whose HEAD
+// already carries a diverged copy (an old binary's local regen, or a hand
+// edit) — it re-affirms whatever's there instead. That's fine: this hook's
+// job is narrower than "repair" — it only keeps an ALREADY-clean branch
+// clean, stopping divergence from ARRIVING via a stray hook regen or a raw
+// `git commit -a`. Repairing an already-diverged branch needs a trustworthy,
+// freshly-fetched origin/<default> to compute a correct merge-base against
+// — `logmind warp` is the one surface that fetches first, so that's where
+// the repair now lives (see runWarp in internal/cli/warp.go).
+//
+// v2.0.0 4b-quater — deliberately does NOT gain the "skip an already-staged
+// path" filter that commitDecision's L1 (internal/cli/log.go) and
+// guardCommitHarness's L2b (internal/cli/guard_commit.go) gained in that
+// change. Those two surfaces run their restore BEFORE their OWN staging
+// step (L1: before `git add -A`/`git add <target>`; L2b: before the
+// pending Bash command — which is what would stage anything — even runs),
+// so at THEIR check time "the index already differs from HEAD for this
+// path" can only mean a prior, SEPARATE, deliberate action — chiefly
+// `logmind warp`'s merge-base repair. This hook has no such guarantee: it
+// fires from `git commit` itself, which runs AFTER whatever staged the
+// index for THIS commit — very often `git add -A` or `git commit -a`
+// sweeping up an ACCIDENTALLY dirtied derived doc right along with
+// everything else a raw commit carries. At hook-fire time here, "staged"
+// is simply the normal state of anything about to be committed, not a
+// reliable signal that a human (or `warp`) deliberately meant to keep it.
+// Skipping a staged path here would silently reopen exactly the hole this
+// hook exists to close: see
+// TestPreCommitHook_EndToEnd_RawGitCommitDoesNotCarryDirtyDerivedDoc
+// (hooks_test.go), which dirties docs/timeline.md and commits via `git
+// commit -am` — `-a` stages the dirt automatically, before this hook ever
+// runs — and asserts the commit does NOT carry it; that test would start
+// failing the instant this hook skipped staged paths.
+//
+// Residual gap, accepted, and BROADER than just a raw `git commit`: this
+// hook is a REAL `.git/hooks/pre-commit` script, so it fires for EVERY
+// `git commit` in this repo — including the one `logmind log` itself runs
+// internally (gitcli.Commit shells out to a literal `git commit -m
+// <message>`, no `--no-verify`). That means a warp-then-`logmind log`
+// sequence is NOT fully protected by L1 alone whenever this hook happens
+// to be installed (which `logmind init`/`doctor --fix` do automatically
+// the moment a repo adopts `derived_docs: {mode: integration-point}` — see
+// init.go): L1 runs first and correctly leaves the warp-staged repair
+// alone, `git add -A` stages the rest, and then `logmind log`'s own `git
+// commit` invocation triggers THIS hook, which restores unconditionally to
+// HEAD and undoes what L1 just preserved — same bug, reached through the
+// installed hook instead of a manual bypass. A plain, unqualified "raw
+// `git commit` bypassing `logmind log`" is the NARROWER case (no
+// installed hook needed to trigger it, since the user's own `git commit`
+// IS the trigger) but not the only one. Both are currently unresolved:
+// closing them needs a signal from `logmind log`'s own commit invocation
+// telling this hook "L1 already decided, stand down" (e.g. an environment
+// variable set only around that specific `git commit` call) — deliberately
+// NOT implemented here, since it is a distinct, cross-cutting change
+// (touching gitcli.Commit / commitDecision AND this hook body, with its
+// own golden-file + test surface) beyond this fix's scope. L3 (the CI
+// check-derived-docs gate) is the backstop for both variants of this gap,
+// same as for any other already-diverged branch. See
+// TestPreCommitHook_EndToEnd_DoesNotRepairAlreadyDivergedBranch, which
+// pins the raw-`git commit` half of this residual behavior.
+//
 // MUST NEVER block a commit. Unlike the commit-msg hook (Layer 2 of commit
 // enforcement, which can legitimately reject a commit), this hook exists
 // solely to keep two files pinned — a purely mechanical, lossless operation
