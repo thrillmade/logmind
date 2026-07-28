@@ -176,9 +176,12 @@ auto-fix in the `check-doc-links` workflow).
 - Single static binary — no runtime dependency for end users
 - Cross-platform distribution (brew, curl, `setup-logmind` action,
   `go install`)
-- Superseded the original Python implementation at v1.0.0; the port's
-  hard contract was byte-identical output against the frozen Python
-  v0.6.16 baseline
+- Superseded the original Python implementation at v1.0.0. Byte-identical
+  output against the frozen Python v0.6.16 baseline was the *migration*
+  check for that port; it is now dead history, not a live constraint
+- The contract is the SkDD SPEC (`thrillmade/protocol/SPEC.md`, declared by
+  `version.SpecVersion`). Conformance is judged against a cited SPEC
+  section — never against Python archaeology
 
 ### Storage: markdown, no database
 - `docs/decisions.md` (recent, default branch) + `docs/decisions-branches/`

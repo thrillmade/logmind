@@ -118,8 +118,11 @@ logmind show --all         # include archive
 logmind search "postgres"  # full-text across both files
 ```
 
-Working as an agent? Set `LOGMIND_QUIET=1` for terse, chainable machine output:
-each verb suppresses progress chatter and prints a single `ok <key=value>` line.
+Working as an agent? Set `LOGMIND_QUIET=1` for terse, chainable machine output
+on the read/emit verbs (`doctor`, `file-structure`, `guard-commit`, `headline`,
+`log`, `repomap`, `search`, `show`, `timeline`): each suppresses progress
+chatter and prints a single `ok <key=value>` line. Other verbs currently
+ignore this flag.
 
 Reading prior decisions first prevents you from re-litigating something
 the team already decided.
