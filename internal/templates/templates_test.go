@@ -210,13 +210,22 @@ func TestWorkflowTemplates_SetupLogmindStepsCarryToken(t *testing.T) {
 // v10: removes v9's `derived_docs.mode: integration-point` opt-in — the
 // invariant is now unconditional, with no per-repo escape hatch and no
 // adoption signal left to read from anywhere, PR or base ref.
+//
+// v11 (logmind#262): regen-on-main's push step stops conflating "no
+// credential" with "push refused". SPEC-2 §3.3 requires three outcomes
+// that MUST NOT look alike — nothing-to-push and no-credential still exit
+// 0 (the latter with a `::warning`, since a merge that was otherwise fine
+// should not fail over a missing secret), but a push that was attempted
+// and refused now fails the job (`::error` + `exit 1`): "a refused write
+// is the job not doing its job", and reporting it as success is how a
+// regenerator stayed green for eleven days while doing nothing.
 func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	body := Workflow("regen-timeline.yml.template")
 
-	// Marker bump v9 → v10 (adoption gate removed; the invariant is now
-	// unconditional).
-	if !strings.Contains(body, "# logmind-template-version: v10") {
-		t.Errorf("regen-timeline template missing v10 marker")
+	// Marker bump v10 → v11 (push-refusal now fails the job; see v11 note
+	// above).
+	if !strings.Contains(body, "# logmind-template-version: v11") {
+		t.Errorf("regen-timeline template missing v11 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
@@ -264,17 +273,48 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	}
 	// No-PAT is a freshness-only gap, not a failure: warn + exit 0 (never blocks
 	// the push event; the invariant guarantee lives in the PR gate, not here).
-	if !strings.Contains(body, "::warning") || !strings.Contains(body, "exit 0") {
-		t.Errorf("regen-timeline v10 regen-on-main must warn + exit 0 when no PAT (freshness-only)")
+	// Scoped to the no-credential branch specifically — SPEC-2 §3.3 requires
+	// the push-refusal branch below to look visibly different, not merely
+	// for "::warning" to appear somewhere in the file.
+	_, noPATBlock, found := strings.Cut(body, `if [ -z "${PAT:-}" ]; then`)
+	if !found {
+		t.Fatalf("regen-timeline v11 missing the no-PAT credential check")
 	}
-	// The push-rejection warning must not promise self-healing — a missing
+	noPATBlock, _, found = strings.Cut(noPATBlock, "fi\n")
+	if !found {
+		t.Fatalf("regen-timeline v11: could not find the end of the no-PAT block")
+	}
+	if !strings.Contains(noPATBlock, "::warning") || !strings.Contains(noPATBlock, "exit 0") {
+		t.Errorf("regen-timeline v11 regen-on-main must warn + exit 0 when no PAT (freshness-only)")
+	}
+
+	// SPEC-2 §3.3 (logmind#262): "A push that was attempted and refused is
+	// a failure, and MUST be reported as one." This is a DIFFERENT outcome
+	// from the no-credential case above and must fail the job loudly
+	// (::error + exit 1), never degrade quietly (::warning + exit 0) —
+	// that conflation is exactly what let the regen job stay green for
+	// eleven days while doing nothing.
+	_, pushBlock, found := strings.Cut(body, `if ! git push "https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"; then`)
+	if !found {
+		t.Fatalf("regen-timeline v11 missing the push-refusal check")
+	}
+	if !strings.Contains(pushBlock, "::error") {
+		t.Errorf("regen-timeline v11 push-refusal must be reported with ::error — it MUST NOT look like the no-credential ::warning case")
+	}
+	if !strings.Contains(pushBlock, "exit 1") {
+		t.Errorf("regen-timeline v11 push-refusal must fail the job (exit 1), not degrade (exit 0)")
+	}
+	if strings.Contains(pushBlock, "::warning") {
+		t.Errorf("regen-timeline v11 push-refusal must not also emit a ::warning — the two outcomes must be visibly distinct")
+	}
+	// The push-rejection error must not promise self-healing — a missing
 	// ruleset bypass (GH013) is a POLICY refusal that repeats every cycle,
 	// not a transient one-off; see docs/orchestrator-app.md.
 	if !strings.Contains(body, "GH013") {
-		t.Errorf("regen-timeline v10 push-rejection warning must name GH013 as the likely cause")
+		t.Errorf("regen-timeline v11 push-rejection error must name GH013 as the likely cause")
 	}
 	if !strings.Contains(body, "NOT self-heal") {
-		t.Errorf("regen-timeline v10 warnings must not promise the staleness resolves itself on the next merge")
+		t.Errorf("regen-timeline v11 messaging must not promise the staleness resolves itself on the next merge")
 	}
 
 	// v10 removes the entire adoption gate: no per-repo config read, no
@@ -554,8 +594,11 @@ func repoRootFromCaller(t *testing.T) string {
 //  3. The credential block: a consumer repo configures a
 //     LOGMIND_AUTO_REGEN_PAT secret directly; this repo mints a
 //     short-lived `skdd-steward[bot]` GitHub App installation token
-//     instead (see docs/orchestrator-app.md) — a different identity,
-//     the same "degrade, never fail" push contract.
+//     instead (see docs/orchestrator-app.md) — a different identity, the
+//     same push-outcome contract (SPEC-2 §3.3, logmind#262): no
+//     credential still degrades (warn + exit 0), but a push that was
+//     attempted and refused now fails the job (error + exit 1) — those
+//     two outcomes MUST NOT look alike, on either side of this pair.
 //
 // Everything else — MOST IMPORTANTLY the check-derived-docs job, which
 // is the actual PR-blocking enforcement logic — must be byte-identical,
@@ -633,10 +676,18 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 			"            echo \"Derived docs already current on main.\"\n" +
 			"            exit 0\n" +
 			"          fi\n",
-		// gap 3 (unanchored, runs to EOF): the credential-missing check,
-		// the git identity, the push-failure comment prose, and the
-		// push URL's token variable — all keyed on which identity this
-		// repo vs. a consumer repo pushes as.
+		// gap 3: the credential-missing check, the git identity, the
+		// push-failure comment prose, and the push URL's token variable —
+		// all keyed on which identity this repo vs. a consumer repo
+		// pushes as.
+		"            exit 1\n" +
+			"          fi\n",
+		// The trailing anchor above pins the one thing gap 3 must NOT be
+		// free to diverge on: a push that was attempted and refused MUST
+		// fail the job (exit 1) on both sides of this pair, per SPEC-2
+		// §3.3 (logmind#262) — a fix landed on only one side would leave
+		// that repo's own CI exercising the old silent-success behavior
+		// while claiming to match its template.
 	}
 	requireAnchorsInOrder(t, "template", tmplBody[tmplGateEnd:], anchors)
 	requireAnchorsInOrder(t, "installed workflow", workflow[wfGateEnd:], anchors)
