@@ -11,9 +11,12 @@
 // bumped to "1.0.0" 2026-07-04 (the coordinated SPEC 1.0.0 that REMOVES
 // the branch-divergent timeline model: §1.6.4 main-canonical union
 // assembly is now the sole, unconditional timeline. See v2.0.0 below),
-// then advanced to "1.5.0" ahead of the v2.0.0 tag (§15 decision-logging
-// enforcement, §16 the canonical spec-file contract, §3.1.1 the pulse —
-// see docs/spec.md), then to the current "2.0.0" for logmind#264: the
+// then advanced to "1.5.0" ahead of the v2.0.0 tag (for what were THEN
+// numbered §15 decision-logging enforcement, §16 the canonical spec-file
+// contract, and §3.1.1 the pulse — those three numbers are from the
+// archived predecessor document and address nothing in the live SPEC;
+// they are recorded here as history, not as citations to follow), then
+// to the current "2.0.0" for logmind#264: the
 // document was rewritten and renumbered as SPEC-2, restarting its own
 // version at 2.0.0 (Status: Draft) — the old "1.5.0" no longer
 // corresponds to anything in the live section numbering. See SpecVersion's

@@ -382,8 +382,12 @@ logmind context — token receipt (est. ~4 chars/token, deterministic)
             <div className="border-t border-rule" />
             <p className="marginalia normal-case tracking-normal text-foreground/55 mt-6 text-xs leading-relaxed">
               <code className="font-mono">logmind --version</code> should print{" "}
-              <code className="font-mono">logmind 2.0.0 (spec 1.5.0)</code>.
-              The agent skill (03) is optional but recommended — it teaches
+              <code className="font-mono">logmind 2.0.0 (spec 2.0.0)</code>,
+              then{" "}
+              <code className="font-mono">
+                areas: orient, work, record, propagate, gates
+              </code>
+              . The agent skill (03) is optional but recommended — it teaches
               Claude Code, Cursor, Codex et al. when and how to call{" "}
               <code className="font-mono">logmind log</code> in any project
               that has logmind installed.
