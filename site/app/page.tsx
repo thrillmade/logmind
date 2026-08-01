@@ -8,6 +8,37 @@ const VERIFY = "logmind --version";
 // consumer repos that still hardcode `logmind==0.6.x` keep resolving.
 const PIP_LEGACY = "pip install 'logmind==0.6.16'";
 
+// ---------------------------------------------------------------------------
+// Version truth — single source for every version string this page shows.
+//
+// TO RELEASE v2.0.0: update these three lines (CURRENT_VERSION,
+// CURRENT_SPEC, CURRENT_RELEASE_DATE) — everything below derives from
+// them, and every "forthcoming" / "in design" caveat on the page clears
+// itself automatically once CURRENT_VERSION === NEXT_VERSION. No other
+// edit is required.
+//
+// CURRENT_* is what `brew install thrillmade/tap/logmind` / curl / the
+// skill installs *today*. Verified against `gh release list --repo
+// thrillmade/logmind` (latest tag) and the installed binary's own
+// `logmind --version` output — re-verify both at every release.
+//
+// NEXT_VERSION names the release the "enforced" section and the hero
+// badge describe ahead of time (commit-guard hooks, zero-conflict
+// derived docs). The site can't import internal/version/version.go (Go
+// vs TS), so this block is a hand-maintained mirror of it — keep them in
+// sync at tag time.
+// ---------------------------------------------------------------------------
+// Typed `string` (not narrowed to a literal) so the equality check below
+// type-checks at every point in the release cycle, including the moment
+// CURRENT_VERSION becomes "2.0.0" and this stops being a static "always
+// false" comparison.
+const CURRENT_VERSION: string = "1.2.0";
+const CURRENT_SPEC = "0.1.1";
+const CURRENT_RELEASE_DATE = "2026-06-07";
+const NEXT_VERSION: string = "2.0.0";
+const IS_NEXT_RELEASED = CURRENT_VERSION === NEXT_VERSION;
+const VERIFY_OUTPUT = `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})`;
+
 const QUICKSTART = `$ logmind init
 $ git checkout -b feat/auth
 $ logmind log "JWT for stateless API auth" \\
@@ -79,7 +110,9 @@ export default function Home() {
       <section className="px-6 sm:px-10 lg:px-16 pt-12 sm:pt-24 pb-20">
         <div className="max-w-6xl mx-auto w-full">
           <div className="rise marginalia mb-6">
-            v2.0.0 ⁄ released 2026-07 ⁄ MIT ⁄ <a href="https://zakelfassi.com/skdd-skills-driven-development" className="hover:text-accent transition-colors">a substrate for SkDD</a>
+            v{CURRENT_VERSION} ⁄ released {CURRENT_RELEASE_DATE} ⁄ MIT{" "}
+            {!IS_NEXT_RELEASED && `⁄ v${NEXT_VERSION} design in progress `}
+            ⁄ <a href="https://zakelfassi.com/skdd-skills-driven-development" className="hover:text-accent transition-colors">a substrate for SkDD</a>
           </div>
           <h1 className="rise display text-[12vw] sm:text-[8.5vw] leading-[0.92] font-light max-w-[16ch]" style={{ animationDelay: "0.05s" }}>
             Infinite context
@@ -274,12 +307,19 @@ export default function Home() {
               enforced<span className="text-accent">.</span>
             </h2>
             <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
-              A convention only holds if the tooling holds the door. v2 adds
-              a guard in front of every substantive commit.
+              A convention only holds if the tooling holds the door. v{NEXT_VERSION}{" "}
+              adds a guard in front of every substantive commit
+              {!IS_NEXT_RELEASED && " — in design, not yet released"}.
             </p>
           </div>
           <div className="sm:col-span-8">
             <p className="text-[15px] leading-[1.65] text-foreground/85 mb-6">
+              {!IS_NEXT_RELEASED && (
+                <>
+                  <strong className="text-accent">Not yet released</strong> —
+                  ships with v{NEXT_VERSION}.{" "}
+                </>
+              )}
               A <code className="font-mono text-foreground text-[0.85em]">commit-msg</code> hook and a Claude
               Code <code className="font-mono text-foreground text-[0.85em]">PreToolUse</code> hook check the
               same rule: a substantive change with no matching{" "}
@@ -370,7 +410,7 @@ logmind context — token receipt (est. ~4 chars/token, deterministic)
               install<span className="text-accent">.</span>
             </h2>
             <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
-              v2.0 ships as a single signed + notarized Go binary. Brew or curl,
+              v{CURRENT_VERSION} ships as a single signed + notarized Go binary. Brew or curl,
               pick whichever lives closest to your other dev tools.
             </p>
           </div>
@@ -381,8 +421,9 @@ logmind context — token receipt (est. ~4 chars/token, deterministic)
             <CommandBlock cmd={VERIFY} hint="verify" index="04" />
             <div className="border-t border-rule" />
             <p className="marginalia normal-case tracking-normal text-foreground/55 mt-6 text-xs leading-relaxed">
-              <code className="font-mono">logmind --version</code> should print{" "}
-              <code className="font-mono">logmind 2.0.0 (spec 1.5.0)</code>.
+              <code className="font-mono">logmind --version</code> prints{" "}
+              <code className="font-mono">{VERIFY_OUTPUT}</code> for the current release
+              {!IS_NEXT_RELEASED && ` (v${NEXT_VERSION} is in design, not yet released)`}.
               The agent skill (03) is optional but recommended — it teaches
               Claude Code, Cursor, Codex et al. when and how to call{" "}
               <code className="font-mono">logmind log</code> in any project
@@ -485,8 +526,13 @@ logmind context — token receipt (est. ~4 chars/token, deterministic)
               logmind<span className="text-accent">.</span>
             </a>
             <div className="marginalia normal-case tracking-normal mt-2 text-xs text-foreground/55 flex flex-wrap items-center gap-x-2 gap-y-1">
-              {/* keep version in sync with cmd/logmind/version */}
-              <span>v2.0.0</span>
+              {/* Single source of truth: CURRENT_VERSION near the top of
+                  this file. The site can't import Go, so this is a
+                  hand-maintained mirror of internal/version/version.go —
+                  update CURRENT_VERSION (and CURRENT_SPEC /
+                  CURRENT_RELEASE_DATE) at every release; nothing else on
+                  the page should hardcode a version string. */}
+              <span>v{CURRENT_VERSION}</span>
               <span>·</span>
               <span>MIT licensed</span>
               <span>·</span>
