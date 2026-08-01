@@ -10,8 +10,7 @@
 
 ## Checklist
 
-- [ ] Tests added / updated; `pytest -q` is green locally
+- [ ] Tests added / updated; `make test` is green locally
 - [ ] `logmind check-links` is green (run it before pushing)
 - [ ] Architectural change? Logged via `logmind log "..."` on this branch
-- [ ] CHANGELOG updated under `[Unreleased]` if user-visible
-- [ ] No committed `dist/`, `__pycache__/`, or other generated artefacts
+- [ ] No committed `bin/`, `*.test`, `*.out`, or other generated artefacts

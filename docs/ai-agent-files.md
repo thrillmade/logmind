@@ -108,7 +108,7 @@ Supported agents: claude, cursor, copilot, windsurf, aider, continue, cody, zed,
 logmind agents add cursor    # Write .cursorrules as a stub pointing to AGENTS.md
 logmind agents add windsurf  # Write .windsurfrules as a stub pointing to AGENTS.md
 logmind agents remove cursor # Remove .cursorrules
-logmind agents update        # Refresh stale logmind blocks + CI workflow pins
+logmind agents update        # Reports stale logmind blocks + CI workflow pins (dry-run; add --apply to rewrite)
 logmind agents migrate       # Consolidate any full per-agent files into stubs
 ```
 
