@@ -14,17 +14,37 @@ import (
 	"github.com/thrillmade/logmind/internal/version"
 )
 
-// versionLine returns the canonical `--version` output. Centralised so
-// the version subcommand and the cobra root's --version flag both emit
-// byte-identical text — the snapshot test pins this exact string.
+// versionLine returns the first line of `--version` output — the tool
+// identity line. Centralised so the version subcommand and the cobra
+// root's --version flag both emit byte-identical text — the snapshot
+// test pins this exact string.
 //
-// Format: `logmind <version> (spec <spec-version>)`
+// Format: `logmind <version> (spec <spec-version>)` — SPEC §7.3's
+// `<tool-name> <tool-semver> (spec <spec-semver>)`.
 //
 // This is the protocol contract — downstream tooling (clud-bug,
 // tokenomics, agent-skills) greps this line to detect skew. Don't
 // change the format without bumping SpecVersion.
 func versionLine() string {
 	return fmt.Sprintf("logmind %s (spec %s)", version.Version, version.SpecVersion)
+}
+
+// areasLine returns the second line of `--version` output — SPEC §7.3's
+// coarse area declaration: `areas: <comma-separated words>`, drawn from
+// the fixed seven-word vocabulary (orient, work, record, review,
+// propagate, gates, versioning). See version.Areas for which words this
+// binary claims and the evidence for each.
+func areasLine() string {
+	return "areas: " + version.Areas
+}
+
+// fullVersionOutput returns the complete `--version` payload: the tool
+// identity line, a newline, then the areas line — with no trailing
+// newline of its own, so every caller (printVersion's Fprintln, cobra's
+// "{{.Version}}\n" template) adds exactly one, giving SPEC §7.3's
+// required single trailing newline rather than one per line.
+func fullVersionOutput() string {
+	return versionLine() + "\n" + areasLine()
 }
 
 // NewRootCmd returns a fresh cobra root command. Each call constructs
@@ -121,7 +141,7 @@ func NewRootCmd() *cobra.Command {
 	// `logmind --version` and `logmind version` produce the same line.
 	// This matches the Python click ergonomics users are used to.
 	root.SetVersionTemplate("{{.Version}}\n")
-	root.Version = versionLine()
+	root.Version = fullVersionOutput()
 
 	return root
 }
@@ -146,6 +166,6 @@ func newVersionCmd() *cobra.Command {
 }
 
 func printVersion(w io.Writer) error {
-	_, err := fmt.Fprintln(w, versionLine())
+	_, err := fmt.Fprintln(w, fullVersionOutput())
 	return err
 }

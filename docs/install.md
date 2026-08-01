@@ -157,13 +157,15 @@ target Linux.
 
 ```bash
 logmind --version
-# logmind 2.0.0 (spec 1.5.0)
+# logmind 2.0.0 (spec 2.0.0)
+# areas: orient, work, record, propagate, gates
 ```
 
-The `--version` line is the protocol contract — downstream tooling
-(clud-bug, tokenomics, agent-skills) reads it to detect protocol skew.
-If the line doesn't appear or the format differs, your install is broken
-or running an older version.
+Both lines are the protocol contract (SPEC §7.3) — downstream tooling
+(clud-bug, tokenomics, agent-skills) reads the first to detect protocol
+skew and the second to learn which parts of the spec this binary
+implements. If either line doesn't appear or the format differs, your
+install is broken or running an older version.
 
 ## Deprecated: Python install
 

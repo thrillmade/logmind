@@ -11,9 +11,16 @@
 // bumped to "1.0.0" 2026-07-04 (the coordinated SPEC 1.0.0 that REMOVES
 // the branch-divergent timeline model: §1.6.4 main-canonical union
 // assembly is now the sole, unconditional timeline. See v2.0.0 below),
-// then advanced to the current "1.5.0" ahead of the v2.0.0 tag (§15
-// decision-logging enforcement, §16 the canonical spec-file contract,
-// §3.1.1 the pulse — see docs/spec.md).
+// then advanced to "1.5.0" ahead of the v2.0.0 tag (for what were THEN
+// numbered §15 decision-logging enforcement, §16 the canonical spec-file
+// contract, and §3.1.1 the pulse — those three numbers are from the
+// archived predecessor document and address nothing in the live SPEC;
+// they are recorded here as history, not as citations to follow), then
+// to the current "2.0.0" for logmind#264: the
+// document was rewritten and renumbered as SPEC-2, restarting its own
+// version at 2.0.0 (Status: Draft) — the old "1.5.0" no longer
+// corresponds to anything in the live section numbering. See SpecVersion's
+// own doc comment below for the full evidence trail.
 package version
 
 import (
@@ -63,7 +70,79 @@ var Version = "2.0.0-dev"
 // this binary implements. Reported via `logmind --version` so downstream
 // tools can detect protocol skew without parsing the binary version.
 // Overridable via -ldflags at build time; see package docstring.
-var SpecVersion = "1.5.0"
+//
+// Bumped to "2.0.0" for logmind#264 (SPEC §7.3 — "What a tool declares").
+// Fetched from thrillmade/protocol SPEC.md@main: the document header reads
+// `<!-- spec-version: 2.0.0 -->` / `**Version:** 2.0.0` / `**Status:**
+// Draft`. §7.2 — "`Status: Draft` names the version being drafted, not the
+// last one released, and requires no tag" — so the absence of a
+// `spec-v2.0.0` tag (`gh api repos/thrillmade/protocol/tags` tops out at
+// `spec-v0.6.3`, then jumps straight to `spec-pre-rewrite-2026-07-31`: the
+// 0.x/1.x line was retired and renumbered as this SPEC-2 document starting
+// at 2.0.0) does not block declaring it. §7.4 confirms tools are meant to
+// declare support for a major version BEFORE it is cut final — "A major
+// version MUST NOT be declared final until every first-party tool has
+// released a version implementing it" — so declaring 2.0.0 now, while
+// Draft, is the expected order of operations, not a jump of the gun. The
+// prior "1.5.0" was measured against the archived predecessor document's
+// numbering (thrillmade/protocol:docs/SPEC-0.7.2-archive.md — it lives in
+// the protocol repository, NOT this one) and does not correspond to
+// anything in the live SPEC-2 text.
+var SpecVersion = "2.0.0"
+
+// Areas is the comma-and-space-joined SPEC §7.3 area declaration this
+// binary claims, in the vocabulary's fixed order (orient, work, record,
+// review, propagate, gates, versioning — only the ones actually
+// implemented are listed). Printed as the second line of `--version`
+// output: `areas: <Areas>`.
+//
+// Coarse by design (§7.3: "Claiming an area is deliberately coarse... A
+// tool claims an area when it implements any part of it"), and each word
+// below is backed by shipped code, not aspiration (§0.4: a tool "does not
+// claim the ones it does not [implement]"):
+//
+//   - orient  — §1: the AGENTS.md tool-owned block (internal/templates),
+//     `.logmind/config.yml` (internal/config, §1.6), and `logmind context`
+//     assembling the cold-start payload verbatim to §1.5's envelope order
+//     (internal/cli/context.go).
+//   - work    — §2.1/§2.2: skill-file authoring, frontmatter validation
+//     and `kind` routing (internal/skill/{scaffold,validate}.go); §2.7/2.8:
+//     the LOGMIND_QUIET / `ok <k=v>` discipline (internal/cli/quiet.go)
+//     and the `ceil(bytes/4)` token estimate plus "(N omitted)" truncation
+//     markers used throughout internal/tree, internal/repomap,
+//     internal/cli/context.go and internal/cli/file_structure.go.
+//   - record  — §3 in full: `logmind log` writes
+//     `docs/decisions-branches/<branch>.md` entries in the §3.1 format,
+//     branch-sanitizes per §3.2, and regenerates the derived
+//     `docs/timeline.md` / `docs/file-structure.md` per §3.3
+//     (internal/decisions, internal/inserter, internal/timeline,
+//     internal/repomap).
+//   - propagate — §5.2's upward "nomination" path specifically (a pull
+//     request against the catalog, opened by the repository that homes
+//     the item, refusing to target a catalog the repo has not named):
+//     `logmind skill push` (internal/skill/push.go,
+//     internal/cli/skill_push.go). Not the harness's downward
+//     distribution/seeding/skills-lock machinery of §5.1/§5.2 — that is
+//     skdd's job, not logmind's, so only the part actually shipped is
+//     claimed.
+//   - gates   — §6.2's canonical checks: `check-decisions`,
+//     `check-derived-docs` and `check-links` are all installed and
+//     produced by logmind's own templates and CLI verbs
+//     (internal/cli/check_decisions.go, internal/cli/check_links.go,
+//     internal/timeline/canonical.go, internal/templates/github/*.yml.template).
+//
+// Deliberately NOT claimed:
+//
+//   - review     — clud-bug's job (§0.1); logmind never examines a change
+//     or emits a finding. `logmind sync` only consumes clud-bug's already-
+//     written review output to update local skill PROVENANCE.md — reading
+//     a review's output is not performing one.
+//   - versioning — §7 governs the SPEC document's own version-agreement
+//     and tag rules, checked by the protocol repository's own tooling;
+//     declaring this binary's own version (this file) is a §7.3
+//     obligation every conformant tool has, not an implementation of §7's
+//     rules for others.
+var Areas = "orient, work, record, propagate, gates"
 
 // SatisfiesMin reports whether v is at least min, using a simple
 // major.minor.patch integer compare — NOT full semver precedence. Originally
