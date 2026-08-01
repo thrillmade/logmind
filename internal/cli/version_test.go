@@ -18,17 +18,18 @@ import (
 var update = flag.Bool("update", false, "regenerate testdata/*.golden files from current Go output")
 
 // TestVersionLine_InProcess locks the `--version` output format from the
-// versionLine() function alone (no subprocess). Fast, runs without a
+// fullVersionOutput() function alone (no subprocess). Fast, runs without a
 // pre-built binary, and serves as the canonical assertion that the
 // protocol-contract format hasn't drifted.
 //
-// Format: `logmind <version> (spec <spec-version>)`
+// Format (SPEC §7.3): `logmind <version> (spec <spec-version>)`, then
+// `areas: <words>`, single trailing newline.
 //
 // This is the BYTE-IDENTICAL parity contract. Subsequent waves' golden
 // files will follow the same testdata/<command>.golden pattern.
 func TestVersionLine_InProcess(t *testing.T) {
 	golden := goldenPath(t, "version.golden")
-	got := versionLine() + "\n"
+	got := fullVersionOutput() + "\n"
 
 	if *update {
 		writeGolden(t, golden, got)
@@ -37,7 +38,7 @@ func TestVersionLine_InProcess(t *testing.T) {
 
 	want := readGolden(t, golden)
 	if got != want {
-		t.Fatalf("versionLine() drifted from %s\n--- want ---\n%q\n--- got ---\n%q",
+		t.Fatalf("fullVersionOutput() drifted from %s\n--- want ---\n%q\n--- got ---\n%q",
 			golden, want, got)
 	}
 }
@@ -201,5 +202,85 @@ func TestVersionLine_HasSpecSegment(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "logmind ") {
 		t.Fatalf("versionLine() missing `logmind ` prefix: %q", got)
+	}
+}
+
+// specAreaVocabulary is SPEC §7.3's fixed seven-word area vocabulary, in
+// its documented order. Copied here (not imported from anywhere — the
+// spec has no Go representation) so a claimed area that isn't one of
+// these seven words fails loudly instead of silently shipping a typo.
+var specAreaVocabulary = map[string]bool{
+	"orient":     true,
+	"work":       true,
+	"record":     true,
+	"review":     true,
+	"propagate":  true,
+	"gates":      true,
+	"versioning": true,
+}
+
+// TestAreasLine_Format guards SPEC §7.3's `areas:` line: every word must
+// come from the fixed vocabulary, order must match the vocabulary's own
+// order (not claim-order or alphabetical), and there must be no duplicate
+// or empty entries. A typo'd or reordered area is exactly the silent
+// drift §7.3 exists to prevent, so this fails the build rather than the
+// golden file quietly encoding a mistake.
+func TestAreasLine_Format(t *testing.T) {
+	got := areasLine()
+	const prefix = "areas: "
+	if !strings.HasPrefix(got, prefix) {
+		t.Fatalf("areasLine() missing %q prefix: %q", prefix, got)
+	}
+	words := strings.Split(strings.TrimPrefix(got, prefix), ", ")
+	seen := make(map[string]bool, len(words))
+	vocabOrder := []string{"orient", "work", "record", "review", "propagate", "gates", "versioning"}
+	lastVocabIdx := -1
+	for _, w := range words {
+		if w == "" {
+			t.Fatalf("areasLine() has an empty area word: %q", got)
+		}
+		if !specAreaVocabulary[w] {
+			t.Fatalf("areasLine() claims %q, not in SPEC §7.3's fixed vocabulary: %q", w, got)
+		}
+		if seen[w] {
+			t.Fatalf("areasLine() claims %q more than once: %q", w, got)
+		}
+		seen[w] = true
+		idx := -1
+		for i, v := range vocabOrder {
+			if v == w {
+				idx = i
+				break
+			}
+		}
+		if idx <= lastVocabIdx {
+			t.Fatalf("areasLine() area %q is out of the vocabulary's fixed order: %q", w, got)
+		}
+		lastVocabIdx = idx
+	}
+}
+
+// TestFullVersionOutput_SingleTrailingNewline verifies SPEC §7.3's "A
+// single trailing newline is REQUIRED" byte-for-byte: exactly one '\n' at
+// the very end, none in the middle beyond the one line separator, and no
+// second/blank trailing line.
+func TestFullVersionOutput_SingleTrailingNewline(t *testing.T) {
+	root := NewRootCmd()
+	var stdout bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stdout)
+	root.SetArgs([]string{"--version"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("logmind --version failed: %v\nstdout:\n%s", err, stdout.String())
+	}
+	got := stdout.String()
+	if !strings.HasSuffix(got, "\n") {
+		t.Fatalf("output does not end in a newline: %q", got)
+	}
+	if strings.HasSuffix(got, "\n\n") {
+		t.Fatalf("output ends in more than one newline: %q", got)
+	}
+	if n := strings.Count(got, "\n"); n != 2 {
+		t.Fatalf("expected exactly 2 newlines (one per line, single trailing), got %d: %q", n, got)
 	}
 }
