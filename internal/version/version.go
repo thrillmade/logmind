@@ -85,7 +85,8 @@ var Version = "2.0.0-dev"
 // released a version implementing it" — so declaring 2.0.0 now, while
 // Draft, is the expected order of operations, not a jump of the gun. The
 // prior "1.5.0" was measured against the archived predecessor document's
-// numbering (docs/SPEC-0.7.2-archive.md) and does not correspond to
+// numbering (thrillmade/protocol:docs/SPEC-0.7.2-archive.md — it lives in
+// the protocol repository, NOT this one) and does not correspond to
 // anything in the live SPEC-2 text.
 var SpecVersion = "2.0.0"
 

@@ -3,8 +3,9 @@
      by design (SPEC §1.5), so this committed pointer is the in-repo spec.
 
      Section numbers below are from the LIVE SPEC.md. SPEC 2.0 was a
-     from-scratch rewrite and its numbering does NOT map to the predecessor
-     archived at docs/SPEC-0.7.2-archive.md — never reason from that file. -->
+     from-scratch rewrite and its numbering does NOT map to the predecessor,
+     which is archived in the protocol repository (not this one) at
+     thrillmade/protocol:docs/SPEC-0.7.2-archive.md — never reason from it. -->
 
 # logmind — Spec
 
