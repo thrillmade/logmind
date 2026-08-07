@@ -35,6 +35,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -180,6 +181,48 @@ func RemoteRepoName(repoRoot string) string {
 		url = url[i+1:]
 	}
 	return url
+}
+
+// CommonDirRepoName returns the basename of the directory containing the
+// repository's SHARED git dir — `git rev-parse --git-common-dir`. This is
+// deliberately not `--show-toplevel`: inside a `git worktree` checkout,
+// `--show-toplevel` resolves to the WORKTREE's own path (e.g.
+// ".../agent-<id>"), which is exactly the checkout-basename bug this
+// exists to route around. `--git-common-dir` instead points at the ONE
+// .git directory every worktree of a repo shares, so its parent's
+// basename is the actual repository name no matter which worktree (or how
+// deep a subdirectory of one) the command runs from.
+//
+// git prints `--git-common-dir` relative to repoRoot in the common case
+// (".git" at the top level, "../../.git" three directories down) and only
+// switches to an absolute path when relative wouldn't resolve correctly
+// (observed from inside a worktree). We join against repoRoot before
+// taking the parent's basename so both forms resolve the same way.
+//
+// Empty string on any failure (not a repo, missing git binary, unexpected
+// path shape) — callers fall back to the checkout directory's basename,
+// the same degrade pattern as RemoteRepoName.
+func CommonDirRepoName(repoRoot string) string {
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(stdout.String())
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(repoRoot, dir)
+	}
+	name := filepath.Base(filepath.Dir(dir))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
 }
 
 // DiffCachedNames returns the list of staged file paths
