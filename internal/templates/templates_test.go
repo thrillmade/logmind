@@ -135,12 +135,13 @@ func TestDependabotTemplate_HasMarkerAndShape(t *testing.T) {
 // distribution-lock change: workflow templates must use the new
 // `thrillmade/setup-logmind@vX.Y.Z` action and NOT the legacy
 // `pip install logmind==X.Y.Z` line. check-doc-links, regen-timeline,
-// and logmind-self-update are all asserted here.
+// logmind-self-update and check-decisions are all asserted here.
 func TestWorkflowTemplates_UseSetupLogmindAction(t *testing.T) {
 	for _, name := range []string{
 		"check-doc-links.yml.template",
 		"regen-timeline.yml.template",
 		"logmind-self-update.yml.template",
+		"check-decisions.yml.template",
 	} {
 		body := Workflow(name)
 		if !strings.Contains(body, "thrillmade/setup-logmind@v") {
@@ -171,6 +172,7 @@ func TestWorkflowTemplates_SetupLogmindStepsCarryToken(t *testing.T) {
 		"check-doc-links.yml.template",
 		"regen-timeline.yml.template",
 		"logmind-self-update.yml.template",
+		"check-decisions.yml.template",
 	} {
 		body := Workflow(name)
 		lines := strings.Split(body, "\n")
@@ -459,54 +461,112 @@ func TestCheckDocLinksTemplate_V8_AdvisoryNoStrand(t *testing.T) {
 	}
 }
 
-// TestCheckDecisionsTemplate_V4_LivePRTitle pins the issue #212 fix: the
-// `[skip-logmind]` override (a NORMATIVE escape hatch — protocol SPEC
-// §15.3 / Appendix A.2) must be read from the LIVE PR title at run time,
-// not from github.event.pull_request.title, which is frozen at trigger
-// time and goes stale across a maintainer retitle+rerun.
-func TestCheckDecisionsTemplate_V4_LivePRTitle(t *testing.T) {
+// TestCheckDecisionsTemplate_V5_CallsTheVerb pins the v5 shape: the
+// workflow INVOKES `logmind check-decisions --base/--head` instead of
+// reimplementing the decision rule in bash. SPEC §3.4: "Both interception
+// points and the gate MUST use this one list. Two lists that mean the
+// same thing are two lists that will disagree" — v4's bash was that
+// second list, and each assertion below pins one of the five ways it had
+// already drifted from the verb.
+func TestCheckDecisionsTemplate_V5_CallsTheVerb(t *testing.T) {
 	body := Workflow("check-decisions.yml.template")
+	// The must-NOT-contain assertions below run against the workflow with
+	// whole-line comments removed, so they bind what the job DOES rather
+	// than what its header says about what v4 used to do — the header
+	// names every removed mechanism, and naming them is the point.
+	active := stripCommentLines(body)
 
-	// Marker bump v3 → v4.
-	if !strings.Contains(body, "# logmind-template-version: v4") {
-		t.Errorf("check-decisions template missing v4 marker")
-	}
-
-	// The Enforce step's `if:` must no longer trust the frozen event
-	// payload title for the skip-logmind check — that's the bug: a
-	// re-run after a retitle replays the ORIGINAL payload.
-	if strings.Contains(body, "contains(github.event.pull_request.title, '[skip-logmind]')") {
-		t.Errorf("check-decisions v4 Enforce step must not gate on the frozen github.event.pull_request.title (issue #212)")
-	}
-	// Instead it must key off a step output resolved from the live title.
-	if !strings.Contains(body, "steps.diff.outputs.skip_logmind != 'true'") {
-		t.Errorf("check-decisions v4 Enforce step must gate on steps.diff.outputs.skip_logmind (resolved from the live PR title)")
+	// Marker bump v4 → v5.
+	if !strings.Contains(body, "# logmind-template-version: v5") {
+		t.Errorf("check-decisions template missing v5 marker")
 	}
 
-	// The live title must be fetched via `gh pr view` using the PR number
-	// from the event (stable across reruns) — not the title.
-	if !strings.Contains(body, `gh pr view "$PR_NUMBER" --json title -q .title`) {
-		t.Errorf("check-decisions v4 missing the live-title fetch via `gh pr view \"$PR_NUMBER\" --json title -q .title`")
+	// The one thing this workflow does: call the verb over the PR's range.
+	if !strings.Contains(body, `logmind check-decisions --base "$BASE_SHA" --head "$HEAD_SHA"`) {
+		t.Errorf("check-decisions v5 must invoke `logmind check-decisions --base \"$BASE_SHA\" --head \"$HEAD_SHA\"` — the gate does not reimplement the rule")
 	}
-	if !strings.Contains(body, "PR_NUMBER: ${{ github.event.pull_request.number }}") {
-		t.Errorf("check-decisions v4 missing PR_NUMBER sourced from the event (stable across reruns, unlike the title)")
-	}
-
-	// A `gh` API hiccup must fail OPEN to the old behavior (the event
-	// payload title), never crash the check.
-	if !strings.Contains(body, `live_title="$EVENT_TITLE"`) {
-		t.Errorf("check-decisions v4 missing the fail-open fallback to the event payload title on a `gh pr view` error")
-	}
-	if !strings.Contains(body, "EVENT_TITLE: ${{ github.event.pull_request.title }}") {
-		t.Errorf("check-decisions v4 missing EVENT_TITLE (the fail-open fallback source)")
+	if !strings.Contains(body, "BASE_SHA: ${{ github.event.pull_request.base.sha }}") ||
+		!strings.Contains(body, "HEAD_SHA: ${{ github.event.pull_request.head.sha }}") {
+		t.Errorf("check-decisions v5 missing the BASE_SHA/HEAD_SHA env pair the verb's range is built from")
 	}
 
-	// `gh pr view` needs read access to pull request data; the workflow
-	// token must grant it explicitly (the block already restricts
-	// everything else to none).
-	if !strings.Contains(body, "pull-requests: read") {
-		t.Errorf("check-decisions v4 missing pull-requests: read permission (required for `gh pr view`)")
+	// Drift 1: `*.md` in the exclusion list. §3.4 forbids it outright —
+	// "Excluding markdown wholesale switches the rule off in the
+	// repositories where writing is the work." Drift 5: the exclusion
+	// list itself, which now lives only in guardcommit.IsExcludedPath.
+	if strings.Contains(active, "docs/*|.logmind/*") || strings.Contains(active, "|*.md)") {
+		t.Errorf("check-decisions v5 must not carry its own exclusion `case` — one list, in the verb (SPEC §3.4)")
 	}
+
+	// Drift 2: the PR-title read. §3.4: "The gate has no self-service
+	// escape, and MUST NOT be given one." Not relocated — deleted.
+	for _, banned := range []string{
+		"gh pr view",
+		"skip_logmind",
+		"[skip-logmind]",
+		"github.event.pull_request.title",
+		"EVENT_TITLE",
+	} {
+		if strings.Contains(active, banned) {
+			t.Errorf("check-decisions v5 must not reference %q — the gate has no self-service escape (SPEC §3.4)", banned)
+		}
+	}
+	// ...and with the title fetch gone, so is the permission it needed.
+	if strings.Contains(active, "pull-requests:") {
+		t.Errorf("check-decisions v5 must not request pull-requests permission — nothing here reads PR data via the API")
+	}
+
+	// Drift 3: a path match standing in for §3.1 shape. §3.4: the gate
+	// "MUST NOT be satisfied by the decision file merely appearing in the
+	// diff."
+	if strings.Contains(active, "git diff --name-only") || strings.Contains(active, "decision_touched") {
+		t.Errorf("check-decisions v5 must not decide on a decision-file path match — the verb checks §3.1 shape")
+	}
+
+	// Drift 4: a hardcoded threshold. It is git.commit_line_threshold,
+	// which the verb reads; the workflow must not pass or restate it.
+	if strings.Contains(active, "THRESHOLD") || strings.Contains(active, "--threshold") {
+		t.Errorf("check-decisions v5 must not hardcode or pass a threshold — it is git.commit_line_threshold, read by the verb")
+	}
+
+	// SPEC §6.3: a gate is never satisfiable by the change it judges. The
+	// binary comes from the pinned release action; a PR that could rebuild
+	// it from its own checkout would be rewriting its own gate.
+	if !strings.Contains(active, "uses: thrillmade/setup-logmind@v") {
+		t.Errorf("check-decisions v5 must install the binary via the pinned thrillmade/setup-logmind action (SPEC §6.3)")
+	}
+	for _, banned := range []string{"setup-go", "make build", "go build", "./bin/logmind"} {
+		if strings.Contains(active, banned) {
+			t.Errorf("check-decisions v5 must not build logmind from the PR's checkout (%q) — SPEC §6.3", banned)
+		}
+	}
+
+	// §6.3 again, on the OTHER input: the threshold lives in the
+	// repository's configuration, which MUST be read from the base ref.
+	// A default pull_request checkout lands the merge ref, and a PR could
+	// then raise the threshold it is judged against in the same diff.
+	if !strings.Contains(active, "ref: ${{ github.event.pull_request.base.sha }}") {
+		t.Errorf("check-decisions v5 must check out the BASE ref, so config comes from the base (SPEC §6.3)")
+	}
+
+	// The failure path stays actionable: it names the command to run.
+	if !strings.Contains(active, `logmind log \"summary\" -r \"reasoning\" -a \"alternative\" -i \"implication\"`) {
+		t.Errorf("check-decisions v5 failure annotation must tell the author what to run")
+	}
+}
+
+// stripCommentLines drops every whole-line `#` comment (YAML's and, inside
+// a `run:` block, the shell's — they are the same syntax and neither one
+// executes). What survives is what the workflow actually does.
+func stripCommentLines(body string) string {
+	var kept []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // TestDecisionsBranchHeader_Shape pins the v1.2.0 backlink header
