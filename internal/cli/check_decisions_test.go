@@ -412,3 +412,54 @@ func revParse(t *testing.T, repo, ref string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// TestCheckDecisions_RangeMode_RefusesLocalAllowances pins the BLOCKING
+// finding from PR #287's adversarial review. SPEC §3.4 lists six local
+// allowances and says of the gate: "every allowance above that depends on
+// local process state — the environment variable, a git operation in
+// progress, running outside a repository, a marker in a commit subject —
+// is invisible to it and MUST NOT be honoured there. Exactly two things
+// clear the gate."
+//
+// The not-a-repo arm ran BEFORE the range-mode split, so a gate invoked
+// from the wrong directory — `working-directory:` pointing off the
+// checkout, or `actions/checkout` with a `path:` — printed "skipping
+// check" and exited 0. Every pull request would have gone green
+// regardless of size, while reporting success.
+func TestCheckDecisions_RangeMode_RefusesLocalAllowances(t *testing.T) {
+	t.Run("not a git repository is a hard error in range mode", func(t *testing.T) {
+		dir := t.TempDir() // deliberately not a git repo
+		var out bytes.Buffer
+		err := runCheckDecisions(checkDecisionsOpts{
+			cwd: dir, base: "origin/main", head: "HEAD",
+		}, &out)
+		if err == nil {
+			t.Fatalf("range mode outside a repository returned nil (gate would pass); stdout=%q", out.String())
+		}
+	})
+
+	t.Run("not a git repository still skips gracefully in local mode", func(t *testing.T) {
+		dir := t.TempDir()
+		var out bytes.Buffer
+		if err := runCheckDecisions(checkDecisionsOpts{cwd: dir}, &out); err != nil {
+			t.Fatalf("local mode outside a repository must not error, got %v", err)
+		}
+		if !strings.Contains(out.String(), "Not a git repository") {
+			t.Errorf("local mode lost its skip message; got %q", out.String())
+		}
+	})
+
+	t.Run("--no-fail is refused in range mode", func(t *testing.T) {
+		dir := t.TempDir()
+		var out bytes.Buffer
+		err := runCheckDecisions(checkDecisionsOpts{
+			cwd: dir, base: "a", head: "b", noFail: true,
+		}, &out)
+		if err == nil {
+			t.Fatal("--no-fail with --base/--head returned nil; it is a third thing clearing the gate")
+		}
+		if !strings.Contains(err.Error(), "--no-fail") {
+			t.Errorf("error should name the refused flag, got %v", err)
+		}
+	})
+}

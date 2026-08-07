@@ -112,10 +112,34 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 		return fmt.Errorf("--base and --head must be given together")
 	}
 
+	// Running outside a repository is one of §3.4's SIX local allowances,
+	// and like the other five it MUST NOT reach the gate: "every allowance
+	// above that depends on local process state — the environment
+	// variable, a git operation in progress, running outside a repository,
+	// a marker in a commit subject — is invisible to it and MUST NOT be
+	// honoured there. Exactly two things clear the gate."
+	//
+	// In range mode this is the gate, so a missing repository is a hard
+	// error rather than a pass. Otherwise a workflow that resolves its
+	// working directory wrongly — `working-directory:` pointing off the
+	// checkout, or `actions/checkout` with a `path:` — turns every PR
+	// green regardless of size, and reports success while doing it.
 	if !gitcli.IsRepo(opts.cwd) {
-		// Python: click.echo(...) which goes to stdout, no exit.
+		if rangeMode {
+			return fmt.Errorf("not a git repository: %s (the gate cannot evaluate a range outside a repository; check the job's working directory)", opts.cwd)
+		}
+		// Local path only. Python: click.echo(...) to stdout, no exit.
 		fmt.Fprintln(stdout, "Not a git repository, skipping check.")
 		return nil
+	}
+
+	// §3.4 again: exactly two things clear the gate. --no-fail is a third,
+	// and although it is set by whoever wrote the workflow rather than by
+	// the pull request's author, a repository that adds it has a gate that
+	// reports and never blocks. Refuse the combination outright so the
+	// escape cannot be added quietly to a workflow file.
+	if rangeMode && opts.noFail {
+		return fmt.Errorf("--no-fail cannot be combined with --base/--head: SPEC §3.4 allows exactly two things to clear the gate — the change carries a decision, or it falls under the threshold")
 	}
 
 	// One repository root for the config read AND every git command

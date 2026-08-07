@@ -290,6 +290,19 @@ func WellFormedDecisionAdded(added []string) bool {
 // `logmind log` writes) or on the lines that follow it up to the first
 // blank line (a hand-written entry that wrapped). A marker with neither
 // is an empty section and does not count.
+//
+// A section also ends at the NEXT section header, not only at a blank
+// line. §3.1's entry format separates sections with a blank line, but an
+// entry that omits it is still an entry a consumer "MUST treat ... as
+// absent rather than as a parse error" — and without this the following
+// header's own text is swallowed as the previous section's body, so
+//
+//	**Reasoning:**
+//	**Alternatives considered:** none
+//
+// reads as non-empty reasoning when §3.1 defines it as an empty section.
+// That is the "single meaningless line" §3.4 rejects, one blank line away
+// from being caught.
 func hasReasoning(raw string) bool {
 	lines := strings.Split(raw, "\n")
 	for i, line := range lines {
@@ -298,16 +311,39 @@ func hasReasoning(raw string) bool {
 		}
 		body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), reasoningMarker))
 		for _, next := range lines[i+1:] {
-			if strings.TrimSpace(next) == "" {
+			trimmed := strings.TrimSpace(next)
+			if trimmed == "" || isSectionHeader(trimmed) || trimmed == entryTerminator {
 				break
 			}
-			body += strings.TrimSpace(next)
+			body += trimmed
 		}
 		if body != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// entryTerminator is the `---` that ends an entry per SPEC §3.1 ("`---`
+// terminating the entry"). Reasoning cannot run past it.
+const entryTerminator = "---"
+
+// isSectionHeader reports whether a trimmed line opens a new §3.1 section
+// — a bolded label, e.g. `**Alternatives considered:**`. Deliberately
+// shape-based rather than a fixed list of the known section names: §3.1
+// says a consumer "MUST NOT require a section order", and a hand-written
+// entry may carry a section this build has never heard of. Anything that
+// opens a bold run and carries a colon terminates the previous section.
+func isSectionHeader(trimmed string) bool {
+	if !strings.HasPrefix(trimmed, "**") {
+		return false
+	}
+	rest := trimmed[2:]
+	end := strings.Index(rest, "**")
+	if end < 0 {
+		return false
+	}
+	return strings.Contains(rest[:end], ":")
 }
 
 // docsPrefix and configPrefix are the two directory exclusions of SPEC

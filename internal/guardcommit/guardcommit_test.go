@@ -592,3 +592,72 @@ func TestWellFormedDecisionAdded(t *testing.T) {
 		})
 	}
 }
+
+// TestHasReasoning_SectionEndsAtNextHeader pins the hole an adversarial
+// review found in PR #287: the body accumulator stopped only at a blank
+// line, so an entry whose next section header is NOT blank-separated had
+// that header's own text swallowed as the previous section's body —
+// making an empty **Reasoning:** read as non-empty. SPEC §3.1 defines
+// that shape as an empty section, and §3.4 rejects exactly this "single
+// meaningless line". One blank line was all that separated a caught case
+// from an uncaught one.
+func TestHasReasoning_SectionEndsAtNextHeader(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{
+			name: "empty reasoning, next header not blank-separated",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n**Alternatives considered:** none\n\n---\n",
+			want: false,
+		},
+		{
+			name: "empty reasoning, entry terminator immediately after",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n---\n",
+			want: false,
+		},
+		{
+			name: "real reasoning on the marker line",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:** because\n\n---\n",
+			want: true,
+		},
+		{
+			name: "real reasoning wrapped onto following lines",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\nit wrapped onto\nthe next line\n\n---\n",
+			want: true,
+		},
+		{
+			name: "wrapped reasoning still ends at an unseparated next header",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\nreal content\n**Implications:** x\n\n---\n",
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasReasoning(tc.raw); got != tc.want {
+				t.Errorf("hasReasoning() = %v, want %v\nraw:\n%s", got, tc.want, tc.raw)
+			}
+		})
+	}
+}
+
+// TestIsSectionHeader covers the shape test directly. It is deliberately
+// shape-based rather than a fixed list of known section names, because
+// SPEC §3.1 says a consumer "MUST NOT require a section order beyond the
+// title coming first" — a hand-written entry may carry a section this
+// build has never heard of.
+func TestIsSectionHeader(t *testing.T) {
+	yes := []string{"**Reasoning:**", "**Alternatives considered:** none", "**Anything At All:**"}
+	no := []string{"", "plain text", "**bold but no colon**", "*single star:*", "**unterminated:"}
+	for _, s := range yes {
+		if !isSectionHeader(s) {
+			t.Errorf("isSectionHeader(%q) = false, want true", s)
+		}
+	}
+	for _, s := range no {
+		if isSectionHeader(s) {
+			t.Errorf("isSectionHeader(%q) = true, want false", s)
+		}
+	}
+}

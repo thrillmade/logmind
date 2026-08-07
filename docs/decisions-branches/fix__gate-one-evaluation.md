@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-07 17:34 - Close three gate-clearing holes an adversarial panel found in the range path
+
+**Reasoning:** The panel BLOCKED PR #287 on a fail-open in the exact code path the CI template will call. runCheckDecisions returned nil for a non-repo directory BEFORE the range-mode split, so 'logmind check-decisions --base X --head Y' from the wrong directory printed 'Not a git repository, skipping check.' and exited 0. SPEC §3.4 names running-outside-a-repository as one of six local allowances and says of the gate: 'every allowance above that depends on local process state ... is invisible to it and MUST NOT be honoured there. Exactly two things clear the gate.' The header comment enumerated the two arms it had deliberately omitted and missed this third. Live repro from a non-repo dir: exit 0. A workflow whose working-directory points off the checkout would have passed every PR while reporting success. Two more: hasReasoning accumulated until a blank line only, so an unseparated next header was swallowed as body and an empty **Reasoning:** read as non-empty; and --no-fail was a third gate-clearer reachable in range mode.
+
+**Alternatives considered:** Fix only the blocking one and file the other two. Rejected: all three are the same failure — something other than 'carries a decision' or 'under threshold' clears the gate — and the panel found them together in one read of §3.4. Splitting would ship two known holes to buy a smaller diff.
+
+**Implications:**
+- Range mode now hard-errors outside a repository (exit 1, verified with the true exit code, not through a pipe) while local mode still skips gracefully at exit 0. --no-fail is refused in combination with --base/--head and still permitted alone. Section bodies terminate at the next bold section header and at the --- entry terminator, not only at a blank line; isSectionHeader is shape-based rather than a fixed list of names because §3.1 says a consumer MUST NOT require a section order. Eight new subtests pin all three. Full suite exit 0, zero FAIL. The panel also REFUTED seven candidate defects, including that a fifth exclusion had crept in — a runtime dump showed exactly AGENTS.md plus all 11 §1.2 rows.
+
+---
+
