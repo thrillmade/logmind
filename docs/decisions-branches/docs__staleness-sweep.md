@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-07 16:38 - Remove the fabricated PR-merge Action claim from the shipped AGENTS.md template
+
+**Reasoning:** The docs sweep fixed this claim in README, CONTRIBUTING and skill/SKILL.md but missed internal/templates/AGENTS.md.template:93, which is the one copy that ships into consumer repositories. It told every repo running logmind that 'On PR merge, a workflow appends a one-line summary to docs/decisions.md linking the PR and the per-branch file.' No such workflow exists — control: grepping 'one-line summary' across live surfaces now returns 0 while the Python-era changelog still returns 2, where it is correct history because the retired Python line genuinely shipped logmind-aggregate.yml. Caught by an adversarial reviewer on PR #282, not by the sweep.
+
+**Alternatives considered:** Defer to #257 with the other template changes, since template edits ship fleet-wide. Rejected after checking how propagation actually works: the deferred items (the docs/decisions.md required-reading entries) are deferred because #265 has to decide what REPLACES them, so changing them early would desync. This one has no pending decision behind it — the workflow does not exist and never will — so deferring would only mean shipping a known falsehood for longer.
+
+**Implications:**
+- Verified the fix actually reaches consumers before landing it: FindOutdatedMarkerBlocks (internal/inserter/inserter.go:458-487) compares block CONTENT — strings.TrimSpace(installed) == strings.TrimSpace(fresh) — and matchingTemplate only selects the full-vs-slim flavour. So a content change is detected as outdated without a block-version bump; I had assumed a v8 to v9 bump was required and that was wrong. Left the surrounding sentence intact because it is still accurate: resolveDecisionsPath (internal/cli/log.go:534) does still route default-branch entries to docs/decisions.md today. That whole model changes under #265.
+
+---
+

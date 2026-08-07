@@ -89,9 +89,8 @@ logmind log "Use PostgreSQL for primary database" \
 
 On a feature branch, the entry lands in
 `docs/decisions-branches/<sanitized-branch>.md`. On the default branch
-it lands in `docs/decisions.md`. On PR merge, a workflow appends a
-one-line summary to `docs/decisions.md` linking the PR and the
-per-branch file. You don't manage this — `logmind log` does.
+it lands in `docs/decisions.md`. You don't manage this — `logmind log`
+does.
 
 ### Branch summary (headline)
 
