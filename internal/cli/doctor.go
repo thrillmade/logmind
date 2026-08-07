@@ -109,6 +109,11 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return ErrSilent
 	}
 
+	// Refused workflow downgrades (#286) — printed BEFORE the --json branch
+	// below: this is a refusal the user must see on every surface, and
+	// stderr never pollutes the JSON document on stdout.
+	reportTemplateDowngrades(cmd.ErrOrStderr(), res.WorkflowsDeclined)
+
 	// Backfill the §1.6.3 timeline marker into any markerless branch detail
 	// file (main-canonical only) — the deterministic structural half of the
 	// branch-summary migration. The rich one-sentence summary stays the

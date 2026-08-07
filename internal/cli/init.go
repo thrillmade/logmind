@@ -40,6 +40,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -199,7 +200,10 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	var installedWorkflows []string
 	var dependabotChanged bool
 	if f.githubActions {
-		created, _, err := installWorkflowTemplates(cwd, false)
+		// Fresh install: refresh=false never overwrites, so the declined
+		// list is always empty here — only the refresh surfaces can hit a
+		// downgrade.
+		created, _, _, err := installWorkflowTemplates(cwd, false)
 		if err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Warning: workflow install failed:", err)
 		}
@@ -368,7 +372,12 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 		for _, wf := range res.WorkflowsRefreshed {
 			fmt.Fprintln(out, "↻ Refreshed", wf, "to current template")
 		}
-		if len(res.WorkflowsCreated) == 0 && len(res.WorkflowsRefreshed) == 0 {
+		// A refused downgrade (#286) is neither a create nor a refresh, but
+		// it IS a decision the user has to know about — report it before the
+		// "already current" line, which would otherwise be the only thing a
+		// repo running ahead of the binary ever sees.
+		reportTemplateDowngrades(cmd.ErrOrStderr(), res.WorkflowsDeclined)
+		if len(res.WorkflowsCreated) == 0 && len(res.WorkflowsRefreshed) == 0 && len(res.WorkflowsDeclined) == 0 {
 			fmt.Fprintln(out, "  All workflow templates already current.")
 		}
 		// Dependabot config is init-owned (doctor doesn't probe it, so
@@ -395,22 +404,33 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 	return nil
 }
 
+// templateDowngrade records one REFUSED workflow refresh: the file on disk
+// carries a newer `# logmind-template-version:` marker than this binary
+// bundles, so installWorkflowTemplates left it alone. Reported by both
+// callers (init refresh mode, doctor --fix) — never silent.
+type templateDowngrade struct {
+	Path      string // rel path from repo root
+	Installed string // marker found on disk, e.g. "v11"
+	Bundled   string // marker this binary ships, e.g. "v4"
+}
+
 // installWorkflowTemplates copies internal/templates/github/*.yml.template
 // into .github/workflows/. Two modes:
 //
 //   - refresh=false: don't overwrite existing files.
-//   - refresh=true: overwrite when the installed marker differs from the
+//   - refresh=true: overwrite when the installed marker is OLDER than the
 //     bundled marker. (Go-era workflows use thrillmade/setup-logmind and
 //     carry no pip-install pin, so a matching marker is left as-is.)
 //
-// Returns (created, refreshed, err). Each list is a slice of relative
-// paths from cwd.
-func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string, error) {
+// Returns (created, refreshed, declined, err). Each list is a slice of
+// relative paths from cwd; declined additionally names both markers.
+func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string, []templateDowngrade, error) {
 	workflowsDir := filepath.Join(repoRoot, ".github", "workflows")
 	if err := os.MkdirAll(workflowsDir, 0o755); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var created, refreshed []string
+	var declined []templateDowngrade
 	for _, tmpl := range templates.ListWorkflowTemplates() {
 		// `tmpl` includes the `.template` suffix; strip for the install name.
 		targetName := strings.TrimSuffix(tmpl, ".template")
@@ -419,13 +439,13 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 		existing, err := os.ReadFile(target)
 		if errors.Is(err, fs.ErrNotExist) {
 			if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			created = append(created, relativePath(repoRoot, target))
 			continue
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if !refresh {
 			continue
@@ -433,8 +453,28 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 		installedVer := extractTemplateVersion(string(existing))
 		bundledVer := extractTemplateVersion(body)
 		if installedVer != "" && bundledVer != "" && installedVer != bundledVer {
+			// ORDER, not inequality (#286). A released binary bundles OLDER
+			// markers than dev (`brew install logmind` → v1.2.0 → v4 while
+			// dev is on v11), so an inequality test makes every refresh run
+			// from a release walk a repo that is deliberately ahead of it
+			// BACKWARDS — silently, and reported as "Refreshed … to current
+			// template". Refuse that direction and report it instead.
+			//
+			// Unparseable on either side falls through to the old
+			// refresh-on-inequality behaviour: an unreadable marker must not
+			// become a way to pin a stale template forever.
+			installedN, iok := parseTemplateVersion(installedVer)
+			bundledN, bok := parseTemplateVersion(bundledVer)
+			if iok && bok && installedN > bundledN {
+				declined = append(declined, templateDowngrade{
+					Path:      relativePath(repoRoot, target),
+					Installed: installedVer,
+					Bundled:   bundledVer,
+				})
+				continue
+			}
 			if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			refreshed = append(refreshed, relativePath(repoRoot, target))
 			continue
@@ -442,7 +482,7 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 		// Body marker matches the bundled template — leave the installed
 		// file untouched (no pip-install pin to reconcile anymore).
 	}
-	return created, refreshed, nil
+	return created, refreshed, declined, nil
 }
 
 // renderWorkflowTemplate substitutes install-time placeholders. Currently:
@@ -463,6 +503,46 @@ func extractTemplateVersion(text string) string {
 		}
 	}
 	return ""
+}
+
+// parseTemplateVersion extracts the ORDERING key from a template marker:
+// "v11" → 11, "v9-pointer" → 9. Only the numeric generation orders — a
+// string compare gets this exactly backwards ("v11" < "v4" lexically),
+// which is the trap #286 fell into.
+//
+// Deliberately NOT version.SatisfiesMin: these markers are a single
+// monotonic integer, not a major.minor.patch triple, so that helper can't
+// parse them at all. The variant suffix (the "-pointer" flavour tag, and
+// the "-FAKE" markers the tests plant) is stripped before the compare,
+// mirroring parseVersionCore's suffix handling.
+//
+// Returns ok=false for anything that isn't a leading "v" followed by at
+// least one digit — callers fall back to the pre-#286 behaviour rather
+// than treating an unreadable marker as a reason to do nothing.
+func parseTemplateVersion(marker string) (int, bool) {
+	s := strings.TrimSpace(marker)
+	if !strings.HasPrefix(s, "v") {
+		return 0, false
+	}
+	s = strings.TrimPrefix(s, "v")
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		s = s[:i]
+	}
+	if s == "" {
+		return 0, false
+	}
+	// Reject anything Atoi would tolerate but a marker never contains
+	// (a sign, whitespace) — only bare digits order.
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // enabledAgentList resolves the agents flag. --all-agents wins;

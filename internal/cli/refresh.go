@@ -28,6 +28,8 @@
 package cli
 
 import (
+	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/thrillmade/logmind/internal/claudehook"
@@ -39,9 +41,10 @@ import (
 // refreshResult tallies what applyRefresh actually changed. It drives both
 // init's "✓/↻" lines and doctor --fix's quiet `ok` summary.
 type refreshResult struct {
-	WorkflowsCreated   []string // rel paths
-	WorkflowsRefreshed []string // rel paths
-	AgentsMDMsg        string   // "" when no change
+	WorkflowsCreated   []string            // rel paths
+	WorkflowsRefreshed []string            // rel paths
+	WorkflowsDeclined  []templateDowngrade // refused downgrades (#286) — MUST be reported
+	AgentsMDMsg        string              // "" when no change
 	GitattrChanged     bool
 	MergeDriverSet     bool     // a merge-driver git config key was (re)written
 	HooksRefreshed     []string // subset of {"post-merge","post-rewrite","commit-msg"}
@@ -75,9 +78,10 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 	}
 
 	if opts.githubActions {
-		created, refreshed, err := installWorkflowTemplates(cwd, true)
+		created, refreshed, declined, err := installWorkflowTemplates(cwd, true)
 		res.WorkflowsCreated = created
 		res.WorkflowsRefreshed = refreshed
+		res.WorkflowsDeclined = declined
 		note(err)
 	}
 
@@ -131,4 +135,21 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 	}
 
 	return res, firstErr
+}
+
+// reportTemplateDowngrades writes one stderr line per refused workflow
+// refresh. Called by BOTH refresh surfaces (init refresh mode, doctor
+// --fix) — the refusal is the whole point of #286, so it can never be
+// left to a caller's discretion.
+//
+// Shape follows SPEC §3.4's rule for the analogous fail-open case ("Failing
+// open MUST NOT be silent... MUST say so on stderr, naming what it looked
+// for and what it found"): name the file, both markers, and the direction.
+func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
+	for _, d := range declined {
+		fmt.Fprintf(stderr,
+			"note: %s left unchanged — installed template %s is NEWER than the %s this binary bundles; "+
+				"refusing to downgrade. Upgrade logmind to move it forward.\n",
+			d.Path, d.Installed, d.Bundled)
+	}
 }
