@@ -84,7 +84,7 @@ PR merge, CI appends a one-line pointer from the branch file into
 
 As of v2.0.0 there is exactly one timeline assembly model:
 **main-canonical**, a deterministic, source-derived union of every
-decision file in the repo (SPEC §1.6.4). The older branch-divergent
+decision file in the repo (SPEC §3.3). The older branch-divergent
 full-regen renderer has been removed entirely — there is no config knob
 to opt back into it, and `logmind timeline --full` is accepted but
 ignored. The agent-authored branch headline, the per-log timeline marker,
@@ -107,8 +107,9 @@ orient in:
 - **`LOGMIND_QUIET`** — a single `ok key=value` line per command instead
   of human-formatted prose, for scripted/agent invocations.
 - All of the above are grounded in the shared thrillmade/protocol SPEC
-  §14 token-efficiency contract, so `context`/`repomap` output stays
-  consistent across the SkDD toolchain (logmind, clud-bug, agent-skills).
+  §2.7 (token discipline) and §2.8 (truncation leaves a mark), so
+  `context`/`repomap` output stays consistent across the SkDD toolchain
+  (logmind, clud-bug, agent-skills).
 
 ### 4. Reading and auditing decisions
 
@@ -148,27 +149,52 @@ auto-fix in the `check-doc-links` workflow).
 
 ### v2.0.0
 
+> **Section numbers below are from the LIVE SPEC.** SPEC 2.0 was a
+> from-scratch rewrite: it has Sections 0–8 and no appendices, and its
+> numbering does **not** map to the predecessor archived in the protocol
+> repository at `thrillmade/protocol:docs/SPEC-0.7.2-archive.md`. Never
+> reason from that document. Citations elsewhere in this repo that still
+> point at the old numbering are tracked in
+> [#280](https://github.com/thrillmade/logmind/issues/280).
+
 - **Shipped:** main-canonical is now the sole timeline model
   (branch-divergent removed, see Core Features above); the token-killer
   surface (`context`, `repomap` with ranking + `--map-tokens`,
-  `LOGMIND_QUIET`, protocol §14); `show`, `search`, `headline`, and
+  `LOGMIND_QUIET`, SPEC §2.7–2.8); `show`, `search`, `headline`, and
   `doctor --fix` are all live.
-- **Force-logmind-usage enforcement (SPEC §15):** the commit-msg hook
+- **Spec version + areas declaration (SPEC §7.3):** `logmind --version`
+  prints two lines — `logmind <semver> (spec <semver>)` then
+  `areas: orient, work, record, propagate, gates`, from the fixed
+  vocabulary. `review` and `versioning` are deliberately not claimed.
+  Landed on `dev` as `d79c430`; closes
+  [#264](https://github.com/thrillmade/logmind/issues/264) when `dev`
+  reaches `main`.
+- **Force-logmind-usage enforcement (SPEC §3.4):** the commit-msg hook
   (git layer) and the Claude Code PreToolUse hook (harness layer) block a
   substantive raw `git commit` that bypasses `logmind log`
   (`internal/guardcommit` + `internal/claudehook`); escape hatches are
   `[skip-logmind]`, `LOGMIND_ALLOW_GIT_COMMIT=1`, and
   `git.enforce_commits: false`. The git layer signals a block via exit
   65 and fails open on any other error.
-- **Canonical spec-file contract (SPEC §16):** an optional,
-  forward-looking spec document surfaced via `logmind context`, defined
-  SkDD-wide (shared across logmind, clud-bug, and agent-skills) rather
-  than logmind-specific. logmind's own spec is the pointer doc
+  **§3.4 requires the local hatches and forbids them at the CI gate** —
+  "the gate has no self-service escape, and MUST NOT be given one". The
+  shipped `check-decisions` template violates this today and the gate is
+  defeated four independent ways; see *Known gaps* below.
+- **Canonical spec-file contract (SPEC §1.5):** an optional,
+  forward-looking spec document that leads the cold-start payload,
+  defined SkDD-wide (shared across logmind, clud-bug, and agent-skills)
+  rather than logmind-specific. logmind's own spec is the pointer doc
   [docs/spec.md](spec.md) (`context.spec_file: docs/spec.md`).
-- **The pulse (SPEC §3.1.1):** `logmind log` prints stderr advisories
-  after every commit — stale components (per `logmind doctor`) and spec
-  staleness (the spec file hasn't been touched in 20+ decisions).
-  Advisory only; it never blocks the commit that already landed.
+- **The pulse — shipped, and NOT specified by SPEC 2.0:** `logmind log`
+  prints stderr advisories after every commit — stale components (per
+  `logmind doctor`) and spec staleness (the spec file hasn't been touched
+  in 20+ decisions). Advisory only; it never blocks the commit that
+  already landed. The predecessor document specified this as §3.1.1;
+  **the live SPEC does not mention a pulse at all** (zero occurrences of
+  the word). It is therefore a logmind-local feature with no current
+  normative backing, which is context for
+  [#268](https://github.com/thrillmade/logmind/issues/268) — widening it
+  means widening something the protocol does not yet describe.
 
 ## Technical Decisions
 
@@ -184,38 +210,49 @@ auto-fix in the `check-doc-links` workflow).
   section — never against Python archaeology
 
 ### Storage: markdown, no database
-- `docs/decisions.md` (recent, default branch) + `docs/decisions-branches/`
-  (in-flight feature work) + `docs/decisions-archive.md` (historical)
+- **Today:** `docs/decisions-branches/<branch>.md` (one file per branch) is
+  where every decision is written. `docs/decisions.md` (116 lines) and
+  `docs/decisions-archive.md` (9 lines) still exist in the tree but are
+  effectively dead — the newest entry in `decisions.md` is 2026-07-16 and
+  the archive holds zero entries, because a PR-required default branch
+  means nothing can commit to them directly.
+- **Changing:** [#265](https://github.com/thrillmade/logmind/issues/265)
+  removes that layout. Per SPEC §3.2 decision files are append-only and
+  **uncapped** — "a decision written is a decision kept" — so there is no
+  main log, no cap and no archive to port. `rotateDecisions` is deleted
+  outright rather than moved.
 - `docs/timeline.md` and `docs/file-structure.md` are derived, regenerated
   automatically — never hand-edited
 - Human-readable, AI-friendly, greppable, works offline, git provides full
   versioning
 
 ### Timeline: main-canonical only
-- One deterministic, source-derived assembly (SPEC §1.6.4) replaces the
-  old dual-mode (branch-divergent vs. main-canonical) design — less
-  config surface, no risk of the two renderers drifting apart
+- One deterministic, source-derived assembly (SPEC §3.3, "The history and
+  the map") replaces the old dual-mode (branch-divergent vs.
+  main-canonical) design — less config surface, no risk of the two
+  renderers drifting apart
+- **§3.3 also caps the rendered timeline at 50 entries**, with everything
+  older rendered to `docs/timeline-archive.md`. That file does not exist
+  in this repo yet. It is a split in a *rendering*, not a move: nothing
+  transfers between files, and both regenerate from the same sources every
+  time. It adds a **third** derived file that every restore path and
+  `check-derived-docs` must know about — both name only two today. Tracked
+  as part of [#265](https://github.com/thrillmade/logmind/issues/265).
 
-### Derived docs: regenerated at the integration point (v2.0.0), opt-in via `derived_docs.mode` (B6)
-- **Opt-in, not default.** The protocol owner HOLD-blocked the first cut of
-  this feature on two findings: the SPEC's claimed compatibility story was
-  fiction (nothing read `file_structure.auto_update`), and the L0/L1 layers
-  applied UNCONDITIONALLY — keyed only on branch name, no per-repo signal —
-  which silently changed a repo's behavior the moment any contributor
-  upgraded to a v2 binary. The fix is `derived_docs.mode` in
-  `.logmind/config.yml`:
-  ```yaml
-  derived_docs:
-    mode: driver              # "driver" (DEFAULT) | "integration-point"
-    min_binary: ""            # e.g. "2.0.0" — SHOULD be set when integration-point
-  ```
-  `mode` **defaults to `driver`** — the exact pre-v2.0.0 behavior (derived
-  docs regenerate on every branch; nothing restores or blocks anything). Only
-  `mode: integration-point` turns on the invariant below. Tolerant parse: an
-  empty/unrecognised `mode` value resolves to `driver` — never an error.
-  Replaces the earlier `git.pin_derived_docs bool` (unreleased at the time;
-  no back-compat needed).
-- **The invariant (integration-point mode only):** on a non-default branch,
+### Derived docs: regenerated at the integration point (v2.0.0) — unconditional
+
+> **Superseded design note.** An earlier cut of this feature was gated on a
+> per-repo `derived_docs.mode` (`driver` | `integration-point`) adoption
+> signal plus a `min_binary` version floor. **Both are gone.** The invariant
+> is now unconditional and there is no `derived_docs` key in
+> `internal/config`, none in this repo's own `.logmind/config.yml`, and no
+> caller of the version floor — `version.SatisfiesMin` survives only as an
+> unused general-purpose helper. Per the protocol owner: *do not rebuild the
+> `min_binary` floor — it shipped once and was deleted for cause.* The
+> surviving mentions of `derived_docs` in `internal/` are comments recording
+> the removal, not live config.
+
+- **The invariant:** on a non-default branch,
   `docs/timeline.md` and `docs/file-structure.md` stay byte-identical to
   their merge-base with the default branch. A branch never edits them; they
   are regenerated on the default branch after a merge. Because the branch
@@ -223,67 +260,99 @@ auto-fix in the `check-doc-links` workflow).
   silently — **a merge conflict on a derived doc is impossible by
   construction**, without relying on the merge driver (which is client-side
   and so cannot run on a server-side merge — the reason PRs still showed
-  conflicts before v2.0.0). In **driver mode** (the default) neither the
-  invariant nor any of the layers below apply — a driver-mode repo's derived
-  docs are free to diverge per branch, exactly like a pre-v2.0.0 install.
+  conflicts before v2.0.0).
 - **Why reverting a branch-side edit is always safe:** both files are pure
   functions of committed sources (`timeline.md` of the decision files,
   `file-structure.md` of the tracked tree). Discarding a branch-local edit
   cannot lose information, which is what licenses silent self-heal.
-- **Enforced in layers — ALL FOUR gated on `derived_docs.mode:
-  integration-point` (see `internal/cli/derived.go`'s `integrationPointMode`):**
-  - **L0** — the `post-merge`/`post-rewrite` git hooks. In integration-point
-    mode they regenerate on the default branch only, restoring nothing on a
-    non-default branch. In driver mode they regenerate on EVERY branch — the
-    pre-v2.0.0 behavior. Because the hook body is a standalone `sh` script
-    with no Go process to call `integrationPointMode` from, the check is
-    inlined as a `grep` against `.logmind/config.yml` — one canonical body
-    per hook either way, so `doctor`'s byte-comparison drift detection keeps
-    working unchanged.
+- **Restore target is HEAD, not the merge-base.** Preventive surfaces
+  (L0–L2) restore to the branch's own last commit; only the repair path
+  (`logmind warp`) may fetch the default branch. Restoring to the
+  merge-base on the commit path was ruled against and must not be
+  reintroduced.
+- **Enforced in four layers, all unconditional:**
+  - **L0** — the `post-merge`/`post-rewrite` git hooks regenerate on the
+    default branch only, restoring nothing on a non-default branch. The
+    hook body is a standalone `sh` script, so the branch check is inlined
+    rather than calling the Go binary — one canonical body per hook, so
+    `doctor`'s byte-comparison drift detection keeps working unchanged.
   - **L1** — `logmind log`'s `commitDecision` restores both files to HEAD
-    before staging, on a non-default branch — but only in integration-point
-    mode. Driver mode never restores here.
-  - **L2 (pin-preservation)** — closes the raw-`git commit` gap L0/L1 can't
-    reach (e.g. `logmind warp` deliberately writing the default branch's
-    newer copy into the working tree, then a plain `git commit -am` sweeping
-    it in). Two halves, both gated on integration-point mode: **L2a** is a
-    `pre-commit` git hook — pure git (`git checkout HEAD -- <path>`), no
-    `logmind` binary required, always exits 0 — INSTALLED only in
-    integration-point mode, that restores both files before the commit is
-    built. **L2b** is the SAME restore performed inside `logmind guard-commit
-    --layer harness` (the Claude Code PreToolUse guard), before its
-    allow/block decision — this is what additionally catches `git commit
-    --no-verify` (which skips every git hook, including L2a) and works in a
-    fresh clone (git hooks aren't cloned; `.claude/settings.json`, which
-    invokes guard-commit, is).
-  - **L3** — CI's `check-derived-docs` workflow. It first checks the repo's
-    own `.logmind/config.yml` for `mode: integration-point`; an unadopted
-    repo (driver, the default) PASSES with an explanatory message instead of
-    blocking. Only an adopted repo's PR gate blocks a branch that modified
-    either derived doc.
-  - **Honest caveat:** L0-L2 are local guardrails, not guarantees — every one
-    of them is bypassable (`--no-verify`, deleting or disabling a hook,
-    hand-editing `.claude/settings.json`, or simply using a tool that never
-    goes through git or Claude Code). **L3 (CI) is the only non-bypassable
-    enforcement** — it runs server-side on every PR regardless of what did
-    or didn't happen on the contributor's machine, and even it only applies
-    once a repo has declared integration-point mode.
-- **Version floor.** `min_binary` (e.g. `"2.0.0"`) SHOULD be set alongside
-  `mode: integration-point` — `logmind doctor` compares it against the
-  running binary (`internal/version.SatisfiesMin`, a small major.minor.patch
-  compare with no new dependency; a `X.Y.Z-dev` prerelease satisfies its own
-  `X.Y.Z` floor) and reports an advisory (never a hard failure) when the
-  binary is older, or when integration-point mode is declared without a
-  floor at all.
+    before staging, on a non-default branch.
+  - **L2 (pin-preservation)** — closes the raw-`git commit` gap L0/L1
+    can't reach (e.g. `logmind warp` deliberately writing the default
+    branch's newer copy into the working tree, then a plain
+    `git commit -am` sweeping it in). **L2a** is a `pre-commit` git hook —
+    pure git (`git checkout HEAD -- <path>`), no `logmind` binary
+    required, always exits 0 — that restores both files before the commit
+    is built. **L2b** is the SAME restore performed inside
+    `logmind guard-commit --layer harness` (the Claude Code PreToolUse
+    guard), before its allow/block decision — this is what additionally
+    catches `git commit --no-verify` (which skips every git hook,
+    including L2a) and works in a fresh clone (git hooks aren't cloned;
+    `.claude/settings.json`, which invokes guard-commit, is).
+  - **L3** — CI's `check-derived-docs` job. It takes **no checkout at
+    all**: it reads only the PR's file list via `gh pr diff --name-only`
+    and fails if either derived doc appears. Staying checkout-free is
+    deliberate — per SPEC §6.3 a gate must not be satisfiable by the
+    change it judges, and with no checkout there is nothing in the job for
+    a PR to influence about its own gate.
+  - **Honest caveat:** L0–L2 are local guardrails, not guarantees — every
+    one of them is bypassable (`--no-verify`, deleting or disabling a
+    hook, hand-editing `.claude/settings.json`, or simply using a tool
+    that never goes through git or Claude Code). **L3 (CI) is the only
+    non-bypassable enforcement** — it runs server-side on every PR
+    regardless of what did or didn't happen on the contributor's machine.
 - **Staying current on a branch:** `logmind warp` refreshes the working copy
   from the default branch (read-only — it never commits, which would break the
   pin), `logmind context` renders the last-fetched default-branch copy, and the
-  pulse nudges when the default branch has advanced. These apply regardless of
-  mode.
-- **This repo's own adoption:** logmind dogfoods `derived_docs: {mode:
-  integration-point, min_binary: "2.0.0"}` in its own `.logmind/config.yml`.
+  pulse nudges when the default branch has advanced.
 - Design record: [derived-docs-on-main implementation plan](superpowers/plans/2026-07-17-derived-docs-on-main.md).
-  Normative backing: SPEC §0.3.2 integration-point regeneration mode.
+  Normative backing: SPEC §3.3 ("Only the default branch writes them. A
+  non-default branch MUST NOT modify any derived file — the history, its
+  archive, or the map. Each committed copy stays byte-identical to the
+  merge-base with the default branch.")
+
+## Known gaps — the enforcement surface is not yet what this document describes
+
+Verified against current source and against each consumer repository's
+*installed* copy, not against these templates.
+
+- **The `check-decisions` gate is defeated four independent ways**
+  ([#260](https://github.com/thrillmade/logmind/issues/260),
+  [#278](https://github.com/thrillmade/logmind/issues/278)): `*.md` sits in
+  the line-count exclusion list, so the threshold is never reached in a
+  markdown-heavy repo; the gate reads the live PR title for
+  `[skip-logmind]`, which SPEC §3.4 forbids outright; the decision test is a
+  path match (`git diff --name-only | grep`) rather than the §3.1 shape
+  check §3.4 requires, so one empty line clears it; and
+  `logmind-self-update.yml.template` titles its own pull requests with the
+  skip marker — the exact case §3.4 calls out. These must close together,
+  or the gate stays decorative.
+- **The fleet is running much older copies than this repo ships.** logmind
+  ships `check-decisions.yml.template` at `v4`. protocol, clud-bug,
+  clud-bug-app and agent-skills all run `v2`; reporulez runs an unversioned
+  copy predating the marker; skdd has no `check-decisions.yml` at all. All
+  five installed copies carry both the `*.md` exclusion and the skip-marker
+  read. Template versions are **per file** — `regen-timeline.yml.template`
+  is at `v11`, `logmind-self-update.yml.template` at `v10`,
+  `check-doc-links.yml.template` at `v8` — so "the fleet is on v4" is not a
+  single number. Tracked by
+  [#257](https://github.com/thrillmade/logmind/issues/257).
+- **`check-derived-docs` in the fleet is the pre-v11 shape**, which
+  regenerates from the branch's own sources and fails on the diff —
+  enforcing the opposite of §3.3.
+  [#277](https://github.com/thrillmade/logmind/issues/277) reports this;
+  logmind's own copy and its shipped `v11` template are already correct, so
+  it is a propagation problem carried by #257, not new code here.
+- **Hooks resolve their engine by bare name**
+  ([#270](https://github.com/thrillmade/logmind/issues/270)), so any PATH
+  skew silently disables the local gate. §3.4 requires fail-open, and that
+  is correct; §3.4 also requires that failing open **not be silent**, and
+  today it is.
+- **`file_structure.auto_update`** is still declared, defaulted, and written
+  into every generated config while being read by nothing
+  ([#251](https://github.com/thrillmade/logmind/issues/251)) — including
+  this repo's own `.logmind/config.yml`.
 
 ### Git as audit trail
 - Every decision is one commit; git history is the timeline's ground
