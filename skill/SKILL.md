@@ -52,9 +52,8 @@ file + its companion docs when you have unrelated WIP.
 When you are on a feature branch (anything other than the project's default
 branch), the entry is written to
 `docs/decisions-branches/<sanitized-branch>.md` rather than
-`docs/decisions.md`. On PR merge, a GitHub Action appends a one-line
-summary linking the PR + the per-branch file to `docs/decisions.md`. You do
-not need to manage this routing — `logmind log` does it automatically.
+`docs/decisions.md`. You do not need to manage this routing — `logmind
+log` does it automatically.
 
 ## Reading prior context
 
@@ -135,6 +134,11 @@ brew install thrillmade/tap/logmind   # or: curl -fsSL https://logmind.dev/insta
 logmind init                          # scaffolds docs/, AGENTS.md, GH Actions, hooks
 logmind doctor                        # confirm a clean install
 ```
+
+brew/curl installs the latest tagged release (v1.2.0), which lacks
+`context`, `show`, `search`, `headline`, and `guard-commit` (PreToolUse
+harness) enforcement — those verbs require building from source/the dev
+branch (`2.0.0-dev`).
 
 ## Don'ts
 

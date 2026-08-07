@@ -3,9 +3,10 @@
 logmind ships as a single self-contained binary. Pick the install method
 that matches your platform and preferences.
 
-> **Heads up:** v2.0.0 is the current release line (Go binary, main
-> branch). v0.6.x Python users — see the
-> [Deprecated: Python install](#deprecated-python-install) section.
+> **Heads up:** v1.2.0 is the latest tagged release (Go binary). Building
+> from `main`/source reports `2.0.0-dev` — that's the in-progress next
+> version, not something you can install yet. v0.6.x Python users — see
+> the [Deprecated: Python install](#deprecated-python-install) section.
 
 ## Homebrew (recommended on macOS)
 
@@ -52,10 +53,10 @@ Override defaults:
 curl -fsSL logmind.dev/install.sh | bash -s -- --prefix=/usr/local
 
 # Pin to a specific version (flag form)
-curl -fsSL logmind.dev/install.sh | bash -s -- --version=v2.0.0
+curl -fsSL logmind.dev/install.sh | bash -s -- --version=v1.2.0
 
 # Pin to a specific version (env form — equivalent, lower precedence than --version)
-LOGMIND_VERSION=v2.0.0 curl -fsSL logmind.dev/install.sh | bash
+LOGMIND_VERSION=v1.2.0 curl -fsSL logmind.dev/install.sh | bash
 ```
 
 Re-running the installer when the same version is already installed
@@ -118,7 +119,7 @@ Builds the latest tagged release into `$(go env GOPATH)/bin/logmind`.
 For a specific tag:
 
 ```bash
-go install github.com/thrillmade/logmind/cmd/logmind@v2.0.0
+go install github.com/thrillmade/logmind/cmd/logmind@v1.2.0
 ```
 
 Or clone + build:
@@ -157,15 +158,13 @@ target Linux.
 
 ```bash
 logmind --version
-# logmind 2.0.0 (spec 2.0.0)
-# areas: orient, work, record, propagate, gates
+# logmind 1.2.0 (spec 0.1.1)
 ```
 
-Both lines are the protocol contract (SPEC §7.3) — downstream tooling
-(clud-bug, tokenomics, agent-skills) reads the first to detect protocol
-skew and the second to learn which parts of the spec this binary
-implements. If either line doesn't appear or the format differs, your
-install is broken or running an older version.
+This line is the protocol contract (SPEC §7.3) — downstream tooling
+(clud-bug, tokenomics, agent-skills) reads it to detect protocol skew. If
+it doesn't appear or the format differs, your install is broken or
+running an older version.
 
 ## Deprecated: Python install
 

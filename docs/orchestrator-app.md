@@ -45,8 +45,8 @@ originate from a thrillmade-owned workflow.
 - **Steward service** — a standing service (not just workflow-minted
   tokens) running under this App identity. Contract details are drafted in
   [`thrillmade/protocol#39`](https://github.com/thrillmade/protocol/issues/39)
-  and SPEC §17 (draft — not yet merged into the canonical
-  `thrillmade/protocol` SPEC).
+  and tracked in SPEC §0.3's Planned list, "Unified install and the
+  steward — [skdd#6](https://github.com/thrillmade/skdd/issues/6)".
 
 Per the master plan at
 `/Users/ludlow/.claude/plans/ok-here-is-recent-distributed-chipmunk.md`,
@@ -56,7 +56,7 @@ spin up a machine-user account: PATs require periodic rotation and tie the
 release pipeline to one human's GitHub account, and machine-user accounts
 add real-account-maintenance overhead with no narrower audit story than an
 App. Tokens are 1-hour installation tokens minted at workflow time by the
-official `actions/create-github-app-token@v2` action — the only App-token
+official `actions/create-github-app-token@v3` action — the only App-token
 action compatible with the repo's `allowed_actions: selected` workflow
 allowlist.
 
@@ -348,13 +348,13 @@ steps — the env-var name stays unchanged for a minimal diff; the secret
 behind it is now an App token.
 
 ```yaml
-      # actions/create-github-app-token@v2 is the official action and the
+      # actions/create-github-app-token@v3 is the official action and the
       # only App-token action compatible with this repo's
       # `allowed_actions: selected` workflow allowlist (tibdex/github-app-token
       # is NOT permitted — verified-Marketplace and actions/* only).
       - name: Mint orchestrator App installation token
         id: app_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
           private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}

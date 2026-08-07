@@ -51,8 +51,7 @@ logmind log "Short summary" -r "why" -a "alt 1" -i "implication"
 
 Branch-aware: feature branches write to
 `docs/decisions-branches/<branch>.md`; the default branch writes to
-`docs/decisions.md`. The PR-merge GH Action then appends a one-line
-summary linking your PR.
+`docs/decisions.md`.
 
 ### Tests
 
