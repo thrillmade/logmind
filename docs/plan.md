@@ -1,4 +1,13 @@
-# logmind: Plan & Architecture
+# logmind: Architecture
+
+> **Sequencing lives in [roadmap.md](roadmap.md), not here.** This document is
+> the durable half — what logmind is, how the enforcement layers fit together,
+> and why the load-bearing calls were made. It changes yearly. The release
+> board changes weekly, and fusing the two is what let the combined document
+> describe a config gate for weeks after that gate was deleted.
+>
+> One owner per fact: if a date, a count, an issue number or an ordering appears
+> in both files, `roadmap.md` is right and this one is stale.
 
 ## Vision
 
