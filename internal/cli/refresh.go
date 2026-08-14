@@ -41,10 +41,11 @@ import (
 // refreshResult tallies what applyRefresh actually changed. It drives both
 // init's "✓/↻" lines and doctor --fix's quiet `ok` summary.
 type refreshResult struct {
-	WorkflowsCreated   []string            // rel paths
-	WorkflowsRefreshed []string            // rel paths
-	WorkflowsDeclined  []templateDowngrade // refused downgrades (#286) — MUST be reported
-	AgentsMDMsg        string              // "" when no change
+	WorkflowsCreated   []string                     // rel paths
+	WorkflowsRefreshed []string                     // rel paths
+	WorkflowsDeclined  []templateDowngrade          // refused downgrades (#286) — MUST be reported
+	AgentsMDMsg        string                       // "" when no change
+	AgentsMDDeclined   *inserter.AgentsBlockRefusal // refused block refresh (#267) — MUST be reported
 	GitattrChanged     bool
 	MergeDriverSet     bool     // a merge-driver git config key was (re)written
 	HooksRefreshed     []string // subset of {"post-merge","post-rewrite","commit-msg"}
@@ -87,9 +88,10 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 
 	// AGENTS.md marker block + .gitattributes block are repo-content, not
 	// git-state, so they run regardless of opts.git.
-	msg, err := inserter.EnsureAgentsMD(cwd)
+	msg, declined, err := inserter.EnsureAgentsMD(cwd)
 	if err == nil {
 		res.AgentsMDMsg = msg
+		res.AgentsMDDeclined = declined
 	}
 	note(err)
 
@@ -152,4 +154,40 @@ func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 				"refusing to downgrade. Upgrade logmind to move it forward.\n",
 			d.Path, d.Installed, d.Bundled)
 	}
+}
+
+// reportAgentsBlockRefusal writes the one stderr line for a refused
+// AGENTS.md marker-block refresh (#267). Same contract as
+// reportTemplateDowngrades above and the same §3.4 shape — every surface
+// that can hit the refusal calls this, so none of them can swallow it.
+//
+// Two messages, because the two conditions want different remedies:
+//
+//   - AHEAD — the block parses and orders after ours. The repo is running
+//     in front of this binary (a staggered fleet rollout, #257); the fix
+//     is to upgrade logmind, and the block is fine as it stands.
+//   - UNRECOGNISED — the id is absent or unreadable, so there is no
+//     flavour to preserve and no generation to compare. Upgrading may not
+//     help; a human has to look at the block.
+//
+// A no-op on nil so callers can call it unconditionally.
+func reportAgentsBlockRefusal(stderr io.Writer, d *inserter.AgentsBlockRefusal) {
+	if d == nil {
+		return
+	}
+	if d.Ahead {
+		fmt.Fprintf(stderr,
+			"note: %s logmind block left unchanged — installed block-version %s is NEWER than the %s this "+
+				"binary ships; refusing to downgrade. Upgrade logmind to move it forward.\n",
+			d.Path, d.Installed, d.Bundled)
+		return
+	}
+	found := d.Installed
+	if found == "" {
+		found = "none"
+	}
+	fmt.Fprintf(stderr,
+		"note: %s logmind block left unchanged — unrecognised block-version marker (found %s; this binary "+
+			"ships %s); refusing to guess which template it is.\n",
+		d.Path, found, d.Bundled)
 }

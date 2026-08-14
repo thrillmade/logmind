@@ -40,7 +40,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -179,8 +178,14 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	// The Python init runs insert_into_all_ai_files; we delegate to the
 	// EnsureAgentsMD path which writes the slim variant by default and
 	// CreateAgentFile for each enabled agent's stub.
-	if msg, err := inserter.EnsureAgentsMD(cwd); err == nil && msg != "" {
-		fmt.Fprintln(out, msg)
+	// A first-time init normally CREATES AGENTS.md, but a repo can already
+	// carry a block written by a newer binary (a partially-migrated fleet,
+	// #257) — so this surface reports the refusal too.
+	if msg, declined, err := inserter.EnsureAgentsMD(cwd); err == nil {
+		if msg != "" {
+			fmt.Fprintln(out, msg)
+		}
+		reportAgentsBlockRefusal(cmd.ErrOrStderr(), declined)
 	}
 	for _, agentName := range enabled {
 		filePath, err := inserter.CreateAgentFile(agentName, cwd)
@@ -389,6 +394,9 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 	if res.AgentsMDMsg != "" {
 		fmt.Fprintln(out, res.AgentsMDMsg)
 	}
+	// #267's analogue of the workflow refusal above: a block this binary
+	// can't move forward is silence on stdout, so stderr carries it.
+	reportAgentsBlockRefusal(cmd.ErrOrStderr(), res.AgentsMDDeclined)
 	if res.GitattrChanged {
 		fmt.Fprintln(out, "✓ Added logmind block to .gitattributes")
 	}
@@ -519,30 +527,12 @@ func extractTemplateVersion(text string) string {
 // Returns ok=false for anything that isn't a leading "v" followed by at
 // least one digit — callers fall back to the pre-#286 behaviour rather
 // than treating an unreadable marker as a reason to do nothing.
+//
+// Delegates to inserter.ParseMarkerGeneration so the workflow-template
+// guard (#286) and the AGENTS.md block guard (#267) order marker
+// generations by one rule rather than two copies of it.
 func parseTemplateVersion(marker string) (int, bool) {
-	s := strings.TrimSpace(marker)
-	if !strings.HasPrefix(s, "v") {
-		return 0, false
-	}
-	s = strings.TrimPrefix(s, "v")
-	if i := strings.IndexByte(s, '-'); i >= 0 {
-		s = s[:i]
-	}
-	if s == "" {
-		return 0, false
-	}
-	// Reject anything Atoi would tolerate but a marker never contains
-	// (a sign, whitespace) — only bare digits order.
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return 0, false
-		}
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
+	return inserter.ParseMarkerGeneration(marker)
 }
 
 // enabledAgentList resolves the agents flag. --all-agents wins;

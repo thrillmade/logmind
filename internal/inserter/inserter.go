@@ -28,9 +28,11 @@
 //     Drift is
 //     detected by comparing the marker bodies stripped (the Python
 //     code uses .strip() to be whitespace-tolerant; we mirror that).
-//     The matchingTemplate helper accepts every old and new marker
-//     so existing repos refresh into the new body without manual
-//     intervention.
+//     The planBlockRefresh helper reads the flavour and the generation
+//     OFF the installed marker and compares the generation against the
+//     bundled one, so an older marker refreshes forward while a newer
+//     one — written by a binary ahead of this one — is refused rather
+//     than overwritten (SPEC §1.1, issue #267).
 //
 // The inserter package is read-mostly: only the apply paths in
 // `agents update --apply`, `agents add <name>`, and `agents migrate`
@@ -45,6 +47,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/thrillmade/logmind/internal/agents"
@@ -348,56 +351,60 @@ func jsonAgentBody() string {
 //     block refreshes into the current full body, a slim repo into the
 //     current slim body — never a silent full↔slim flip).
 //   - Exists with markers and matching body → no-op (return "").
+//   - Exists with a version id this binary can't move forward (newer
+//     than the one it ships, or unreadable) → REFUSED: the file is left
+//     byte-for-byte alone and the refusal is returned for the caller to
+//     report (#267).
 //
-// Returns a status string when a write happened, or "" for no-op.
+// Returns a status string when a write happened, or "" for no-op, plus a
+// non-nil *AgentsBlockRefusal when the block was deliberately left alone.
 // The status strings match Python's three return values verbatim.
-func EnsureAgentsMD(repoRoot string) (string, error) {
+func EnsureAgentsMD(repoRoot string) (string, *AgentsBlockRefusal, error) {
 	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
-	template := agentsMDTemplate()
 
 	data, err := os.ReadFile(agentsPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		if err := os.WriteFile(agentsPath, []byte(template), 0o644); err != nil {
-			return "", err
+		if err := os.WriteFile(agentsPath, []byte(agentsMDTemplate()), 0o644); err != nil {
+			return "", nil, err
 		}
-		return "Created AGENTS.md (canonical agent instructions)", nil
+		return "Created AGENTS.md (canonical agent instructions)", nil, nil
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	content := string(data)
 	if !HasLogmindSection(content) {
 		if _, err := InsertLogmindSection(agentsPath); err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return "Added logmind section to existing AGENTS.md", nil
+		return "Added logmind section to existing AGENTS.md", nil, nil
 	}
 
 	installedBlock, iok := ExtractMarkerBlock(content)
 	if !iok {
-		return "", nil
+		return "", nil, nil
 	}
-	// Refresh AGAINST THE INSTALLED FLAVOUR, not an unconditional slim
-	// default: a repo that shipped the full block must refresh into the
-	// current full body, never silently flip full↔slim (that migration is
-	// an explicit init/migrate decision). This mirrors the version-guard
-	// in matchingTemplate / FindOutdatedMarkerBlocks and honours invariant
-	// #3 documented on agentsMDTemplate. When the installed marker is
-	// unrecognized, fall back to the slim default (pre-existing behaviour).
-	refreshTemplate := template
-	if mt := matchingTemplate(installedBlock); mt != "" {
-		refreshTemplate = mt
+	// Refresh AGAINST THE INSTALLED BLOCK'S OWN ID — flavour and
+	// generation both — never against this binary's default. planBlockRefresh
+	// is the single classifier FindOutdatedMarkerBlocks also uses, so the two
+	// cannot drift apart on what an unreadable or newer id means; they used
+	// to, and EnsureAgentsMD's half of that disagreement silently downgraded
+	// the repo's block (#267).
+	plan := planBlockRefresh(installedBlock)
+	if plan.Template == "" {
+		plan.Refusal.Path = agentsPath
+		return "", plan.Refusal, nil
 	}
-	templateBlock, tok := ExtractMarkerBlock(refreshTemplate)
+	templateBlock, tok := ExtractMarkerBlock(plan.Template)
 	if tok && strings.TrimSpace(installedBlock) != strings.TrimSpace(templateBlock) {
 		refreshed := ReplaceMarkerBlock(content, templateBlock)
 		if err := os.WriteFile(agentsPath, []byte(refreshed), 0o644); err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return "Refreshed AGENTS.md logmind block to current template", nil
+		return "Refreshed AGENTS.md logmind block to current template", nil, nil
 	}
-	return "", nil
+	return "", nil, nil
 }
 
 // agentsMDTemplate returns the canonical AGENTS.md body. Defaults to
@@ -413,10 +420,9 @@ func EnsureAgentsMD(repoRoot string) (string, error) {
 //  3. Repos that already shipped the full template stay on full: the
 //     refresh paths (EnsureAgentsMD and FindOutdatedMarkerBlocks) both
 //     select the template flavour matching the installed block-version
-//     marker via matchingTemplate, so a v5 / v6 / v7 / v8 full block
-//     refreshes into the current full body rather than silently
-//     flipping to slim.
-//     See matchingTemplate for the explicit flavour guard.
+//     marker via planBlockRefresh, so an older full block refreshes into
+//     the current full body rather than silently flipping to slim.
+//     See planBlockRefresh for the flavour + ordering guards.
 //
 // Callers that need the full variant (e.g., during `init --no-slim`)
 // can call templates.AgentsTemplate() directly.
@@ -455,81 +461,222 @@ type OutdatedMarkerEntry struct {
 // that shipped slim will compare slim-vs-slim only when the host has
 // skills.sh. We harden the Go side: only refresh when the template
 // flavour matches the installed flavour (same block-version marker).
-func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, error) {
+//
+// Returns the refusal alongside the entries when the installed id is one
+// this binary can't move forward — skipping was always the right ACTION
+// here, but doing it silently let `agents update` report a block that is
+// ahead of the binary as "current" (#267).
+func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, *AgentsBlockRefusal, error) {
 	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
 	data, err := os.ReadFile(agentsPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	content := string(data)
 	installed, iok := ExtractMarkerBlock(content)
 	if !iok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Choose the template variant matching the installed block-version
-	// marker. This is the guard that prevents silent full↔slim flips.
-	template := matchingTemplate(installed)
-	if template == "" {
-		return nil, nil
+	// marker. This is the guard that prevents silent full↔slim flips, and
+	// (since #267) silent downgrades of a newer block.
+	plan := planBlockRefresh(installed)
+	if plan.Template == "" {
+		plan.Refusal.Path = agentsPath
+		return nil, plan.Refusal, nil
 	}
-	fresh, tok := ExtractMarkerBlock(template)
+	fresh, tok := ExtractMarkerBlock(plan.Template)
 	if !tok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if strings.TrimSpace(installed) == strings.TrimSpace(fresh) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	return []OutdatedMarkerEntry{{
 		Path: agentsPath, OldBody: installed, NewBody: fresh,
-	}}, nil
+	}}, nil, nil
 }
 
-// matchingTemplate picks the template flavour that matches the
-// block-version marker in the installed body. Returns "" if the
-// installed body carries no recognized marker — in which case we
-// take no action (refusing to guess).
+// blockVersionRE captures the version token out of an AGENTS.md block
+// marker: `<!-- logmind-block-version: v9-pointer -->` → "v9-pointer".
+// Mirrors internal/doctor's logmindBlockVersionRe — doctor PROBES the
+// marker, inserter WRITES against it, so the pattern lives once per side
+// of that boundary.
+var blockVersionRE = regexp.MustCompile(`<!--\s*logmind-block-version:\s*(\S+)\s*-->`)
+
+// pointerSuffix is the flavour tag that distinguishes the slim
+// ("pointer") block from the full one. SPEC §1.1 forbids a silent
+// full↔slim flip, so this suffix — not a hardcoded list of generations —
+// is what decides which template body a block may refresh into.
+const pointerSuffix = "-pointer"
+
+// AgentsBlockRefusal records a REFUSED AGENTS.md marker-block refresh
+// (#267): the installed block carries a version id this binary cannot
+// move forward, so the file was left byte-for-byte alone.
 //
-// v0.6.16 bumped the full template v5→v6 and the slim variant
-// v7-pointer→v8-pointer. Both old + new markers map to the same
-// FLAVOUR (full vs slim) so existing repos with the older marker
-// get refreshed to the new body, while the explicit guard against
-// silent full↔slim flips (the substring of "-pointer") is preserved.
+// Returned by EnsureAgentsMD / FindOutdatedMarkerBlocks / MigrateToAgentsMD
+// and reported by every caller — SPEC §3.4's rule for the analogous
+// fail-open case ("Failing open MUST NOT be silent... MUST say so on
+// stderr, naming what it looked for and what it found") applies here too:
+// a repo whose block this binary declines to touch has to be told.
+type AgentsBlockRefusal struct {
+	Path      string // absolute path to AGENTS.md
+	Installed string // version token found in the block, e.g. "v10-pointer"; "" when the block carries no marker
+	Bundled   string // what this binary ships: the same-flavour marker, or both markers when the flavour is unreadable
+	Ahead     bool   // Installed parsed and orders AFTER Bundled — a downgrade, as opposed to an unreadable id
+}
+
+// blockPlan is the classification of one installed marker-block body:
+// the template flavour it may be refreshed into, or the refusal that says
+// why it may not be touched. Exactly one of the two fields is set.
+type blockPlan struct {
+	Template string              // flavour-matched template body; "" when the block must be left alone
+	Refusal  *AgentsBlockRefusal // non-nil iff Template == ""; Path is filled in by the caller that read the file
+}
+
+// planBlockRefresh decides what may happen to an installed AGENTS.md
+// marker block. Both refresh paths (EnsureAgentsMD and
+// FindOutdatedMarkerBlocks) route through it, so they cannot disagree
+// about what an unreadable id means — the disagreement between them WAS
+// issue #267.
 //
-// The Slice-2 branch-summary wave bumped the full template v6→v7,
-// carrying the branch-summary (headline) convention into the inline
-// procedure. v5 / v6 / v7 all map to the full flavour, so a repo that
-// shipped an older full block refreshes forward into the v7 body while
-// the full↔slim guard still holds.
+// Two guards, both load-bearing:
 //
-// The stale-binary-hardening / enforcement wave bumped the full template
-// v7→v8 and the slim variant v8-pointer→v9-pointer (enforcement prose:
-// the commit-msg + Claude Code PreToolUse hooks BLOCK, not warn). ORDERING
-// IS LOAD-BEARING here: every "-pointer" (slim) check MUST run before every
-// bare-version (full) check. "logmind-block-version: v8-pointer" contains
-// "logmind-block-version: v8" as a literal substring — the bare "v8"
-// marker is a PREFIX of "v8-pointer" — so if the bare-"v8" full-flavour
-// check ran first, a slim v8-pointer body would ALSO match it and get
-// mis-classified as full. That is exactly the full↔slim collision this
-// function's marker ordering exists to prevent; keeping every "-pointer"
-// variant checked first (regardless of how many marker generations pile
-// up) keeps the collision impossible by construction. v8-pointer /
-// v9-pointer map to slim; v5 / v6 / v7 / v8 map to full.
-func matchingTemplate(installedBody string) string {
-	if strings.Contains(installedBody, "logmind-block-version: v7-pointer") ||
-		strings.Contains(installedBody, "logmind-block-version: v8-pointer") ||
-		strings.Contains(installedBody, "logmind-block-version: v9-pointer") {
-		return templates.AgentsSlimTemplate()
+//  1. FLAVOUR (SPEC §1.1). The `-pointer` suffix separates the slim block
+//     from the full one; a repo that shipped full refreshes into the
+//     current full body, a slim repo into the current slim body, never a
+//     silent flip. The suffix is READ OFF the installed marker rather
+//     than enumerated, so a generation this binary has never heard of
+//     still classifies into the right flavour instead of falling into a
+//     default.
+//
+//  2. ORDER (SPEC §1.1: "a tool MUST NOT replace an installed block with
+//     an older id"). The generation compares NUMERICALLY against the
+//     marker this binary ships for that flavour, and a block that orders
+//     AFTER it is refused. This used to be membership in a hardcoded
+//     {v5,v6,v7,v8,v7-pointer,v8-pointer,v9-pointer} set, which made
+//     every FUTURE generation "unrecognised" — and EnsureAgentsMD read
+//     unrecognised as "install the slim default", silently downgrading
+//     any repo a newer binary had moved forward (#267). Extending that
+//     set to v10, v11, ... would re-break at the next bump; ordering
+//     against the bundled marker cannot go stale, because the next
+//     generation is newer by arithmetic rather than by enumeration.
+//     Mixed binary versions is not an edge case during a fleet migration
+//     (#257) — it is the definition of one.
+//
+// An UNREADABLE id — absent, not `v<digits>`, or carrying a flavour
+// suffix this binary doesn't know — is refused as well: there is no
+// flavour to preserve and no generation to compare, and guessing "it's
+// probably slim" is precisely what #267 was.
+func planBlockRefresh(installedBody string) blockPlan {
+	found := ""
+	if m := blockVersionRE.FindStringSubmatch(installedBody); len(m) >= 2 {
+		found = m[1]
 	}
-	if strings.Contains(installedBody, "logmind-block-version: v5") ||
-		strings.Contains(installedBody, "logmind-block-version: v6") ||
-		strings.Contains(installedBody, "logmind-block-version: v7") ||
-		strings.Contains(installedBody, "logmind-block-version: v8") {
-		return templates.AgentsTemplate()
+	gen, suffix, ok := parseBlockMarker(found)
+	var template string
+	if ok {
+		switch suffix {
+		case "":
+			template = templates.AgentsTemplate()
+		case pointerSuffix:
+			template = templates.AgentsSlimTemplate()
+		}
+	}
+	if template == "" {
+		return blockPlan{Refusal: &AgentsBlockRefusal{
+			Installed: found,
+			Bundled:   bundledBlockMarkerList(),
+		}}
+	}
+	bundled := bundledBlockMarker(template)
+	bundledGen, bok := ParseMarkerGeneration(bundled)
+	if !bok {
+		// The template WE ship carries no readable marker — a build-time
+		// defect, not a repo state. Refuse rather than compare against
+		// nothing; the alternative is downgrading on a typo in our own body.
+		return blockPlan{Refusal: &AgentsBlockRefusal{
+			Installed: found,
+			Bundled:   bundledBlockMarkerList(),
+		}}
+	}
+	if gen > bundledGen {
+		return blockPlan{Refusal: &AgentsBlockRefusal{
+			Installed: found,
+			Bundled:   bundled,
+			Ahead:     true,
+		}}
+	}
+	return blockPlan{Template: template}
+}
+
+// bundledBlockMarker returns the version token carried by one of OUR
+// template bodies — the "what this binary knows" side of every compare.
+// Read from the body rather than restated as a constant, so a template
+// bump moves the guard with it.
+func bundledBlockMarker(templateBody string) string {
+	if m := blockVersionRE.FindStringSubmatch(templateBody); len(m) >= 2 {
+		return m[1]
 	}
 	return ""
+}
+
+// bundledBlockMarkerList names both bundled markers for the refusal
+// message when the installed id is unreadable and there's no single
+// flavour to compare against.
+func bundledBlockMarkerList() string {
+	return bundledBlockMarker(templates.AgentsTemplate()) + " (full) or " +
+		bundledBlockMarker(templates.AgentsSlimTemplate()) + " (slim)"
+}
+
+// ParseMarkerGeneration extracts the ORDERING key from a logmind version
+// marker token: "v11" → 11, "v9-pointer" → 9. Only the numeric generation
+// orders — a string compare gets this exactly backwards ("v11" < "v4"
+// lexically), which is the trap #286 fell into for workflow templates and
+// #267 sidestepped entirely by not comparing at all.
+//
+// Shared with internal/cli's workflow-template guard so the two artifacts
+// order by the same rule; the block path additionally needs the flavour
+// suffix, which parseBlockMarker returns.
+//
+// Returns ok=false for anything that isn't a leading "v" followed by at
+// least one digit.
+func ParseMarkerGeneration(marker string) (int, bool) {
+	n, _, ok := parseBlockMarker(marker)
+	return n, ok
+}
+
+// parseBlockMarker splits a marker token into its generation and its
+// flavour suffix: "v9-pointer" → (9, "-pointer", true), "v8" → (8, "",
+// true), "vNOPE" → (0, "", false).
+func parseBlockMarker(marker string) (int, string, bool) {
+	s := strings.TrimSpace(marker)
+	if !strings.HasPrefix(s, "v") {
+		return 0, "", false
+	}
+	s = strings.TrimPrefix(s, "v")
+	suffix := ""
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		suffix, s = s[i:], s[:i]
+	}
+	if s == "" {
+		return 0, "", false
+	}
+	// Reject anything Atoi would tolerate but a marker never contains
+	// (a sign, whitespace) — only bare digits order.
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, "", false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, "", false
+	}
+	return n, suffix, true
 }
 
 // OutdatedPinEntry records one stale workflow pin:
@@ -624,11 +771,14 @@ func UpdateWorkflowPin(content, newVersion string) (string, string) {
 // Returns a list of human-readable status messages — the caller
 // prints them to stdout. Returning a slice (rather than a stream)
 // matches Python's accumulator pattern; the migrate command renders
-// the slice line-by-line.
-func MigrateToAgentsMD(repoRoot string) ([]string, error) {
+// the slice line-by-line. The second return is EnsureAgentsMD's refusal
+// (#267): migrate still consolidates the per-agent files, but the caller
+// must say that AGENTS.md's own block was left alone.
+func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 	var messages []string
-	if _, err := EnsureAgentsMD(repoRoot); err != nil {
-		return nil, err
+	_, declined, err := EnsureAgentsMD(repoRoot)
+	if err != nil {
+		return nil, declined, err
 	}
 	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
 	var appendedBlocks []string
@@ -660,7 +810,7 @@ func MigrateToAgentsMD(repoRoot string) ([]string, error) {
 		}
 
 		if err := os.WriteFile(filePath, []byte(templates.Stub()), 0o644); err != nil {
-			return messages, err
+			return messages, declined, err
 		}
 		messages = append(messages,
 			fmt.Sprintf("✓ %s replaced with stub", filepath.Base(filePath)))
@@ -669,16 +819,16 @@ func MigrateToAgentsMD(repoRoot string) ([]string, error) {
 	if len(appendedBlocks) > 0 {
 		existing, err := os.ReadFile(agentsPath)
 		if err != nil {
-			return messages, err
+			return messages, declined, err
 		}
 		// Match Python: existing.rstrip() + "\n\n" + "\n".join(appended).
 		body := strings.TrimRight(string(existing), " \t\n\r") +
 			"\n\n" + strings.Join(appendedBlocks, "\n")
 		if err := os.WriteFile(agentsPath, []byte(body), 0o644); err != nil {
-			return messages, err
+			return messages, declined, err
 		}
 	}
-	return messages, nil
+	return messages, declined, nil
 }
 
 // fileExists returns true when path refers to an existing regular

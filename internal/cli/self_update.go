@@ -70,17 +70,26 @@ func runSelfUpdate(cmd *cobra.Command) error {
 	}
 
 	updated := false
+	blockRefused := false
 
-	if msg, err := inserter.EnsureAgentsMD(cwd); err == nil && msg != "" {
-		fmt.Fprintln(out, msg)
-		updated = true
+	if msg, declined, err := inserter.EnsureAgentsMD(cwd); err == nil {
+		if msg != "" {
+			fmt.Fprintln(out, msg)
+			updated = true
+		}
+		// self-update is the surface a stale binary is most likely to be
+		// run from, so it is the most likely to meet a block a newer one
+		// wrote. Say so rather than reporting "up to date" (#267).
+		reportAgentsBlockRefusal(cmd.ErrOrStderr(), declined)
+		blockRefused = declined != nil
 	}
 
 	// Refresh per-agent stubs by detecting drift and rewriting affected
 	// files. The inserter package's FindOutdatedMarkerBlocks +
 	// MigrateToAgentsMD pipeline already covers this; we call them here
-	// in best-effort mode.
-	if entries, err := inserter.FindOutdatedMarkerBlocks(cwd); err == nil {
+	// in best-effort mode. Its refusal is dropped deliberately: it can only
+	// concern the same AGENTS.md EnsureAgentsMD just reported on above.
+	if entries, _, err := inserter.FindOutdatedMarkerBlocks(cwd); err == nil {
 		for _, entry := range entries {
 			refreshed := inserter.ReplaceMarkerBlock(entry.OldBody, entry.NewBody)
 			if err := os.WriteFile(entry.Path, []byte(refreshed), 0o644); err == nil {
@@ -122,7 +131,14 @@ func runSelfUpdate(cmd *cobra.Command) error {
 	}
 
 	if !updated {
-		fmt.Fprintln(out, "✓ logmind templates are up to date.")
+		if blockRefused {
+			// "up to date" would contradict the note on stderr — this repo's
+			// block is one this binary can't move forward, not one it just
+			// verified (#267).
+			fmt.Fprintln(out, "! AGENTS.md logmind block left unchanged — see the note on stderr.")
+		} else {
+			fmt.Fprintln(out, "✓ logmind templates are up to date.")
+		}
 	}
 	fmt.Fprintln(out, "ok self-update applied")
 	return nil
