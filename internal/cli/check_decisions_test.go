@@ -463,3 +463,40 @@ func TestCheckDecisions_RangeMode_RefusesLocalAllowances(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckDecisions_RangeMode_RefusesThreshold pins the fourth
+// gate-clearer. Its sibling --no-fail refusal was tested; this one shipped
+// untested and an adversarial review caught the gap.
+//
+// SPEC §3.4 pins the gate's threshold to git.commit_line_threshold and
+// nothing else. --threshold is worse than --no-fail as an escape because
+// it does not look like one: `--threshold 999999` reads as configuration
+// rather than a bypass, so it is the version a reviewer waves through.
+func TestCheckDecisions_RangeMode_RefusesThreshold(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("--threshold is refused in range mode", func(t *testing.T) {
+		var out bytes.Buffer
+		err := runCheckDecisions(checkDecisionsOpts{
+			cwd: dir, base: "a", head: "b",
+			threshold: 999999, thresholdExplicit: true,
+		}, &out)
+		if err == nil {
+			t.Fatal("--threshold with --base/--head returned nil; it is a third thing clearing the gate")
+		}
+		if !strings.Contains(err.Error(), "--threshold") {
+			t.Errorf("error should name the refused flag, got %v", err)
+		}
+	})
+
+	t.Run("--threshold is still allowed locally", func(t *testing.T) {
+		var out bytes.Buffer
+		// Not a repo, so the local path returns its skip message rather
+		// than evaluating — enough to prove the flag is not refused.
+		if err := runCheckDecisions(checkDecisionsOpts{
+			cwd: dir, threshold: 999999, thresholdExplicit: true,
+		}, &out); err != nil {
+			t.Fatalf("--threshold alone must not be refused, got %v", err)
+		}
+	})
+}

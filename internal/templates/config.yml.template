@@ -17,7 +17,11 @@ git:
   # Block substantive commits that bypass `logmind log` (commit-msg + Claude
   # Code PreToolUse hooks). Set false to fall back to warn-only for this repo.
   enforce_commits: true
-  # Lines-changed threshold shared with `logmind check-decisions --threshold`.
+  # Lines-changed threshold. SPEC §3.4 makes this the ONE source for every
+  # enforcement point — the commit-msg hook, the harness guard, and the CI
+  # gate. `logmind check-decisions --threshold` overrides it locally, but is
+  # refused alongside `--base/--head`: the gate reads this file and nothing
+  # else, so a pull request cannot raise its own bar.
   commit_line_threshold: 20
 
 # Decision management

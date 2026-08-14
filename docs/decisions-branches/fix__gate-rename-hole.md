@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-14 17:57 - Pin the rename fix on git's real output, not on synthetic rows
+
+**Reasoning:** An adversarial panel found the fix's own test was worthless as a guard. It reverted numstatFlags to just --numstat — reproducing #287 verbatim — and the full suite stayed GREEN, because the test asserted on synthetic NumstatLine values and never invoked git. I confirmed it independently before fixing. That is the exact trap: a test on the helper you fixed passes its own mutation and still goes green when the bug ships again. The PR comment even said 'the first line of defence was removed once already' while shipping nothing that would notice a third time.
+
+**Alternatives considered:** Assert on more synthetic rows. Rejected — the bug is in what git EMITS, not in how we classify what we are handed, so no amount of hand-written rows can catch the flag going missing.
+
+**Implications:**
+- The new test drives a real git repository through a real rename and asserts the numstat output carries no ' => ' rendering. Mutation-verified in both directions: removing --no-renames now fails with 'numstat still carries a rename rendering (1 rows)', and removing the IsExcludedPath guard fails the consumer-side test. The source file has to be large enough to stay above git's ~50% rename-similarity threshold or the test passes vacuously, so it builds 400 lines and appends 150 — a guard the test states and checks. Also fixes the panel's other findings: --threshold's range-mode refusal shipped untested and now has one, and both flag-combination guards move ABOVE the not-a-repo check, because an invalid flag combination is an argument error that should not depend on where the process is standing. The config template's comment claiming the threshold is 'shared with check-decisions --threshold' now says what §3.4 actually requires.
+
+---
+
