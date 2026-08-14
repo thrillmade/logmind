@@ -57,6 +57,25 @@ func All() []Agent {
 	return out
 }
 
+// FilePatterns returns the repo-root-relative path of every registered
+// agent's per-tool file — SPEC §1.2's table — in canonical insertion
+// order. Forward-slash, matching Agent.FilePattern. The returned slice
+// is freshly allocated.
+//
+// The consumer is internal/guardcommit, whose substantive-line count
+// excludes these files (SPEC §3.4: "a refresh rewrites these, carrying
+// no decision of its own"). It reads them from HERE rather than
+// re-listing the filenames so the exclusion set cannot drift from the
+// registry that writes them — SPEC §3.4: "Two lists that mean the same
+// thing are two lists that will disagree."
+func FilePatterns() []string {
+	out := make([]string, 0, len(registryOrder))
+	for _, name := range registryOrder {
+		out = append(out, registry[name].FilePattern)
+	}
+	return out
+}
+
 // Lookup returns the Agent for a registered name, plus an `ok` bool
 // matching the Python "if name in AGENT_REGISTRY" check. Unknown
 // names return the zero value + false; callers print the

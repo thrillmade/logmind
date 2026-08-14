@@ -255,6 +255,137 @@ func DiffNumstat(repoRoot string) []NumstatLine {
 	return parseNumstat(stdout.String())
 }
 
+// rangeSpec renders the three-dot range `check-decisions --base/--head`
+// evaluates: base...head is the diff of head against the MERGE BASE of
+// the two, which is what a pull request actually proposes to add. A
+// two-dot range would also attribute everything that landed on base
+// since the branch forked, failing a PR for its neighbours' lines.
+func rangeSpec(base, head string) string { return base + "..." + head }
+
+// DiffRangeNames returns the file paths a base...head range touches
+// (`git diff --name-only base...head`).
+//
+// Unlike DiffCachedNames this reports an ERROR rather than degrading to
+// an empty slice. Its caller is the `check-decisions` gate, which is the
+// point that actually blocks a merge (SPEC §3.4) — a bad ref there must
+// fail loudly, because "git couldn't resolve the range" and "the range
+// changed nothing" are the same empty result and only one of them should
+// let a pull request through.
+func DiffRangeNames(repoRoot, base, head string) ([]string, error) {
+	out, err := runDiffRange(repoRoot, base, head, "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimRight(out, "\n")
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
+}
+
+// DiffRangeNumstat parses `git diff --numstat base...head` into typed
+// rows. Same parsing rules as DiffCachedNumstat, same loud-on-failure
+// contract as DiffRangeNames.
+//
+// The flags deliberately match DiffCachedNumstat's exactly (i.e. none
+// beyond --numstat): SPEC §3.4 drives every enforcement point from "one
+// shared evaluation," and a flag one surface passes and another doesn't
+// is that evaluation quietly becoming two.
+func DiffRangeNumstat(repoRoot, base, head string) ([]NumstatLine, error) {
+	out, err := runDiffRange(repoRoot, base, head, "--numstat")
+	if err != nil {
+		return nil, err
+	}
+	return parseNumstat(out), nil
+}
+
+// DiffCachedAddedLines returns the lines the staged diff ADDS to one
+// path, with git's leading "+" stripped. Nil on any failure, matching
+// its DiffCached* siblings.
+//
+// -U0 asks for no context lines, so every "+" line inside a hunk is
+// genuinely new content rather than an unchanged neighbour. Callers use
+// this to judge what a change WROTE to a file, not what the file
+// contains — SPEC §3.4: "A decision clears the gate by being written,
+// not by existing."
+func DiffCachedAddedLines(repoRoot, path string) []string {
+	cmd := exec.Command("git", "diff", "--cached", "-U0", "--", path)
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+	return parseAddedLines(stdout.String())
+}
+
+// DiffRangeAddedLines is DiffCachedAddedLines over a base...head range,
+// with DiffRangeNames' loud-on-failure contract.
+func DiffRangeAddedLines(repoRoot, base, head, path string) ([]string, error) {
+	out, err := runDiffRange(repoRoot, base, head, "-U0", "--", path)
+	if err != nil {
+		return nil, err
+	}
+	return parseAddedLines(out), nil
+}
+
+// runDiffRange runs `git diff <flags...> base...head` (with the range
+// inserted ahead of any pathspec the caller passed after "--") and
+// returns stdout. Shared by the three DiffRange* wrappers so the range
+// spelling and the error shape live in one place.
+func runDiffRange(repoRoot, base, head string, flags ...string) (string, error) {
+	args := []string{"diff"}
+	spec := rangeSpec(base, head)
+	inserted := false
+	for _, f := range flags {
+		if f == "--" && !inserted {
+			args = append(args, spec)
+			inserted = true
+		}
+		args = append(args, f)
+	}
+	if !inserted {
+		args = append(args, spec)
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", ErrGitNotFound
+		}
+		return "", &GitError{Op: "diff " + spec, Err: err, Stderr: stderr.String()}
+	}
+	return stdout.String(), nil
+}
+
+// parseAddedLines pulls the added-content lines out of a unified diff,
+// stripping the leading "+".
+//
+// It tracks hunk state rather than filtering on a "+++" prefix: a real
+// added line whose own content begins with "++" renders as "+++...", so
+// a prefix test would silently drop it. Only lines after a "@@" header
+// are content; a "diff --git" line starts the next file's header block
+// and ends the current one.
+func parseAddedLines(out string) []string {
+	var lines []string
+	inHunk := false
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			inHunk = false
+		case strings.HasPrefix(line, "@@ "):
+			inHunk = true
+		case inHunk && strings.HasPrefix(line, "+"):
+			lines = append(lines, strings.TrimPrefix(line, "+"))
+		}
+	}
+	return lines
+}
+
 // UntrackedFiles returns the repo-relative paths of every untracked
 // file (`git status --porcelain -z --untracked-files=all`, "??" rows).
 // `--untracked-files=all` expands untracked directories to their

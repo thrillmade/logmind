@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thrillmade/logmind/internal/agents"
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
@@ -416,5 +417,247 @@ func TestSubstantiveLines_SkipsDocsAndBinaryAndUnparseable(t *testing.T) {
 	want := 10 + 2 + 3 + 1
 	if got != want {
 		t.Fatalf("SubstantiveLines = %d; want %d", got, want)
+	}
+}
+
+// --- SPEC §3.4's exclusion table, one case per row --------------------
+//
+// "Four things are excluded from the count, and nothing else is."
+// Everything below is a regression PIN, not incidental coverage: each
+// row is a rule the SPEC states, and a change that flips one has changed
+// what the gate enforces.
+
+// TestIsExcludedPath_DocsTree pins exclusion 1 — "everything under
+// docs/", the decision record and the documents derived from it.
+func TestIsExcludedPath_DocsTree(t *testing.T) {
+	for _, p := range []string{
+		"docs/plan.md",
+		"docs/timeline.md",
+		"docs/decisions-branches/feature__x.md",
+		"docs/nested/deep/thing.go",
+	} {
+		if !IsExcludedPath(p) {
+			t.Errorf("IsExcludedPath(%q) = false; want true (SPEC §3.4: everything under docs/)", p)
+		}
+	}
+}
+
+// TestIsExcludedPath_InstructionAndPerToolFiles pins exclusion 2 —
+// AGENTS.md and the per-tool files of SPEC §1.2. The expected set is
+// read from the agents registry rather than retyped here, because a
+// second copy of the list is exactly the defect §3.4 warns about ("two
+// lists that mean the same thing are two lists that will disagree") and
+// a test that carries its own copy would pass while the two drifted.
+func TestIsExcludedPath_InstructionAndPerToolFiles(t *testing.T) {
+	if !IsExcludedPath("AGENTS.md") {
+		t.Errorf("IsExcludedPath(%q) = false; want true (SPEC §1.1 instruction file)", "AGENTS.md")
+	}
+	patterns := agents.FilePatterns()
+	if len(patterns) == 0 {
+		t.Fatal("agents.FilePatterns() is empty — the exclusion set has no source")
+	}
+	for _, p := range patterns {
+		if !IsExcludedPath(p) {
+			t.Errorf("IsExcludedPath(%q) = false; want true (SPEC §1.2 per-tool file)", p)
+		}
+	}
+}
+
+// TestIsExcludedPath_ToolchainConfig pins exclusion 3 — "the toolchain's
+// own configuration."
+func TestIsExcludedPath_ToolchainConfig(t *testing.T) {
+	for _, p := range []string{".logmind/config.yml", ".logmind/nested/whatever.yml"} {
+		if !IsExcludedPath(p) {
+			t.Errorf("IsExcludedPath(%q) = false; want true (SPEC §3.4: the toolchain's own configuration)", p)
+		}
+	}
+}
+
+// TestSubstantiveLines_BinaryRowsExcluded pins exclusion 4 — "any file
+// the forge reports as binary," which git's numstat marks with "-"
+// rather than a count. It is a numstat rule, not a path rule, so it
+// lives on SubstantiveLines and not on IsExcludedPath.
+func TestSubstantiveLines_BinaryRowsExcluded(t *testing.T) {
+	if IsExcludedPath("assets/logo.png") {
+		t.Error("IsExcludedPath(\"assets/logo.png\") = true; binary is a numstat rule, not a path rule")
+	}
+	rows := []gitcli.NumstatLine{{Added: "-", Removed: "-", Path: "assets/logo.png"}}
+	if got := SubstantiveLines(rows); got != 0 {
+		t.Fatalf("SubstantiveLines(binary row) = %d; want 0", got)
+	}
+}
+
+// TestSubstantiveLines_MarkdownOutsideDocsCounts is the load-bearing
+// negative of the table: markdown is NOT excluded for being markdown.
+//
+// SPEC §3.4: "A skill file counts. So does an agent definition. ...
+// Excluding markdown wholesale switches the rule off in the repositories
+// where writing *is* the work." The `*.md` arm the CI workflow carries
+// today is the bug this pins against.
+func TestSubstantiveLines_MarkdownOutsideDocsCounts(t *testing.T) {
+	rows := []gitcli.NumstatLine{
+		{Added: "40", Removed: "0", Path: ".claude/skills/logmind/SKILL.md"},
+		{Added: "30", Removed: "0", Path: ".claude/agents/reviewer.md"},
+		{Added: "20", Removed: "0", Path: "README.md"},
+		{Added: "10", Removed: "0", Path: ".github/PULL_REQUEST_TEMPLATE.md"},
+	}
+	for _, row := range rows {
+		if IsExcludedPath(row.Path) {
+			t.Errorf("IsExcludedPath(%q) = true; want false — markdown outside docs/ counts (SPEC §3.4)", row.Path)
+		}
+	}
+	if got, want := SubstantiveLines(rows), 100; got != want {
+		t.Fatalf("SubstantiveLines = %d; want %d", got, want)
+	}
+}
+
+// --- §3.4's well-formedness requirement on the gate -------------------
+
+// TestWellFormedDecisionAdded pins "a decision clears the gate by being
+// written, not by existing": title + timestamp + non-empty reasoning in
+// the lines the diff ADDED, and nothing less.
+func TestWellFormedDecisionAdded(t *testing.T) {
+	cases := []struct {
+		name  string
+		added []string
+		want  bool
+	}{
+		{
+			name: "complete entry",
+			added: []string{
+				"## 2026-08-07 14:30 - Share one evaluation",
+				"",
+				"**Reasoning:** Two lists that mean the same thing will disagree.",
+				"",
+				"---",
+			},
+			want: true,
+		},
+		{
+			// The shape §3.4 names outright: "a test that asks only
+			// whether the file was touched is passed by a single
+			// meaningless line."
+			name:  "single meaningless line",
+			added: []string{"."},
+			want:  false,
+		},
+		{
+			name:  "header only, no reasoning",
+			added: []string{"## 2026-08-07 14:30 - Untitled thought", "", "---"},
+			want:  false,
+		},
+		{
+			name:  "reasoning header with nothing under it",
+			added: []string{"## 2026-08-07 14:30 - Empty", "", "**Reasoning:**", "", "---"},
+			want:  false,
+		},
+		{
+			name:  "reasoning without a decision header",
+			added: []string{"**Reasoning:** orphaned prose with no entry above it"},
+			want:  false,
+		},
+		{
+			name:  "malformed timestamp",
+			added: []string{"## 2026-13-45 99:99 - Bad clock", "", "**Reasoning:** nope.", "", "---"},
+			want:  false,
+		},
+		{
+			name:  "no seconds allowed — §3.1 forbids them, so the header is not one",
+			added: []string{"## 2026-08-07 14:30:11 - Seconds", "", "**Reasoning:** nope.", "", "---"},
+			want:  false,
+		},
+		{
+			name:  "nothing added at all",
+			added: nil,
+			want:  false,
+		},
+		{
+			name: "reasoning wrapped onto the following line",
+			added: []string{
+				"## 2026-08-07 14:30 - Wrapped",
+				"",
+				"**Reasoning:**",
+				"the prose starts on the next line instead.",
+				"",
+				"---",
+			},
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WellFormedDecisionAdded(tc.added); got != tc.want {
+				t.Fatalf("WellFormedDecisionAdded(%q) = %v; want %v", tc.added, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHasReasoning_SectionEndsAtNextHeader pins the hole an adversarial
+// review found in PR #287: the body accumulator stopped only at a blank
+// line, so an entry whose next section header is NOT blank-separated had
+// that header's own text swallowed as the previous section's body —
+// making an empty **Reasoning:** read as non-empty. SPEC §3.1 defines
+// that shape as an empty section, and §3.4 rejects exactly this "single
+// meaningless line". One blank line was all that separated a caught case
+// from an uncaught one.
+func TestHasReasoning_SectionEndsAtNextHeader(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{
+			name: "empty reasoning, next header not blank-separated",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n**Alternatives considered:** none\n\n---\n",
+			want: false,
+		},
+		{
+			name: "empty reasoning, entry terminator immediately after",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n---\n",
+			want: false,
+		},
+		{
+			name: "real reasoning on the marker line",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:** because\n\n---\n",
+			want: true,
+		},
+		{
+			name: "real reasoning wrapped onto following lines",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\nit wrapped onto\nthe next line\n\n---\n",
+			want: true,
+		},
+		{
+			name: "wrapped reasoning still ends at an unseparated next header",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\nreal content\n**Implications:** x\n\n---\n",
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasReasoning(tc.raw); got != tc.want {
+				t.Errorf("hasReasoning() = %v, want %v\nraw:\n%s", got, tc.want, tc.raw)
+			}
+		})
+	}
+}
+
+// TestIsSectionHeader covers the shape test directly. It is deliberately
+// shape-based rather than a fixed list of known section names, because
+// SPEC §3.1 says a consumer "MUST NOT require a section order beyond the
+// title coming first" — a hand-written entry may carry a section this
+// build has never heard of.
+func TestIsSectionHeader(t *testing.T) {
+	yes := []string{"**Reasoning:**", "**Alternatives considered:** none", "**Anything At All:**"}
+	no := []string{"", "plain text", "**bold but no colon**", "*single star:*", "**unterminated:"}
+	for _, s := range yes {
+		if !isSectionHeader(s) {
+			t.Errorf("isSectionHeader(%q) = false, want true", s)
+		}
+	}
+	for _, s := range no {
+		if isSectionHeader(s) {
+			t.Errorf("isSectionHeader(%q) = true, want false", s)
+		}
 	}
 }

@@ -248,8 +248,26 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// flag, but warn so agents get the nudge. We don't error out:
 	// log_first_decision passes reasoning, and follow-up logs often
 	// only carry a summary in scripted use.
+	//
+	// The warning names the GATE, not just the lost value, because the
+	// consequence is now concrete: SPEC §3.4 requires `check-decisions`
+	// to reject an entry whose reasoning section is empty ("A decision
+	// clears the gate by being written, not by existing"). So a
+	// reasoning-less entry does not merely lose value — it fails to
+	// clear the merge gate for any change over the threshold, and the
+	// author finds out in CI rather than here.
+	//
+	// Deliberately still a warning and not an error. SPEC §3.1 says an
+	// entry "MUST carry a title and a timestamp, and SHOULD carry the
+	// reasoning", and states outright that "an entry of title plus `---`
+	// is well-formed" — so refusing to write one would over-implement
+	// the record format. §3.1 and §3.4 disagree about this; raised as
+	// thrillmade/protocol#93. Until that resolves, logmind writes what
+	// §3.1 permits and warns about what §3.4 will do to it.
 	if strings.TrimSpace(f.reasoning) == "" {
-		fmt.Fprintln(stderr, "Warning: -r/--reasoning is empty. Decision logs without reasoning lose most of their value.")
+		fmt.Fprintln(stderr, "Warning: -r/--reasoning is empty. Decision logs without reasoning lose most of their value,")
+		fmt.Fprintln(stderr, "         and the check-decisions gate rejects a reasoning-less entry (SPEC §3.4) — so this")
+		fmt.Fprintln(stderr, "         entry will NOT clear CI for a change above the line threshold.")
 	}
 
 	cfg, _ := config.Load(cwd)

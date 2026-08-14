@@ -31,6 +31,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
@@ -246,25 +248,179 @@ func IsDecisionFile(path string) bool {
 	return false
 }
 
-// SubstantiveLines sums added+removed lines across rows, applying the same
-// skip rules check-decisions has always used (moved verbatim from
-// internal/cli/check_decisions.go's runCheckDecisions loop):
+// reasoningMarker opens SPEC §3.1's reasoning section. §3.1 lets a
+// producer omit an empty section's header entirely, so a marker present
+// with nothing under it is malformed, not merely sparse.
+const reasoningMarker = "**Reasoning:**"
+
+// WellFormedDecisionAdded reports whether the lines a diff ADDED to a
+// decision file carry an entry well-formed enough to clear the
+// `check-decisions` gate.
 //
-//   - a row whose Path starts with "docs/" is skipped (documentation
-//     changes aren't the kind of decision this gate is watching for)
+// SPEC §3.4: "A decision clears the gate by being written, not by
+// existing. The gate MUST check that the added entry is well-formed under
+// §3.1 — a title, a timestamp, and a reasoning section that is not empty
+// — and MUST NOT be satisfied by the decision file merely appearing in
+// the diff. A test that asks only whether the file was touched is passed
+// by a single meaningless line."
+//
+// added is the diff's added lines with git's leading "+" already
+// stripped, in file order. Title and timestamp come free from
+// decisions.SplitRawBytes, which only opens an entry on a line matching
+// `## YYYY-MM-DD HH:MM - <title>` whose date/time actually parses — the
+// same boundary rule every other reader in this codebase uses. This
+// function adds §3.4's one extra requirement on top: non-empty reasoning.
+//
+// Note this is shape, not quality — §3.4 is explicit that "a determined
+// author can still write three plausible sentences that explain nothing,
+// and no gate can catch that." What it removes is the version that costs
+// nothing.
+func WellFormedDecisionAdded(added []string) bool {
+	_, entries := decisions.SplitRawBytes(strings.Join(added, "\n"))
+	for _, e := range entries {
+		if hasReasoning(e.Raw) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasReasoning reports whether raw carries a reasoningMarker section with
+// content under it. Content may sit on the marker's own line (what
+// `logmind log` writes) or on the lines that follow it up to the first
+// blank line (a hand-written entry that wrapped). A marker with neither
+// is an empty section and does not count.
+//
+// A section also ends at the NEXT section header, not only at a blank
+// line. §3.1's entry format separates sections with a blank line, but an
+// entry that omits it is still an entry a consumer "MUST treat ... as
+// absent rather than as a parse error" — and without this the following
+// header's own text is swallowed as the previous section's body, so
+//
+//	**Reasoning:**
+//	**Alternatives considered:** none
+//
+// reads as non-empty reasoning when §3.1 defines it as an empty section.
+// That is the "single meaningless line" §3.4 rejects, one blank line away
+// from being caught.
+func hasReasoning(raw string) bool {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), reasoningMarker) {
+			continue
+		}
+		body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), reasoningMarker))
+		for _, next := range lines[i+1:] {
+			trimmed := strings.TrimSpace(next)
+			if trimmed == "" || isSectionHeader(trimmed) || trimmed == entryTerminator {
+				break
+			}
+			body += trimmed
+		}
+		if body != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// entryTerminator is the `---` that ends an entry per SPEC §3.1 ("`---`
+// terminating the entry"). Reasoning cannot run past it.
+const entryTerminator = "---"
+
+// isSectionHeader reports whether a trimmed line opens a new §3.1 section
+// — a bolded label, e.g. `**Alternatives considered:**`. Deliberately
+// shape-based rather than a fixed list of the known section names: §3.1
+// says a consumer "MUST NOT require a section order", and a hand-written
+// entry may carry a section this build has never heard of. Anything that
+// opens a bold run and carries a colon terminates the previous section.
+func isSectionHeader(trimmed string) bool {
+	if !strings.HasPrefix(trimmed, "**") {
+		return false
+	}
+	rest := trimmed[2:]
+	end := strings.Index(rest, "**")
+	if end < 0 {
+		return false
+	}
+	return strings.Contains(rest[:end], ":")
+}
+
+// docsPrefix and configPrefix are the two directory exclusions of SPEC
+// §3.4's table: the decision record plus the documents derived from it,
+// and the toolchain's own configuration.
+const (
+	docsPrefix   = "docs/"
+	configPrefix = ".logmind/"
+)
+
+// instructionFile is SPEC §1.1's single instruction file, named in its
+// own right by §3.4's table alongside "the per-tool files of §1.2". The
+// §1.2 set is NOT listed here — it comes from agents.FilePatterns(), the
+// registry that writes those files (see excludedFiles).
+const instructionFile = "AGENTS.md"
+
+// excludedFiles is the exact-match half of §3.4's exclusion table:
+// AGENTS.md plus every per-tool file of §1.2, derived from the agents
+// registry so the two can't disagree. Codex's registry entry is also
+// "AGENTS.md" (§1.2 lists it as reading the instruction file directly),
+// so the two sources overlap by one — harmless for a set.
+var excludedFiles = func() map[string]bool {
+	set := map[string]bool{instructionFile: true}
+	for _, p := range agents.FilePatterns() {
+		set[p] = true
+	}
+	return set
+}()
+
+// IsExcludedPath reports whether a repo-root-relative path is excluded
+// from the substantive-line count by SPEC §3.4's table. Three of the four
+// exclusions are path rules:
+//
+//   - everything under "docs/" — the decision record and the documents
+//     derived from it
+//   - AGENTS.md and the per-tool files of §1.2 — "a refresh rewrites
+//     these, carrying no decision of its own"
+//   - ".logmind/", the toolchain's own configuration — same reason
+//
+// The fourth ("any file the forge reports as binary") is not a path rule
+// at all: it's git's numstat "-" marker, which SubstantiveLines skips
+// separately.
+//
+// §3.4 says "four things are excluded from the count, and NOTHING ELSE
+// IS." In particular markdown is NOT excluded merely for being markdown:
+// "A skill file counts. So does an agent definition. ... Excluding
+// markdown wholesale switches the rule off in the repositories where
+// writing *is* the work." Do not add a "*.md" arm here.
+func IsExcludedPath(path string) bool {
+	if strings.HasPrefix(path, docsPrefix) || strings.HasPrefix(path, configPrefix) {
+		return true
+	}
+	return excludedFiles[path]
+}
+
+// SubstantiveLines sums added+removed lines across rows, applying SPEC
+// §3.4's exclusion table:
+//
+//   - a row whose Path is excluded by IsExcludedPath is skipped
 //   - a row with Added == "-" is a binary file (git's numstat marker) and
-//     is skipped
+//     is skipped — §3.4's fourth exclusion, "a line count means nothing
+//     there"
 //   - a row that fails to parse as integers is silently swallowed
+//     (inherited from the Python original; not a SPEC rule)
 //
 // Taking a flat []gitcli.NumstatLine (rather than a repoRoot + diff mode)
 // is deliberate: it lets WorkingTreeUnion feed rows from three different
 // git commands (staged, unstaged-tracked, untracked) through the exact
 // same skip logic as StagedOnly's single source, with no risk of the two
-// modes' counting rules drifting apart.
+// modes' counting rules drifting apart. The `check-decisions` gate
+// (internal/cli/check_decisions.go) feeds it a base...head range through
+// the same function for the same reason — §3.4: "driven by one shared
+// evaluation so they cannot disagree."
 func SubstantiveLines(rows []gitcli.NumstatLine) int {
 	total := 0
 	for _, row := range rows {
-		if strings.HasPrefix(row.Path, "docs/") {
+		if IsExcludedPath(row.Path) {
 			continue
 		}
 		if row.Added == "-" {
