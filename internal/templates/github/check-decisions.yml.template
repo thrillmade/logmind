@@ -1,10 +1,34 @@
-# logmind-template-version: v4
+# logmind-template-version: v5
 name: logmind / check-decisions
 
-# Fail PRs that introduce >20 lines of non-docs code changes without
-# updating docs/decisions.md or a docs/decisions-branches/<branch>.md file.
-# Mirrors the local `logmind check-decisions` pre-commit hook but against
-# the PR diff. Installed by `logmind init`.
+# SPEC §6.2's `check-decisions` gate — the third interception point of
+# §3.4, and the one that actually blocks a merge. Installed by
+# `logmind init`.
+#
+# v5: this workflow no longer decides anything. It calls
+# `logmind check-decisions --base <base sha> --head <head sha>`, the same
+# verb (and the same evaluation) the commit-msg and harness hooks run
+# locally. §3.4: "Both interception points and the gate MUST use this one
+# list. Two lists that mean the same thing are two lists that will
+# disagree." v4's bash WAS the second list, and it had drifted five ways:
+#
+#   1. it excluded `*.md` wholesale — §3.4 forbids that outright:
+#      "Excluding markdown wholesale switches the rule off in the
+#      repositories where writing is the work." A skill file counts.
+#   2. it read the PR title for a `[skip-logmind]` override — §3.4: "The
+#      gate has no self-service escape, and MUST NOT be given one." The
+#      only route past is the ruleset bypass of §6.6, which belongs to
+#      people. The title read is gone, not relocated.
+#   3. it passed any PR whose diff merely TOUCHED a decision file — §3.4:
+#      a decision "clears the gate by being written, not by existing",
+#      and the gate "MUST NOT be satisfied by the decision file merely
+#      appearing in the diff." The verb checks §3.1 shape instead.
+#   4. it hardcoded the threshold at 20 and never read
+#      `git.commit_line_threshold`, so raising the key in config moved
+#      the local hooks and left the gate where it was.
+#   5. it carried its own copy of the exclusion list.
+#
+# All five die the same way: the bash stops deciding anything.
 
 on:
   pull_request:
@@ -12,93 +36,80 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read # fetch the live PR title (Enforce step) so a retitle+rerun honors [skip-logmind]
+  # `contents: read` and nothing else. v4 also took `pull-requests: read`,
+  # solely for the `gh pr view` title fetch behind the removed override;
+  # with that gone, no step here touches pull-request data through the API.
 
 jobs:
   check-decisions:
+    name: check-decisions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      # The WORKSPACE is the base ref, deliberately — never the PR's own
+      # content. §6.3: "Anything that decides whether a change may merge —
+      # the ruleset, a repository's configuration (§1.6), a gating
+      # workflow's own logic — MUST be read from the pull request's base
+      # ref. Never from the head ref, and never from a workspace populated
+      # with the pull request's content." The threshold this gate enforces
+      # is `git.commit_line_threshold` in .logmind/config.yml, so a default
+      # (merge-ref) checkout would let a PR raise its own threshold in the
+      # very diff being judged. The PR's content is read only as git
+      # objects, through the range passed to the verb below.
+      - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
 
-      - name: Compute diff vs base
-        id: diff
+      # The base checkout carries the base branch's history; the range also
+      # needs the PR's head commit, which for a fork PR sits on no branch
+      # of this repository. `refs/pull/N/head` reaches it either way. If
+      # this fetch fails the range is unresolvable and the job goes red —
+      # §6.5: a gate that cannot run says so, rather than exiting green.
+      # This leans on checkout's default `persist-credentials: true` for
+      # origin's auth header; turning that off above would break fork PRs
+      # here while same-repo PRs (whose head is already under refs/heads/*)
+      # kept passing, which is the worst way for it to break.
+      - name: Fetch the PR head commit
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/pull/${PR_NUMBER}/head:refs/remotes/pull/${PR_NUMBER}/head"
+
+      # A RELEASED binary from a pinned action — never one built from the
+      # checkout above. §6.3: "a gate is never satisfiable by the change it
+      # judges", and a pull request that can rebuild the binary judging it
+      # has rewritten its own gate: a one-line edit to the exclusion table
+      # would pass itself. Dependabot bumps this pin (see the
+      # `.github/dependabot.yml` block `logmind init` installs), so the gate
+      # tracks releases without any PR getting a say in which binary runs.
+      # `token:` is REQUIRED — composite actions can't default an input to
+      # `github.token`, and without it setup-logmind's release lookup is
+      # anonymous and 403s on shared runner IPs (setup-logmind#4).
+      #
+      # The release this resolves to MUST carry `check-decisions
+      # --base/--head`. An older binary fails the flag parse, which fails
+      # the job — red, not quietly green — but the failure is the gate's,
+      # not the PR's, so this template belongs downstream of that release.
+      - uses: thrillmade/setup-logmind@v1.0.0
+        with:
+          token: ${{ github.token }}
+
+      - name: Enforce the decision rule
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EVENT_TITLE: ${{ github.event.pull_request.title }}
-          GH_TOKEN: ${{ github.token }}
-          THRESHOLD: "20"
         run: |
           set -euo pipefail
-
-          # Count non-docs lines added+removed
-          total=0
-          while IFS=$'\t' read -r added removed path; do
-            [ -z "$path" ] && continue
-            # Skip docs/, the .logmind config, and the agent files — those
-            # are documentation surfaces, not the code logging should track.
-            case "$path" in
-              docs/*|.logmind/*|AGENTS.md|CLAUDE.md|.cursorrules|.windsurfrules|.continuerules|.clinerules|CONVENTIONS.md|.amazonq/*|.sourcegraph/*|.zed/*|.github/copilot-instructions.md|.github/*.md|*.md)
-                continue
-                ;;
-            esac
-            # Binary diffs render added/removed as "-"; skip them.
-            [ "$added" = "-" ] && continue
-            total=$((total + added + removed))
-            # --no-renames so a src→docs rename isn't double-counted as src.
-          done < <(git diff --numstat --no-renames "$BASE_SHA...$HEAD_SHA")
-
-          # Did the PR add a decision log update?
-          decision_touched=0
-          if git diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -qE '^docs/decisions(\.md|-branches/.+\.md)$'; then
-            decision_touched=1
+          # No --threshold: the verb reads git.commit_line_threshold from
+          # the base ref's .logmind/config.yml (default 20). Exactly two
+          # things clear this gate (§3.4) — the change carries a well-formed
+          # decision, or it falls under that threshold.
+          if logmind check-decisions --base "$BASE_SHA" --head "$HEAD_SHA"; then
+            exit 0
           fi
-
-          # [skip-logmind] is a NORMATIVE maintainer override (protocol SPEC
-          # §15.3 / Appendix A.2), not just a convenience. github.event.
-          # pull_request.title is frozen at trigger time, so re-running a
-          # failed check after a maintainer retitles the PR would still
-          # judge the STALE title — the override would silently not take
-          # effect (issue #212). Fetch the LIVE title instead. PR_NUMBER
-          # comes from the event too, but it IS stable across reruns (a PR
-          # keeps its number for life; only the title payload goes stale).
-          # This workflow only triggers on `pull_request`, so there's no
-          # non-PR event to guard against. Fail OPEN to the event payload
-          # title if the API call errors (rate limit, transient outage,
-          # etc.) — a `gh` hiccup must never crash this check.
-          live_title="$(gh pr view "$PR_NUMBER" --json title -q .title 2>/dev/null)" || live_title=""
-          if [ -z "$live_title" ]; then
-            live_title="$EVENT_TITLE"
-          fi
-          skip_logmind=false
-          case "$live_title" in
-            *"[skip-logmind]"*) skip_logmind=true ;;
-          esac
-
-          {
-            echo "total_lines=$total"
-            echo "decision_touched=$decision_touched"
-            echo "skip_logmind=$skip_logmind"
-          } >> "$GITHUB_OUTPUT"
-          echo "Non-docs lines changed: $total (threshold: $THRESHOLD)"
-          echo "Decision log touched: $decision_touched"
-          echo "skip-logmind override: $skip_logmind"
-
-      - name: Enforce
-        # Gate trips when the PR exceeds THRESHOLD non-docs lines without
-        # touching a decision log. `[skip-logmind]` in the PR title bypasses
-        # the gate for one-off overrides (handled by maintainers). Reads
-        # steps.diff.outputs.skip_logmind, resolved from the LIVE PR title
-        # above — NOT github.event.pull_request.title, which is frozen at
-        # trigger time and would miss a retitle+rerun (issue #212).
-        if: steps.diff.outputs.total_lines >= fromJSON(env.THRESHOLD) && steps.diff.outputs.decision_touched == '0' && steps.diff.outputs.skip_logmind != 'true'
-        env:
-          THRESHOLD: "20"
-        run: |
-          echo "::error::This PR changes ${{ steps.diff.outputs.total_lines }} lines of non-docs code without updating docs/decisions.md or docs/decisions-branches/<branch>.md."
-          echo "::error::Log a decision with: logmind log \"summary\" -r \"reasoning\" -a \"alternative\" -i \"implication\""
-          echo "::error::Or override on a one-off basis by adding [skip-logmind] to the PR title (handled by maintainers)."
+          echo "::error title=check-decisions failed::A substantive change must carry a decision (SPEC §3.4). The \`logmind check-decisions\` output above has the line count and the threshold it was judged against — or, if the range could not be resolved, the git error that stopped the gate running."
+          echo "::error::Log a decision, then push: logmind log \"summary\" -r \"reasoning\" -a \"alternative\" -i \"implication\" — it lands in docs/decisions-branches/<branch>.md. The entry must be well-formed: a title, a timestamp, and non-empty reasoning."
+          echo "::error::There is no PR-title override, by design. Exactly two things clear this gate: the change carries a decision, or it falls under git.commit_line_threshold."
           exit 1
