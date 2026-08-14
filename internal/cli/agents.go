@@ -312,18 +312,19 @@ Dry-run (default): reports which files would be updated.
 			if err != nil {
 				return err
 			}
-			return runAgentsUpdate(cwd, version.Version, doApply, cmd.OutOrStdout())
+			return runAgentsUpdate(cwd, version.Version, doApply, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&doApply, "apply", false, "Rewrite stale marker blocks in place. Default is dry-run.")
 	return cmd
 }
 
-func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout io.Writer) error {
-	outdated, err := inserter.FindOutdatedMarkerBlocks(cwd)
+func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io.Writer) error {
+	outdated, declined, err := inserter.FindOutdatedMarkerBlocks(cwd)
 	if err != nil {
 		return err
 	}
+	reportAgentsBlockRefusal(stderr, declined)
 	stalePins, err := inserter.FindOutdatedWorkflowPins(cwd, currentVersion)
 	if err != nil {
 		return err
@@ -344,6 +345,12 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout io.Writer)
 		}
 		if _, ok := inserter.ExtractMarkerBlock(string(data)); !ok {
 			fmt.Fprintln(stdout, "✓ AGENTS.md exists but has no logmind marker block. Run `logmind init` to install one (will preserve existing content above + below the markers).")
+			return nil
+		}
+		if declined != nil {
+			// A block this binary can't read or can't move forward is NOT
+			// "current" — claiming it is was the quiet half of #267.
+			fmt.Fprintln(stdout, "! AGENTS.md logmind block left unchanged — see the note on stderr.")
 			return nil
 		}
 		fmt.Fprintln(stdout, "✓ AGENTS.md logmind block is current (no update needed).")
@@ -427,18 +434,21 @@ func newAgentsMigrateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAgentsMigrate(cwd, noCommit, cmd.OutOrStdout())
+			return runAgentsMigrate(cwd, noCommit, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&noCommit, "no-commit", false, "Don't commit the migration changes")
 	return cmd
 }
 
-func runAgentsMigrate(cwd string, noCommit bool, stdout io.Writer) error {
-	messages, err := inserter.MigrateToAgentsMD(cwd)
+func runAgentsMigrate(cwd string, noCommit bool, stdout, stderr io.Writer) error {
+	messages, declined, err := inserter.MigrateToAgentsMD(cwd)
 	if err != nil {
 		return err
 	}
+	// Reported before the messages: migrate consolidates the per-agent
+	// files either way, but AGENTS.md's own block was left alone (#267).
+	reportAgentsBlockRefusal(stderr, declined)
 	if len(messages) == 0 {
 		fmt.Fprintln(stdout, "No agent files to migrate (already consolidated).")
 		return nil

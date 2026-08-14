@@ -109,10 +109,12 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return ErrSilent
 	}
 
-	// Refused workflow downgrades (#286) — printed BEFORE the --json branch
-	// below: this is a refusal the user must see on every surface, and
-	// stderr never pollutes the JSON document on stdout.
+	// Refused workflow downgrades (#286) and a refused AGENTS.md block
+	// refresh (#267) — printed BEFORE the --json branch below: these are
+	// refusals the user must see on every surface, and stderr never
+	// pollutes the JSON document on stdout.
 	reportTemplateDowngrades(cmd.ErrOrStderr(), res.WorkflowsDeclined)
+	reportAgentsBlockRefusal(cmd.ErrOrStderr(), res.AgentsMDDeclined)
 
 	// Backfill the §1.6.3 timeline marker into any markerless branch detail
 	// file (main-canonical only) — the deterministic structural half of the
