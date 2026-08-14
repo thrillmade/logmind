@@ -10,7 +10,18 @@
 # rebase/merge/cherry-pick in progress).
 #
 # Fails open when logmind isn't on PATH: a missing binary should never
-# block a commit.
+# block a commit. Fail-open is NOT silent though (issue #270): every
+# path that allows a commit without a decision from the engine prints a
+# one-line notice to stderr naming what was looked for, what was found,
+# and which logmind installed this hook. A gate that cannot report its
+# own absence gets trusted long after it stopped working.
+#
+# LOGMIND_HOOK_VERSION carries this hook's installed-by version to the
+# engine so it can complain about a major-version skew between the
+# binary that WROTE this hook and the one now RUNNING it. Deliberately
+# an env var, not a flag: an engine that doesn't know the variable
+# ignores it, whereas an engine that doesn't know a flag would error
+# out — turning a working gate into a skipped one.
 #
 # Stale-binary hardening: 65 is guard-commit's OWN distinctive block
 # signal (EX_DATAERR). Any other nonzero exit — including a STALE
@@ -36,17 +47,24 @@ MSG_FILE="$1"
 if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
     exit 0
 fi
-if command -v logmind >/dev/null 2>&1; then
-    logmind guard-commit --layer git-hook --msg-file "$MSG_FILE" &
-    __lm_pid=$!
-    ( sleep 10; kill "$__lm_pid" 2>/dev/null ) >/dev/null 2>&1 &
-    __lm_watcher=$!
-    wait "$__lm_pid" 2>/dev/null
-    rc=$?
-    kill "$__lm_watcher" 2>/dev/null
-    wait "$__lm_watcher" 2>/dev/null
-    if [ "$rc" -eq 65 ]; then
-        exit 1
-    fi
+__lm_want='2.0.0-dev'
+__lm_engine=$(command -v logmind 2>/dev/null || true)
+if [ -z "$__lm_engine" ]; then
+    printf 'logmind: commit gate NOT RUN — looked for `logmind` on PATH, found nothing (this hook was installed by logmind %s). Commit allowed.\n' "$__lm_want" >&2
+    exit 0
+fi
+LOGMIND_HOOK_VERSION="$__lm_want" logmind guard-commit --layer git-hook --msg-file "$MSG_FILE" &
+__lm_pid=$!
+( sleep 10; kill "$__lm_pid" 2>/dev/null ) >/dev/null 2>&1 &
+__lm_watcher=$!
+wait "$__lm_pid" 2>/dev/null
+rc=$?
+kill "$__lm_watcher" 2>/dev/null
+wait "$__lm_watcher" 2>/dev/null
+if [ "$rc" -eq 65 ]; then
+    exit 1
+fi
+if [ "$rc" -ne 0 ]; then
+    printf 'logmind: commit gate NOT RUN — %s could not run `guard-commit` (exit %s); this hook was installed by logmind %s. Commit allowed; run `logmind doctor`.\n' "$__lm_engine" "$rc" "$__lm_want" >&2
 fi
 exit 0

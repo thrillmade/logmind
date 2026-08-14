@@ -279,6 +279,45 @@ func BuildPostRewriteBody() string {
 // is always available. A missing binary fails open (exit 0) — logmind
 // not being installed should never block a commit.
 //
+// Loud fail-open + engine-skew handshake (issue #270, SPEC §3.4). Fail-open
+// is REQUIRED and unchanged — "a missing, stale or crashing engine MUST
+// allow the commit" — but §3.4 also says "Failing open MUST NOT be silent. A
+// hook that cannot run the engine it was installed for MUST say so on
+// stderr, naming what it looked for and what it found." This body used to
+// say nothing at all: a `logmind` on PATH that predates `guard-commit` (the
+// released v1.2.0 does) exits 1, fell through the rc!=65 path below, and the
+// commit landed with the gate silently off. Two changes close that:
+//
+//   - Every no-decision exit from this hook now prints a one-line stderr
+//     notice naming what it looked for (`logmind` on PATH, able to run
+//     `guard-commit`), what it found (nothing, or the resolved absolute path
+//     and its exit code), and which logmind version installed this hook. The
+//     exit code is still 0 in both cases.
+//   - The invocation carries LOGMIND_HOOK_VERSION — this hook's own
+//     installed-by version — so the engine can compare it against its own
+//     and complain on a MAJOR skew (§3.4: "An installer MUST make that skew
+//     visible ... checking the engine's version at run and complaining").
+//     See reportEngineSkew in internal/cli/guard_commit.go.
+//
+// Why an ENVIRONMENT VARIABLE and not a `--hook-version` flag: an engine
+// that doesn't recognise the variable ignores it, while an engine that
+// doesn't recognise a flag ERRORS OUT — which would turn "the gate ran
+// against a slightly older engine" into "the gate did not run" for exactly
+// the mixed-version fleet §3.4 says this matters most for. The handshake
+// must never be able to break a gate that was working.
+//
+// Why not pin the installing binary's absolute path (§3.4's OTHER offered
+// remedy): the hook body is byte-compared in two places — internal/doctor's
+// probeHook diffs the installed file against BuildCommitMsgBody(), and
+// testdata/commit-msg.golden pins the same bytes in CI. Both require the
+// body to be a pure function of internal/version.Version. A path resolved at
+// install time makes it a function of the installing machine's filesystem
+// instead, so every correctly-installed hook on a machine whose logmind
+// lives anywhere else would be reported as content drift, and no golden
+// could be checked in at all. A pinned path also breaks on a reinstall to a
+// different prefix and needs a PATH fallback to stay fail-open — which
+// reintroduces the bare-name binding it was meant to remove.
+//
 // Stale-binary hardening (CTO design amendment, post-PR2): this body used
 // to do `logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"; exit $?`
 // — i.e. relay ANY nonzero exit from `logmind` straight into the hook's own
@@ -318,7 +357,18 @@ func BuildCommitMsgBody() string {
 		"# rebase/merge/cherry-pick in progress).\n" +
 		"#\n" +
 		"# Fails open when logmind isn't on PATH: a missing binary should never\n" +
-		"# block a commit.\n" +
+		"# block a commit. Fail-open is NOT silent though (issue #270): every\n" +
+		"# path that allows a commit without a decision from the engine prints a\n" +
+		"# one-line notice to stderr naming what was looked for, what was found,\n" +
+		"# and which logmind installed this hook. A gate that cannot report its\n" +
+		"# own absence gets trusted long after it stopped working.\n" +
+		"#\n" +
+		"# LOGMIND_HOOK_VERSION carries this hook's installed-by version to the\n" +
+		"# engine so it can complain about a major-version skew between the\n" +
+		"# binary that WROTE this hook and the one now RUNNING it. Deliberately\n" +
+		"# an env var, not a flag: an engine that doesn't know the variable\n" +
+		"# ignores it, whereas an engine that doesn't know a flag would error\n" +
+		"# out — turning a working gate into a skipped one.\n" +
 		"#\n" +
 		"# Stale-binary hardening: 65 is guard-commit's OWN distinctive block\n" +
 		"# signal (EX_DATAERR). Any other nonzero exit — including a STALE\n" +
@@ -344,18 +394,25 @@ func BuildCommitMsgBody() string {
 		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then\n" +
 		"    exit 0\n" +
 		"fi\n" +
-		"if command -v logmind >/dev/null 2>&1; then\n" +
-		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\" &\n" +
-		"    __lm_pid=$!\n" +
-		"    ( sleep 10; kill \"$__lm_pid\" 2>/dev/null ) >/dev/null 2>&1 &\n" +
-		"    __lm_watcher=$!\n" +
-		"    wait \"$__lm_pid\" 2>/dev/null\n" +
-		"    rc=$?\n" +
-		"    kill \"$__lm_watcher\" 2>/dev/null\n" +
-		"    wait \"$__lm_watcher\" 2>/dev/null\n" +
-		"    if [ \"$rc\" -eq 65 ]; then\n" +
-		"        exit 1\n" +
-		"    fi\n" +
+		"__lm_want='" + hookVersion() + "'\n" +
+		"__lm_engine=$(command -v logmind 2>/dev/null || true)\n" +
+		"if [ -z \"$__lm_engine\" ]; then\n" +
+		"    printf 'logmind: commit gate NOT RUN — looked for `logmind` on PATH, found nothing (this hook was installed by logmind %s). Commit allowed.\\n' \"$__lm_want\" >&2\n" +
+		"    exit 0\n" +
+		"fi\n" +
+		"LOGMIND_HOOK_VERSION=\"$__lm_want\" logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\" &\n" +
+		"__lm_pid=$!\n" +
+		"( sleep 10; kill \"$__lm_pid\" 2>/dev/null ) >/dev/null 2>&1 &\n" +
+		"__lm_watcher=$!\n" +
+		"wait \"$__lm_pid\" 2>/dev/null\n" +
+		"rc=$?\n" +
+		"kill \"$__lm_watcher\" 2>/dev/null\n" +
+		"wait \"$__lm_watcher\" 2>/dev/null\n" +
+		"if [ \"$rc\" -eq 65 ]; then\n" +
+		"    exit 1\n" +
+		"fi\n" +
+		"if [ \"$rc\" -ne 0 ]; then\n" +
+		"    printf 'logmind: commit gate NOT RUN — %s could not run `guard-commit` (exit %s); this hook was installed by logmind %s. Commit allowed; run `logmind doctor`.\\n' \"$__lm_engine\" \"$rc\" \"$__lm_want\" >&2\n" +
 		"fi\n" +
 		"exit 0\n"
 }

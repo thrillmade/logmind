@@ -153,7 +153,80 @@ func TestCommitMsgHook_StaleBinaryOnPath_FailsOpen(t *testing.T) {
 					staleExitCode, err, out)
 			}
 			assertCommitCount(t, dir, binDir, 2)
+
+			// Issue #270 / SPEC §3.4: failing open must not be SILENT. The
+			// hook has to name what it looked for, what it found (the
+			// resolved engine path and its exit status), and which logmind
+			// installed it — otherwise a repository whose gate has been off
+			// for weeks looks exactly like one where every commit complied.
+			// The stale binary's own "unknown command" line does not count:
+			// it says nothing about the gate not having run.
+			for _, must := range []string{
+				"commit gate NOT RUN",
+				filepath.Join(staleDir, "logmind"),
+				fmt.Sprintf("exit %d", staleExitCode),
+				"installed by logmind " + hookVersion(),
+			} {
+				if !strings.Contains(out, must) {
+					t.Errorf("fail-open notice missing %q; git output was:\n%s", must, out)
+				}
+			}
 		})
+	}
+}
+
+// TestCommitMsgHook_NoEngineOnPath_FailsOpenLoudly is the other half of the
+// issue #270 regression: not a WRONG engine but NO engine. §3.4 requires the
+// commit to be allowed (exit 0) and requires the hook to say so, naming what
+// it looked for and what it found.
+//
+// Runs the installed hook script directly under an empty PATH rather than
+// through `git commit`. That is the hermetic way to express "nothing on PATH
+// answers to logmind" — filtering the host's real PATH would depend on where
+// this machine happens to keep git and logmind (often the same directory).
+// git contributes nothing to this path anyway: it runs the hook file and
+// takes its exit code, which is exactly what this asserts.
+func TestCommitMsgHook_NoEngineOnPath_FailsOpenLoudly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX sh hook body; not applicable on Windows")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallCommitMsg(dir); err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	msgFile := filepath.Join(dir, "COMMIT_EDITMSG")
+	if err := os.WriteFile(msgFile, []byte("substantive change, no decision log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("/bin/sh", filepath.Join(dir, ".git", "hooks", "commit-msg"), msgFile)
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH="} // nothing on PATH answers to `logmind`
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	// Fail OPEN — a missing engine must never block a commit.
+	if err != nil {
+		t.Fatalf("hook exited non-zero with no engine on PATH: %v\nstderr: %s", err, stderr.String())
+	}
+	// ...but loudly, and on stderr: stdout belongs to whatever is capturing
+	// git's output, and §3.4 keeps a gate's report about itself off it.
+	for _, must := range []string{
+		"commit gate NOT RUN",
+		"found nothing",
+		"installed by logmind " + hookVersion(),
+	} {
+		if !strings.Contains(stderr.String(), must) {
+			t.Errorf("stderr missing %q; got: %q", must, stderr.String())
+		}
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("hook wrote to stdout: %q; the notice belongs on stderr", stdout.String())
 	}
 }
 

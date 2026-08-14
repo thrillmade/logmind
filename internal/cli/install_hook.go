@@ -164,7 +164,17 @@ const preCommitMarker = "logmind check-decisions"
 //
 //   - Missing binary: the `command -v logmind` guard makes it a clean no-op
 //     (fall through to the end of the script → exit 0) instead of a
-//     `command not found` non-zero that would wrongly block the commit.
+//     `command not found` non-zero that would wrongly block the commit. As
+//     of issue #270 it is not a SILENT no-op: SPEC §3.4 requires a gate that
+//     fails open to say so on stderr, "naming what it looked for and what it
+//     found". This hook is opt-in — the user asked for it by running
+//     `logmind install-hook` — so it not running is exactly what they need
+//     told. Exit status is unchanged (still 0).
+//   - Stale binary: unlike the commit-msg hook, no skew handshake is needed
+//     here. This block PRESERVES check-decisions' exit code, so an engine
+//     that doesn't know the subcommand exits nonzero and BLOCKS — noisy and
+//     visible, never a silent allow. Missing is the only way this gate can
+//     disappear quietly, and that is the branch made loud below.
 //   - Normal completion: check-decisions' own exit code is PRESERVED —
 //     `exit 0` when clean/under-threshold, `exit 1` when it blocks an
 //     undocumented over-threshold change (its designed pre-commit behavior).
@@ -179,7 +189,9 @@ const preCommitMarker = "logmind check-decisions"
 const preCommitGuardedCall = "# logmind check-decisions — hang-guarded (issue #213): run under a\n" +
 	"# deadline so a wedged logmind binary can never stall `git commit`.\n" +
 	"# Fail OPEN (exit 0) on timeout/crash; preserve a real block exit code\n" +
-	"# on the normal path. A missing binary is a clean no-op.\n" +
+	"# on the normal path. A missing binary is a clean no-op — but not a\n" +
+	"# silent one (issue #270): a gate that cannot report its own absence\n" +
+	"# gets trusted long after it stopped working.\n" +
 	"if command -v logmind >/dev/null 2>&1; then\n" +
 	"    logmind check-decisions &\n" +
 	"    __lm_pid=$!\n" +
@@ -193,6 +205,8 @@ const preCommitGuardedCall = "# logmind check-decisions — hang-guarded (issue 
 	"        exit 0\n" +
 	"    fi\n" +
 	"    exit \"$__lm_rc\"\n" +
+	"else\n" +
+	"    printf 'logmind: check-decisions NOT RUN — looked for `logmind` on PATH, found nothing. Commit allowed.\\n' >&2\n" +
 	"fi\n"
 
 // ErrSilent is the cli-layer alias of clierr.ErrSilent. Backward-compat
