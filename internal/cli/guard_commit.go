@@ -34,6 +34,7 @@ import (
 	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/guardcommit"
+	"github.com/thrillmade/logmind/internal/version"
 )
 
 func newGuardCommitCmd() *cobra.Command {
@@ -413,6 +414,8 @@ func guardCommitGitHook(repoRootFlag, msgFile string, thresholdFlag int, thresho
 		return 0, nil // the repo off-ramp: git.enforce_commits: false
 	}
 
+	reportEngineSkew(stderr, os.Getenv(hookVersionEnv))
+
 	subject, err := firstLineOfFile(msgFile)
 	if err != nil {
 		return 0, err
@@ -430,6 +433,54 @@ func guardCommitGitHook(repoRootFlag, msgFile string, thresholdFlag int, thresho
 	}
 	fmt.Fprintln(stderr, d.Reason)
 	return exGitHookBlock, nil
+}
+
+// hookVersionEnv names the environment variable the commit-msg hook body
+// sets around its own `logmind guard-commit` invocation, carrying the
+// version of logmind that INSTALLED that hook (see
+// internal/hooks.BuildCommitMsgBody). It is the engine half of issue #270's
+// skew handshake: the hook resolves its engine by bare name off PATH, so the
+// binary answering need not be the one that wrote the hook, and SPEC §3.4
+// requires an installer to "make that skew visible".
+//
+// An env var rather than a flag, deliberately: an engine that predates the
+// handshake ignores an unknown variable and still runs the gate, whereas an
+// unknown FLAG would make cobra error out — converting "the gate ran against
+// an older engine" into "the gate did not run" across exactly the
+// mixed-version fleet the handshake exists for. The handshake must never be
+// able to break a gate that was working.
+const hookVersionEnv = "LOGMIND_HOOK_VERSION"
+
+// reportEngineSkew writes the §3.4 skew notice to stderr when the logmind
+// that installed the calling hook (hookVer) and the logmind now running as
+// its engine disagree on MAJOR version. Advisory only — it NEVER touches the
+// allow/block decision or the exit code, because a skewed engine has still
+// evaluated the change and its answer stands.
+//
+// Never routed through qout: like a block reason, this is a report about the
+// gate's own integrity, and §3.4 keeps those off stdout and out of reach of a
+// quiet flag. The caller only reaches this after the git.enforce_commits
+// off-ramp, so a repo that deliberately turned local enforcement off does not
+// get nagged about which binary would have enforced it.
+//
+// Major is the reporting boundary, not exact equality — see
+// version.SameMajor's doc comment for why (a per-patch notice would print on
+// every commit in every un-refreshed repo, and `logmind doctor` already
+// reports minor/patch hook staleness on demand).
+func reportEngineSkew(stderr io.Writer, hookVer string) {
+	if hookVer == "" || version.SameMajor(hookVer, version.Version) {
+		return
+	}
+	// os.Executable is what the hook actually resolved off PATH — "what it
+	// found", in §3.4's terms. Degrade to the bare name rather than dropping
+	// the notice if the platform can't answer.
+	engine, err := os.Executable()
+	if err != nil || engine == "" {
+		engine = "logmind"
+	}
+	fmt.Fprintf(stderr,
+		"logmind: commit gate ran a DIFFERENT logmind than the one that installed this hook — hook installed by logmind %s, engine answering PATH is logmind %s (%s). Enforcement may differ across that boundary; refresh with `logmind doctor --fix`.\n",
+		hookVer, version.Version, engine)
 }
 
 // exGitHookBlock is the git-hook layer's distinctive block exit code —

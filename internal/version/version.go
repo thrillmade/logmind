@@ -188,6 +188,42 @@ func SatisfiesMin(v, min string) bool {
 	return true // equal
 }
 
+// SameMajor reports whether a and b share a major version, using the same
+// tolerant parse as SatisfiesMin (leading "v" and any prerelease/build
+// suffix stripped before comparing).
+//
+// Added for the commit-msg hook's engine-skew handshake (issue #270, SPEC
+// §3.4: "An installer MUST make that skew visible"). The hook tells the
+// engine which logmind installed it via LOGMIND_HOOK_VERSION; the engine
+// compares that against its own Version and complains on stderr when the
+// two MAJORS disagree — see reportEngineSkew in internal/cli/guard_commit.go.
+//
+// Major, not exact equality, is the deliberate boundary. This repo bumps
+// the major for a contract change (the enforcement gate itself arrived in
+// 2.0.0; SpecVersion moves with it), so a major difference is the skew that
+// can actually change what the gate decides. Complaining on every patch
+// difference instead would print on every commit in every repo whose hooks
+// hadn't been refreshed since the last release — noise that trains a reader
+// to ignore the one message that matters. Minor/patch staleness is still
+// reported, on demand, by `logmind doctor`'s hook-drift probe.
+//
+// Unparseable input on either side returns true — the same fail-open stance
+// SatisfiesMin takes. A skew notice fired off a version string this helper
+// cannot read would be a false alarm, and the case that actually disables
+// the gate (an engine that cannot run `guard-commit` at all) is caught by
+// the hook body's own loud fail-open, not by this compare.
+func SameMajor(a, b string) bool {
+	ap, ok := parseVersionCore(a)
+	if !ok {
+		return true
+	}
+	bp, ok := parseVersionCore(b)
+	if !ok {
+		return true
+	}
+	return ap[0] == bp[0]
+}
+
 // parseVersionCore extracts the [major, minor, patch] integer triple from a
 // version string, stripping a leading "v" and any trailing
 // prerelease/build suffix (from the first '-' or '+' onward) first. Returns

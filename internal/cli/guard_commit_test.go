@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/version"
 )
 
 // writeGuardCommitConfig writes a minimal .logmind/config.yml under repo
@@ -490,6 +492,139 @@ func TestRunGuardCommit_GitHook_MissingMsgFileOnDisk_PropagatesRealError(t *test
 	}
 	if err == nil || err == ErrSilent {
 		t.Fatalf("err = %v; want a plain os.ReadFile error", err)
+	}
+}
+
+// --- the git-hook layer's engine-skew handshake (issue #270) --------------
+
+// The commit-msg hook resolves its engine by bare name off PATH, so the
+// binary that answers need not be the one that installed the hook. SPEC §3.4
+// requires an installer to "make that skew visible", offering two ways and
+// leaving the choice open: pin the engine resolved at install, or check the
+// engine's version at run and complain. logmind checks at run — the hook
+// hands its own installed-by version over in LOGMIND_HOOK_VERSION and the
+// engine compares it against its own.
+//
+// The comparison is on MAJOR version (see version.SameMajor for why), and it
+// is advisory in the strictest sense: it never moves the exit code, in
+// either direction.
+
+func TestRunGuardCommit_GitHook_ReportsMajorEngineSkew(t *testing.T) {
+	repo := initRepo(t)
+	stageLines(t, repo, "small.go", 5)
+	msgFile := writeMsgFile(t, repo, "a small change")
+	t.Setenv(hookVersionEnv, "1.2.0") // the hook was written by a 1.x logmind
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+		nil, &stdout, &stderr)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil — a skew notice must never change the decision", exitCode, err)
+	}
+	for _, must := range []string{"DIFFERENT logmind", "1.2.0", version.Version} {
+		if !strings.Contains(stderr.String(), must) {
+			t.Errorf("skew notice missing %q; stderr = %q", must, stderr.String())
+		}
+	}
+	// stdout carries guard-commit's own chatty allow line; the skew notice
+	// must not be anywhere near it.
+	if strings.Contains(stdout.String(), "DIFFERENT logmind") {
+		t.Errorf("skew notice leaked to stdout: %q", stdout.String())
+	}
+}
+
+// A skew notice must not be able to rescue — or to cause — a block. Pin both
+// halves against the same 1.x hook version.
+func TestRunGuardCommit_GitHook_SkewNoticeLeavesTheBlockIntact(t *testing.T) {
+	repo := initRepo(t)
+	stageLines(t, repo, "big.go", 25)
+	msgFile := writeMsgFile(t, repo, "a big change")
+	t.Setenv(hookVersionEnv, "1.2.0")
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+		nil, &stdout, &stderr)
+	if exitCode != 65 || err != nil {
+		t.Fatalf("exitCode=%d err=%v; want 65,nil (the block still stands under skew)", exitCode, err)
+	}
+	if !strings.Contains(stderr.String(), "DIFFERENT logmind") {
+		t.Errorf("stderr = %q; want the skew notice alongside the block reason", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "logmind log") {
+		t.Errorf("stderr = %q; want the block reason too", stderr.String())
+	}
+}
+
+// The quiet contract: §3.4 keeps a gate's reports about itself off stdout and
+// out of reach of a quiet flag, exactly like a block reason.
+func TestRunGuardCommit_GitHook_SkewNoticeSurvivesQuiet(t *testing.T) {
+	repo := initRepo(t)
+	stageLines(t, repo, "small.go", 5)
+	msgFile := writeMsgFile(t, repo, "a small change")
+	t.Setenv(hookVersionEnv, "1.2.0")
+
+	var stdout, stderr bytes.Buffer
+	if _, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, true,
+		nil, &stdout, &stderr); err != nil {
+		t.Fatalf("runGuardCommit: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "DIFFERENT logmind") {
+		t.Errorf("stderr = %q; the skew notice must not be suppressible by --quiet", stderr.String())
+	}
+}
+
+// The noise floor. A notice that fires on every commit in every repo whose
+// hooks predate the last release teaches its reader to ignore the one
+// message that matters, so only a MAJOR difference is reported — an
+// unset variable, a matching major, and a version string this binary cannot
+// parse all stay silent. Minor/patch hook staleness is still reported, on
+// demand, by `logmind doctor`'s hook-drift probe.
+func TestRunGuardCommit_GitHook_SkewNoticeStaysSilentWhenItShould(t *testing.T) {
+	sameMajor := "2.99.99"
+	if !version.SameMajor(sameMajor, version.Version) {
+		t.Fatalf("fixture is stale: %q is no longer the same major as %q", sameMajor, version.Version)
+	}
+	for name, hookVer := range map[string]string{
+		"unset":       "",
+		"same major":  sameMajor,
+		"unparseable": "not-a-version",
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := initRepo(t)
+			stageLines(t, repo, "small.go", 5)
+			msgFile := writeMsgFile(t, repo, "a small change")
+			t.Setenv(hookVersionEnv, hookVer)
+
+			var stdout, stderr bytes.Buffer
+			if _, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+				nil, &stdout, &stderr); err != nil {
+				t.Fatalf("runGuardCommit: %v", err)
+			}
+			if strings.Contains(stderr.String(), "DIFFERENT logmind") {
+				t.Errorf("skew notice fired for %s hook version %q; stderr = %q", name, hookVer, stderr.String())
+			}
+		})
+	}
+}
+
+// git.enforce_commits:false is the repo's own decision to run without the
+// local gate. It should not then be nagged about which binary would have
+// enforced it — the off-ramp returns before the notice.
+func TestRunGuardCommit_GitHook_NoSkewNoticeWhenEnforcementIsOff(t *testing.T) {
+	repo := initRepo(t)
+	writeGuardCommitConfig(t, repo, "git:\n  enforce_commits: false\n")
+	stageLines(t, repo, "big.go", 25)
+	msgFile := writeMsgFile(t, repo, "a big change")
+	t.Setenv(hookVersionEnv, "1.2.0")
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+		nil, &stdout, &stderr)
+	if exitCode != 0 || err != nil {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil (enforce_commits:false off-ramp)", exitCode, err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q; want silence when the repo has turned local enforcement off", stderr.String())
 	}
 }
 

@@ -83,6 +83,118 @@ func TestCommitMsgBody_DelegatesToGuardCommit(t *testing.T) {
 	}
 }
 
+// TestCommitMsgBody_FailsOpenLoudlyAndHandshakesVersion is the issue #270
+// guard. Fail-open itself is REQUIRED and pinned above; what this pins is
+// SPEC §3.4's other half — "Failing open MUST NOT be silent. A hook that
+// cannot run the engine it was installed for MUST say so on stderr, naming
+// what it looked for and what it found" — plus the run-time engine-version
+// check §3.4 requires an installer to make skew visible with.
+//
+// The defect it exists to catch: this body used to resolve its engine by
+// bare name and say nothing when that engine turned out not to know
+// `guard-commit` (the released v1.2.0 doesn't — it exits 1). The commit
+// landed, correctly, and the gate had silently ceased to exist.
+func TestCommitMsgBody_FailsOpenLoudlyAndHandshakesVersion(t *testing.T) {
+	body := BuildCommitMsgBody()
+
+	// The engine is RESOLVED, not merely probed: the resolved path is the
+	// "what it found" half of §3.4's naming requirement.
+	if !strings.Contains(body, `__lm_engine=$(command -v logmind 2>/dev/null || true)`) {
+		t.Errorf("commit-msg body must capture the resolved engine path in $__lm_engine")
+	}
+
+	// The hook's own installed-by version, and the handshake carrying it to
+	// the engine. An environment variable, NEVER a flag: an engine that
+	// predates the handshake ignores an unknown variable and still runs the
+	// gate, whereas an unknown flag makes cobra error out — which would turn
+	// "the gate ran against an older engine" into "the gate did not run" for
+	// exactly the mixed-version fleet §3.4 says this matters most for.
+	if !strings.Contains(body, "__lm_want='"+hookVersion()+"'\n") {
+		t.Errorf("commit-msg body must pin its installed-by version in $__lm_want")
+	}
+	if !strings.Contains(body, `LOGMIND_HOOK_VERSION="$__lm_want" logmind guard-commit --layer git-hook`) {
+		t.Errorf("commit-msg body must hand LOGMIND_HOOK_VERSION to the engine on the guard-commit invocation")
+	}
+	if strings.Contains(body, "--hook-version") {
+		t.Errorf("commit-msg body must not pass the hook version as a FLAG — an engine that doesn't know it would error out and skip the gate entirely")
+	}
+
+	// Both allow-without-a-decision paths announce themselves, on stderr,
+	// naming the version that installed this hook.
+	notices := 0
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "printf ") {
+			continue
+		}
+		notices++
+		if !strings.HasSuffix(trimmed, ">&2") {
+			t.Errorf("notice must go to stderr, never stdout: %q", trimmed)
+		}
+		if !strings.Contains(trimmed, "NOT RUN") {
+			t.Errorf("notice must say the gate did not run: %q", trimmed)
+		}
+		if !strings.Contains(trimmed, `"$__lm_want"`) {
+			t.Errorf("notice must name the logmind that installed this hook: %q", trimmed)
+		}
+	}
+	if notices != 2 {
+		t.Errorf("commit-msg body emits %d stderr notices; want 2 (no engine on PATH, and an engine that could not run guard-commit)", notices)
+	}
+
+	// The no-engine branch must be loud AND self-terminating: falling
+	// through into the guard-commit invocation with no engine would be a
+	// `command not found` on every commit.
+	noEngine := blockAfter(t, body, `if [ -z "$__lm_engine" ]; then`)
+	if !strings.Contains(noEngine, "printf ") || !strings.Contains(noEngine, "exit 0") {
+		t.Errorf("the no-engine branch must print a notice and exit 0; got:\n%s", noEngine)
+	}
+
+	// The could-not-run branch names what it found — the resolved path and
+	// the exit status the engine produced.
+	failedRun := blockAfter(t, body, `if [ "$rc" -ne 0 ]; then`)
+	for _, must := range []string{`"$__lm_engine"`, `"$rc"`} {
+		if !strings.Contains(failedRun, must) {
+			t.Errorf("the could-not-run notice must name %s; got:\n%s", must, failedRun)
+		}
+	}
+
+	// Fail-open is untouched: the ONLY `exit 1` STATEMENT in the body is
+	// still the rc==65 block, and it still sits under that exact guard.
+	// (Counted over statement lines, not the whole string — the comment
+	// header discusses a stale binary's own "exit 1" in prose.)
+	nonZeroExits := 0
+	for _, line := range strings.Split(body, "\n") {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "exit ") && t != "exit 0" {
+			nonZeroExits++
+		}
+	}
+	if nonZeroExits != 1 {
+		t.Errorf("commit-msg body has %d non-zero `exit` statements; want exactly 1 (the rc==65 block)", nonZeroExits)
+	}
+	if !strings.Contains(body, "if [ \"$rc\" -eq 65 ]; then\n    exit 1\n") {
+		t.Errorf("the sole `exit 1` must sit directly under the rc==65 guard")
+	}
+}
+
+// blockAfter returns the lines between `guard` and the `fi` that closes it,
+// so a test can assert about ONE branch of the hook body rather than about
+// the script as a whole. The hook bodies nest no `if` inside an `if`, so the
+// first following top-of-block `fi` is the closing one.
+func blockAfter(t *testing.T, body, guard string) string {
+	t.Helper()
+	i := strings.Index(body, guard)
+	if i < 0 {
+		t.Fatalf("body missing guard %q", guard)
+	}
+	rest := body[i+len(guard):]
+	j := strings.Index(rest, "\nfi\n")
+	if j < 0 {
+		t.Fatalf("guard %q is never closed by an `fi`", guard)
+	}
+	return rest[:j]
+}
+
 // TestPreCommitBody_MatchesGolden pins the L2a pre-commit hook body — the
 // derived-docs pin-preservation guardrail. No Python ancestor (this hook is
 // v2.0.0+/Go-only), same as commit-msg's golden: exists purely so a future

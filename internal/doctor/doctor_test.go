@@ -659,6 +659,72 @@ func revertClaudeHookMarker(t *testing.T, dir string) {
 	}
 }
 
+// --- probeCommitMsgHook (the §3.4 commit gate) ---------------------------
+
+// probeHook's whole drift signal rests on the hook body being a pure
+// function of internal/version.Version: it byte-compares the installed file
+// against hooks.BuildCommitMsgBody(). Issue #270 weighed pinning the
+// installing binary's absolute PATH into that body and rejected it for
+// exactly this reason — a body that varied by machine would make every
+// correctly-installed hook look like content drift. These two tests are the
+// pin on that reasoning: a hook this binary just wrote is CURRENT, and one
+// byte of hand-editing is STALE.
+
+func TestProbeCommitMsgHook_CurrentAfterInstall(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	if _, err := hooks.InstallCommitMsg(dir); err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	row := probeCommitMsgHook(dir)
+	if row.Drift != "current" {
+		t.Errorf("Drift = %q; want current — a correctly-installed hook must not be reported as drifted", row.Drift)
+	}
+	if row.Marker == nil || *row.Marker != version.Version {
+		t.Errorf("Marker = %v; want %v", row.Marker, version.Version)
+	}
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "OK" {
+		t.Errorf("Overall = %q; want OK", r.Overall)
+	}
+}
+
+// TestProbeCommitMsgHook_ContentDriftOnHandEdit hand-edits ONE line of the
+// installed hook — the fail-open branch, i.e. the line someone silencing the
+// gate would reach for — leaving the version marker untouched, so only the
+// byte-compare can catch it.
+func TestProbeCommitMsgHook_ContentDriftOnHandEdit(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	if _, err := hooks.InstallCommitMsg(dir); err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	path := filepath.Join(dir, ".git", "hooks", "commit-msg")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read commit-msg: %v", err)
+	}
+	edited := strings.Replace(string(data), `if [ "$rc" -eq 65 ]; then`, `if [ "$rc" -eq 66 ]; then`, 1)
+	if edited == string(data) {
+		t.Fatalf("fixture is stale: the rc==65 block guard is no longer in the installed body")
+	}
+	mustWrite(t, path, edited)
+
+	row := probeCommitMsgHook(dir)
+	if row.Drift != "stale" {
+		t.Errorf("Drift = %q; want stale — a hand-edited hook body must be detected", row.Drift)
+	}
+	if row.Marker == nil || !strings.Contains(*row.Marker, "content drift") {
+		t.Errorf("Marker = %v; want it to say content drift (the version marker is untouched)", row.Marker)
+	}
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "DRIFT" {
+		t.Errorf("Overall = %q; want DRIFT with a hand-edited commit-msg hook", r.Overall)
+	}
+}
+
 // --- probePreCommitHook (L2a / v2.0.0 derived-docs pin-preservation) -----
 
 // fakeGitDir plants a bare `.git/hooks/` directory under dir — enough for
