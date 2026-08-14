@@ -869,26 +869,62 @@ func TestClassifyMarker_OrderedNotEqual(t *testing.T) {
 	}
 }
 
-// TestClassifyLogmindDrift_AheadDoesNotFlipDrift pins the consequence: a
-// repository running templates NEWER than this binary is not "drifted".
-// It is the binary that is behind, and there is nothing for `--fix` to do
-// — so reporting DRIFT would send the operator to a command that
-// correctly refuses, leaving a red row they cannot clear.
+// TestRenderStatus_AheadRowNamesTheDirection pins the STRING the user
+// saw, not the helper behind it.
+//
+// An adversarial review found the first attempt at this test worthless:
+// it constructed `Drift: "ahead"` literally and asserted the roll-up did
+// not flip, so deleting the rendering branch entirely left the package
+// green while the row silently fell back to a bare "ahead" via
+// formatDrift's default. The reported symptom was the string
+// `STALE (latest: v4)` — inverted verdict, inverted label — so the string
+// is what has to be pinned.
+func TestRenderStatus_AheadRowNamesTheDirection(t *testing.T) {
+	bundled := "v5"
+	installed := "v99"
+	r := StatusReport{
+		Overall: "OK",
+		Tools: []ToolStatus{{
+			Name:  "logmind",
+			Drift: "ok",
+			Workflows: []WorkflowStatus{{
+				Name:          "check-decisions.yml",
+				Marker:        &installed,
+				BundledMarker: &bundled,
+				Drift:         "ahead",
+			}},
+		}},
+	}
+	body := RenderStatus(r)
+
+	if !strings.Contains(body, "ahead of this binary") {
+		t.Errorf("rendered row does not name the direction; got:\n%s", body)
+	}
+	if !strings.Contains(body, "bundles: v5") {
+		t.Errorf("rendered row does not name what this binary bundles; got:\n%s", body)
+	}
+	// The original defect: calling the OLDER marker "latest".
+	if strings.Contains(body, "latest: v5") {
+		t.Errorf("rendered row calls the older marker \"latest\" — the inverted label this fixes; got:\n%s", body)
+	}
+	if strings.Contains(body, "STALE") {
+		t.Errorf("an ahead row must not read STALE; got:\n%s", body)
+	}
+}
+
+// TestClassifyLogmindDrift_AheadDoesNotFlipDrift covers the roll-up.
+// Deliberately kept alongside the rendering test above rather than
+// instead of it: this one proves an ahead row does not send the operator
+// to `--fix`, which correctly refuses; that one proves the row says why.
 func TestClassifyLogmindDrift_AheadDoesNotFlipDrift(t *testing.T) {
 	ahead := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "ahead"}}
 	if got := classifyLogmindDrift(ahead); got == "stale" {
-		t.Errorf("an ahead workflow flipped the tool to stale; got %q, want anything but stale", got)
+		t.Errorf("an ahead workflow flipped the tool to stale; got %q", got)
 	}
-
-	// Control: a genuinely stale row must still flip it, or this change
-	// has simply disabled drift detection.
 	stale := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "stale"}}
 	if got := classifyLogmindDrift(stale); got != "stale" {
 		t.Errorf("a stale workflow must still flip the tool to stale; got %q", got)
 	}
-
-	// Control: ahead alongside a stale row must still report stale — the
-	// stale one is real work, and ahead must not mask it.
 	mixed := []WorkflowStatus{
 		{Name: "check-decisions.yml", Drift: "ahead"},
 		{Name: "regen-timeline.yml", Drift: "stale"},

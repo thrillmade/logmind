@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-14 18:04 - Give the version ordering one owner, and pin the string the user saw
+
+**Reasoning:** An adversarial panel found my doctor fix reintroduced the exact defect it was fixing. parseMarkerOrdinal was a SECOND copy of the ordering rule alongside cli.parseTemplateVersion, and they disagreed: init required a leading v, doctor did not and used bare Atoi. Since doctor's extractor is a non-whitespace match, a marker like '12' reached it — and the panel demonstrated doctor printing 'ahead of this binary' while doctor --fix then silently overwrote the file and destroyed the edit with no decline note. Doctor claimed protection it did not have. §3.4's own line applies to my fix as much as to the code it fixed: two lists that mean the same thing are two lists that will disagree.
+
+**Alternatives considered:** Make doctor's parser require the v prefix and leave both copies. Rejected — that fixes this instance and leaves the duplication, which is the defect class. #295 exported inserter.ParseMarkerGeneration and made cli delegate to it; doctor now delegates to the same function, so there is one owner and no third copy to drift.
+
+**Implications:**
+- The panel also found the ahead ROW was untested: deleting the rendering branch left the package green while the row fell back to a bare 'ahead' via formatDrift's default, and my TestClassifyLogmindDrift test was tautological because it constructed Drift:'ahead' literally. The reported symptom was the STRING 'STALE (latest: v4)' — inverted verdict, inverted label — so the string is now what is pinned, asserting it names the direction, names what the binary bundles, and does NOT call the older marker latest. Both mutations verified: deleting the rendering branch fails the new test; reverting to equality-only fails three ordering subtests. The second mutation initially reported zero failures because it left an unused import and never compiled — a mutation that does not build tests nothing, so it was redone.
+
+---
+

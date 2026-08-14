@@ -64,7 +64,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +72,7 @@ import (
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/timeline"
 	"github.com/thrillmade/logmind/internal/version"
@@ -529,34 +529,12 @@ func classifyMarker(marker, bundled *string) string {
 	// An unparseable marker on either side falls through to the old
 	// equality semantics: something differs and we cannot say which way,
 	// so "stale" is the honest answer and refreshing is safe.
-	mv, mok := parseMarkerOrdinal(*marker)
-	bv, bok := parseMarkerOrdinal(*bundled)
+	mv, mok := inserter.ParseMarkerGeneration(*marker)
+	bv, bok := inserter.ParseMarkerGeneration(*bundled)
 	if mok && bok && mv > bv {
 		return "ahead"
 	}
 	return "stale"
-}
-
-// parseMarkerOrdinal extracts the integer from a template marker of the
-// form `v<N>` or `v<N>-<suffix>` (e.g. `v11`, `v9-pointer`). Returns
-// ok=false for anything else.
-//
-// Deliberately NOT a string compare: "v11" sorts BEFORE "v4"
-// lexically, which is the trap that makes this class of bug look correct
-// in testing right up until a version reaches double digits.
-func parseMarkerOrdinal(s string) (int, bool) {
-	s = strings.TrimPrefix(s, "v")
-	if i := strings.IndexByte(s, '-'); i >= 0 {
-		s = s[:i]
-	}
-	if s == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
-		return 0, false
-	}
-	return n, true
 }
 
 func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
