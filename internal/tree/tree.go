@@ -375,13 +375,27 @@ func GenerateFileStructure(repoRoot string, maxDepth int) (string, error) {
 }
 
 // resolveRootLabel maps the config value to the literal root label.
-// Empty (default) → "" (RenderWithLabel falls back to the checkout basename,
-// byte-parity). "auto" → the git remote repo name, or "" when it can't be
-// resolved (shallow/fork CI, no origin) so it degrades to the basename. Any
-// other value is used verbatim.
+//
+// Empty (default, unconfigured) → the repository's actual name, derived
+// from git's shared common-dir (gitcli.CommonDirRepoName) rather than the
+// checkout directory's basename. In an ordinary top-level clone the two
+// are identical, so this is byte-parity-preserving there; the divergence
+// only shows up in a `git worktree` checkout, where the basename is
+// something like "agent-<id>" but the common-dir-derived name is still the
+// real repo. Falls back to "" (RenderWithLabel then uses the checkout
+// basename) when repoRoot isn't a git repo at all — a plain non-git
+// directory still works, no error.
+//
+// "auto" (explicit opt-in, pre-existing) → the git remote repo name, or ""
+// when it can't be resolved (shallow/fork CI, no origin) so it degrades to
+// the basename. Any other value is used verbatim — an explicit configured
+// label always wins over both derivations above.
 func resolveRootLabel(repoRoot, configured string) string {
 	if configured == "auto" {
 		return gitcli.RemoteRepoName(repoRoot)
+	}
+	if configured == "" {
+		return gitcli.CommonDirRepoName(repoRoot)
 	}
 	return configured
 }
