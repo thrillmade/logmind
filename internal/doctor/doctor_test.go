@@ -817,3 +817,83 @@ func TestProbePreCommitHook_StaleOnRevertedMarker(t *testing.T) {
 		t.Errorf("Overall = %q; want DRIFT with stale pre-commit marker", r.Overall)
 	}
 }
+
+// TestClassifyMarker_OrderedNotEqual pins the bug a retrospective panel
+// found in the combination of #289 and #291.
+//
+// #289 taught `installWorkflowTemplates` that template markers are ORDERED
+// and refused to move one backwards. It did not teach doctor, which still
+// compared for equality — so a repository AHEAD of the running binary was
+// reported "STALE (latest: <older marker>)", with both the verdict and the
+// "latest" label inverted. Worse, because #289's refusal is correct, the
+// row became permanently unclearable: doctor said stale, --fix refused,
+// and nothing the operator did could reconcile them.
+//
+// Two consumers of the same fact have to agree, or the tool contradicts
+// itself.
+func TestClassifyMarker_OrderedNotEqual(t *testing.T) {
+	s := func(v string) *string { return &v }
+	cases := []struct {
+		name            string
+		marker, bundled *string
+		want            string
+	}{
+		{"equal is current", s("v5"), s("v5"), "current"},
+		{"older installed is stale", s("v1"), s("v5"), "stale"},
+		{"newer installed is ahead, not stale", s("v99"), s("v5"), "ahead"},
+
+		// The lexical trap: "v11" sorts BEFORE "v4" as a string, so an
+		// equality-or-string-compare implementation looks correct on
+		// single digits and inverts the moment a version reaches two.
+		{"v11 vs v4 is ahead, not stale", s("v11"), s("v4"), "ahead"},
+		{"v4 vs v11 is stale", s("v4"), s("v11"), "stale"},
+
+		// Flavour suffixes must not defeat the parse.
+		{"pointer suffix, newer", s("v10-pointer"), s("v9-pointer"), "ahead"},
+		{"pointer suffix, older", s("v9-pointer"), s("v10-pointer"), "stale"},
+
+		// Unparseable falls back to the old semantics: something differs
+		// and we cannot say which way, so "stale" is the honest answer.
+		{"unparseable installed falls back to stale", s("vNEXT"), s("v5"), "stale"},
+		{"unparseable bundled falls back to stale", s("v5"), s("vNEXT"), "stale"},
+
+		{"no marker is markerless", nil, s("v5"), "markerless"},
+		{"no bundled is unknown", s("v5"), nil, "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyMarker(tc.marker, tc.bundled); got != tc.want {
+				t.Errorf("classifyMarker() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClassifyLogmindDrift_AheadDoesNotFlipDrift pins the consequence: a
+// repository running templates NEWER than this binary is not "drifted".
+// It is the binary that is behind, and there is nothing for `--fix` to do
+// — so reporting DRIFT would send the operator to a command that
+// correctly refuses, leaving a red row they cannot clear.
+func TestClassifyLogmindDrift_AheadDoesNotFlipDrift(t *testing.T) {
+	ahead := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "ahead"}}
+	if got := classifyLogmindDrift(ahead); got == "stale" {
+		t.Errorf("an ahead workflow flipped the tool to stale; got %q, want anything but stale", got)
+	}
+
+	// Control: a genuinely stale row must still flip it, or this change
+	// has simply disabled drift detection.
+	stale := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "stale"}}
+	if got := classifyLogmindDrift(stale); got != "stale" {
+		t.Errorf("a stale workflow must still flip the tool to stale; got %q", got)
+	}
+
+	// Control: ahead alongside a stale row must still report stale — the
+	// stale one is real work, and ahead must not mask it.
+	mixed := []WorkflowStatus{
+		{Name: "check-decisions.yml", Drift: "ahead"},
+		{Name: "regen-timeline.yml", Drift: "stale"},
+	}
+	if got := classifyLogmindDrift(mixed); got != "stale" {
+		t.Errorf("ahead masked a genuinely stale row; got %q, want stale", got)
+	}
+}

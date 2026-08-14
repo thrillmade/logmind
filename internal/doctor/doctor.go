@@ -64,6 +64,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -505,6 +506,16 @@ func readWorkflow(projectRoot, name string) (string, bool) {
 	return string(data), true
 }
 
+// classifyMarker compares an installed workflow's template marker against
+// the one this binary bundles.
+//
+// The comparison is ORDERED, not an equality test. #289 taught
+// installWorkflowTemplates to refuse a downgrade; teaching only the writer
+// and not the reader left doctor reporting a repository that is AHEAD of
+// this binary as "STALE (latest: <older>)" — a verdict and a label both
+// inverted — and, because --fix now correctly refuses to overwrite it, a
+// row that could never be cleared. The two consumers of the same fact have
+// to agree, or the tool contradicts itself.
 func classifyMarker(marker, bundled *string) string {
 	if marker == nil {
 		return "markerless"
@@ -515,7 +526,37 @@ func classifyMarker(marker, bundled *string) string {
 	if *marker == *bundled {
 		return "current"
 	}
+	// An unparseable marker on either side falls through to the old
+	// equality semantics: something differs and we cannot say which way,
+	// so "stale" is the honest answer and refreshing is safe.
+	mv, mok := parseMarkerOrdinal(*marker)
+	bv, bok := parseMarkerOrdinal(*bundled)
+	if mok && bok && mv > bv {
+		return "ahead"
+	}
 	return "stale"
+}
+
+// parseMarkerOrdinal extracts the integer from a template marker of the
+// form `v<N>` or `v<N>-<suffix>` (e.g. `v11`, `v9-pointer`). Returns
+// ok=false for anything else.
+//
+// Deliberately NOT a string compare: "v11" sorts BEFORE "v4"
+// lexically, which is the trap that makes this class of bug look correct
+// in testing right up until a version reaches double digits.
+func parseMarkerOrdinal(s string) (int, bool) {
+	s = strings.TrimPrefix(s, "v")
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		s = s[:i]
+	}
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
@@ -932,6 +973,13 @@ func RenderStatus(r StatusReport) string {
 			driftWord := formatDrift(wf.Drift)
 			if wf.Drift == "stale" && wf.BundledMarker != nil {
 				driftWord = fmt.Sprintf("STALE (latest: %s)", *wf.BundledMarker)
+			}
+			// "ahead" is not a problem to fix — it is this binary being
+			// behind the repository. Saying "latest" of the older marker
+			// would be false, and calling it stale would send the reader
+			// to `--fix`, which correctly refuses and leaves them stuck.
+			if wf.Drift == "ahead" && wf.BundledMarker != nil {
+				driftWord = fmt.Sprintf("ahead of this binary (bundles: %s) — upgrade logmind", *wf.BundledMarker)
 			}
 			lines = append(lines, fmt.Sprintf("  %-28s %-4s %s", wf.Name, marker, driftWord))
 		}
