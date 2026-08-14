@@ -268,7 +268,7 @@ type NumstatLine struct {
 // Returns an empty slice on git failure — check-decisions treats that
 // as "0 lines changed" rather than blowing up the pre-commit hook.
 func DiffCachedNumstat(repoRoot string) []NumstatLine {
-	cmd := exec.Command("git", "diff", "--cached", "--numstat")
+	cmd := exec.Command("git", append([]string{"diff", "--cached"}, numstatFlags...)...)
 	cmd.Dir = repoRoot
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -287,7 +287,7 @@ func DiffCachedNumstat(repoRoot string) []NumstatLine {
 // git commit` stages anything, so `--cached` alone would undercount a
 // change that is still sitting unstaged at evaluation time.
 func DiffNumstat(repoRoot string) []NumstatLine {
-	cmd := exec.Command("git", "diff", "--numstat")
+	cmd := exec.Command("git", append([]string{"diff"}, numstatFlags...)...)
 	cmd.Dir = repoRoot
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -326,16 +326,40 @@ func DiffRangeNames(repoRoot, base, head string) ([]string, error) {
 	return strings.Split(trimmed, "\n"), nil
 }
 
+// numstatFlags is the ONE flag list every substantive-line count runs
+// with. SPEC §3.4 drives all three enforcement points from "one shared
+// evaluation," so the flags live here rather than at each call site —
+// a flag one surface passes and another doesn't is that one evaluation
+// quietly becoming two.
+//
+// --no-renames is load-bearing, and its absence was a live gate hole.
+// With rename detection ON, git renders a cross-directory rename as a
+// SINGLE row whose path field is `old => new`:
+//
+//	150	0	docs/notes.md => src/payload.go
+//
+// guardcommit.IsExcludedPath prefix-matches that whole string, so the
+// row is excluded as `docs/...` and 550 lines of new Go counted zero —
+// the gate passed a change it exists to stop. --no-renames splits it
+// into a deletion under docs/ (correctly excluded) and an addition under
+// src/ (correctly counted).
+//
+// Deliberately NOT fixed by teaching IsExcludedPath to parse `old =>
+// new`: git has two rename renderings (that one, and the compact
+// `{docs => src}/sub/notes.md`), so a parser owes both plus whatever
+// git adds later. Not asking for renames at all has no such surface.
+var numstatFlags = []string{"--numstat", "--no-renames"}
+
 // DiffRangeNumstat parses `git diff --numstat base...head` into typed
 // rows. Same parsing rules as DiffCachedNumstat, same loud-on-failure
 // contract as DiffRangeNames.
 //
-// The flags deliberately match DiffCachedNumstat's exactly (i.e. none
-// beyond --numstat): SPEC §3.4 drives every enforcement point from "one
-// shared evaluation," and a flag one surface passes and another doesn't
-// is that evaluation quietly becoming two.
+// The flags deliberately match DiffCachedNumstat's exactly: SPEC §3.4
+// drives every enforcement point from "one shared evaluation," and a flag
+// one surface passes and another doesn't is that evaluation quietly
+// becoming two. See numstatFlags for why --no-renames is among them.
 func DiffRangeNumstat(repoRoot, base, head string) ([]NumstatLine, error) {
-	out, err := runDiffRange(repoRoot, base, head, "--numstat")
+	out, err := runDiffRange(repoRoot, base, head, numstatFlags...)
 	if err != nil {
 		return nil, err
 	}

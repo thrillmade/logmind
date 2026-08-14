@@ -142,6 +142,20 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 		return fmt.Errorf("--no-fail cannot be combined with --base/--head: SPEC §3.4 allows exactly two things to clear the gate — the change carries a decision, or it falls under the threshold")
 	}
 
+	// --threshold is the fourth, by exactly the same argument, and it is
+	// worse than --no-fail because it does not look like an escape:
+	// `--threshold 999999` reads as configuration. §3.4 pins the gate's
+	// threshold to `git.commit_line_threshold` and to nothing else, so in
+	// range mode the flag has no legitimate use — the repository already
+	// has a way to say what its threshold is, read from the base ref
+	// precisely so the change under judgement cannot forge it.
+	//
+	// Refused rather than ignored: silently discarding a flag someone
+	// passed deliberately is its own way of lying about what ran.
+	if rangeMode && opts.thresholdExplicit {
+		return fmt.Errorf("--threshold cannot be combined with --base/--head: SPEC §3.4 pins the gate's threshold to git.commit_line_threshold; set it in the repository's .logmind/config.yml instead")
+	}
+
 	// One repository root for the config read AND every git command
 	// below. Resolving them separately is SPEC §3.4's named silent
 	// bypass: "configuration from where the process started, diffs from
