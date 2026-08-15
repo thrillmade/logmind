@@ -17,9 +17,16 @@
 > from memory or from an issue body. A claimed zero is stated with the control
 > that proves the probe finds a non-zero when one exists.
 
-**Verified 2026-08-15** against `origin/dev 2a8e10a`, `origin/main 0aa9049`, and
-the live SPEC at `thrillmade/protocol` blob `cd64e5c` (1,475 lines, Sections 0–8,
-no appendices).
+**Verified 2026-08-15** against the live SPEC at `thrillmade/protocol` blob
+`cd64e5c` (1,475 lines, Sections 0–8, no appendices) — an immutable blob, so
+that pin cannot rot.
+
+This line used to name the `dev` and `main` SHAs it was checked against. Those
+are gone, and their absence is the point: the pin was stale three minutes before
+the commit that introduced it, which is the fourth recurrence of the defect this
+file exists to prevent — in the file's own header, two paragraphs above the rule
+forbidding it. A branch tip is not a fact this file may own. Run
+`git rev-parse --short origin/dev origin/main` instead.
 
 ---
 

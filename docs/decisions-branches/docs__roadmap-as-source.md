@@ -48,3 +48,14 @@
 
 ---
 
+## 2026-08-15 14:12 - roadmap: remove the branch-tip pin from the header — the file's own rule, broken in the file's own header
+
+**Reasoning:** The fourth review found the verification header naming the dev and main tips it was checked against, two paragraphs above the rule forbidding exactly that. Worse, the pin was already wrong when written: the commit introducing it is timestamped three minutes after PR 302 moved dev past the SHA it names. A rule stated and then broken in the same document teaches readers the rule is decorative.
+
+**Alternatives considered:** Update the header to the current tip. Rejected for the fourth time on the same grounds: any branch tip written into this file is wrong within hours, and the previous three corrections all proved it. The SPEC blob pin stays because a blob hash is immutable and cannot rot; a branch tip is a moving reference that this file may not own.
+
+**Implications:**
+- The header now pins only the SPEC blob and tells the reader to run git rev-parse for the tips. The absence is documented rather than silent, so the next person does not helpfully add it back. A grep for a dev or main tip in the file returns nothing, controlled against the two immutable commit references in the historical sections, which are allowed and still present.
+
+---
+
