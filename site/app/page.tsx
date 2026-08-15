@@ -15,7 +15,11 @@ const PIP_LEGACY = "pip install 'logmind==0.6.16'";
 // CURRENT_SPEC, CURRENT_RELEASE_DATE) — everything below derives from
 // them, and every "forthcoming" / "in design" caveat on the page clears
 // itself automatically once CURRENT_VERSION === NEXT_VERSION. No other
-// edit is required.
+// edit is required — UNLESS internal/version/version.go's own `Areas`
+// string has changed since AREAS below was last copied. AREAS is not
+// part of the three-line flip: it mirrors what the binary claims under
+// SPEC §7.3, which is orthogonal to the version number, so it only needs
+// touching when the binary's declared areas change, not at every release.
 //
 // CURRENT_* is what `brew install thrillmade/tap/logmind` / curl / the
 // skill installs *today*. Verified against `gh release list --repo
@@ -37,7 +41,17 @@ const CURRENT_SPEC = "0.1.1";
 const CURRENT_RELEASE_DATE = "2026-06-07";
 const NEXT_VERSION: string = "2.0.0";
 const IS_NEXT_RELEASED = CURRENT_VERSION === NEXT_VERSION;
-const VERIFY_OUTPUT = `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})`;
+// SPEC §7.3's second `--version` line — mirrored byte-for-byte from
+// internal/version/version.go's `Areas` (comma-and-space-joined, fixed
+// vocabulary order). The released 1.2.0 binary predates this line — it
+// shipped after 1.2.0, ahead of internal/version/version.go's own
+// CURRENT_VERSION bump — so it's gated on IS_NEXT_RELEASED rather than
+// shown unconditionally; hardcoding it in today's one-line output would
+// claim something the installed binary doesn't print.
+const AREAS = "orient, work, record, propagate, gates";
+const VERIFY_OUTPUT = IS_NEXT_RELEASED
+  ? `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})\nareas: ${AREAS}`
+  : `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})`;
 
 const QUICKSTART = `$ logmind init
 $ git checkout -b feat/auth
@@ -422,7 +436,7 @@ logmind context — token receipt (est. ~4 chars/token, deterministic)
             <div className="border-t border-rule" />
             <p className="marginalia normal-case tracking-normal text-foreground/55 mt-6 text-xs leading-relaxed">
               <code className="font-mono">logmind --version</code> prints{" "}
-              <code className="font-mono">{VERIFY_OUTPUT}</code> for the current release
+              <code className="font-mono whitespace-pre-line">{VERIFY_OUTPUT}</code> for the current release
               {!IS_NEXT_RELEASED && ` (v${NEXT_VERSION} is in design, not yet released)`}.
               The agent skill (03) is optional but recommended — it teaches
               Claude Code, Cursor, Codex et al. when and how to call{" "}
