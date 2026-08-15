@@ -586,10 +586,28 @@ func TestNumstat_RenameOutOfDocsIsSplit(t *testing.T) {
 	f.Close()
 	run("add", "-A")
 
+	// POSITIVE CONTROL FIRST. Assert that git, left to itself, DOES render
+	// this as a rename. Without it the whole test is vacuous: an adversarial
+	// review showed that under `diff.renames=false` in a user's gitconfig,
+	// the "no => rows" assertion below passes even with --no-renames removed,
+	// because git never emitted a rename in the first place. Absence of the
+	// rendering only means something once we know it would otherwise appear.
+	bare := exec.Command("git", "diff", "--cached", "--numstat")
+	bare.Dir = repo
+	bareOut, err := bare.Output()
+	if err != nil {
+		t.Fatalf("bare numstat: %v", err)
+	}
+	if !strings.Contains(string(bareOut), " => ") {
+		t.Skipf("git did not render this as a rename (diff.renames disabled, or "+
+			"similarity below threshold) — the test cannot prove anything about "+
+			"--no-renames here. Bare numstat was:\n%s", bareOut)
+	}
+
 	rows := DiffCachedNumstat(repo)
 
-	// Guard against a vacuous pass: if git did not detect a rename at all,
-	// this test proves nothing about the flag.
+	// Now the real assertion: our flags must suppress what the control just
+	// proved git would otherwise emit.
 	var renameRows int
 	for _, r := range rows {
 		if strings.Contains(r.Path, " => ") {

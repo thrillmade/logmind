@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-14 21:36 - Make the two guard tests prove the guards, not the tempdir path
+
+**Reasoning:** A re-entry panel applied four mutations. Three died. The fourth — deleting the --no-fail range guard entirely — SURVIVED, and the reason is worth recording: t.TempDir() names the directory after the calling test, so a subtest named '--no-fail is refused in range mode' produced a path CONTAINING the string '--no-fail'. The not-a-repo error echoes opts.cwd, so strings.Contains(err.Error(), "--no-fail") matched the PATH. The test passed for entirely the wrong reason, and would have stayed green while --no-fail --base X --head Y silently cleared every pull request. Its sibling --threshold test escaped only by accident, because its dir happened to be created at parent scope. Confirmed independently before fixing: the temp dir really is named .../TestTempDirNameLeak--no-fail_is_refused_in_range_mode.../001.
+
+**Alternatives considered:** Rename the subtests so the flag string cannot appear in the path. Rejected as coincidence-proofing rather than a fix — the assertion would still be satisfiable by any incidental substring. Both assertions now check text unique to the guard's own refusal, and the shared dir is created at parent scope so no subtest name reaches it.
+
+**Implications:**
+- The panel also found the rename test's anti-vacuity guard was inverted: it asserted no ' => ' rows, which is exactly what 'git never detected a rename' produces. Demonstrated under diff.renames=false in a global gitconfig — the test passed WITH the fix removed. A positive control now runs first and asserts git, left to itself, does emit the rename rendering; if it does not, the test SKIPS with the bare numstat output rather than reporting a green it has not earned. Absence of the rendering means nothing until we know it would otherwise appear. Mutation D now dies, and its failure output shows the path no longer carries the flag name.
+
+---
+
