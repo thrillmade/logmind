@@ -175,7 +175,22 @@ auto-fix in the `check-doc-links` workflow).
   (`internal/guardcommit` + `internal/claudehook`); escape hatches are
   `[skip-logmind]`, `LOGMIND_ALLOW_GIT_COMMIT=1`, and
   `git.enforce_commits: false`. The git layer signals a block via exit
-  65 and fails open on any other error.
+  65 and fails open on any other error; the harness layer signals a block
+  via exit 2 (the only code Claude Code treats as blocking) and fails open
+  on every other.
+  **Both layers report their own absence, by different means** — §3.4's
+  "failing open MUST NOT be silent" applies to each, and what reaches a
+  human differs per layer. The git hook prints a stderr notice on every
+  no-decision exit, and carries its installed-by version to the engine in
+  `LOGMIND_HOOK_VERSION`. The harness hook cannot do either: it is one line
+  run through whatever shell the OS gives Claude Code, where `command -v`
+  and inline `VAR=x cmd` are not portable. Instead a missing binary
+  announces itself through the shell's own exit 127 — which Claude Code
+  surfaces as a non-blocking hook error carrying the command string and its
+  version marker, whereas an exit-0 hook's stderr is surfaced to nobody —
+  and engine skew is reported from inside the binary, which reads the
+  installed marker back out of `.claude/settings.json` and emits a
+  `systemMessage`. Both layers share one skew decision (`engineSkewNotice`).
   **§3.4 requires the local hatches and forbids them at the CI gate** —
   "the gate has no self-service escape, and MUST NOT be given one". The
   shipped `check-decisions` template violates this today and the gate is

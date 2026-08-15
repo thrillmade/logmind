@@ -74,12 +74,38 @@ func SettingsPath(repoRoot string) string {
 // user's shell, which varies by OS) — giving doctor's drift probe the
 // exact same marker-extraction contract the git hooks already use.
 //
-// Deliberately NOT prefixed with a `command -v logmind` guard: the
-// command must stay a single cross-platform line, and a missing logmind
-// binary already produces a non-2 "command not found" exit — which is
-// the correct fail-open behavior for a PreToolUse hook (only exit code 2
-// blocks the tool call). Adding our own existence check would only
-// introduce a platform-specific branch for no behavioral gain.
+// Deliberately NOT prefixed with a `command -v logmind` guard, and the
+// reason is now stronger than "no behavioral gain" (issue #298, SPEC
+// §3.4's "Failing open MUST NOT be silent"): the bare name is the LOUD
+// shape here, and the guard would be the silent one.
+//
+// Measured against Claude Code 2.1.233, driving a real headless session
+// with this exact command string and no `logmind` on PATH: the shell
+// exits 127, the Bash tool call still runs (fail-open holds — only exit
+// 2 blocks), and Claude Code records a `hook_non_blocking_error`
+// attachment carrying both `/bin/sh: logmind: command not found` AND
+// this whole command string, version marker included. That names what
+// it looked for, what it found, and which logmind installed the entry
+// — §3.4's three requirements — and it reaches a human.
+//
+// A `command -v logmind >/dev/null || { echo ... >&2; exit 0; }` guard
+// would have to exit 0 to stay fail-open, and an exit-0 PreToolUse
+// hook's stderr is surfaced to NO ONE (same measurement: it produces a
+// bare `hook_success` attachment). The "obvious" fix therefore trades a
+// notice a human sees for one nobody does — on top of the
+// cross-platform problem, since the command runs through bash on POSIX
+// but PowerShell on Windows without Git Bash, where `command -v` is not
+// syntax at all.
+//
+// What the bare name genuinely cannot catch is a logmind that IS on
+// PATH and answers `guard-commit`, but is not the one that wrote this
+// entry: that exits 0 and says nothing. Nothing on this line can fix
+// that, and nothing on this line has to — the engine reports it from
+// the inside, reading the marker above back out of settings.json. See
+// harnessHookVersion in internal/cli/guard_commit.go.
+//
+// TestCanonicalCommand_MissingBinaryIsFailOpenAndLoud pins the measured
+// behaviour rather than the shape of the string.
 func CanonicalCommand() string {
 	return "logmind guard-commit --layer harness " + hooks.HookVersionPrefix + version.Version
 }
