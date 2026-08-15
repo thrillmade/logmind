@@ -1,8 +1,15 @@
 # logmind — roadmap to v2.0.0
 
 > **This file is the source of truth for sequencing.** The roadmap artifact
-> renders from it; [#243](https://github.com/thrillmade/logmind/issues/243)
-> points at it. Architecture lives in [plan.md](plan.md) — that changes yearly,
+> renders from it.
+>
+> [#243](https://github.com/thrillmade/logmind/issues/243) is the tracking
+> thread and points here. It carried its own ordering table until 2026-08-14,
+> which meant two orderings of record — the exact defect this split was made to
+> remove, recreated one revision later. That table is gone; if the two ever
+> disagree again, this file is right.
+>
+> Architecture lives in [plan.md](plan.md) — that changes yearly,
 > this changes weekly, and fusing them is why the old combined document went
 > stale.
 >
@@ -10,7 +17,7 @@
 > from memory or from an issue body. A claimed zero is stated with the control
 > that proves the probe finds a non-zero when one exists.
 
-**Verified 2026-08-07** against `origin/dev a0f6339`, `origin/main 0aa9049`, and
+**Verified 2026-08-14** against `origin/dev 7b2b4f8`, `origin/main 0aa9049`, and
 the live SPEC at `thrillmade/protocol` blob `cd64e5c` (1,475 lines, Sections 0–8,
 no appendices).
 
@@ -60,39 +67,59 @@ the default branch. That is expected, not drift.
 
 ## Blocked on a person
 
-### #288 — the steward App is on no ruleset bypass list
+### #288 — the bypass is granted; it has never been exercised
 
-**The tightest constraint on the tag.** `regen-on-main` has never once pushed.
+**Not a blocker on the tag.** An earlier revision of this file said the steward
+App was on no bypass list and called that "the tightest constraint on the tag."
+**That was wrong**, and the correction matters more than the original claim.
 
 ```
-$ gh api 'repos/thrillmade/logmind/commits?sha=main&per_page=100' \
-    --jq '[.[] | select((.commit.message|split("\n")[0])|test("^chore: regen derived docs"))] | length'
-0
+$ gh api repos/thrillmade/logmind/rulesets --jq '.[]|"\(.id) \(.name)"'
+18502737 org-baseline
+16898453 org-default-protection
+
+$ gh api repos/thrillmade/logmind/rulesets/18502737 \
+    --jq '[.bypass_actors[]|"\(.actor_type):\(.actor_id)"]'
+["OrganizationAdmin:null", "Integration:3951953"]
+
+$ gh api /apps/skdd-steward --jq .id
+3951953
 ```
 
-**Control** — the same subject-line probe on `thrillmade/protocol` PR#75 returns
-**30**, so the matcher works.
+Two active rulesets, not three — `reporulez-default` (18292242) returns **404**
+here and no longer covers this repository. Both survivors carry
+`Integration:3951953`, which is `skdd-steward`. Their `updated_at` is
+**2026-08-07T17:1x**.
 
-The seven `success` runs of `regen-timeline.yml` are all `pull_request` events,
-which execute only the gate job. `regen-on-main` runs on `push`, and the single
-`push` event **failed**. The success column never described it.
+### What is actually unresolved
 
-Three active rulesets cover `main` and none admits an App by identity class:
+The push has still never landed a commit, and the reason is *not* a refusal:
 
-| ruleset | id | bypass actors |
-|---|---|---|
-| `org-baseline` | 18502737 | `OrganizationAdmin` |
-| `org-default-protection` | 16898453 | `RepositoryRole 2`, `RepositoryRole 5` |
-| `reporulez-default` | 18292242 | *(empty)* |
+| probe | result |
+|---|---|
+| regen commits on `main`, by subject line | **0** |
+| control — same probe, protocol PR#75 | **30** |
+| `regen-timeline` runs, all events | 503 |
+| runs on the `push` event | **15** |
+| `push` runs that **succeeded** | **13** |
 
-`branches/main/protection` returns 404 "Branch not protected" — that is the
-legacy endpoint and **must not** be read as unprotected; protection here is
-entirely ruleset-based.
+Thirteen green push runs and zero commits means the job runs, finds the derived
+docs already current, and exits 0 on that path — it never reaches the push at
+all. The one `push` failure, on `0aa9049`, carried the GH013 annotation and dates
+to **2026-08-01**, six days *before* the bypass was added. So the original
+diagnosis was correct when filed and the remedy has since been applied.
 
-**To close:** add `skdd-steward[bot]` as an **Integration** bypass actor, then
-prove it with a push that actually lands a commit. Seven green runs already
-proved nothing. `reporulez-default` is empty on every repo surveyed and looks
-machine-generated, so a UI edit may be reverted on its next sync.
+**The bypass is therefore untested, not missing.** It gets exercised the first
+time `main` receives a merge that leaves a derived doc stale — which is the
+`dev` → `main` merge at the tag, not something to manufacture beforehand.
+
+> **A caution this file has already earned.** An earlier revision reported
+> "seven `success` runs, and the single `push` event failed." The real figures
+> are 15 push runs and 13 successes. The conclusion — that the green column
+> never described `regen-on-main` — survived, but the evidence for it did not,
+> and an auditor who finds thirteen greens discounts the section that is right.
+> Every count in this file names the command that produced it for exactly this
+> reason.
 
 ### Awaiting protocol rulings
 
@@ -150,6 +177,24 @@ not be silent; today it is.
 §1.4 line 202 says the three sources are **merged**, so this is a spec violation,
 not a wart. Fix shape depends on protocol#89.
 
+**#259** — the derived-doc restore does not refuse while a merge, rebase,
+cherry-pick or revert is in progress. Restoring mid-conflict discards the
+resolution someone is part-way through, and the restore paths run automatically.
+
+**#266** — `logmind config set` has no refusal for gate settings. §1.6's point is
+that some keys are humans-only; an agent that can lower `commit_line_threshold`
+to unblock itself has bought exactly what §3.4's gate exists to prevent.
+
+**#244** — branch→issue binding plus comment-back on merge. Pre-tag by **Ruling
+12**, not by defect: nothing in current behaviour is wrong, the feature simply
+does not exist. Recorded here rather than in §5 so the ruling stays visible —
+its own issue body still says "after the v2.0.0 tag", which contradicts the
+ruling that governs it and needs correcting.
+
+**#241** — `logmind auto`. Also pre-tag by Ruling 12, and the longest pole among
+them: it installs two skills that did not exist, so those had to be written
+first (agent-skills#207, open). Build once that merges.
+
 **#279** — the site's `--version` example is one line; §7.3 requires two, and the
 tag-time flip will not add the `areas:` line.
 
@@ -160,6 +205,13 @@ main is a branch like any other, no cap, no archive, `rotateDecisions` deleted
 rather than ported — and adds `docs/timeline-archive.md` as a **third** derived
 file that every restore path and `check-derived-docs` must learn. All of them
 name two today.
+
+**#277 rides here too.** It reports `check-derived-docs` enforcing the opposite
+of §3.3 — regenerating from the branch's own sources and failing on the diff, so
+it demands the branch commit exactly what §3.3 forbids. logmind's own copy and
+its shipped `v11` template are **already correct**; the defect is a stale
+installed copy in the consumer repos. So it is a #257 payload, not code to write
+here, and it closes when the fleet takes the current template.
 
 ### 5 — After the tag
 
@@ -180,10 +232,9 @@ ships.
 | clud-bug-app | `v2` | `v4` | **yes** |
 | agent-skills | `v2` | `v4` | **yes** |
 | reporulez | *unversioned* | *unmarked* | no |
-| skdd | *absent* | `v11` on `dev` | no |
+| skdd | *absent* on `main`, **`v4`** on `dev` | — | no |
 
-**logmind ships** `check-decisions` at the version merged in #291 and
-`regen-timeline` at `v11`. Template versions are **per file** — "the fleet is on
+**logmind ships** `check-decisions` at **`v5`** and `regen-timeline` at `v11`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
 
 Two corrections to #257's original inventory:
@@ -192,9 +243,13 @@ Two corrections to #257's original inventory:
   guards on `installedVer != ""`, so a file with no `# logmind-template-version`
   marker is skipped **forever**. It needs hand-replacement or it is silently left
   behind.
-- **skdd is already on v11**, so migrating it is a no-op. Do not read its clean
-  `check-derived-docs` history as validation — it is green because neither
-  derived doc exists on any skdd branch.
+- **skdd was misread, and the misreading mixed two branches.** Its `main` has no
+  `.github/workflows` at all (404); its `dev` carries `check-decisions` at **v4**,
+  added 2026-08-01. An earlier revision of this file said "already on v11, so
+  migrating it is a no-op" — that was wrong in both halves, and it would have
+  removed a repository from the migration list that genuinely needs migrating.
+  Its clean `check-derived-docs` history is still no validation: green because
+  neither derived doc exists on any skdd branch.
 
 ### The cost of not migrating
 
