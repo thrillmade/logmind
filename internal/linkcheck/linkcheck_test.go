@@ -91,6 +91,27 @@ func TestCheck_DefaultAllowlistSkipsDecisions(t *testing.T) {
 	}
 }
 
+// TestCheck_DefaultAllowlistSkipsDecisionsArchive pins logmind#301 round-5
+// LOW: the collapse-decision-layout rewrite of DefaultAllowOrphans dropped
+// docs/decisions-archive.md while adding docs/timeline-archive.md, instead
+// of keeping both. The legacy archive only has no parseable `## ` headers
+// (nothing links to it) during a half-migrated upgrade — exactly the state
+// an upgrader passes through — so losing this entry turns that transition
+// into a false-positive orphan finding.
+func TestCheck_DefaultAllowlistSkipsDecisionsArchive(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md":                 "# Project\n",
+		"docs/decisions-archive.md": "# Archive\n",
+	})
+	_, orphans, err := Check(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(orphans) != 0 {
+		t.Fatalf("orphans = %v; want [] (decisions-archive.md is allowlisted)", orphans)
+	}
+}
+
 func TestCheck_DirectoryPrefixAllowlist(t *testing.T) {
 	// docs/decisions-branches/ trailing-slash entry: any .md under
 	// it must be exempt.

@@ -179,6 +179,77 @@ func TestConfigureMergeDrivers_SetsKeys(t *testing.T) {
 	}
 }
 
+// TestAddMissingLines_DoesNotReinstateDeliberatelyRemovedLine pins
+// logmind#301 round 5 LOW: addMissingLines used to re-add ANY DefaultLines
+// pattern absent from the block, with no way to tell "this repo predates
+// the pattern" apart from "the user deleted it on purpose". Reinstating a
+// line someone removed on purpose is the same class of bug as overwriting
+// a user-owned artifact.
+//
+// Sequence: seed a block that predates docs/timeline-archive.md (simulating
+// an old repo), run the CURRENT EnsureBlock once so it's offered and added
+// (an upgrade must still land it), delete it by hand (the user's deliberate
+// removal), then run EnsureBlock again — it must NOT come back.
+func TestAddMissingLines_DoesNotReinstateDeliberatelyRemovedLine(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping addMissingLines offered-tracking test")
+	}
+	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q")
+	path := filepath.Join(dir, ".gitattributes")
+
+	oldLines := []string{
+		"docs/timeline.md          merge=logmind-timeline",
+		"docs/file-structure.md    merge=logmind-file-structure",
+	}
+	if _, err := ensureBlockWithLines(path, oldLines); err != nil {
+		t.Fatalf("seed pre-archive block: %v", err)
+	}
+
+	// Upgrade: the CURRENT DefaultLines (adds timeline-archive.md) must
+	// still land on a repo that has never seen that pattern.
+	changed, err := EnsureBlock(path)
+	if err != nil {
+		t.Fatalf("EnsureBlock (upgrade): %v", err)
+	}
+	if !changed {
+		t.Fatalf("EnsureBlock did not add the new timeline-archive.md registration on upgrade")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after upgrade: %v", err)
+	}
+	if !strings.Contains(string(body), "docs/timeline-archive.md") {
+		t.Fatalf("timeline-archive.md missing after upgrade:\n%s", body)
+	}
+
+	// The user deliberately deletes the line logmind just added.
+	const archiveLine = "docs/timeline-archive.md  merge=logmind-timeline-archive\n"
+	if !strings.Contains(string(body), archiveLine) {
+		t.Fatalf("archive line not in the exact expected form; got:\n%s", body)
+	}
+	withoutArchive := strings.Replace(string(body), archiveLine, "", 1)
+	if err := os.WriteFile(path, []byte(withoutArchive), 0o644); err != nil {
+		t.Fatalf("simulate user deletion: %v", err)
+	}
+
+	// A later run (another `init`, or `refresh`) must NOT bring it back.
+	changed, err = EnsureBlock(path)
+	if err != nil {
+		t.Fatalf("EnsureBlock (after deletion): %v", err)
+	}
+	if changed {
+		t.Fatalf("EnsureBlock reported changed=true reinstating a deliberately deleted line")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after second EnsureBlock: %v", err)
+	}
+	if strings.Contains(string(after), "docs/timeline-archive.md") {
+		t.Fatalf("timeline-archive.md was reinstated after the user deleted it:\n%s", after)
+	}
+}
+
 // --- helpers -------------------------------------------------------------
 
 func checkGolden(t *testing.T, name, body string) {

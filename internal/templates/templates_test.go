@@ -1,6 +1,8 @@
 package templates
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,9 +227,11 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	body := Workflow("regen-timeline.yml.template")
 
 	// Marker bump v10 → v11 (push-refusal now fails the job; see v11 note
-	// above).
-	if !strings.Contains(body, "# logmind-template-version: v12") {
-		t.Errorf("regen-timeline template missing v12 marker")
+	// above). v12 → v13: the archive-gate change (see the v13 note in the
+	// template) had to move off v12 after logmind#301 round 5 found it
+	// colliding with fix/template-v12's unrelated, already in-flight v12.
+	if !strings.Contains(body, "# logmind-template-version: v13") {
+		t.Errorf("regen-timeline template missing v13 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
@@ -355,6 +359,75 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	// explaining why there isn't one.
 	if strings.Contains(prJob, "uses: actions/checkout") {
 		t.Errorf("regen-timeline v10 PR gate must NOT check out the PR — a checkout on a pull_request event lands refs/pull/N/merge (the PR's own content)")
+	}
+}
+
+// templateMarkerPins pins bundled workflow templates' declared
+// `# logmind-template-version:` marker to a SHA256 of the marker's FULL
+// body.
+//
+// logmind#301 round 5 BLOCK: feat/collapse-decision-layout (this branch)
+// and fix/template-v12 (logmind#314) independently bumped
+// regen-timeline.yml.template's marker from v11 to v12 with UNRELATED
+// content. installWorkflowTemplates (internal/cli/init.go) refreshes an
+// installed workflow only when the installed and bundled marker STRINGS
+// differ — never when they merely match, even if the bytes underneath
+// don't — so whichever v12 a repo installed first would have kept it
+// forever, silently, even after the other v12 shipped upstream; `doctor`
+// would have reported that repo current the whole time. This branch
+// resolved the actual collision by moving to v13 (see the NOTE in the
+// template itself); this table is what would have made it IMPOSSIBLE to
+// ship silently in the first place.
+//
+// It works from inside ONE repo's tree, at test time, on the CI of
+// whichever branch runs second: the first branch to land a marker's
+// checksum here owns that number's content from then on. A second branch
+// that independently reuses the same marker for different content fails
+// THIS test the moment it merges/rebases past the first branch's entry —
+// without ever needing to see the other branch's diff. If it instead
+// edits the pin to match its own content, that edit shows up as a
+// reviewable change to a line that used to mean something else: loud,
+// not silent.
+//
+// What this does NOT catch: two branches that both introduce the SAME new
+// marker and BOTH merge into dev before either ever rebases onto the
+// other (a true simultaneous-merge race). Git still flags that case as a
+// textual merge conflict on this table's entry — the same "loud, not
+// silent" outcome — so the residual gap is narrower still: a collision
+// where neither branch's own test run ever recorded a pin for the number
+// it claims. Closing THAT would need something that can see both trees
+// before either merges (e.g. a bot diffing open PRs' bundled markers
+// against each other); nothing in this repo does that today, and nothing
+// caught the actual v12/v12 collision this pins against — a human review
+// pass did.
+var templateMarkerPins = map[string]struct {
+	marker string
+	sha256 string
+}{
+	"regen-timeline.yml.template": {"v13", "e979a11154dafb7495aca79e977299818fe905ffd06c33f07af01e92dbb07720"},
+}
+
+func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
+	for name, pin := range templateMarkerPins {
+		body := Workflow(name)
+		wantMarkerLine := "# logmind-template-version: " + pin.marker
+		if !strings.HasPrefix(body, wantMarkerLine) {
+			t.Errorf("%s: expected to start with %q — if this is a deliberate "+
+				"version bump, add a NEW entry to templateMarkerPins for the new "+
+				"marker rather than editing this one", name, wantMarkerLine)
+			continue
+		}
+		sum := sha256.Sum256([]byte(body))
+		got := hex.EncodeToString(sum[:])
+		if got != pin.sha256 {
+			t.Errorf("%s: content under marker %s changed (sha256 %s, want %s). "+
+				"A shipped marker's content must never change silently: if this is "+
+				"a genuine content edit, bump the marker AND add a new pin for it "+
+				"rather than updating this one in place; if it's a collision with "+
+				"another branch that already claimed marker %s for different "+
+				"content, THIS branch must pick a different, unclaimed number.",
+				name, pin.marker, got, pin.sha256, pin.marker)
+		}
 	}
 }
 

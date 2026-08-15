@@ -34,7 +34,8 @@ func newTimelineCmd() *cobra.Command {
 		Short: "Print or regenerate the high-level decision timeline",
 		Long: `Print or regenerate the high-level decision timeline.
 
-Reads every docs/decisions-branches/*.md as sources; renders a chronological
+Reads docs/decisions.md, docs/decisions-archive.md (where they exist), and
+every docs/decisions-branches/*.md as sources; renders a chronological
 timeline grouped by year-month. Sources are never modified.
 
 --write renders BOTH halves of the SPEC §3.3 split from one read of those

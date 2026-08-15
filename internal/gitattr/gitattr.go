@@ -35,6 +35,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/thrillmade/logmind/internal/atomicio"
@@ -155,12 +156,93 @@ func ensureBlockWithLines(path string, lines []string) (bool, error) {
 	if err := atomicio.WriteFile(path, []byte(existing+block), 0o644); err != nil {
 		return false, err
 	}
+	// A fresh block writes every entry in `lines` unconditionally, so record
+	// them as offered too — otherwise a user who deletes one right after
+	// `logmind init` would see it silently reinstated by the very next
+	// addMissingLines call (refresh, or another `init`).
+	recordOfferedPatterns(filepath.Dir(path), offeredPatterns(filepath.Dir(path)), lines)
 	return true, nil
 }
 
+// gitAttrOfferedLinesKey is the per-clone git-config key (never committed)
+// recording every DefaultLines PATH PATTERN this repo has ever been
+// offered by EnsureBlock/addMissingLines. It is what lets addMissingLines
+// tell "this repo's block predates a pattern logmind now ships" (offer it)
+// apart from "this repo has already seen this pattern and it is still
+// absent, so the user removed it on purpose" (leave it alone) — see
+// addMissingLines below for the bug this closes (logmind#301 round 5 LOW:
+// reinstating a line someone deleted on purpose is the same class of bug
+// as overwriting a user-owned artifact).
+//
+// Deliberately per-clone git config, not a marker stamped into the
+// COMMITTED .gitattributes block itself: the block's byte format is a
+// promise doctor and every consumer repo depend on (see
+// testdata/gitattributes-fresh.golden — EnsureBlock's fresh-file output is
+// pinned to the exact byte), and EnsureBlock/addMissingLines take only a
+// bare file path, not a repoRoot, so there is no signature-compatible way
+// to hang this state anywhere else without touching call sites this
+// package doesn't own. Losing the key (no git, no repo, a read/write
+// failure) degrades to the pre-tracking behaviour — offer everything
+// still missing — never a hard failure; see offeredPatterns/
+// recordOfferedPatterns.
+const gitAttrOfferedLinesKey = "logmind.gitattr-offered-lines"
+
+// offeredPatterns reads gitAttrOfferedLinesKey for repoRoot and returns the
+// recorded set of path patterns. Empty (never nil) when the key is unset,
+// repoRoot isn't a git repo, or git isn't on PATH.
+func offeredPatterns(repoRoot string) map[string]bool {
+	set := make(map[string]bool)
+	value, ok := gitcli.ConfigGet(repoRoot, gitAttrOfferedLinesKey)
+	if !ok || value == "" {
+		return set
+	}
+	for _, p := range strings.Split(value, ",") {
+		if p != "" {
+			set[p] = true
+		}
+	}
+	return set
+}
+
+// recordOfferedPatterns unions the PATH PATTERN (first field) of every
+// entry in lines into already, then writes the result back to
+// gitAttrOfferedLinesKey for repoRoot — but only when the set actually
+// grew, so a repo with nothing new to record doesn't spam a `git config`
+// call on every `logmind init`/refresh. Best-effort: a write failure is
+// swallowed (matching ConfigureMergeDrivers's convention) because losing
+// this record only means the NEXT run treats a since-deleted line as
+// stale rather than deliberate — degraded, not broken.
+func recordOfferedPatterns(repoRoot string, already map[string]bool, lines []string) {
+	all := make(map[string]bool, len(already)+len(lines))
+	for p := range already {
+		all[p] = true
+	}
+	grew := false
+	for _, l := range lines {
+		f := strings.Fields(l)
+		if len(f) == 0 {
+			continue
+		}
+		if !all[f[0]] {
+			grew = true
+		}
+		all[f[0]] = true
+	}
+	if !grew {
+		return
+	}
+	patterns := make([]string, 0, len(all))
+	for p := range all {
+		patterns = append(patterns, p)
+	}
+	sort.Strings(patterns)
+	_ = gitcli.ConfigSet(repoRoot, gitAttrOfferedLinesKey, strings.Join(patterns, ","))
+}
+
 // addMissingLines registers any `lines` entry whose PATH PATTERN is absent
-// from an existing logmind block, inserting it just before the closing
-// sentinel. Returns (true, nil) when it wrote.
+// from an existing logmind block AND has never before been offered to this
+// repo, inserting it just before the closing sentinel. Returns (true, nil)
+// when it wrote.
 //
 // This is how a repo initialised by an older binary picks up a newly-shipped
 // merge driver. Without it, EnsureBlock's "block present → nothing to do"
@@ -174,6 +256,13 @@ func ensureBlockWithLines(path string, lines []string) (bool, error) {
 // only ever ADDS a pattern logmind owns and has no registration for. Nothing
 // inside the block is rewritten or removed, which is the same promise
 // EnsureBlock has always made about manual edits.
+//
+// A pattern already recorded in gitAttrOfferedLinesKey (offeredPatterns)
+// that is STILL absent from the block is exactly a line the user removed on
+// purpose, not one this binary has never mentioned — it is skipped, not
+// re-added. Every pattern in `lines` is recorded as offered before
+// returning, whether or not it was actually written, so the very next run
+// (even if this one wrote nothing) already knows about it.
 func addMissingLines(path, existing string, lines []string) (bool, error) {
 	startIdx := strings.Index(existing, BlockStart)
 	endIdx := strings.Index(existing[startIdx:], BlockEnd)
@@ -191,10 +280,15 @@ func addMissingLines(path, existing string, lines []string) (bool, error) {
 			registered[f[0]] = true
 		}
 	}
+
+	repoRoot := filepath.Dir(path)
+	offered := offeredPatterns(repoRoot)
+	defer recordOfferedPatterns(repoRoot, offered, lines)
+
 	var missing []string
 	for _, l := range lines {
 		f := strings.Fields(l)
-		if len(f) == 0 || registered[f[0]] {
+		if len(f) == 0 || registered[f[0]] || offered[f[0]] {
 			continue
 		}
 		missing = append(missing, l)

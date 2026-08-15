@@ -264,6 +264,20 @@ func collectShowEntries(docsPath, basePath, baseLabel string, all, withBody bool
 		return nil, err
 	}
 	for _, s := range extra {
+		// s.path came from decisions.ListSources' directory enumeration, so
+		// unlike basePath (a branch's file legitimately may not exist yet —
+		// zero decisions logged), something IS on disk at this path. A read
+		// failure here is never "nothing to show": decisions.SplitRaw treats
+		// os.IsNotExist as "optional file absent, zero entries, no error" —
+		// correct for that case, but a dangling symlink resolves to the SAME
+		// ENOENT, so SplitRaw was silently dropping it, alone among the four
+		// read paths (search, timeline, and show's own default/--all text
+		// stream all fail loud on the identical file — logmind#301 round 5).
+		// Read it directly first so an enumerated-but-unreadable entry is
+		// reported, not under-counted.
+		if _, err := os.ReadFile(s.path); err != nil {
+			return nil, fmt.Errorf("read %s: %w", s.path, err)
+		}
 		if err := appendFile(s.path, s.label); err != nil {
 			return nil, err
 		}

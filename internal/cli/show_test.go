@@ -380,6 +380,43 @@ func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 	})
 }
 
+// TestShow_All_DanglingSymlinkFailsLoud pins logmind#301 round 5: a
+// docs/decisions-branches/*.md entry that decisions.ListSources found via
+// directory enumeration but that fails to read (most realistically a
+// dangling symlink) used to be silently dropped by `show --all --brief` /
+// `--json` — the ONLY one of the four read paths (search, timeline, show's
+// own default/--all text stream) that didn't fail loud on the identical
+// file. Skipped when symlinks aren't supported by the test filesystem.
+func TestShow_All_DanglingSymlinkFailsLoud(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		branchDir := filepath.Join(d, "docs", "decisions-branches")
+		mustMkdir(t, branchDir)
+		mustWrite(t, filepath.Join(branchDir, "feat__other.md"),
+			"## 2026-06-02 11:00 - Other branch decision\n")
+		brokenPath := filepath.Join(branchDir, "broken.md")
+		if err := os.Symlink(filepath.Join(d, "does-not-exist"), brokenPath); err != nil {
+			t.Skipf("symlink not supported on this filesystem: %v", err)
+		}
+
+		for _, args := range [][]string{
+			{"show", "--all", "--brief"},
+			{"show", "--all", "--json"},
+		} {
+			root := NewRootCmd()
+			root.SetArgs(args)
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&out)
+			if err := root.Execute(); err == nil {
+				t.Errorf("%v: expected an error on the dangling symlink, got none; stdout:\n%s", args, out.String())
+			}
+			if strings.Contains(out.String(), "Other branch decision") {
+				t.Errorf("%v: partially succeeded and printed output instead of failing loud:\n%s", args, out.String())
+			}
+		}
+	})
+}
+
 // TestShow_JSON_SchemaKeysAndValues pins SPEC section sec-3-2's NORMATIVE
 // --json schema for a 2-decision fixture: exact key set (no more, no fewer —
 // a future rename/add/drop of a key breaks this test) and correct values,

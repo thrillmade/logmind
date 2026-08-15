@@ -1,4 +1,4 @@
-# logmind-template-version: v12
+# logmind-template-version: v13
 name: logmind / check-derived-docs
 
 # v2.0.0 derived-docs-on-main. The derived docs are regenerated ONLY here on
@@ -19,12 +19,19 @@ name: logmind / check-derived-docs
 # success is how a regenerator stays broken for weeks while every run is
 # green.
 #
-# v12: docs/timeline-archive.md joins the gate (SPEC §3.3, logmind#265). The
+# v13: docs/timeline-archive.md joins the gate (SPEC §3.3, logmind#265). The
 # history is now rendered in two halves — docs/timeline.md carries the 50 most
 # recent entries and the archive the remainder — and §3.3 governs all three
 # alike: "A non-default branch MUST NOT modify any derived file — the history,
 # its archive, or the map." A branch that edits the archive is blocked exactly
 # as one that edits the timeline.
+#
+# NOTE on the version number: this was v12 until logmind#301 round 5 caught
+# it colliding with a DIFFERENT, already in-flight v12 (logmind#314) — two
+# branches independently bumped v11 to v12 with unrelated content, and nothing
+# compared the two beyond the marker string matching. This archive change
+# moves to v13 so the two numbers stay one-to-one with one piece of content
+# each.
 
 on:
   pull_request:
