@@ -817,3 +817,119 @@ func TestProbePreCommitHook_StaleOnRevertedMarker(t *testing.T) {
 		t.Errorf("Overall = %q; want DRIFT with stale pre-commit marker", r.Overall)
 	}
 }
+
+// TestClassifyMarker_OrderedNotEqual pins the bug a retrospective panel
+// found in the combination of #289 and #291.
+//
+// #289 taught `installWorkflowTemplates` that template markers are ORDERED
+// and refused to move one backwards. It did not teach doctor, which still
+// compared for equality — so a repository AHEAD of the running binary was
+// reported "STALE (latest: <older marker>)", with both the verdict and the
+// "latest" label inverted. Worse, because #289's refusal is correct, the
+// row became permanently unclearable: doctor said stale, --fix refused,
+// and nothing the operator did could reconcile them.
+//
+// Two consumers of the same fact have to agree, or the tool contradicts
+// itself.
+func TestClassifyMarker_OrderedNotEqual(t *testing.T) {
+	s := func(v string) *string { return &v }
+	cases := []struct {
+		name            string
+		marker, bundled *string
+		want            string
+	}{
+		{"equal is current", s("v5"), s("v5"), "current"},
+		{"older installed is stale", s("v1"), s("v5"), "stale"},
+		{"newer installed is ahead, not stale", s("v99"), s("v5"), "ahead"},
+
+		// The lexical trap: "v11" sorts BEFORE "v4" as a string, so an
+		// equality-or-string-compare implementation looks correct on
+		// single digits and inverts the moment a version reaches two.
+		{"v11 vs v4 is ahead, not stale", s("v11"), s("v4"), "ahead"},
+		{"v4 vs v11 is stale", s("v4"), s("v11"), "stale"},
+
+		// Flavour suffixes must not defeat the parse.
+		{"pointer suffix, newer", s("v10-pointer"), s("v9-pointer"), "ahead"},
+		{"pointer suffix, older", s("v9-pointer"), s("v10-pointer"), "stale"},
+
+		// Unparseable falls back to the old semantics: something differs
+		// and we cannot say which way, so "stale" is the honest answer.
+		{"unparseable installed falls back to stale", s("vNEXT"), s("v5"), "stale"},
+		{"unparseable bundled falls back to stale", s("v5"), s("vNEXT"), "stale"},
+
+		{"no marker is markerless", nil, s("v5"), "markerless"},
+		{"no bundled is unknown", s("v5"), nil, "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyMarker(tc.marker, tc.bundled); got != tc.want {
+				t.Errorf("classifyMarker() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderStatus_AheadRowNamesTheDirection pins the STRING the user
+// saw, not the helper behind it.
+//
+// An adversarial review found the first attempt at this test worthless:
+// it constructed `Drift: "ahead"` literally and asserted the roll-up did
+// not flip, so deleting the rendering branch entirely left the package
+// green while the row silently fell back to a bare "ahead" via
+// formatDrift's default. The reported symptom was the string
+// `STALE (latest: v4)` — inverted verdict, inverted label — so the string
+// is what has to be pinned.
+func TestRenderStatus_AheadRowNamesTheDirection(t *testing.T) {
+	bundled := "v5"
+	installed := "v99"
+	r := StatusReport{
+		Overall: "OK",
+		Tools: []ToolStatus{{
+			Name:  "logmind",
+			Drift: "ok",
+			Workflows: []WorkflowStatus{{
+				Name:          "check-decisions.yml",
+				Marker:        &installed,
+				BundledMarker: &bundled,
+				Drift:         "ahead",
+			}},
+		}},
+	}
+	body := RenderStatus(r)
+
+	if !strings.Contains(body, "ahead of this binary") {
+		t.Errorf("rendered row does not name the direction; got:\n%s", body)
+	}
+	if !strings.Contains(body, "bundles: v5") {
+		t.Errorf("rendered row does not name what this binary bundles; got:\n%s", body)
+	}
+	// The original defect: calling the OLDER marker "latest".
+	if strings.Contains(body, "latest: v5") {
+		t.Errorf("rendered row calls the older marker \"latest\" — the inverted label this fixes; got:\n%s", body)
+	}
+	if strings.Contains(body, "STALE") {
+		t.Errorf("an ahead row must not read STALE; got:\n%s", body)
+	}
+}
+
+// TestClassifyLogmindDrift_AheadDoesNotFlipDrift covers the roll-up.
+// Deliberately kept alongside the rendering test above rather than
+// instead of it: this one proves an ahead row does not send the operator
+// to `--fix`, which correctly refuses; that one proves the row says why.
+func TestClassifyLogmindDrift_AheadDoesNotFlipDrift(t *testing.T) {
+	ahead := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "ahead"}}
+	if got := classifyLogmindDrift(ahead); got == "stale" {
+		t.Errorf("an ahead workflow flipped the tool to stale; got %q", got)
+	}
+	stale := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "stale"}}
+	if got := classifyLogmindDrift(stale); got != "stale" {
+		t.Errorf("a stale workflow must still flip the tool to stale; got %q", got)
+	}
+	mixed := []WorkflowStatus{
+		{Name: "check-decisions.yml", Drift: "ahead"},
+		{Name: "regen-timeline.yml", Drift: "stale"},
+	}
+	if got := classifyLogmindDrift(mixed); got != "stale" {
+		t.Errorf("ahead masked a genuinely stale row; got %q, want stale", got)
+	}
+}

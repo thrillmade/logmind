@@ -72,6 +72,7 @@ import (
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/timeline"
 	"github.com/thrillmade/logmind/internal/version"
@@ -505,6 +506,16 @@ func readWorkflow(projectRoot, name string) (string, bool) {
 	return string(data), true
 }
 
+// classifyMarker compares an installed workflow's template marker against
+// the one this binary bundles.
+//
+// The comparison is ORDERED, not an equality test. #289 taught
+// installWorkflowTemplates to refuse a downgrade; teaching only the writer
+// and not the reader left doctor reporting a repository that is AHEAD of
+// this binary as "STALE (latest: <older>)" — a verdict and a label both
+// inverted — and, because --fix now correctly refuses to overwrite it, a
+// row that could never be cleared. The two consumers of the same fact have
+// to agree, or the tool contradicts itself.
 func classifyMarker(marker, bundled *string) string {
 	if marker == nil {
 		return "markerless"
@@ -514,6 +525,14 @@ func classifyMarker(marker, bundled *string) string {
 	}
 	if *marker == *bundled {
 		return "current"
+	}
+	// An unparseable marker on either side falls through to the old
+	// equality semantics: something differs and we cannot say which way,
+	// so "stale" is the honest answer and refreshing is safe.
+	mv, mok := inserter.ParseMarkerGeneration(*marker)
+	bv, bok := inserter.ParseMarkerGeneration(*bundled)
+	if mok && bok && mv > bv {
+		return "ahead"
 	}
 	return "stale"
 }
@@ -932,6 +951,13 @@ func RenderStatus(r StatusReport) string {
 			driftWord := formatDrift(wf.Drift)
 			if wf.Drift == "stale" && wf.BundledMarker != nil {
 				driftWord = fmt.Sprintf("STALE (latest: %s)", *wf.BundledMarker)
+			}
+			// "ahead" is not a problem to fix — it is this binary being
+			// behind the repository. Saying "latest" of the older marker
+			// would be false, and calling it stale would send the reader
+			// to `--fix`, which correctly refuses and leaves them stuck.
+			if wf.Drift == "ahead" && wf.BundledMarker != nil {
+				driftWord = fmt.Sprintf("ahead of this binary (bundles: %s) — upgrade logmind", *wf.BundledMarker)
 			}
 			lines = append(lines, fmt.Sprintf("  %-28s %-4s %s", wf.Name, marker, driftWord))
 		}
