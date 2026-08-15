@@ -41,10 +41,19 @@ func TestFileStructureRootLabel_DefaultAndRoundTrip(t *testing.T) {
 	if cfg.FileStructure.RootLabel != "my-repo" {
 		t.Errorf("RootLabel = %q; want my-repo", cfg.FileStructure.RootLabel)
 	}
-	// Leafwise deep-merge: setting root_label must NOT wipe the default
-	// ignore_patterns (regression guard for the typed-config merge).
-	if len(cfg.FileStructure.IgnorePatterns) == 0 {
-		t.Errorf("ignore_patterns lost when only root_label was set")
+	// Leafwise deep-merge: setting root_label must not disturb its sibling
+	// key. IgnorePatterns is §1.4's CONFIG source and this config sets no
+	// patterns, so the correct value is EMPTY — a non-empty one here would
+	// mean sixteen built-in defaults had been smuggled into the config
+	// source, which is exactly the mis-ranking #303 fixed.
+	//
+	// That the defaults still apply to the walk is a claim about rendered
+	// output, so it is pinned where it is observable — see
+	// TestFileStructure_RootLabelOnlyConfigKeepsEveryDefault in
+	// internal/tree (internal/config cannot import internal/tree; tree
+	// imports config).
+	if len(cfg.FileStructure.IgnorePatterns) != 0 {
+		t.Errorf("ignore_patterns = %q after setting only root_label; want empty — the built-in defaults are DefaultIgnorePatterns, not the config source", cfg.FileStructure.IgnorePatterns)
 	}
 }
 
