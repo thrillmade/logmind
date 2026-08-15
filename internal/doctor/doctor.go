@@ -67,6 +67,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thrillmade/logmind/internal/auto"
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
@@ -151,6 +152,19 @@ type StatusReport struct {
 	// spec_file is unset. Like SummariesNeeded, this NEVER affects Overall —
 	// the spec fold-in is a nice-to-have, not a gate.
 	SpecAdvisories []string `json:"spec_advisories"`
+
+	// AutoAdvisories is an ADVISORY list (#241) about `.logmind/auto.yml`,
+	// the standing directive `logmind auto <profile>` writes: a directive
+	// that predates the current bundled policy, one written for a profile
+	// this binary doesn't know, or one carrying no ownership marker. Empty
+	// in the (common) case of a repo that never opted into `logmind auto`.
+	//
+	// Advisory for the same reason SpecAdvisories is: `auto` is an explicit
+	// opt-in verb and its directive carries policy a human authored, so
+	// nothing here is auto-fixable and none of it is drift. Re-running
+	// `logmind auto <profile>` is the deliberate remediation, exactly as
+	// `logmind init --spec` is for the spec nudge.
+	AutoAdvisories []string `json:"auto_advisories"`
 }
 
 // ToJSON serialises the report with 2-space indent, matching Python's
@@ -223,6 +237,59 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 		Suggestions:     suggestions,
 		SummariesNeeded: collectSummariesNeeded(projectRoot),
 		SpecAdvisories:  collectSpecAdvisories(projectRoot),
+		AutoAdvisories:  collectAutoAdvisories(projectRoot),
+	}
+}
+
+// collectAutoAdvisories returns the ADVISORY list for `.logmind/auto.yml`
+// — the standing directive `logmind auto <profile>` writes (#241).
+//
+// A repo that never ran `logmind auto` has no directive and gets nothing:
+// absence is not drift, exactly as a missing workflow or hook is "not
+// installed" rather than "stale". When a directive IS installed, three
+// things are worth saying:
+//
+//   - its ownership marker predates (or postdates) the directive this
+//     binary bundles — the policy it restates has moved on;
+//   - it names a profile this binary does not know — a newer logmind, a
+//     hand-written file, or a typo, and in every case not something to
+//     guess at;
+//   - it carries no marker at all, so it belongs to the user (SPEC §5.2)
+//     and nothing will ever refresh it.
+//
+// Purely informational: like SpecAdvisories, it never feeds Overall.
+// `doctor --fix` deliberately does not act on any of it — the directive
+// carries policy a human authored (repo hard stops, the wake mechanism),
+// and rewriting that from a template is exactly the failure the whole
+// feature exists to prevent.
+func collectAutoAdvisories(projectRoot string) []string {
+	state := auto.Inspect(projectRoot)
+	if !state.Present {
+		return nil
+	}
+	const path = ".logmind/auto.yml"
+	if state.Marker == "" {
+		return []string{
+			path + " carries no `# logmind-auto-version:` marker — it belongs to you, and logmind will " +
+				"never refresh it. Move it aside and re-run `logmind auto <profile>` to adopt a managed directive.",
+		}
+	}
+	profile, known := auto.Lookup(state.Profile)
+	if !known {
+		return []string{
+			fmt.Sprintf("%s names profile %q, which this binary does not know (known: %s) — logmind will not "+
+				"guess what it should contain. Upgrade logmind, or re-run `logmind auto <profile>`.",
+				path, state.Profile, strings.Join(auto.Names(), ", ")),
+		}
+	}
+	bundled, ok := auto.BundledMarker(profile)
+	if !ok || bundled == state.Marker {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("%s is at %s; this binary bundles %s for profile %q — the policy it restates has changed. "+
+			"Move it aside, re-run `logmind auto %s`, then re-apply your repo-specific slots.",
+			path, state.Marker, bundled, profile.Name, profile.Name),
 	}
 }
 
@@ -996,6 +1063,13 @@ func RenderStatus(r StatusReport) string {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("Canonical spec file (%d):", len(r.SpecAdvisories)))
 		for _, s := range r.SpecAdvisories {
+			lines = append(lines, fmt.Sprintf("  • %s", s))
+		}
+	}
+	if len(r.AutoAdvisories) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Unattended-operation directive (%d):", len(r.AutoAdvisories)))
+		for _, s := range r.AutoAdvisories {
 			lines = append(lines, fmt.Sprintf("  • %s", s))
 		}
 	}

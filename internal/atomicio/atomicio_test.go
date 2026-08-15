@@ -41,15 +41,13 @@ func TestWriteFile_OverwritesExistingFile(t *testing.T) {
 	assertNoTmpResidue(t, dir)
 }
 
-// TestWriteFile_RenameSemantics_DoesNotFollowSymlink proves WriteFile
-// actually takes the temp-file-plus-rename path rather than an in-place
-// truncate+write in disguise: os.Rename replaces the destination NAME
-// itself (swapping a symlink for a regular file) instead of following the
-// symlink and writing through to its target — which is exactly what a
-// bare os.WriteFile(path, ...) on a symlinked path WOULD do. This is the
-// same rename-is-atomic property that makes the technique crash-safe: the
-// destination path only ever changes via one atomic filesystem op.
-func TestWriteFile_RenameSemantics_DoesNotFollowSymlink(t *testing.T) {
+// TestWriteFile_RefusesSymlinkDestination_ExistingTargetUntouched covers
+// the non-dangling case: the destination is a symlink to a real file
+// elsewhere. WriteFile must refuse rather than silently deciding between
+// the two available (and both wrong) behaviours — following the link and
+// clobbering whatever it points to, or swapping the link out for a
+// regular file via rename. Neither the link nor its target may change.
+func TestWriteFile_RefusesSymlinkDestination_ExistingTargetUntouched(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unprivileged symlink creation is unreliable on Windows CI runners")
 	}
@@ -63,25 +61,57 @@ func TestWriteFile_RenameSemantics_DoesNotFollowSymlink(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	if err := WriteFile(link, []byte("new content"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	err := WriteFile(link, []byte("new content"), 0o644)
+	if err == nil {
+		t.Fatal("WriteFile returned no error for a symlinked destination; want a refusal")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error = %q; want it to name the symlink so the caller knows what to remove", err)
 	}
 
 	fi, err := os.Lstat(link)
 	if err != nil {
 		t.Fatalf("lstat %s: %v", link, err)
 	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		t.Errorf("%s is still a symlink after WriteFile; want it replaced by a regular file (rename semantics)", link)
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("%s was replaced by a regular file; WriteFile must leave a refused symlink exactly as found", link)
 	}
-	assertContent(t, link, "new content")
 
 	targetContent, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
 	if string(targetContent) != "original target content" {
-		t.Errorf("target content = %q; want unchanged (a naive truncate+write would have followed the symlink and clobbered it)", targetContent)
+		t.Errorf("target content = %q; want unchanged — WriteFile must not follow the link and clobber it", targetContent)
+	}
+}
+
+// TestWriteFile_RefusesDanglingSymlinkDestination is the exact shape of
+// the reported escape: a symlink at the managed path whose target does
+// not exist yet. A bare os.WriteFile follows it via open(2)'s O_CREATE
+// and lands the body at the target — an arbitrary-write primitive out of
+// anything that can plant a symlink in a repo a caller did not write.
+// WriteFile must refuse and create nothing at the target.
+func TestWriteFile_RefusesDanglingSymlinkDestination(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unprivileged symlink creation is unreliable on Windows CI runners")
+	}
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "..", "escaped.json")
+	link := filepath.Join(dir, "settings.json")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	err := WriteFile(link, []byte("attacker-controlled body"), 0o644)
+	if err == nil {
+		t.Fatal("WriteFile returned no error for a dangling symlinked destination; want a refusal")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error = %q; want it to name the symlink so the caller knows what to remove", err)
+	}
+	if _, statErr := os.Lstat(outside); statErr == nil {
+		t.Errorf("WriteFile created %s by following the dangling symlink", outside)
 	}
 }
 
