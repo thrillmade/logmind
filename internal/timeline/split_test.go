@@ -222,29 +222,23 @@ func readDoc(t *testing.T, docs, rel string) string {
 	return string(data)
 }
 
-// TestCollectMarked_MarkerlessFileDatesByNewestEntry pins the rule that a
-// markerless file's single synthesized row takes its NEWEST entry, not its
-// first.
+// TestCollectMarked_MarkerlessFileDatesByFirstEntry pins SPEC line 646:
+// "Where none exists the producer MUST derive the sentence from the
+// branch's first decision title, so a summary always resolves without a
+// model call."
 //
-// Every branch file except one eventually closes: the branch merges and the
-// file stops changing, so first and last are days apart inside one window of
-// work and the choice is immaterial. `main.md` never closes — it keeps
-// collecting decisions made directly on the default branch. Dating from the
-// first entry froze main's row at its oldest decision while the file grew
-// underneath it, and the row sank past §3.3's 50-entry cut into the archive
-// and stayed there, making anything logged on main invisible in the recent
-// view.
-//
-// Deliberately ONE rule for every file rather than a default-branch special
-// case: it only *matters* for a file that stays open, which is the honest
-// reason to prefer it over branching on the branch name.
-func TestCollectMarked_MarkerlessFileDatesByNewestEntry(t *testing.T) {
+// This test asserted the NEWEST entry until an adversarial review found
+// that contradicted the MUST above. Dating by newest is the better rule —
+// every branch file except `main.md` eventually closes, so first-vs-last
+// is immaterial for them, while main never closes and its row froze at
+// its oldest decision while the file kept growing. It is proposed at
+// thrillmade/protocol#97. Until the SPEC moves, the code conforms.
+func TestCollectMarked_MarkerlessFileDatesByFirstEntry(t *testing.T) {
 	docs := t.TempDir()
 	branches := filepath.Join(docs, "decisions-branches")
 	if err := os.MkdirAll(branches, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A markerless file (no entry-block markers) spanning two months.
 	body := "# Decisions — main\n\n" +
 		"## 2026-05-15 10:00 - Oldest decision\n\n**Reasoning:** first\n\n---\n\n" +
 		"## 2026-06-20 10:00 - Middle decision\n\n**Reasoning:** second\n\n---\n\n" +
@@ -260,17 +254,11 @@ func TestCollectMarked_MarkerlessFileDatesByNewestEntry(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("a markerless file must synthesize exactly one row, got %d", len(items))
 	}
-	got := items[0].date.Format("2006-01-02")
-	if got != "2026-07-16" {
-		t.Errorf("row dated %s; want 2026-07-16 (the NEWEST entry) — dating by the "+
-			"oldest freezes an open file's row while it keeps growing", got)
+	if got := items[0].date.Format("2006-01-02"); got != "2026-05-15" {
+		t.Errorf("row dated %s; want 2026-05-15 (the FIRST entry, SPEC line 646)", got)
 	}
-	// The rendered body must agree with the date, or the row reads as the
-	// newest date attached to the oldest decision's title.
-	if !strings.Contains(items[0].body, "Newest decision") {
-		t.Errorf("row body does not carry the newest entry's title; got %q", items[0].body)
-	}
-	if strings.Contains(items[0].body, "Oldest decision") {
-		t.Errorf("row body still carries the oldest entry's title; got %q", items[0].body)
+	// Date and title must come from the SAME entry, whichever end it is.
+	if !strings.Contains(items[0].body, "Oldest decision") {
+		t.Errorf("row body does not carry the first entry's title; got %q", items[0].body)
 	}
 }

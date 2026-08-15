@@ -334,24 +334,22 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 		if len(entries) == 0 {
 			continue
 		}
-		// NEWEST entry, not the first. A markerless file collapses to a
-		// single row, and that row has to stand for a file that may still
-		// be growing.
+		// FIRST entry, per SPEC line 646: "Where none exists the producer
+		// MUST derive the sentence from the branch's first decision title,
+		// so a summary always resolves without a model call."
 		//
-		// Every OTHER branch file eventually closes: the branch merges and
-		// the file stops changing, so a row dated at its first entry stays
-		// a true summary — first and last are days apart, inside one window
-		// of work. `main.md` is the one file that never closes. Dating it
-		// from `entries[0]` froze its row at 2026-05-15 while the file kept
-		// collecting hotfixes through August, and the row sank past the
-		// §3.3 cut into the archive and stayed there — so anything logged
-		// on main became invisible in the recent view.
+		// Dating from the NEWEST entry is better engineering and was ruled
+		// for by the CEO: every branch file except one eventually closes, so
+		// first-vs-last is immaterial for them, while `main.md` never closes
+		// and its row froze at its oldest decision while the file kept
+		// growing — sinking past §3.3's cut into the archive and taking
+		// everything logged on main with it.
 		//
-		// Taking the newest entry is deliberately NOT a special case for
-		// main. It is one rule for every file, and it only *matters* for a
-		// file that stays open — which is the honest reason to prefer it
-		// over a `if branch == default` branch in the renderer.
-		e := entries[len(entries)-1]
+		// But that contradicts a normative MUST, and logmind's job is
+		// conforming to this document, not improving on it unilaterally.
+		// Proposed at thrillmade/protocol#97; this line changes when the SPEC
+		// does, not before.
+		e := entries[0]
 		d := dateOnly(e.Date)
 		items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: rel})
 	}
