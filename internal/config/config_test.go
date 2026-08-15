@@ -30,6 +30,16 @@ func TestDefaultConfig(t *testing.T) {
 	if !c.FileStructure.AutoUpdate {
 		t.Errorf("FileStructure.AutoUpdate = false; want true")
 	}
+	// FileStructure.IgnorePatterns is SPEC §1.4's CONFIG source, and a
+	// default Config has configured nothing — so it MUST be empty. It used
+	// to be seeded with the built-in defaults, which made "the user set
+	// this" and "nobody set this" indistinguishable downstream; §1.4
+	// resolves positionally, so defaults wearing the config source's
+	// position outranked a `.gitignore` negation (#303). The built-ins now
+	// live in DefaultIgnorePatterns and are pinned just below.
+	if len(c.FileStructure.IgnorePatterns) != 0 {
+		t.Errorf("FileStructure.IgnorePatterns = %q; want empty — it is §1.4's config source, and DefaultConfig configures nothing", c.FileStructure.IgnorePatterns)
+	}
 	wantPatterns := []string{
 		"__pycache__", ".git", "node_modules", "venv", ".venv",
 		"env", ".env", "*.pyc", ".pytest_cache", ".mypy_cache",
@@ -37,8 +47,8 @@ func TestDefaultConfig(t *testing.T) {
 		// SPEC §1.2.1 additions: .next/, .turbo/, .DS_Store.
 		".next", ".turbo", ".DS_Store",
 	}
-	if !reflect.DeepEqual(c.FileStructure.IgnorePatterns, wantPatterns) {
-		t.Errorf("FileStructure.IgnorePatterns =\n  %q\nwant\n  %q", c.FileStructure.IgnorePatterns, wantPatterns)
+	if !reflect.DeepEqual(DefaultIgnorePatterns(), wantPatterns) {
+		t.Errorf("DefaultIgnorePatterns() =\n  %q\nwant\n  %q", DefaultIgnorePatterns(), wantPatterns)
 	}
 	if !c.Agents["claude"] || !c.Agents["cursor"] {
 		t.Errorf("Agents claude/cursor should be true by default: %v", c.Agents)
@@ -55,35 +65,60 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_IgnorePatterns_IncludesSpecRequiredDefaults pins the
+// TestDefaultIgnorePatterns_IncludesSpecRequiredDefaults pins the
 // MINOR fix: SPEC §1.2.1 states the default file_structure.ignore_patterns
 // "MUST include at least" .git/, node_modules/, venv/, __pycache__/,
 // .next/, dist/, build/, .turbo/, *.pyc, .DS_Store. .next/.turbo/.DS_Store
 // were missing entirely. (Checked here without the SPEC prose's trailing
-// "/" — see the doc comment on DefaultConfig's IgnorePatterns literal for
-// why: internal/tree's matcher does a literal component match, and every
-// sibling default pattern already omits the trailing slash for the same
-// reason.)
-func TestDefaultConfig_IgnorePatterns_IncludesSpecRequiredDefaults(t *testing.T) {
-	got := DefaultConfig().FileStructure.IgnorePatterns
+// "/" — see the doc comment on DefaultIgnorePatterns for why: internal/tree's
+// matcher does a literal component match, and §1.4 says a trailing slash
+// matches nothing.)
+func TestDefaultIgnorePatterns_IncludesSpecRequiredDefaults(t *testing.T) {
+	got := DefaultIgnorePatterns()
 	set := map[string]bool{}
 	for _, p := range got {
 		set[p] = true
 	}
-	for _, want := range []string{".next", ".turbo", ".DS_Store"} {
+	for _, want := range []string{
+		"__pycache__", ".git", "node_modules", "venv",
+		"dist", "build", "*.pyc", ".next", ".turbo", ".DS_Store",
+	} {
 		if !set[want] {
-			t.Errorf("DefaultConfig().FileStructure.IgnorePatterns = %q; missing SPEC §1.2.1-required default %q", got, want)
+			t.Errorf("DefaultIgnorePatterns() = %q; missing SPEC §1.2.1-required default %q", got, want)
 		}
 	}
 }
 
-// TestDefaultMap_IgnorePatterns_MatchesDefaultConfig guards against the
-// two hand-maintained pattern lists (DefaultConfig's typed slice and
-// DefaultMap's `config list`/get/set-facing []any slice) drifting apart —
-// `logmind config list` must show the same ignore_patterns file-structure
-// tree generation actually uses.
-func TestDefaultMap_IgnorePatterns_MatchesDefaultConfig(t *testing.T) {
-	typed := DefaultConfig().FileStructure.IgnorePatterns
+// TestDefaultIgnorePatterns_ReturnsAFreshSlice pins that callers cannot
+// scribble on the built-ins for the rest of the process. tree.ResolveRules
+// appends .gitignore and config rules onto this slice; sharing a backing
+// array would let one repository's patterns leak into the next.
+func TestDefaultIgnorePatterns_ReturnsAFreshSlice(t *testing.T) {
+	first := DefaultIgnorePatterns()
+	first[0] = "clobbered"
+	first = append(first, "appended")
+	second := DefaultIgnorePatterns()
+	if second[0] == "clobbered" {
+		t.Errorf("DefaultIgnorePatterns()[0] = %q; a previous caller's write leaked", second[0])
+	}
+	for _, p := range second {
+		if p == "appended" {
+			t.Errorf("DefaultIgnorePatterns() = %q; a previous caller's append leaked", second)
+		}
+	}
+}
+
+// TestDefaultMap_IgnorePatterns_MatchesDefaultIgnorePatterns guards the
+// `config list` / `config set` round trip (#304): DefaultMap is what
+// `logmind config list` prints AND what `config set` writes back, so the
+// list it shows must be exactly the one the tree walk seeds itself with.
+//
+// The two lists used to be hand-maintained separately and could drift;
+// DefaultMap now renders DefaultIgnorePatterns, so this test additionally
+// pins that the derivation stays a derivation — reintroduce a literal here
+// and the entries can silently diverge again.
+func TestDefaultMap_IgnorePatterns_MatchesDefaultIgnorePatterns(t *testing.T) {
+	typed := DefaultIgnorePatterns()
 	fileStructure, ok := DefaultMap().Get("file_structure")
 	if !ok {
 		t.Fatal("DefaultMap() has no file_structure key")

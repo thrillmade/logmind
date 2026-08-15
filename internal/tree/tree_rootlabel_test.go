@@ -1,6 +1,7 @@
 package tree
 
 import (
+	"github.com/thrillmade/logmind/internal/testgit"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,6 +113,11 @@ func TestResolveRootLabel_WorktreeMatchesMainCheckout(t *testing.T) {
 	run(main, "init", "-q")
 	run(main, "config", "user.email", "test@test.com")
 	run(main, "config", "user.name", "test")
+	// This test commits, so it needs the same background-maintenance
+	// suppression every other test repo gets (#271). It builds its repo
+	// through a local `run` helper rather than testgit.InitRepo because it
+	// also needs `git worktree add` against the same handle.
+	testgit.DisableMaintenance(t, main)
 	mustWriteTree(t, filepath.Join(main, "README.md"), "hello\n")
 	run(main, "add", "README.md")
 	run(main, "commit", "-q", "-m", "init")

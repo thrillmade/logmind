@@ -31,6 +31,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/guardcommit"
@@ -181,7 +182,7 @@ func runGuardCommit(
 ) (exitCode int, err error) {
 	switch layer {
 	case "harness":
-		return guardCommitHarness(stdin, stderr, repoRootFlag, thresholdFlag, thresholdExplicit), nil
+		return guardCommitHarness(stdin, stdout, stderr, repoRootFlag, thresholdFlag, thresholdExplicit), nil
 	case "git-hook":
 		if msgFile == "" {
 			// Pure CLI-usage error, independent of any repo/config state.
@@ -279,7 +280,11 @@ type harnessPayload struct {
 // SUBDIRECTORY of the repo), falling back to --repo-root then the process
 // cwd. resolveRepoAndConfig then resolves that to the git toplevel so both
 // config AND every git op use the correct base directory.
-func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, thresholdFlag int, thresholdExplicit bool) int {
+//
+// stdout carries exactly one thing and only when there is something to say:
+// the §3.4 engine-skew notice, as a PreToolUse hook-output JSON object (see
+// writeHarnessNotice). Every ordinary allow still prints nothing at all.
+func guardCommitHarness(stdin io.Reader, stdout, stderr io.Writer, repoRootFlag string, thresholdFlag int, thresholdExplicit bool) int {
 	data, err := io.ReadAll(stdin)
 	if err != nil {
 		return 0 // fail open: couldn't even read the payload
@@ -371,13 +376,99 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 		return 0 // the repo off-ramp: git.enforce_commits: false
 	}
 
+	// §3.4's skew report for THIS layer (issue #298). Same primitive, same
+	// wording and same major-only boundary as the git-hook layer's
+	// (engineSkewNotice); only the handshake channel differs — see
+	// harnessHookVersion for why this layer reads the marker instead of an
+	// environment variable. Placed after the enforce_commits off-ramp for the
+	// git layer's reason: a repo that turned local enforcement off does not
+	// get nagged about which binary would have enforced it.
+	skew := engineSkewNotice(harnessHookVersion(repoRoot))
+	if skew != "" {
+		fmt.Fprintln(stderr, skew)
+	}
+
 	subject := extractSubjectHint(payload.ToolInput.Command)
 	d := guardcommit.Evaluate(repoRoot, subject, threshold, guardcommit.WorkingTreeUnion)
 	if d.Allow {
+		// The allow path exits 0, and an exit-0 hook's stderr reaches nobody
+		// (see writeHarnessNotice) — so the notice has to go out the one
+		// channel that does. On the block path below it rides the exit-2
+		// stderr the harness already surfaces, so no second copy is needed.
+		writeHarnessNotice(stdout, skew)
 		return 0
 	}
 	fmt.Fprintln(stderr, d.Reason)
 	return 2
+}
+
+// harnessHookVersion returns the version of logmind that installed this
+// repo's PreToolUse guard entry, or "" when there is no entry, no marker, or
+// no readable .claude/settings.json.
+//
+// The git-hook layer gets the same fact handed to it in LOGMIND_HOOK_VERSION,
+// set inline around the invocation by its own shell body. This layer cannot
+// do that: its whole invocation is a SINGLE line run through whatever shell
+// the OS hands Claude Code (bash on POSIX; PowerShell on Windows without Git
+// Bash), and `VAR=x cmd` is POSIX-only syntax. A `--hook-version` flag is
+// worse still, for the reason spelled out on hookVersionEnv: an engine that
+// predates the flag would error out, turning "the gate ran against an older
+// engine" into "the gate did not run".
+//
+// So the handshake reads the marker where the installer already wrote it —
+// the `# logmind-hook-version:` suffix on the command string in
+// .claude/settings.json (claudehook.CanonicalCommand). Moving the check
+// inside the binary makes portability a non-issue, and the marker is a
+// stronger source than an env var besides: it is the byte the installer
+// actually left behind, not something the environment can assert.
+//
+// Its one blind spot, stated rather than hidden: an entry installed into the
+// USER-level ~/.claude/settings.json instead of the repo's leaves nothing to
+// read here, and the notice stays silent. That degrades the same way a
+// missing LOGMIND_HOOK_VERSION does on the git layer.
+func harnessHookVersion(repoRoot string) string {
+	return claudehook.Inspect(repoRoot).Version
+}
+
+// harnessNotice is the PreToolUse hook-output JSON shape guard-commit writes
+// on stdout to put a line in front of a human. `systemMessage` is Claude
+// Code's documented "display a message to the user" field, and it is the ONLY
+// field emitted: `hookSpecificOutput.permissionDecision` would move the
+// allow/block decision, and a report about the gate's own integrity must
+// never be able to do that.
+type harnessNotice struct {
+	SystemMessage string `json:"systemMessage"`
+}
+
+// writeHarnessNotice emits notice as a hook-output JSON object on stdout, or
+// does nothing when notice is empty.
+//
+// Why stdout-JSON and not stderr, when §3.4 says stderr and the git layer
+// uses it: measured against Claude Code 2.1.233, a PreToolUse hook that exits
+// 0 has its stderr recorded in the transcript and surfaced to NO ONE — it
+// produces a `hook_success` attachment and nothing else. Only two things a
+// PreToolUse hook can do reach a human without blocking the tool call: exit
+// non-zero-and-non-2 (a `hook_non_blocking_error` attachment carrying the
+// stderr), or print `{"systemMessage": ...}` on stdout (a
+// `hook_system_message` attachment). The first misreports a gate that ran and
+// allowed as a hook that failed, and it is already how the MISSING-binary
+// case announces itself (the shell's own exit 127) — so this layer takes the
+// second. The stderr copy still goes out alongside, both because §3.4 asks
+// for it and because it is what the block path (exit 2, where stderr IS
+// surfaced) carries.
+//
+// A notice must never be able to break the gate it reports on: a marshal
+// failure of this fixed two-field shape is impossible, and if it somehow
+// happened, dropping the notice is the correct outcome, not a crash.
+func writeHarnessNotice(stdout io.Writer, notice string) {
+	if notice == "" {
+		return
+	}
+	b, err := json.Marshal(harnessNotice{SystemMessage: notice})
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(stdout, string(b))
 }
 
 // guardCommitGitHook implements the --layer git-hook evaluation: resolve
@@ -451,25 +542,32 @@ func guardCommitGitHook(repoRootFlag, msgFile string, thresholdFlag int, thresho
 // able to break a gate that was working.
 const hookVersionEnv = "LOGMIND_HOOK_VERSION"
 
-// reportEngineSkew writes the §3.4 skew notice to stderr when the logmind
-// that installed the calling hook (hookVer) and the logmind now running as
-// its engine disagree on MAJOR version. Advisory only — it NEVER touches the
-// allow/block decision or the exit code, because a skewed engine has still
-// evaluated the change and its answer stands.
+// engineSkewNotice returns the §3.4 skew notice — one line, no trailing
+// newline — when the logmind that installed the calling hook (hookVer) and
+// the logmind now running as its engine disagree on MAJOR version, and ""
+// when they don't. It is the single owner of that message and of the decision
+// to send it: BOTH hook layers route through it (git-hook via
+// reportEngineSkew, harness via writeHarnessNotice), because two copies of
+// "when is the gate skewed" are two copies that will disagree, and a layer
+// whose copy quietly says "never" is a gate that stopped reporting its own
+// absence — the exact failure §3.4 names.
 //
-// Never routed through qout: like a block reason, this is a report about the
-// gate's own integrity, and §3.4 keeps those off stdout and out of reach of a
-// quiet flag. The caller only reaches this after the git.enforce_commits
-// off-ramp, so a repo that deliberately turned local enforcement off does not
-// get nagged about which binary would have enforced it.
+// The layers differ only in where they GET hookVer (an environment variable
+// on the git side, the installed settings.json marker on the harness side —
+// see harnessHookVersion) and in which channel actually reaches a human on
+// each (see writeHarnessNotice). Neither difference belongs in this function.
+//
+// Advisory in the strictest sense: nothing here touches the allow/block
+// decision or the exit code, because a skewed engine has still evaluated the
+// change and its answer stands.
 //
 // Major is the reporting boundary, not exact equality — see
 // version.SameMajor's doc comment for why (a per-patch notice would print on
 // every commit in every un-refreshed repo, and `logmind doctor` already
 // reports minor/patch hook staleness on demand).
-func reportEngineSkew(stderr io.Writer, hookVer string) {
+func engineSkewNotice(hookVer string) string {
 	if hookVer == "" || version.SameMajor(hookVer, version.Version) {
-		return
+		return ""
 	}
 	// os.Executable is what the hook actually resolved off PATH — "what it
 	// found", in §3.4's terms. Degrade to the bare name rather than dropping
@@ -478,9 +576,23 @@ func reportEngineSkew(stderr io.Writer, hookVer string) {
 	if err != nil || engine == "" {
 		engine = "logmind"
 	}
-	fmt.Fprintf(stderr,
-		"logmind: commit gate ran a DIFFERENT logmind than the one that installed this hook — hook installed by logmind %s, engine answering PATH is logmind %s (%s). Enforcement may differ across that boundary; refresh with `logmind doctor --fix`.\n",
+	return fmt.Sprintf(
+		"logmind: commit gate ran a DIFFERENT logmind than the one that installed this hook — hook installed by logmind %s, engine answering PATH is logmind %s (%s). Enforcement may differ across that boundary; refresh with `logmind doctor --fix`.",
 		hookVer, version.Version, engine)
+}
+
+// reportEngineSkew writes engineSkewNotice's verdict to the git-hook layer's
+// stderr.
+//
+// Never routed through qout: like a block reason, this is a report about the
+// gate's own integrity, and §3.4 keeps those off stdout and out of reach of a
+// quiet flag. The caller only reaches this after the git.enforce_commits
+// off-ramp, so a repo that deliberately turned local enforcement off does not
+// get nagged about which binary would have enforced it.
+func reportEngineSkew(stderr io.Writer, hookVer string) {
+	if notice := engineSkewNotice(hookVer); notice != "" {
+		fmt.Fprintln(stderr, notice)
+	}
 }
 
 // exGitHookBlock is the git-hook layer's distinctive block exit code —

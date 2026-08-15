@@ -46,6 +46,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/gitattr"
@@ -595,11 +596,14 @@ func enabledAgentList(flag string, all bool) []string {
 
 // writeFile writes content to path, creating parent directories.
 // Uses 0o644 perms — matches Python's open(...).write defaults.
+//
+// Delegates to atomicio.WriteFile (temp-file-plus-rename, refuses a
+// symlink at path) rather than a bare os.WriteFile — this helper is the
+// one that lands .logmind/config.yml on a fresh `logmind init`, so a
+// symlink planted at that path before init runs must not turn into an
+// arbitrary-write primitive.
 func writeFile(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return atomicio.WriteFile(path, []byte(content), 0o644)
 }
 
 // relativePath returns target's path relative to repoRoot. Best-effort:

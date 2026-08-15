@@ -7,19 +7,25 @@
 // trees come from the Go walker so consuming repos get identical
 // output regardless of host OS.
 //
-// The renderer respects three pattern sources, merged in this order:
+// The renderer respects SPEC §1.4's three pattern sources, merged in
+// that section's order:
 //
 //  1. logmind built-in defaults (DEFAULT_IGNORES in tree_gen.py)
 //  2. patterns from the repo's .gitignore (with leading-"/" and
-//     trailing-"/" trimmed; `!negate` lines are routed to the negate
-//     bucket)
-//  3. any extra patterns the caller supplies (e.g. config.yml's
-//     file_structure.ignore_patterns)
+//     trailing-"/" trimmed)
+//  3. file_structure.ignore_patterns from .logmind/config.yml, plus any
+//     extras the caller supplies
+//
+// The merge is unconditional — a repository that names one pattern of
+// its own keeps the built-in sixteen (#269). `!pattern` is honoured in
+// every source, which is what keeps that from being a one-way door: a
+// project that genuinely wants dist/ on its map writes `!dist`.
 //
 // Pattern matching is path-aware: a pattern like `site/.next` matches
 // any path that traverses through site/.next, not just basenames.
-// Negation (`!keep.log`) re-includes a path that would otherwise be
-// ignored — gitignore precedence rules.
+// Resolution is POSITIONAL — the last rule in the merged list that
+// matches decides, exactly as git does within a .gitignore — see
+// IgnoreRules.Matches.
 package tree
 
 import (
@@ -55,20 +61,26 @@ const fileStructureTemplateTail = "\n```\n" +
 	"`logmind file-structure --write docs/file-structure.md --max-depth N` or\n" +
 	"`logmind tree --max-depth 0` for the full tree._\n"
 
-// IgnoreRules holds compiled ignore + negate patterns.
+// Rule is one pattern from one of §1.4's three sources. Negate marks a
+// `!pattern` entry, which re-includes a path an EARLIER rule excluded —
+// "earlier" being load-bearing, since resolution is positional.
+type Rule struct {
+	Pattern string
+	Negate  bool
+}
+
+// IgnoreRules is the merged pattern list in §1.4 source order — defaults,
+// then .gitignore, then config. One ordered list rather than separate
+// ignore/negate buckets so that `!` is parsed in exactly one place and no
+// rule can be filed under the wrong source. ORDER IS THE SEMANTICS here:
+// Matches resolves by position, so reordering this slice changes verdicts.
 //
 // Patterns are stored as raw strings; matching happens at the leaf via
-// filepath.Match. Per pattern we test three targets per item:
+// filepath.Match. Per rule we test three targets per item:
 //  1. full repo-relative path (e.g. "site/.next/cache")
 //  2. each path component individually
 //  3. the basename
-//
-// First match wins for ignore-vs-negate (negate beats ignore — matches
-// gitignore precedence).
-type IgnoreRules struct {
-	Ignore []string
-	Negate []string
-}
+type IgnoreRules []Rule
 
 // Matches reports whether the path should be excluded.
 //
@@ -76,24 +88,54 @@ type IgnoreRules struct {
 // basename is the path's last component (extracted once by the caller
 // since it's reused across pattern tests).
 //
-// Mirrors Python IgnoreRules.matches (tree_gen.py:47-59).
+// Resolution is POSITIONAL LAST-MATCH-WINS: the last rule in the merged list
+// that matches decides, and a `!pattern` only re-includes what a rule BEFORE
+// it excluded. That is §1.4 as written — "a !pattern re-includes a path an
+// earlier pattern excluded" — and it is what git does. Inside one .gitignore,
+//
+//	!important.log
+//	*.log
+//
+// git reports `.gitignore:2:*.log` for important.log: ignored, because the
+// negation sits earlier. Any rule that lets a negation win from anywhere in
+// the list disagrees with git on that file, and leaves config with no way to
+// re-exclude what .gitignore negated.
+//
+// This is only correct because the sources are RANKED CORRECTLY, and that
+// depends on the built-in defaults being a source of their own
+// (config.DefaultIgnorePatterns, seeded first by ResolveRules) rather than
+// arriving as the config source. When DefaultConfig still seeded
+// FileStructure.IgnorePatterns, a repository with no config file at all
+// handed ResolveRules sixteen built-in patterns at the CONFIG source's
+// position — so a positional resolver let that third-position `dist` outrank
+// a `.gitignore` `!dist` the repository had written on purpose. The defect
+// was the mis-ranked defaults, not the positional rule; see
+// config.FileStructureConfig.IgnorePatterns.
+//
+// The whole list is scanned rather than short-circuiting on the first match:
+// under last-match-wins the LAST matching rule is the answer, so an early
+// match tells us nothing.
 func (r IgnoreRules) Matches(relPath, basename string) bool {
-	if !patternSetMatches(r.Ignore, relPath, basename) {
+	if len(r) == 0 {
 		return false
 	}
-	// Ignore matched — check negation override.
-	if patternSetMatches(r.Negate, relPath, basename) {
-		return false
+	var components []string
+	if relPath != "" {
+		components = strings.Split(relPath, "/")
 	}
-	return true
+	ignored := false
+	for _, rule := range r {
+		if !rule.matches(relPath, basename, components) {
+			continue
+		}
+		ignored = !rule.Negate
+	}
+	return ignored
 }
 
-// patternSetMatches tests every pattern in `patterns` against the full
-// relative path, each path component, and the basename. Returns true
-// on the first match.
-//
-// Empty pattern set always returns false (matches Python's
-// `if not patterns: return False` short-circuit).
+// matches tests the rule's pattern against the full relative path, the
+// basename, and each path component. `components` is relPath pre-split by
+// the caller, since it is reused across every rule in the list.
 //
 // IMPORTANT: filepath.Match has subtly different semantics from
 // Python's fnmatch.fnmatchcase — Go's `*` does NOT match `/`, Python's
@@ -103,53 +145,73 @@ func (r IgnoreRules) Matches(relPath, basename string) bool {
 // a slash (`site/.next`). The mismatch would only surface on an
 // unusual pattern like `*foo*/bar` which doesn't appear in real use.
 // Worth noting if a future config.yml adds patterns that cross slashes.
-func patternSetMatches(patterns []string, relPath, basename string) bool {
-	if len(patterns) == 0 {
-		return false
+func (rule Rule) matches(relPath, basename string, components []string) bool {
+	if ok, _ := filepath.Match(rule.Pattern, relPath); ok {
+		return true
 	}
-	var components []string
-	if relPath != "" {
-		components = strings.Split(relPath, "/")
+	if ok, _ := filepath.Match(rule.Pattern, basename); ok {
+		return true
 	}
-	for _, pat := range patterns {
-		if ok, _ := filepath.Match(pat, relPath); ok {
+	for _, comp := range components {
+		if ok, _ := filepath.Match(rule.Pattern, comp); ok {
 			return true
-		}
-		if ok, _ := filepath.Match(pat, basename); ok {
-			return true
-		}
-		for _, comp := range components {
-			if ok, _ := filepath.Match(pat, comp); ok {
-				return true
-			}
 		}
 	}
 	return false
 }
 
-// readGitignorePatterns returns (ignore, negate) lists from
-// `<repoRoot>/.gitignore`. Strips comments, blank lines, leading "/"
-// and trailing "/". `!pattern` entries are routed to negate.
+// parseRules converts raw pattern strings into Rules, in order. A leading
+// "!" marks a negation and is stripped.
+//
+// §1.4 introduces `!pattern` right after listing the three sources without
+// naming one, so it is honoured in ALL of them — the config source included.
+// That is the superset reading (protocol#89 is still open on whether the
+// config source qualifies): if `!` is later restricted to .gitignore, a
+// config `!dist` degrades to an unmatched literal, whereas shipping without
+// it strands every repository that needs to see a default-ignored directory.
+//
+// The leading-/trailing-"/" trim is NOT applied here — §1.4 scopes it to the
+// .gitignore source, and states plainly that a trailing slash matches
+// nothing, so patterns are written without one.
+func parseRules(patterns []string) []Rule {
+	rules := make([]Rule, 0, len(patterns))
+	for _, p := range patterns {
+		negate := strings.HasPrefix(p, "!")
+		if negate {
+			p = p[1:]
+		}
+		if p == "" {
+			continue
+		}
+		rules = append(rules, Rule{Pattern: p, Negate: negate})
+	}
+	return rules
+}
+
+// readGitignoreRules returns the rules from `<repoRoot>/.gitignore` in file
+// order. Strips comments, blank lines, leading "/" and trailing "/" —
+// §1.4's trim, which this source and only this source gets.
 //
 // Mirrors Python _read_gitignore_patterns (tree_gen.py:80-109). Not a
 // complete gitignore parser — anchored patterns / recursive globs are
 // out of scope. Good enough to suppress obvious build-cache noise.
-func readGitignorePatterns(repoRoot string) (ignore, negate []string, err error) {
+func readGitignoreRules(repoRoot string) ([]Rule, error) {
 	path := filepath.Join(repoRoot, ".gitignore")
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
-			return nil, nil, nil
+			return nil, nil
 		}
-		return nil, nil, readErr
+		return nil, readErr
 	}
+	var rules []Rule
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		isNegate := strings.HasPrefix(line, "!")
-		if isNegate {
+		negate := strings.HasPrefix(line, "!")
+		if negate {
 			line = line[1:]
 		}
 		line = strings.TrimPrefix(line, "/")
@@ -157,49 +219,75 @@ func readGitignorePatterns(repoRoot string) (ignore, negate []string, err error)
 		if line == "" {
 			continue
 		}
-		if isNegate {
-			negate = append(negate, line)
-		} else {
-			ignore = append(ignore, line)
-		}
-	}
-	return ignore, negate, nil
-}
-
-// ResolveRules merges built-in defaults + .gitignore patterns + caller
-// extras into an IgnoreRules ready for Render.
-//
-// `defaults` should be config.DefaultConfig().FileStructure.IgnorePatterns
-// (or the user-overridden equivalent). `extras` is for ad-hoc additions
-// the caller wants on top — currently unused by the CLI but kept for
-// parity with Python's `extra_ignore` parameter on generate_tree.
-//
-// Stable de-dup preserves first-seen order.
-func ResolveRules(repoRoot string, defaults []string, extras ...string) (IgnoreRules, error) {
-	combined := append([]string{}, defaults...)
-	gi, neg, err := readGitignorePatterns(repoRoot)
-	if err != nil {
-		return IgnoreRules{}, err
-	}
-	combined = append(combined, gi...)
-	combined = append(combined, extras...)
-
-	rules := IgnoreRules{
-		Ignore: dedup(combined),
-		Negate: dedup(neg),
+		rules = append(rules, Rule{Pattern: line, Negate: negate})
 	}
 	return rules, nil
 }
 
-func dedup(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if _, ok := seen[s]; ok {
+// ResolveRules merges §1.4's three pattern sources into the ordered rule
+// list Render and repomap walk with. It is the ONE place the merge happens,
+// so every consumer of file_structure.ignore_patterns gets the same answer:
+//
+//  1. the built-in defaults, unconditionally — a repository that names one
+//     pattern of its own keeps the other sixteen. Before #269 they arrived
+//     as this function's first argument, so a config that set the key at all
+//     replaced them (yaml.Unmarshal overwrites a slice, it does not append)
+//     and node_modules/, dist/ and .venv/ reappeared in the generated map.
+//     They now come from config.DefaultIgnorePatterns — their OWN source,
+//     not a copy that DefaultConfig smuggled into the config field. That
+//     distinction is what makes positional resolution safe: with the
+//     defaults ranked first, a `.gitignore` `!dist` in a repository that
+//     configured nothing has nothing after it to override the re-inclusion.
+//  2. the repository's .gitignore, leading/trailing "/" trimmed.
+//  3. configPatterns — file_structure.ignore_patterns as loaded from
+//     .logmind/config.yml — then any caller extras. `extras` is for ad-hoc
+//     additions on top, kept for parity with Python's `extra_ignore`
+//     parameter on generate_tree.
+//
+// Sources are concatenated in §1.4's order and resolved positionally: the
+// LAST matching rule decides (see Matches). So a later source can both
+// re-include what an earlier one excluded and re-exclude what an earlier one
+// negated, which is what §1.4's "an earlier pattern" means and what git does.
+func ResolveRules(repoRoot string, configPatterns []string, extras ...string) (IgnoreRules, error) {
+	rules := parseRules(config.DefaultIgnorePatterns())
+	gitignore, err := readGitignoreRules(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	rules = append(rules, gitignore...)
+	rules = append(rules, parseRules(configPatterns)...)
+	rules = append(rules, parseRules(extras)...)
+	return dedup(rules), nil
+}
+
+// dedup drops repeated rules — same pattern AND same polarity, so `dist`
+// and `!dist` both survive. It keeps the LAST occurrence, not the first.
+//
+// That is not a style choice, it is what makes dedup verdict-preserving
+// under last-match-wins. Only the last rule matching a path decides, so
+// deleting an EARLIER exact duplicate can never change any verdict: the
+// later copy is still there, in the same place, and every rule after it is
+// untouched. Keeping the first instead would move a rule earlier in the
+// list and change answers — a .gitignore reading
+//
+//	*.log
+//	!important.log
+//	*.log
+//
+// resolves important.log as ignored (git agrees: last line wins), but
+// first-seen dedup drops the third line and leaves `!important.log` last,
+// flipping the verdict. Keep-last has no such case.
+func dedup(in []Rule) IgnoreRules {
+	lastAt := make(map[Rule]int, len(in))
+	for i, rule := range in {
+		lastAt[rule] = i
+	}
+	out := make(IgnoreRules, 0, len(in))
+	for i, rule := range in {
+		if lastAt[rule] != i {
 			continue
 		}
-		seen[s] = struct{}{}
-		out = append(out, s)
+		out = append(out, rule)
 	}
 	return out
 }
@@ -220,9 +308,9 @@ func dedup(in []string) []string {
 // sentinel (-1) to mean unbounded; the CLI wires this internally. A
 // positive maxDepth truncates the tree at that depth (root = depth 0).
 //
-// rules.Negate patterns re-include previously-matched paths; rules.Ignore
-// excludes them. Both are matched against the entry's repo-relative
-// posix path (e.g. "site/.next/cache").
+// The last rule matching an entry decides: a negating one re-includes it,
+// a plain one excludes it. Both are matched against the entry's
+// repo-relative posix path (e.g. "site/.next/cache").
 func Render(rootPath string, rules IgnoreRules, maxDepth int) (string, error) {
 	return RenderWithLabel(rootPath, rules, maxDepth, "")
 }
@@ -355,9 +443,11 @@ func relPosix(repoRoot, full string) string {
 // repoRoot defaults to "." when empty.
 // maxDepth=-1 → unbounded; 0 → root-only; positive → truncate.
 //
-// The function loads `<repoRoot>/.logmind/config.yml` for the
-// ignore_patterns override (falls back to built-in defaults when
-// config is missing — matches Python's load_config fallback).
+// The function loads `<repoRoot>/.logmind/config.yml` for the config
+// pattern source, which ResolveRules merges ON TOP of the built-in
+// defaults and .gitignore rather than in place of them (§1.4). A missing
+// or unparseable config degrades to the defaults alone — matches Python's
+// load_config fallback.
 func GenerateFileStructure(repoRoot string, maxDepth int) (string, error) {
 	if repoRoot == "" {
 		repoRoot = "."

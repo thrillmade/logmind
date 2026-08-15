@@ -44,7 +44,8 @@ records the "why" behind changes via `logmind log`, and keeps the derived
 `docs/timeline.md` + `docs/file-structure.md` in sync as agent-readable
 context. One leg of the thrillmade SkDD toolchain (with clud-bug = review,
 agent-skills = catalog). Entry point `cmd/logmind/main.go`; code under
-`internal/`. See [docs/plan.md](docs/plan.md) for architecture + roadmap.
+`internal/`. See [docs/plan.md](docs/plan.md) for architecture, and
+[docs/roadmap.md](docs/roadmap.md) for what ships next and in what order.
 
 ## Development Commands
 

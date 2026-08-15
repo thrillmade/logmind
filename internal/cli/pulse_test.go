@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // neutralizePathProbe points PATH at a directory containing ONLY a `git`
@@ -654,10 +655,9 @@ func initClonePairScaffolded(t *testing.T) (origin, repo string) {
 	commitAll(t, origin, "scaffold")
 
 	repo = filepath.Join(t.TempDir(), "repo")
-	cmd := exec.Command("git", "clone", "-q", origin, repo)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git clone: %v\n%s", err, out)
-	}
+	// A clone does NOT inherit origin's gc.auto/maintenance.auto (local,
+	// per-repo config `git clone` doesn't copy) — see testgit's package doc.
+	testgit.CloneRepo(t, repo, "-q", origin)
 	runGitIn(t, repo, "config", "user.email", "test@example.com")
 	runGitIn(t, repo, "config", "user.name", "Test")
 	runGitIn(t, repo, "config", "commit.gpgsign", "false")
