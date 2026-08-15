@@ -196,7 +196,7 @@ func searchSources(docsPath string, noArchive bool) (files []string, archiveScan
 		return nil, false, err
 	}
 	for _, s := range srcs {
-		if s.Label == archiveSourceLabel {
+		if !s.IsBranch && s.Label == archiveSourceLabel {
 			if noArchive {
 				continue
 			}

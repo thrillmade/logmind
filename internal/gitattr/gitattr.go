@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
@@ -143,10 +144,15 @@ func ensureBlockWithLines(path string, lines []string) (bool, error) {
 		existing += "\n"
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, err
-	}
-	if err := os.WriteFile(path, []byte(existing+block), 0o644); err != nil {
+	// atomicio.WriteFile makes its own parent dir (MkdirAll) and refuses to
+	// write through a symlink at path — dangling or not. A bare os.WriteFile
+	// here used to follow a dangling .gitattributes symlink via open(2) and
+	// write the block wherever it pointed, OUTSIDE the repo, while init still
+	// printed "✓ Added logmind block to .gitattributes": the write "succeeded"
+	// because os.WriteFile has no opinion about symlinks. This is a plain
+	// text file with no reason to assert a mode independent of what's already
+	// there, so WriteFile (not WriteFileMode) is the right call.
+	if err := atomicio.WriteFile(path, []byte(existing+block), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -198,7 +204,10 @@ func addMissingLines(path, existing string, lines []string) (bool, error) {
 	}
 
 	updated := existing[:endIdx] + strings.Join(missing, "\n") + "\n" + existing[endIdx:]
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+	// See ensureBlockWithLines: atomicio.WriteFile refuses a symlinked path
+	// (dangling or not) instead of following it, and a plain text file has no
+	// mode to assert here either.
+	if err := atomicio.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -261,7 +270,9 @@ func RemoveBlock(path string) (bool, error) {
 	}
 
 	cleaned := existing[:leadStart] + existing[endIdx:]
-	if err := os.WriteFile(path, []byte(cleaned), 0o644); err != nil {
+	// Same reasoning as ensureBlockWithLines: route through atomicio.WriteFile
+	// so a symlinked .gitattributes is refused rather than followed.
+	if err := atomicio.WriteFile(path, []byte(cleaned), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

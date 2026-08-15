@@ -59,3 +59,14 @@
 
 ---
 
+## 2026-08-15 16:15 - search: a source named archive is not the archive unless it is also not a branch
+
+**Reasoning:** Search was the one read path of four deciding what to exclude from a label alone, so a repository with a branch literally named archive had that branch's decisions dropped by the no-archive flag, and the receipt then reported something untrue. Show and repomap already consulted the branch flag in this same change, which is what made it a one-line divergence rather than a design question. The receipt was separately unpinned: a mutation forcing it to claim an archive was scanned survived the entire suite.
+
+**Alternatives considered:** Rename the legacy label so a branch cannot collide with it. Rejected: the collision is not the defect. Deciding identity from a display label rather than from the field that records what a thing is would remain wrong for the next label anyone reuses, and three of the four paths already did it correctly.
+
+**Implications:**
+- The three raw writes in the git attributes package are routed through the refusing primitive as well, one of which this branch had added itself while registering the archive merge driver. A dangling symlink there had let init and doctor --fix write outside the repository while printing that the block was added and reporting it written, so the regression asserts on what the user is told as well as on what reached disk. Every mutation compiled and died, and the one reverting the attributes write reproduced the reported symptom including its false success line.
+
+---
+
