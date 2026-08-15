@@ -125,29 +125,43 @@ coverage.
 
 Why the wider blast radius is acceptable:
 
-- **Branch rulesets do NOT force PRs on every repo — 12 of 20 accept a
+- **Branch rulesets do NOT force PRs on every repo — 13 of 20 accept a
   direct push from the App.** Bypass is evaluated per ruleset, and rulesets
   *aggregate*: a push must satisfy every ruleset matching the ref. The
   steward is a bypass actor on both **organization-level** rulesets
   (`18502737 org-baseline`, `16898453 org-default-protection`), which apply
   everywhere. A repo is protected from the App only if it *additionally*
   carries its own ruleset requiring pull requests without naming the steward.
-  Seven do: `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
-  `homebrew-logmind`, `setup-logmind`, `tremendous-machine`. An eighth, `arlyn-working`, is protected by **classic branch protection**
-  instead of a ruleset (`enforce_admins: true`), and the steward holds no
-  Administration permission to override it. The other twelve — including
-  `logmind`, `protocol`, `skdd`, `reporulez` and `homebrew-tap` — accept a
-  direct push. See "Ruleset bypass"
-  below for the commands.
+  Six do: `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
+  `homebrew-logmind`, `setup-logmind`. A seventh, `arlyn-working`, is
+  protected by **classic branch protection** instead of a ruleset
+  (`enforce_admins: true`), and the steward holds no Administration
+  permission to override it. The other thirteen — including `logmind`,
+  `protocol`, `skdd`, `reporulez` and `homebrew-tap` — accept a direct push.
+
+  **`tremendous-machine` looks blocked and is not.** Its ruleset `4741217`
+  exists, is `active`, requires pull requests and names no bypass actor — but
+  its `conditions.ref_name.include` is `[]`, so it matches no ref at all. That
+  is why the enumerate-the-rulesets method got this wrong twice. **Ask the
+  forge which rules actually apply** instead:
+
+  ```sh
+  gh api repos/thrillmade/<repo>/rules/branches/main --jq '[.[].ruleset_id]|unique'
+  ```
+
+  `tremendous-machine` → `[16898453, 18502737]`, identical to `logmind`, the
+  canonical accepting case. Control: `agent-skills` → `[16434011, 16898453,
+  18502737]`, its own ruleset present.
 - **All-repos is what the census reads today, and what the catalog
   fan-out / chore loop will require** — see "Purpose" above.
 
 **Residual risk, stated plainly:** a compromised App private key can mint
 an installation token scoped to every repository in the org, for that
-token's 1-hour lifetime. **Twelve of the org's twenty repos are exposed to
+token's 1-hour lifetime. **Thirteen of the org's twenty repos are exposed to
 a direct, unreviewed push under compromise** — not one. The org-level
-bypass, not `homebrew-tap`'s own entry, is what grants it; only the eight repos carrying either their own
-PR-requiring ruleset or classic branch protection are limited by required review on merge — real exposure (an
+bypass, not `homebrew-tap`'s own entry, is what grants it; only the seven repos carrying either their own
+PR-requiring ruleset or classic branch protection stop a direct push — and
+stopping a direct push is NOT the same as requiring review; see below on merge — real exposure (an
 attacker could open PRs, comment, file issues, read contents across the
 org), but gated by human review rather than by installation scope.
 
@@ -226,8 +240,7 @@ missing field.
 **Rulesets aggregate.** A push must satisfy every ruleset matching the ref, so
 bypassing the org pair is not sufficient where a repo adds its own. Seven
 repos do — `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
-`homebrew-logmind`, `setup-logmind`, `tremendous-machine` — and the steward is
-blocked in those.
+`homebrew-logmind`, `setup-logmind` — and the steward is blocked in those.
 
 **Rulesets are not the only mechanism, and checking only them is how this
 section was wrong twice.** `arlyn-working` carries no ruleset but is protected
@@ -241,7 +254,15 @@ gh api repos/thrillmade/<repo>/rulesets              # mechanism 1
 gh api repos/thrillmade/<repo>/branches/main/protection   # mechanism 2
 ```
 
-So eight are blocked and the remaining twelve accept a direct push.
+So seven are blocked and the remaining thirteen accept a direct push.
+
+**Blocked means a direct push is refused. It does NOT mean review.** Every
+`pull_request` rule in the org, and `arlyn-working`'s classic protection, sets
+`required_approving_review_count: 0`, with no code-owner requirement and no
+required status checks (see logmind#315). The steward holds
+`pull_requests: write`, so in every "blocked" repo it can open a pull request
+and merge it itself. The seven repos slow the App down; none of them puts a
+human in the path.
 
 `logmind` is in the second group: it carries no repo-level ruleset, so
 `regen-on-main`'s push to its default branch is exempt. That is the fact the

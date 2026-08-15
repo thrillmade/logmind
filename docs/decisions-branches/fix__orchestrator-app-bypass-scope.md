@@ -37,3 +37,14 @@
 
 ---
 
+## 2026-08-15 19:52 - orchestrator-app: ask the forge which rules apply, rather than enumerating rulesets and counting
+
+**Reasoning:** This is the fourth revision of one paragraph and the third wrong count, so the number was never the problem. A ruleset can exist, be active, require pull requests and name no bypass actor, and still match nothing at all: tremendous-machine's has an empty include list, so enumerating rulesets counted it as protecting a branch it does not apply to. The aggregate endpoint answers the question directly and shows that repository resolving to the same two organisation rulesets as logmind, which is the canonical accepting case. Thirteen accept a direct push and seven refuse one.
+
+**Alternatives considered:** Correct the count a third time and keep enumerating. Rejected: two of the three previous errors came from that method, once by missing classic protection entirely and once by counting an inert ruleset. The document now leads with the aggregate query and keeps enumeration only for showing which actor holds the bypass, which is the one thing the aggregate does not report.
+
+**Implications:**
+- A second claim was wrong in a way that mattered more than the count. The blocked repositories were described as limited by required review; every pull-request rule in the organisation and the one classic protection require zero approvals, with no code-owner rule and no required status checks, while the App holds write access to pull requests. It can therefore open a request and merge it itself in every repository called blocked. Those seven slow the App down and none of them puts a person in the path, which the document now says instead of implying otherwise.
+
+---
+
