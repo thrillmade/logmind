@@ -114,20 +114,33 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// (Python appended a bare `logmind check-decisions` line here; #213
 		// upgrades that to the deadline-wrapped invocation).
 		newContent := strings.TrimRight(content, "\n") + "\n" + preCommitGuardedCall
-		// DELIBERATELY os.WriteFile, not atomicio.WriteFile. This is the
-		// append-onto-an-existing-hook branch, and it is the one place in
-		// the tree where write-through is the correct behaviour:
-		//   - The dangling-symlink attack cannot reach here. We are on the
-		//     ReadFile-succeeded branch, so the path resolves to a real
-		//     file; the exploit needs ReadFile to report ErrNotExist (see
-		//     the fresh-install branch below, which IS routed atomically).
-		//   - Symlinking .git/hooks/pre-commit at a shared/tracked script
-		//     is a common, deliberate setup (husky, dotfile-managed hooks).
-		//     atomicio renames onto the NAME, which would silently detach
-		//     that link and leave the user with a private copy.
-		//   - atomicio unconditionally chmods to the perm argument, which
-		//     would clobber the mode-preservation contract documented just
-		//     below.
+		// DELIBERATELY os.WriteFile, not atomicio. Justified by atomicio's
+		// one rule (see internal/atomicio's package doc), not by an
+		// exception to it: an atomic replace swaps the NAME, so it refuses
+		// a symlink on the destination (rule 2) and severs hardlinks
+		// (rule 3). Both are exactly what must not happen here.
+		//
+		//   - Write-through IS the intent. Pointing .git/hooks/pre-commit
+		//     at a shared/tracked script — husky, chezmoi, a dotfile-managed
+		//     hooks dir, or a hardlink into one — is a common, deliberate
+		//     setup, and appending logmind's line to that shared script is
+		//     what --force was asked to do. atomicio would refuse the write
+		//     outright, or silently hand the user a detached private copy
+		//     that stops tracking the shared file.
+		//   - The dangling-symlink attack cannot reach this branch. We are
+		//     on the ReadFile-SUCCEEDED path, so the name resolved to a real
+		//     file; the exploit needs ErrNotExist (see the fresh-install
+		//     branch below, which IS routed through atomicio).
+		//   - Nor can a hostile repo plant the link: git never checks
+		//     anything out into .git/, so .git/hooks/pre-commit is not
+		//     attacker-supplied content in the threat model this sweep is
+		//     about — unlike AGENTS.md, .github/workflows/*, or .claude/.
+		//
+		// (This keep used to argue a third point — that atomicio
+		// "unconditionally chmods to the perm argument". That was true of
+		// the old implementation and is no longer: rule 1 preserves an
+		// existing file's mode. Deleted rather than restated, because a keep
+		// that outlives its reason is how an exception becomes permanent.)
 		if err := os.WriteFile(hookPath, []byte(newContent), 0o755); err != nil {
 			return err
 		}
@@ -149,14 +162,15 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// exactly this branch, and a bare os.WriteFile would follow it and
 		// drop an executable 0o755 shell script wherever it points. The
 		// rename replaces the link itself.
+		//
+		// WriteFileMode, not WriteFile: 0o755 is the point, not a default.
+		// Rule 1 makes WriteFile's perm a CREATE mode that the umask filters
+		// (a user with `umask 077` would get 0o700, and one who somehow had a
+		// non-exec hook would keep it), so the mode-asserting variant states
+		// the contract at the call site and replaces the follow-up os.Chmod
+		// this branch used to need. Python chmods 0o755 unconditionally too.
 		body := "#!/bin/sh\n" + preCommitGuardedCall
-		if err := atomicio.WriteFile(hookPath, []byte(body), 0o755); err != nil {
-			return err
-		}
-		// WriteFile only honours perm bits on CREATE; chmod
-		// explicitly to make sure the exec bit survives umask
-		// stripping (Python does chmod(0o755) unconditionally too).
-		if err := os.Chmod(hookPath, 0o755); err != nil {
+		if err := atomicio.WriteFileMode(hookPath, []byte(body), 0o755); err != nil {
 			return err
 		}
 		fmt.Fprintln(stdout, "✓ Installed logmind pre-commit hook.")

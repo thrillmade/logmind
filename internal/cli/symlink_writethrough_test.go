@@ -279,3 +279,75 @@ func TestAgentsUpdate_SymlinkedWorkflowFile(t *testing.T) {
 	}
 	assertRealFile(t, link, err)
 }
+
+// TestAgentsUpdate_PreservesModeAndSeversHardlinks measures, through the REAL
+// command, the two user-visible consequences of atomicio's one rule — the
+// exact pair a review panel measured when it blocked this PR:
+//
+//	[before] mode=-rw------- links=2  twin updated   (os.WriteFile)
+//	[broken] mode=-rw-r--r-- links=1  twin stale     (atomicio, chmod'ing)
+//	[now   ] mode=-rw------- links=1  twin stale     (atomicio, rule 1)
+//
+// MODE is a regression: converting a write to atomicio must not re-permission
+// a file the user owns. A 0600 workflow file stays 0600.
+//
+// LINKS is a CONTRACT, asserted here so the next person meets it in a test
+// rather than in a bug report: an atomic replace swaps the NAME, so a
+// hardlink twin keeps the old inode and the old content. That is inherent to
+// atomic replace and is documented on atomicio.WriteFile. If a call site ever
+// needs the inode preserved, it must not use that primitive.
+func TestAgentsUpdate_PreservesModeAndSeversHardlinks(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	wf := filepath.Join(repo, ".github", "workflows")
+	if err := os.MkdirAll(wf, 0o755); err != nil {
+		t.Fatalf("mkdir workflows: %v", err)
+	}
+
+	target := filepath.Join(wf, "regen-timeline.yml")
+	const body = "jobs:\n  x:\n    steps:\n      - run: pip install \"logmind==0.0.1\"\n"
+	if err := os.WriteFile(target, []byte(body), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	if err := os.Chmod(target, 0o600); err != nil { // defeat the ambient umask
+		t.Fatalf("chmod workflow: %v", err)
+	}
+	twin := filepath.Join(wf, "regen-timeline.hardlink.yml")
+	hardlinked := os.Link(target, twin) == nil
+
+	var stdout, stderr bytes.Buffer
+	if err := runAgentsUpdate(repo, "9.9.9", true, &stdout, &stderr); err != nil {
+		t.Fatalf("runAgentsUpdate: %v", err)
+	}
+
+	fi, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat %s: %v", target, err)
+	}
+	// Control: the rewrite must actually have happened, or "mode unchanged"
+	// is unchanged-because-untouched and proves nothing.
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read %s: %v", target, err)
+	}
+	if string(got) == body {
+		t.Fatalf("the workflow pin was not rewritten; this test would pass vacuously")
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("mode after `agents update --apply` = %04o; want 0600. Converting a write to "+
+			"atomicio must not re-permission the user's file — os.WriteFile only honours perm "+
+			"on create, and atomicio.WriteFile reproduces that", perm)
+	}
+
+	if hardlinked {
+		twinBody, rerr := os.ReadFile(twin)
+		if rerr != nil {
+			t.Fatalf("read hardlink twin: %v", rerr)
+		}
+		if string(twinBody) != body {
+			t.Errorf("hardlink twin = %q; want the OLD content. The atomic rename is documented "+
+				"to sever hardlinks; if that stopped being true, atomicio's WriteFile doc "+
+				"comment (rule 3) is now wrong and callers were told the wrong thing", twinBody)
+		}
+	}
+}

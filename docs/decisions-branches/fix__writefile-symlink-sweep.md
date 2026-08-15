@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-15 15:55 - atomicio: an atomic replace swaps the name, it does not write into the inode — one rule, and the earlier entry was wrong
+
+**Reasoning:** Two independent panels found the same thing: converting an existing-file write silently widened its permissions, severed hardlinks and detached a deliberately symlinked target. This branch had argued in one place that exactly those consequences were the reason a write-through must be kept, and then caused them elsewhere with no note. The earlier decision entry on this branch argues that forcing the mode is inherent to the primitive; that is now false and is corrected here rather than left standing. The primitive reproduces the standard call exactly: the permission argument is a create mode, the umask applies to it, and an existing regular file keeps whatever mode it had.
+
+**Alternatives considered:** Exempt the one site that needs write-through and convert everything else. Rejected: an exemption records that a rule was inconvenient, not why it does not apply. The keep now survives on the rule itself, because writing through a deliberately shared hook is the intent and git never checks out into the git directory, so a hostile repository cannot plant the link. Its old justification about mode clobbering was deleted because the rule made it untrue.
+
+**Implications:**
+- Sites are identified by the function that encloses them rather than by a count or a line number: a count lets a kept call be laundered into a helper that anything may call, and line numbers churn until people re-baseline the ledger out of habit. The guard catches aliased and dot imports by resolving from the import declarations, and states plainly what it cannot see, which is any write through a file handle already held. Nineteen mutations, all compiled, all died; one initially survived because no probe existed for a create without a truncate, which is the lock file's shape.
+
+---
+

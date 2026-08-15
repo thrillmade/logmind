@@ -671,12 +671,15 @@ func copyTree(src, dst string, paths []string) error {
 		//      catalog shipping skills/<name>/notes.md as a symlink would
 		//      make os.WriteFile write the copied body through it, outside
 		//      the clone (and outside the repository logmind was run in).
-		//   2. It chmods the temp file to `perm` before the rename, so the
-		//      mode lands whether or not `dp` already existed. That subsumes
-		//      the explicit os.Chmod this call site used to need — os.WriteFile
+		//   2. WriteFileMode (the mode-ASSERTING variant) chmods the temp
+		//      file to `perm` before the rename, so the source's mode lands
+		//      whether or not `dp` already existed. That subsumes the
+		//      explicit os.Chmod this call site used to need — os.WriteFile
 		//      only honours `perm` on create, so a pre-staged dest kept its
 		//      old mode and the executable bit went missing without it.
-		if err := atomicio.WriteFile(dp, data, perm); err != nil {
+		//      Plain atomicio.WriteFile would be wrong here: it preserves an
+		//      existing destination's mode, which is precisely the bug.
+		if err := atomicio.WriteFileMode(dp, data, perm); err != nil {
 			return err
 		}
 	}

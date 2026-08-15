@@ -9,17 +9,21 @@ import (
 	"testing"
 )
 
-// TestNoUnauthorizedRawWriteFile is the guard. It scans the whole module
-// for direct os.WriteFile / ioutil.WriteFile calls in non-test files and
-// requires every one of them to be declared in Allowlist with a reason.
+// TestNoUnauthorizedRawWriteFile is the guard. It scans the whole module for
+// direct calls to the creating/truncating primitives in non-test files and
+// requires every one of them to be declared in Allowlist, by identity, with
+// a reason.
 //
 // Three ways to go red, all deliberate:
 //
 //   - a raw call in a file that is not allowlisted at all → new debt;
-//   - MORE raw calls in an allowlisted file than declared → debt grew
-//     inside a file whose entry made it look accounted-for;
-//   - FEWER than declared → the entry is stale and must be deleted, so the
-//     ledger cannot rot into a blanket permission after the owning PR lands.
+//   - a raw call in an allowlisted file at an identity the entry does not
+//     name → either a new call, or the judged-keep call was MOVED (e.g. into
+//     a general-purpose helper, which is how a single exception becomes a
+//     module-wide one);
+//   - an identity the entry names that is no longer present → the entry is
+//     stale and must be deleted, so the ledger cannot rot into a blanket
+//     permission after the owning PR lands.
 func TestNoUnauthorizedRawWriteFile(t *testing.T) {
 	root := repoRoot(t)
 
@@ -38,32 +42,45 @@ func TestNoUnauthorizedRawWriteFile(t *testing.T) {
 		if !ok {
 			t.Errorf(`%s calls %s directly at %s.
 
-os.WriteFile follows symlinks: a dangling symlink planted at that path
-makes os.Stat/os.ReadFile report "absent", and this write then lands
-OUTSIDE the repository, through the link.
+%s follows symlinks: a dangling symlink planted at that path makes
+os.Stat/os.ReadFile report "absent", and this write then lands OUTSIDE the
+repository, through the link.
 
-Route it through internal/atomicio.WriteFile (temp sibling + rename onto
-the destination name). If write-through is genuinely correct at this site,
-add an entry to Allowlist in internal/writeaudit/writeaudit.go saying why.`,
-				file, got[0].Call, lines(got))
+Route it through internal/atomicio.WriteFile (temp sibling + rename onto the
+destination name, symlink refused). If the raw call is genuinely correct at
+this site, add an entry to Allowlist in internal/writeaudit/writeaudit.go
+naming the site ("%s") and saying why.
+
+SCOPE REMINDER: this guard catches os.WriteFile, ioutil.WriteFile, os.Create,
+and os.OpenFile with O_CREATE/O_TRUNC, under any import spelling. It does NOT
+catch writes through an *os.File you already hold (template.Execute,
+json.Encoder, io.Copy, f.Write) or a shell-out. It is not a sandbox — it
+catches the ACCIDENTAL reintroduction, which is the one that keeps happening.`,
+				file, got[0].Call, lines(got), got[0].Call, got[0].Site())
 			continue
 		}
-		switch {
-		case len(got) > ex.Count:
-			t.Errorf(`%s has %d raw write call(s) at %s but the allowlist permits %d.
+		missing, extra := diffSites(ex.Sites, sites(got))
+		if len(extra) > 0 {
+			t.Errorf(`%s has raw write call(s) the allowlist does not cover: %s
+(all raw calls in this file: %s at line(s) %s)
 
-A new one was added to a file that already had an exception. The existing
-exception does not cover it — read the recorded reason and route the new
-call through internal/atomicio.WriteFile:
+Either a new one was added to a file that already had an exception, or the
+allowlisted call MOVED to a different function — which is exactly what the
+identity check exists to catch, because relocating a judged keep into a
+general-purpose helper turns one exception into a module-wide one.
 
-  %s`, file, len(got), lines(got), ex.Count, ex.Reason)
-		case len(got) < ex.Count:
-			t.Errorf(`%s has %d raw write call(s) at %s but the allowlist still claims %d.
+Route the new call through internal/atomicio.WriteFile, or update the entry.
+Recorded reason:
 
-Stale entry. Lower the count, or delete the entry outright if the file is
-now clean. Recorded reason:
+  %s`, file, strings.Join(extra, ", "), strings.Join(sites(got), ", "), lines(got), ex.Reason)
+		}
+		if len(missing) > 0 {
+			t.Errorf(`%s no longer contains allowlisted call site(s): %s
 
-  %s`, file, len(got), lines(got), ex.Count, ex.Reason)
+Stale entry. Remove those identities, or delete the entry outright if the
+file is now clean. Recorded reason:
+
+  %s`, file, strings.Join(missing, ", "), ex.Reason)
 		}
 	}
 
@@ -91,10 +108,15 @@ func TestAllowlistEntriesCarryAReason(t *testing.T) {
 	for file, ex := range Allowlist {
 		if len(strings.TrimSpace(ex.Reason)) < 40 {
 			t.Errorf("allowlist entry %s has no substantive reason (%q); "+
-				"say why write-through is correct, or who owns the conversion", file, ex.Reason)
+				"say why the raw call is correct, or who owns the conversion", file, ex.Reason)
 		}
-		if ex.Count < 1 {
-			t.Errorf("allowlist entry %s has Count=%d; delete the entry instead", file, ex.Count)
+		if len(ex.Sites) == 0 {
+			t.Errorf("allowlist entry %s names no sites; delete the entry instead", file)
+		}
+		for _, s := range ex.Sites {
+			if !strings.Contains(s, ":") {
+				t.Errorf("allowlist entry %s has malformed site %q; want \"<func>:<pkg>.<Fn>\"", file, s)
+			}
 		}
 	}
 }
@@ -151,6 +173,153 @@ func innocent() error {
 	if got[0].Line != 6 {
 		t.Errorf("finding line = %d; want 6 (the call, not the comment above it)", got[0].Line)
 	}
+	if got[0].Site() != "guilty:os.WriteFile" {
+		t.Errorf("site = %q; want %q — the allowlist identity is the enclosing function", got[0].Site(), "guilty:os.WriteFile")
+	}
+}
+
+// TestScan_DefeatsTheSpellingDodges is the HIGH-3 regression. Every case
+// below was demonstrated to compile and pass the previous guard, which only
+// recognised an *ast.SelectorExpr whose X was literally named "os".
+//
+// Each case is its own file in one probe module so a single Scan proves all
+// of them at once, and each is asserted by SITE, so a scanner that finds the
+// right number of calls in the wrong places still fails.
+func TestScan_DefeatsTheSpellingDodges(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+
+	write(t, dir, "alias.go", `package probe
+
+import w "os"
+
+func viaAlias() error { return w.WriteFile("/tmp/x", nil, 0o644) }
+`)
+	write(t, dir, "dotimport.go", `package probe
+
+import . "os"
+
+func viaDotImport() error { return WriteFile("/tmp/x", nil, 0o644) }
+`)
+	write(t, dir, "openfile.go", `package probe
+
+import "os"
+
+func viaOpenFile() error {
+	f, err := os.OpenFile("/tmp/x", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	// O_CREATE with NO O_TRUNC — the exact shape of
+	// internal/cli/filelock_unix.go, which the previous guard did not flag.
+	// Kept as its own case because a probe that carries both flags cannot
+	// tell whether the O_CREATE arm or the O_TRUNC arm did the catching.
+	write(t, dir, "createonly.go", `package probe
+
+import "os"
+
+func viaCreateOnly() error {
+	f, err := os.OpenFile("/tmp/lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	// O_TRUNC with NO O_CREATE — truncating an existing path still follows a
+	// symlink and still destroys whatever is at the far end.
+	write(t, dir, "truncateonly.go", `package probe
+
+import "os"
+
+func viaTruncOnly() error {
+	f, err := os.OpenFile("/tmp/x", os.O_TRUNC|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	write(t, dir, "create.go", `package probe
+
+import "os"
+
+func viaCreate() error {
+	f, err := os.Create("/tmp/x")
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	// os.Truncate creates nothing, so it cannot be the dangling-symlink
+	// primitive — but it resolves the path and destroys whatever is at the
+	// far end of a link, which is the same damage. Taken from PR #306's
+	// primitive set when the two guards were unified into this one.
+	write(t, dir, "truncate.go", `package probe
+
+import "os"
+
+func viaTruncate() error { return os.Truncate("/tmp/x", 0) }
+`)
+	write(t, dir, "dynamicflags.go", `package probe
+
+import "os"
+
+func viaComputedFlags(flags int) error {
+	f, err := os.OpenFile("/tmp/x", flags, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	// NOT a finding: opening an existing file read-only neither creates
+	// nor truncates, so the guard must not cry wolf about it.
+	write(t, dir, "readonly.go", `package probe
+
+import "os"
+
+func readOnly() error {
+	f, err := os.OpenFile("/tmp/x", os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	gotSites := map[string]string{} // site -> file
+	for _, f := range got {
+		gotSites[f.Site()] = f.File
+	}
+	want := map[string]string{
+		"viaAlias:os.WriteFile":        "alias.go",
+		"viaDotImport:os.WriteFile":    "dotimport.go",
+		"viaOpenFile:os.OpenFile":      "openfile.go",
+		"viaCreateOnly:os.OpenFile":    "createonly.go",
+		"viaTruncOnly:os.OpenFile":     "truncateonly.go",
+		"viaCreate:os.Create":          "create.go",
+		"viaTruncate:os.Truncate":      "truncate.go",
+		"viaComputedFlags:os.OpenFile": "dynamicflags.go",
+	}
+	for site, file := range want {
+		if gotSites[site] != file {
+			t.Errorf("Scan missed %s in %s; a raw write spelled this way slips past the guard. got=%v",
+				site, file, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("Scan found %d finding(s) %v; want exactly %d — an extra one means "+
+			"the read-only os.OpenFile was flagged, which would make the guard noise", len(got), got, len(want))
+	}
 }
 
 // TestScan_DetectsIoutilAlias pins the deprecated spelling, the obvious way
@@ -171,6 +340,72 @@ func old() error { return ioutil.WriteFile("/tmp/x", nil, 0o644) }
 	if len(got) != 1 || got[0].Call != "ioutil.WriteFile" {
 		t.Fatalf("Scan found %v; want one ioutil.WriteFile finding", got)
 	}
+}
+
+// TestScan_ReportsMethodReceiverInSite pins the identity format for methods,
+// so an allowlist entry for a method is writable and stable.
+func TestScan_ReportsMethodReceiverInSite(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "method.go", `package probe
+
+import "os"
+
+type Store struct{ path string }
+
+func (s *Store) Save(b []byte) error { return os.WriteFile(s.path, b, 0o644) }
+`)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 1 || got[0].Site() != "Store.Save:os.WriteFile" {
+		t.Fatalf("Scan found %v; want one finding with site Store.Save:os.WriteFile", got)
+	}
+}
+
+// TestScan_RelocationChangesTheSite is the HIGH-3b regression: moving an
+// allowlisted call into a general-purpose helper must not keep the ledger
+// green. Under a count-based allowlist this was invisible — one call before,
+// one call after.
+func TestScan_RelocationChangesTheSite(t *testing.T) {
+	before := scanOne(t, `package probe
+
+import "os"
+
+func installHook(p string, b []byte) error { return os.WriteFile(p, b, 0o755) }
+`)
+	after := scanOne(t, `package probe
+
+import "os"
+
+func RawWriteFile(p string, b []byte, m os.FileMode) error { return os.WriteFile(p, b, m) }
+
+func installHook(p string, b []byte) error { return RawWriteFile(p, b, 0o755) }
+`)
+	if before.Site() == after.Site() {
+		t.Fatalf("relocating the call into a helper left the site unchanged (%q); "+
+			"the allowlist would stay green while the raw write became callable "+
+			"from anywhere in the module", before.Site())
+	}
+	if after.Site() != "RawWriteFile:os.WriteFile" {
+		t.Errorf("after relocation site = %q; want RawWriteFile:os.WriteFile", after.Site())
+	}
+}
+
+func scanOne(t *testing.T, src string) Finding {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "x.go", src)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Scan found %d findings %v; want exactly 1", len(got), got)
+	}
+	return got[0]
 }
 
 func repoRoot(t *testing.T) string {
@@ -201,6 +436,42 @@ func write(t *testing.T, dir, name, body string) {
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+func sites(fs []Finding) []string {
+	out := make([]string, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, f.Site())
+	}
+	sort.Strings(out)
+	return out
+}
+
+// diffSites compares the allowlisted identities with the observed ones as
+// MULTISETS: two permitted calls in the same function are two entries, and
+// adding a third is caught.
+func diffSites(want, got []string) (missing, extra []string) {
+	counts := map[string]int{}
+	for _, w := range want {
+		counts[w]++
+	}
+	for _, g := range got {
+		counts[g]--
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		for i := 0; i < counts[k]; i++ {
+			missing = append(missing, k)
+		}
+		for i := 0; i < -counts[k]; i++ {
+			extra = append(extra, k)
+		}
+	}
+	return missing, extra
 }
 
 func lines(fs []Finding) string {
