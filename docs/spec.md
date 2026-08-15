@@ -33,4 +33,5 @@ logmind's own templates install.
 review's output but performs none, and declaring a version is a §7.3
 obligation rather than an implementation of §7.
 
-See [docs/plan.md](plan.md) for architecture and the forward roadmap.
+See [docs/plan.md](plan.md) for architecture and [docs/roadmap.md](roadmap.md)
+for the forward roadmap.
