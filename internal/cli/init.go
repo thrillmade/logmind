@@ -702,7 +702,7 @@ func installWorkflowTemplatesMode(repoRoot string, mode workflowInstallMode) ([]
 		// no-op re-render prints is how they find out by not finding out.
 		// The line below is the disclosure; `--refresh`'s flag help carries
 		// the same warning before the fact.
-		if err := os.WriteFile(target, []byte(body), 0o644); err != nil { // MUTATION-1-PROBE
+		if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
 			declined = append(declined, templateDowngrade{Path: rel, Err: err})
 			continue
 		}
