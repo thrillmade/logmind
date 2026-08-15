@@ -157,12 +157,19 @@ func TestFileStructure_GitignoreSourceHonoured(t *testing.T) {
 // arriving from the second source: ".gitignore" re-includes a path the
 // built-in defaults excluded.
 //
-// It is also the guard against the trap that positional last-match-wins
-// resolution would have sprung. This repository configures NOTHING, yet
-// config.Load still hands ResolveRules the sixteen defaults as the config
-// source — so a positional resolver would let that re-appended `dist`
-// override the `!dist` here, hiding a directory the repository asked to
-// see. See IgnoreRules.Matches.
+// This is the case that killed positional resolution the first time, and it
+// passes now for a structural reason rather than because negation cheats.
+// The repository configures NOTHING. It used to still hand ResolveRules the
+// sixteen built-in defaults as the CONFIG source, because DefaultConfig
+// seeded FileStructure.IgnorePatterns — so that re-appended `dist` sat at
+// position 3, AFTER the `!dist` here at position 2, and a positional
+// resolver correctly-but-uselessly let it win. The defaults are now their
+// own source (config.DefaultIgnorePatterns, seeded first by ResolveRules)
+// and the config source is empty for a repository that configured nothing,
+// so `!dist` is the last rule matching dist and nothing follows it.
+//
+// Change ResolveRules to seed from config.DefaultConfig().FileStructure
+// .IgnorePatterns again and this goes red.
 func TestFileStructure_GitignoreNegationReincludesDefault(t *testing.T) {
 	root := namedRepo(t, map[string]string{
 		"dist/bundle.js":      "d",
@@ -193,6 +200,110 @@ func TestFileStructure_NegationSurvivesACustomConfig(t *testing.T) {
 	mustShow(t, got, "dist", "bundle.js")
 	mustHide(t, got, "node_modules", "scratch.tmp")
 	mustShow(t, got, "docs")
+}
+
+// TestFileStructure_ConfigReExcludesWhatGitignoreNegated pins the capability
+// positional resolution buys, and that negation-wins resolution could not
+// express at all: config is §1.4's LAST source, so a repository whose
+// .gitignore re-includes dist/ can still keep it off its own map by naming it
+// in file_structure.ignore_patterns.
+//
+// Under the negation-wins rule this PR replaced, the `!dist` won from
+// wherever it sat and this was unreachable — there was no way to overrule a
+// .gitignore negation from config.
+func TestFileStructure_ConfigReExcludesWhatGitignoreNegated(t *testing.T) {
+	root := namedRepo(t, map[string]string{
+		"dist/bundle.js": "d",
+		"docs/readme.md": "r",
+		".gitignore":     "!dist\n",
+	})
+	writeIgnoreConfig(t, root, "dist")
+
+	got := mustGenerate(t, root)
+	mustHide(t, got, "dist", "bundle.js")
+	mustShow(t, got, "docs", "readme.md")
+}
+
+// TestFileStructure_RootLabelOnlyConfigKeepsEveryDefault is the rendered-
+// output half of internal/config's TestFileStructureRootLabel_DefaultAndRoundTrip.
+//
+// A config that sets only root_label must not cost the repository the
+// built-in defaults. That used to be checked by asserting the typed config's
+// IgnorePatterns was non-empty — but the defaults no longer live there
+// (they are config.DefaultIgnorePatterns, seeded by ResolveRules), so the
+// claim is only observable here, on the document a user actually reads.
+// internal/config cannot make it: tree imports config, not the reverse.
+func TestFileStructure_RootLabelOnlyConfigKeepsEveryDefault(t *testing.T) {
+	root := namedRepo(t, map[string]string{
+		"node_modules/lib.js": "n",
+		"dist/bundle.js":      "d",
+		".venv/pyvenv.cfg":    "v",
+		"docs/readme.md":      "r",
+	})
+	dir := filepath.Join(root, ".logmind")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("file_structure:\n  root_label: myrepo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := mustGenerate(t, root)
+	mustHide(t, got, "node_modules", "dist", ".venv")
+	mustShow(t, got, "docs", "readme.md")
+}
+
+// TestResolveRules_ExtrasApplyAndRankLast covers ResolveRules' variadic
+// `extras`, the ad-hoc fourth source kept for parity with Python's
+// `extra_ignore` on generate_tree.
+//
+// It had no test and no production caller, so dropping it entirely from the
+// merge went unnoticed — found by mutating the append away and watching the
+// suite stay green. Position matters now, so this pins both halves: an extra
+// ignores, and an extra ranks AFTER config, so it can re-exclude what a
+// config `!pattern` re-included.
+func TestResolveRules_ExtrasApplyAndRankLast(t *testing.T) {
+	root := namedRepo(t, map[string]string{
+		"vendored/lib.js": "v",
+		"dist/bundle.js":  "d",
+		"docs/readme.md":  "r",
+	})
+
+	// An extra excludes a path no other source mentions.
+	rules, err := ResolveRules(root, nil, "vendored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RenderWithLabel(root, rules, -1, "myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustHide(t, got, "vendored", "lib.js")
+	mustShow(t, got, "docs", "readme.md")
+
+	// Config re-includes dist; the extra, ranking after it, takes it back.
+	rules, err = ResolveRules(root, []string{"!dist"}, "dist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = RenderWithLabel(root, rules, -1, "myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustHide(t, got, "dist", "bundle.js")
+
+	// Control: without the extra, the config negation stands — so the
+	// assertion above is about the extra's POSITION, not about dist being
+	// hidden by the built-in default all along.
+	rules, err = ResolveRules(root, []string{"!dist"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = RenderWithLabel(root, rules, -1, "myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustShow(t, got, "dist", "bundle.js")
 }
 
 // TestFileStructure_NoConfigHidesEveryDefault is the byte-parity guard for

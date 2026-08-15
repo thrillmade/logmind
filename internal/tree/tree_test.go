@@ -198,8 +198,14 @@ func TestRenderMaxDepthZeroRootOnly(t *testing.T) {
 }
 
 // TestReadGitignoreRules exercises the gitignore parser's trim logic, and
-// that it hands rules back in FILE order — with last-match-wins resolution
-// a negation's position relative to its neighbours is the whole answer.
+// that it hands rules back in FILE order.
+//
+// File order is not bookkeeping — under last-match-wins a negation's
+// position relative to its neighbours IS the answer, so the second half of
+// this test resolves the parsed rules both ways round and asserts the two
+// verdicts differ. Assert the ordering in prose only and the claim survives
+// any resolver, including one that ignores order entirely (which is what
+// shipped before #303).
 func TestReadGitignoreRules(t *testing.T) {
 	dir := t.TempDir()
 	body := "# comment\n" +
@@ -225,6 +231,20 @@ func TestReadGitignoreRules(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("rules = %v; want %v", got, want)
+	}
+
+	// As parsed: `*.log` then `!keep.log`. The negation is LAST, so
+	// keep.log is re-included.
+	if IgnoreRules(got).Matches("keep.log", "keep.log") {
+		t.Errorf("keep.log is ignored with the negation last; want re-included")
+	}
+	// Swap those two neighbours and nothing else. Now `*.log` is last, so
+	// the same file is ignored. Equal verdicts here would mean position
+	// carries no meaning.
+	swapped := append([]Rule(nil), got...)
+	swapped[2], swapped[3] = swapped[3], swapped[2]
+	if !IgnoreRules(swapped).Matches("keep.log", "keep.log") {
+		t.Errorf("keep.log is re-included with the negation moved EARLIER than *.log; want ignored — resolution is not positional")
 	}
 }
 
