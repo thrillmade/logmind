@@ -194,9 +194,28 @@ required_linear_history + pull_request (0 reviews, squash only). The
 steward App is added as a bypass actor so its direct pushes are exempt;
 human pushes still go through PR review. The bypass IS the audit trail —
 every direct push appears in the org audit log under the App identity.
-`homebrew-tap` is the only repo in the org with a bypass entry — see
-"Installation scope" above for why that matters now that the App installs
-`all` repos rather than a selected list.
+**`homebrew-tap` is no longer the only repo with a bypass entry, and has not
+been for some time.** The steward now bypasses in every repo in the org,
+because the entry rides on the two *organization-level* rulesets rather than
+on any repo's own:
+
+```sh
+gh api repos/thrillmade/<repo>/rulesets --jq '.[] | "\(.id) \(.name)"'
+gh api repos/thrillmade/<repo>/rulesets/<id> \
+  --jq '.bypass_actors[]? | "\(.actor_type) \(.actor_id) \(.bypass_mode)"'
+gh api /apps/skdd-steward --jq .id     # the id to look for
+```
+
+Measured 2026-08-15 across all seven org repos: `18502737 org-baseline` and
+`16898453 org-default-protection` both list the steward App with
+`bypass_mode: always`, and both appear in every repo. The repo-specific
+rulesets (`20570854`, `18292238`, `16434011`) do **not** list it — which is
+what makes the measurement above meaningful rather than a probe that matches
+everything.
+
+So `regen-on-main`'s direct push to `main` is exempt in any org repo, not just
+the tap. See "Installation scope" above for why that follows from the App
+installing `all` repos rather than a selected list.
 
 The GitHub Rulesets API requires a full ruleset body on `PUT` — it does
 not accept a partial patch. Use a read-merge-PUT pattern: fetch the
