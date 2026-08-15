@@ -6,8 +6,9 @@
 //     docs/decisions.md (the "current branch" contract SKILL.md/AGENTS.md
 //     document)
 //   - no decisions logged yet on the current branch → friendly message
-//   - --all appends the archive under an ARCHIVED DECISIONS banner when the
-//     archive file exists, and a "(no archive)" ok-suffix when it doesn't
+//   - --all appends a LEGACY docs/decisions-archive.md under an ARCHIVED
+//     DECISIONS banner when that file exists, and never invents one when it
+//     doesn't
 //   - --all ALSO appends every other docs/decisions-branches/*.md file under
 //     a BRANCH DECISIONS banner (SPEC section sec-3-2's "every branch
 //     decisions file" half), without duplicating the current branch's own
@@ -113,13 +114,14 @@ func TestShow_NoDecisionsYetOnBranch(t *testing.T) {
 	})
 }
 
-// TestShow_All_NeverStreamsALeftoverArchive: §3.2 deleted
-// docs/decisions-archive.md. --all covers the branch files and nothing else,
-// so a stale archive file left behind by an older binary must not be streamed
-// under a banner — and its absence is not reported as a missing thing.
-func TestShow_All_NeverStreamsALeftoverArchive(t *testing.T) {
+// TestShow_All_StreamsALegacyArchive: §3.2 stopped rotation, so no repo grows
+// a NEW docs/decisions-archive.md — but one left behind by a pre-§3.2 binary
+// holds real decisions, and `--all` must stream it under its banner. A repo
+// that never rotated has no archive, and its absence is not reported as a
+// missing thing.
+func TestShow_All_StreamsALegacyArchive(t *testing.T) {
 	for _, writeArchive := range []bool{true, false} {
-		name := "leftover archive present"
+		name := "legacy archive present"
 		if !writeArchive {
 			name = "no archive file"
 		}
@@ -135,11 +137,16 @@ func TestShow_All_NeverStreamsALeftoverArchive(t *testing.T) {
 
 				body := runShowCmd(t, "--all")
 				mustContain(t, body, "Main decision")
-				if strings.Contains(body, "ARCHIVED DECISIONS") {
-					t.Errorf("--all streamed an ARCHIVED DECISIONS banner; the archive is gone (§3.2):\n%s", body)
-				}
-				if strings.Contains(body, "Archived decision") {
-					t.Errorf("--all streamed a leftover docs/decisions-archive.md:\n%s", body)
+				if writeArchive {
+					mustContain(t, body, "ARCHIVED DECISIONS")
+					mustContain(t, body, "Archived decision")
+				} else {
+					if strings.Contains(body, "ARCHIVED DECISIONS") {
+						t.Errorf("--all streamed an ARCHIVED DECISIONS banner with no archive on disk:\n%s", body)
+					}
+					if strings.Contains(body, "Archived decision") {
+						t.Errorf("--all invented archived content:\n%s", body)
+					}
 				}
 			})
 		})
@@ -275,18 +282,18 @@ func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 			"## 2026-06-01 10:00 - Main decision\n")
 		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__other.md"),
 			"## 2026-06-02 11:00 - Branch decision\n")
-		// A leftover archive from an older binary — never a source (§3.2).
+		// A legacy archive from a pre-§3.2 binary — still a source, tagged
+		// with the grammar's "archive" label.
 		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 			"## 2025-01-01 09:00 - Archived decision\n")
 
 		body := runShowCmd(t, "--brief", "--all")
 		mustContain(t, body, "[main]")
 		mustContain(t, body, "[branch:feat/other]")
+		mustContain(t, body, "[archive]")
 		mustContain(t, body, "2026-06-01 10:00 - Main decision")
 		mustContain(t, body, "2026-06-02 11:00 - Branch decision")
-		if strings.Contains(body, "[archive]") || strings.Contains(body, "Archived decision") {
-			t.Errorf("--brief --all grouped a leftover archive under its own tag:\n%s", body)
-		}
+		mustContain(t, body, "2025-01-01 09:00 - Archived decision")
 
 		mainIdx := strings.Index(body, "[main]")
 		branchIdx := strings.Index(body, "[branch:feat/other]")
@@ -392,8 +399,10 @@ func TestShow_JSON_MachineCleanOutput(t *testing.T) {
 }
 
 // TestShow_JSON_All_SourceValues: under --all --json, every decision's
-// "source" value matches the grammar exactly: "main" | "branch:<name>".
-// "archive" is no longer in it — §3.2 deleted the file that produced it.
+// "source" value matches the SPEC section sec-3-2 grammar exactly:
+// "main" | "archive" | "branch:<name>". A legacy docs/decisions-archive.md
+// still produces "archive" — §3.2 stopped WRITING that file, it did not make
+// the decisions in it stop counting.
 func TestShow_JSON_All_SourceValues(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
@@ -401,7 +410,7 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 			"## 2026-06-03 09:00 - Main decision\n")
 		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__widget.md"),
 			"## 2026-06-02 08:00 - Branch decision\n")
-		// A leftover archive from an older binary — never a source (§3.2).
+		// A legacy archive from a pre-§3.2 binary — still a source.
 		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 			"## 2025-01-01 07:00 - Archived decision\n")
 
@@ -416,13 +425,15 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 		for _, e := range doc.Decisions {
 			got[e["source"].(string)] = true
 		}
-		for _, want := range []string{"main", "branch:feat/widget"} {
+		for _, want := range []string{"main", "archive", "branch:feat/widget"} {
 			if !got[want] {
 				t.Errorf("missing source %q; got sources %v", want, got)
 			}
 		}
-		if got["archive"] {
-			t.Errorf(`--all --json emitted source "archive"; that source is gone under §3.2 (got %v)`, got)
+		for src := range got {
+			if src != "main" && src != "archive" && !strings.HasPrefix(src, "branch:") {
+				t.Errorf("source %q is outside the NORMATIVE grammar; got %v", src, got)
+			}
 		}
 	})
 }

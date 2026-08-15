@@ -7,7 +7,8 @@
 //   - highlighting works for a query containing regex-special characters
 //   - scope: a term living ONLY in docs/decisions.md IS found while on an
 //     unrelated feature branch; a branch-file-only term is also found there
-//   - --case-sensitive / --no-archive flag matrix (table-driven)
+//   - --case-sensitive / --no-archive flag matrix (table-driven), including
+//     that a legacy docs/decisions-archive.md is searched either way
 //   - empty query → error
 //   - no matches → friendly message, exit 0
 //   - --quiet collapses stdout to exactly one `ok k=v` line
@@ -145,10 +146,12 @@ func TestSearch_FlagMatrix(t *testing.T) {
 		{name: "case-insensitive default matches mixed case", query: "postgresql", wantHit: true},
 		{name: "case-sensitive rejects mismatched case", query: "postgresql", extraArgs: []string{"--case-sensitive"}, wantHit: false},
 		{name: "case-sensitive accepts exact case", query: "PostgreSQL", extraArgs: []string{"--case-sensitive"}, wantHit: true},
-		// §3.2 deleted docs/decisions-archive.md. A file left behind by an
-		// older binary is not a source, with or without the retired flag.
-		{name: "a leftover archive is not searched", query: "archived-term", wantHit: false},
-		{name: "the retired --no-archive flag is accepted and changes nothing", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: false},
+		// §3.2 stopped rotation, so nothing writes docs/decisions-archive.md
+		// any more — but a file left behind by a pre-§3.2 binary holds real
+		// decisions and IS searched. "A decision written is a decision kept."
+		// --no-archive is retired: it changes nothing, in either direction.
+		{name: "a leftover archive IS searched", query: "archived-term", wantHit: true},
+		{name: "the retired --no-archive flag is accepted and changes nothing", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

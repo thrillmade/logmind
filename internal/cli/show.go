@@ -17,13 +17,15 @@
 //     for byte from the pre-§3.2 behavior — existing goldens still pin this).
 //   - --all: appends every OTHER docs/decisions-branches/*.md file (the base
 //     file, when on a branch, is already the primary body — never
-//     duplicated) under BRANCH DECISIONS banners, when each exists.
+//     duplicated) under BRANCH DECISIONS banners, then the non-branch legacy
+//     files (docs/decisions.md, docs/decisions-archive.md) under their own
+//     banners, when each exists.
 //   - --brief: title + timestamp only, one line per decision. Under --all,
 //     lines are grouped under a "[source]" tag matching the --json source
-//     value exactly (main / branch:<name>).
+//     value exactly (main / archive / branch:<name>).
 //   - --json: the SPEC §3.2 NORMATIVE schema —
 //     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
-//     "implications":[],"source":"main|branch:<name>"}]}. Stdout
+//     "implications":[],"source":"main|archive|branch:<name>"}]}. Stdout
 //     carries ONLY the JSON document — no chatter, no ok trailer, regardless
 //     of --quiet, so it is always pipeable into `jq` unmodified.
 //   - --brief --json: the schema's keys never change (NORMATIVE — same key
@@ -75,7 +77,8 @@ docs/decisions-branches/<branch>.md for the branch you are on — the default
 branch included, it is a branch like any other.
 
 Pass --all to also include every OTHER docs/decisions-branches/<branch>.md
-file, each appended under its own banner.
+file plus any legacy docs/decisions.md and docs/decisions-archive.md, each
+appended under its own banner.
 
 Pass --brief for title + timestamp only, one line per decision (under --all,
 lines are grouped by source).
@@ -83,7 +86,7 @@ lines are grouped by source).
 Pass --json for structured output matching PROTOCOL SPEC section sec-3-2's
 NORMATIVE schema:
     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
-    "implications":[],"source":"main|branch:<name>"}]}
+    "implications":[],"source":"main|archive|branch:<name>"}]}
 --json is machine-clean: stdout carries ONLY the JSON document, safe to pipe
 into jq unmodified, regardless of --quiet.
 
@@ -108,7 +111,7 @@ Examples:
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false,
-		"Also include every other docs/decisions-branches/*.md file, each under its own banner.")
+		"Also include every other docs/decisions-branches/*.md file plus any legacy docs/decisions.md and docs/decisions-archive.md, each under its own banner.")
 	cmd.Flags().BoolVar(&brief, "brief", false,
 		"Title + timestamp only, one line per decision. Combined with --json, zeroes reasoning/alternatives/implications instead of dropping them.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
@@ -159,14 +162,50 @@ func listBranchSources(docsPath, excludePath string) ([]showSource, error) {
 
 // allExtraSources returns the ordered list of sources `--all` contributes
 // beyond the base file: every OTHER branch decisions file (see
-// listBranchSources). Shared by --brief and --json so both group sources
-// identically with the default raw-stream mode below.
+// listBranchSources), then every decisions.NonBranchSources() file that
+// exists and is not already the base. Shared by --brief and --json so both
+// group sources identically with the default raw-stream mode below.
 //
-// It used to append docs/decisions-archive.md last. There is no decision
-// archive any more (SPEC §3.2 — nothing rotates, nothing overflows), so the
-// set is exactly the branch files.
+// The non-branch half is what makes `--all` mean all. §3.2 moved main's
+// decisions into main's branch file, which left docs/decisions.md and
+// docs/decisions-archive.md reachable from no `--all` source list at all:
+// a repo that rotated under the old `max_recent: 20` default, or that logged
+// on a detached HEAD, could not see those decisions from any `show`
+// invocation. Both labels are already in the SPEC section sec-3-2 source
+// grammar ("main" | "archive" | "branch:<name>"), so surfacing them needs no
+// schema change.
 func allExtraSources(docsPath, excludePath string) ([]showSource, error) {
-	return listBranchSources(docsPath, excludePath)
+	out, err := listBranchSources(docsPath, excludePath)
+	if err != nil {
+		return nil, err
+	}
+	for _, src := range decisions.NonBranchSources() {
+		p := filepath.Join(docsPath, src.File)
+		if p == excludePath || !pathExists(p) {
+			continue
+		}
+		out = append(out, showSource{path: p, label: src.Label})
+	}
+	return out, nil
+}
+
+// showBannerTitle maps a showSource label (the SPEC section sec-3-2 source
+// grammar: "main" | "archive" | "branch:<name>") to the banner heading the
+// raw `--all` stream prints above that source's verbatim body.
+//
+// "archive" keeps the historical ARCHIVED DECISIONS wording so a reader who
+// upgraded across §3.2 sees the same section title they saw before.
+func showBannerTitle(label string) string {
+	switch {
+	case strings.HasPrefix(label, "branch:"):
+		return "BRANCH DECISIONS: " + strings.TrimPrefix(label, "branch:")
+	case label == "archive":
+		return "ARCHIVED DECISIONS"
+	case label == "main":
+		return "LEGACY MAIN LOG"
+	default:
+		return strings.ToUpper(label)
+	}
 }
 
 // showJSONEntry mirrors SPEC section sec-3-2's NORMATIVE --json schema
@@ -196,7 +235,7 @@ type showJSONOutput struct {
 //
 // Entries within each source preserve on-disk (chronological, oldest-first)
 // order — every decision file is append-only — and sources are concatenated
-// in the order they're visited (base, then branches).
+// in the order they're visited (base, then branches, then legacy).
 func collectShowEntries(docsPath, basePath, baseLabel string, all, withBody bool) ([]showJSONEntry, error) {
 	var out []showJSONEntry
 
@@ -411,31 +450,40 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 		body = string(data)
 	}
 
-	// --all's branch-file half of SPEC section sec-3-2 ("include archive and
-	// every branch decisions file"): every OTHER docs/decisions-branches/*.md
-	// file, appended verbatim under its own BRANCH DECISIONS banner, ordered
-	// before the archive section below (unchanged from before this feature).
-	type branchBlock struct {
+	// SPEC section sec-3-2's "--all: include archive and every branch
+	// decisions file": every OTHER docs/decisions-branches/*.md file, then
+	// the non-branch files (docs/decisions.md, docs/decisions-archive.md)
+	// that are not already the base — each appended verbatim under its own
+	// banner, in allExtraSources order so the raw stream, --brief and --json
+	// all visit sources identically.
+	type extraBlock struct {
 		label string
 		body  string
 	}
-	var branchBlocks []branchBlock
+	var extraBlocks []extraBlock
+	branchCount := 0
+	nonBranchCount := 0
 	if all {
-		branchSrcs, err := listBranchSources(docsPath, target)
+		extraSrcs, err := allExtraSources(docsPath, target)
 		if err != nil {
 			return err
 		}
-		for _, s := range branchSrcs {
+		for _, s := range extraSrcs {
 			data, err := os.ReadFile(s.path)
 			if err != nil {
 				return fmt.Errorf("read %s: %w", s.path, err)
 			}
-			branchBlocks = append(branchBlocks, branchBlock{label: s.label, body: string(data)})
+			extraBlocks = append(extraBlocks, extraBlock{label: s.label, body: string(data)})
+			if strings.HasPrefix(s.label, "branch:") {
+				branchCount++
+			} else {
+				nonBranchCount++
+			}
 		}
 	}
 
 	if quiet {
-		q.ok("show path=%s bytes=%d all=%t branches=%d", rel, len(body), all, len(branchBlocks))
+		q.ok("show path=%s bytes=%d all=%t branches=%d legacy=%d", rel, len(body), all, branchCount, nonBranchCount)
 		return nil
 	}
 
@@ -445,10 +493,10 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 		fmt.Fprint(stdout, body)
 	}
 
-	for _, b := range branchBlocks {
+	for _, b := range extraBlocks {
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, strings.Repeat("=", 80))
-		fmt.Fprintf(stdout, "BRANCH DECISIONS: %s\n", strings.TrimPrefix(b.label, "branch:"))
+		fmt.Fprintln(stdout, showBannerTitle(b.label))
 		fmt.Fprintln(stdout, strings.Repeat("=", 80))
 		fmt.Fprintln(stdout)
 		fmt.Fprint(stdout, b.body)
@@ -456,10 +504,17 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 
 	suffix := ""
 	if all {
-		if len(branchBlocks) > 0 {
-			suffix = fmt.Sprintf(" + %d branch file(s)", len(branchBlocks))
-		} else {
+		var extras []string
+		if branchCount > 0 {
+			extras = append(extras, fmt.Sprintf("%d branch file(s)", branchCount))
+		}
+		if nonBranchCount > 0 {
+			extras = append(extras, fmt.Sprintf("%d legacy file(s)", nonBranchCount))
+		}
+		if len(extras) == 0 {
 			suffix = " (no other branch files)"
+		} else {
+			suffix = " + " + strings.Join(extras, " + ")
 		}
 	}
 	fmt.Fprintf(stdout, "ok show: %s (%d bytes%s)\n", rel, len(body), suffix)
