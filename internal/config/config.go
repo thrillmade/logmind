@@ -488,9 +488,10 @@ func SaveMap(path string, m *OrderedMap) error {
 	if err := enc.Close(); err != nil {
 		return err
 	}
-	// 0600: matches the permission this path has always written
-	// (os.CreateTemp's mode, never explicitly widened) — unchanged by
-	// the atomicio consolidation.
+	// 0600: matches the permission this path has always written —
+	// unchanged by the move to atomicio's own create-temp routine (see
+	// internal/atomicio's package doc for why it no longer calls
+	// os.CreateTemp); never explicitly widened.
 	//
 	// WriteFileMode, not WriteFile: this is logmind's own file and 0600 is
 	// a deliberate choice, not a create-time default. WriteFile would

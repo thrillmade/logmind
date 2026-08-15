@@ -165,6 +165,16 @@ func WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	return write(path, data, mode, true)
 }
 
+// syncFile fsyncs f. A package-level var, not a direct tmp.Sync() call
+// inline in write(), so TestWriteFile_FsyncsBeforeRename can substitute a
+// spy that records the call (still delegating to the real fsync, so
+// behaviour is unchanged) — the same "swap in an observer, restore after"
+// shape internal/skill/sync.go uses for atomicWriteFile, applied here
+// because deleting the fsync call is otherwise a silent, compiling,
+// suite-green mutation: nothing else in this package's tests reads through
+// the OS page cache after a simulated crash to notice its absence.
+var syncFile = func(f *os.File) error { return f.Sync() }
+
 func write(path string, data []byte, perm os.FileMode, assertMode bool) error {
 	if err := RefuseSymlink(path); err != nil {
 		return err
@@ -219,8 +229,14 @@ func write(path string, data []byte, perm os.FileMode, assertMode bool) error {
 			return err
 		}
 	}
-	// Data on disk before the name points at it — see DURABILITY.
-	if err := tmp.Sync(); err != nil {
+	// Data on disk before the name points at it — see DURABILITY. Routed
+	// through syncFile, not called directly, so the durability promise is
+	// pinned by TestWriteFile_FsyncsBeforeRename rather than resting on the
+	// "19 mutations, all killed" claim alone: deleting this call is a
+	// one-line, compiling change with no other observable effect (no test
+	// in this package reads through the OS page cache after a simulated
+	// crash), so nothing else in the suite would go red for it.
+	if err := syncFile(tmp); err != nil {
 		_ = tmp.Close()
 		cleanup()
 		return err

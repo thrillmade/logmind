@@ -393,6 +393,129 @@ func installHook(p string, b []byte) error { return RawWriteFile(p, b, 0o755) }
 	}
 }
 
+// TestScan_DetectsFunctionValueLaundering is the HIGH-1 regression. Storing
+// a banned primitive in a variable and calling THAT compiles and, before
+// this fix, was invisible: resolveCallee only inspected an *ast.CallExpr's
+// Fun, so the assignment itself was never looked at and the subsequent call
+// through the variable resolves to nothing this scanner recognises. The
+// idiom is not hypothetical — internal/skill/sync.go:693 does exactly this
+// shape with the SAFE primitive (`var atomicWriteFile = atomicio.WriteFile`)
+// so a copy-paste with the unsafe one is one keystroke away.
+//
+// Both the package-level var form and the local short-variable form are
+// probed, in separate files so each is asserted by site independently.
+func TestScan_DetectsFunctionValueLaundering(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+
+	write(t, dir, "packagevar.go", `package probe
+
+import "os"
+
+var rawWrite = os.WriteFile
+
+func viaPackageVar(p string, b []byte) error { return rawWrite(p, b, 0o644) }
+`)
+	write(t, dir, "localvar.go", `package probe
+
+import "os"
+
+func viaLocalVar(p string, b []byte) error {
+	w := os.WriteFile
+	return w(p, b, 0o644)
+}
+`)
+
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	gotSites := map[string]string{}
+	for _, f := range got {
+		gotSites[f.Site()] = f.File
+	}
+	want := map[string]string{
+		"<file>:os.WriteFile":      "packagevar.go", // top-level var decl, no enclosing func
+		"viaLocalVar:os.WriteFile": "localvar.go",
+	}
+	for site, file := range want {
+		if gotSites[site] != file {
+			t.Errorf("Scan missed the laundered reference %s in %s (probes rawWrite(...) and w(...) "+
+				"must NOT also appear as separate findings — the call through the variable resolves to "+
+				"nothing this scanner recognises, and the escape is caught at the assignment). got=%v",
+				site, file, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("Scan found %d finding(s) %v; want exactly %d (one per assignment, and the calls "+
+			"through rawWrite/w must NOT double-count)", len(got), got, len(want))
+	}
+}
+
+// TestScan_RejectsUnresolvedOPrefixedFlag is the HIGH-2 regression.
+// openFileVerdict used to pass ANY identifier starting with "O_" as a safe
+// non-creating flag — so a look-alike name that is not actually one of the
+// os package's own flag constants slipped through as "safe" purely because
+// of its spelling. This plants exactly that: a local constant that shares
+// the O_ prefix but names nothing the os package defines.
+func TestScan_RejectsUnresolvedOPrefixedFlag(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "lookalike.go", `package probe
+
+import "os"
+
+const O_LOOKALIKE = 0
+
+func viaLookalike() error {
+	f, err := os.OpenFile("/tmp/x", os.O_RDWR|O_LOOKALIKE, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 1 || got[0].Site() != "viaLookalike:os.OpenFile" {
+		t.Fatalf("Scan found %v; want exactly one finding at viaLookalike:os.OpenFile — "+
+			"O_LOOKALIKE is not a real os package flag constant, and the prefix-only check "+
+			"used to let it (and anything else spelled \"O_*\") pass as safe", got)
+	}
+}
+
+// TestScan_AcceptsKnownSafeOpenFileFlags is the control for the fix above: a
+// combination of GENUINE os package non-creating flags must still pass, or
+// the tightened check would make the guard cry wolf on every read-write,
+// non-creating os.OpenFile call in the tree (acquireRepoLock's O_RDWR among
+// them, once combined with something other than O_CREATE).
+func TestScan_AcceptsKnownSafeOpenFileFlags(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "safe.go", `package probe
+
+import "os"
+
+func viaSafeFlags() error {
+	f, err := os.OpenFile("/tmp/x", os.O_RDWR|os.O_APPEND|os.O_SYNC, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Scan found %v; want no findings — O_RDWR|O_APPEND|O_SYNC neither creates nor "+
+			"truncates and every name in it is a genuine os package flag constant", got)
+	}
+}
+
 func scanOne(t *testing.T, src string) Finding {
 	t.Helper()
 	dir := t.TempDir()

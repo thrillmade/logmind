@@ -520,8 +520,10 @@ func WriteFileStructure(targetPath, repoRoot string, maxDepth int) (bool, error)
 	// took the rendered tree straight outside the repository — and the
 	// following os.Rename then renamed the LINK into place, leaving
 	// file-structure.md itself pointing off-tree for every later write.
-	// atomicio uses os.CreateTemp (unpredictable suffix, O_EXCL), does the
-	// MkdirAll, and renames onto the destination NAME.
+	// atomicio creates the temp sibling itself — unpredictable suffix,
+	// O_EXCL, mode handed to open(2) so the umask applies (see
+	// internal/atomicio's package doc for why this replaced os.CreateTemp)
+	// — does the MkdirAll, and renames onto the destination NAME.
 	if err := atomicio.WriteFile(targetPath, []byte(rendered), 0o644); err != nil {
 		return false, err
 	}

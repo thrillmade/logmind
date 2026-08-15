@@ -37,3 +37,14 @@
 
 ---
 
+## 2026-08-15 16:30 - writeaudit: a banned primitive referenced is as dangerous as one called, and a flag whitelist beats a name prefix
+
+**Reasoning:** The guard inspected only the function position of a call, so assigning the banned primitive to a variable and calling that hid it completely. This is not hypothetical: the codebase already contains that idiom with the safe primitive, so someone copying the pattern with the unsafe one is exactly the accident the guard names as its target, and it was not in the documented list of things it cannot see. Separately the open-file check accepted any identifier whose name began with the flag prefix, which contradicted the guard's own doc promising that an unreadable flag is banned rather than waved through.
+
+**Alternatives considered:** Document both as known limits rather than closing them. Rejected: a limit worth stating is one the guard cannot close, and both of these were a few lines. A guard whose stated limits are wider than its real ones teaches people to route around it, and the whole argument for having a source scan here is that no behavioural test can cover this class.
+
+**Implications:**
+- Safe open-file flags are now a closed whitelist of the six the standard library defines as non-creating, so a constant merely named like one falls through to banned rather than passing on its spelling. The fsync this change introduced was itself unpinned and its removal survived the suite, which is now fixed by routing it through a replaceable reference a test can observe. The hardlink asymmetry between the two write sites is documented rather than equalised, because a shared hook is an advertised arrangement and a hardlinked agent file is not.
+
+---
+

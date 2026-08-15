@@ -60,7 +60,13 @@
 // from the identifier being spelled "os", so an alias (`import w "os"` ->
 // w.Create) and a dot import (`import . "os"` -> a bare Create) are both
 // caught, and so is a call inside a file that is behind a build tag this
-// platform does not compile.
+// platform does not compile. A banned function referenced WITHOUT being
+// called — `var raw = os.WriteFile`, or `w := os.WriteFile` followed by
+// `w(...)` — is caught too, at the reference itself: laundering the
+// primitive through a variable does not change what it does, and the call
+// through that variable (`raw(...)`, `w(...)`) resolves to nothing this scan
+// recognises, so the ONE place the danger is still visible is where the
+// banned selector is named.
 //
 // NOT CAUGHT, and no amount of added patterns would change it: once an
 // *os.File exists, anything can write through it — tmpl.Execute(f, …),
@@ -280,33 +286,93 @@ func Scan(root string) ([]Finding, error) {
 				}
 				body = fd.Body
 			}
+
+			// A manual parent stack, not plain ast.Inspect: the escape check
+			// below (a banned selector used somewhere OTHER than a call's
+			// Fun) needs to know each node's immediate parent, and
+			// ast.Inspect's f(nil)-on-exit signal is the documented way to
+			// track that without a second pass. See resolveExpr's doc for
+			// why a call and a bare reference need different treatment.
+			var stack []ast.Node
 			ast.Inspect(body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
+				if n == nil {
+					if len(stack) > 0 {
+						stack = stack[:len(stack)-1]
+					}
 					return true
 				}
-				pkgPath, fn, pos, ok := resolveCallee(call, named, dotted)
-				if !ok {
-					return true
+				var parent ast.Node
+				if len(stack) > 0 {
+					parent = stack[len(stack)-1]
 				}
-				if !bannedPaths[pkgPath][fn] {
-					return true
-				}
-				why := "creates or truncates through a symlink"
-				if fn == "OpenFile" {
-					banned, note := openFileVerdict(call)
-					if !banned {
+				stack = append(stack, n)
+
+				switch node := n.(type) {
+				case *ast.CallExpr:
+					pkgPath, fn, pos, ok := resolveExpr(node.Fun, named, dotted)
+					if !ok || !bannedPaths[pkgPath][fn] {
 						return true
 					}
-					why = note
+					why := "creates or truncates through a symlink"
+					if fn == "OpenFile" {
+						banned, note := openFileVerdict(node)
+						if !banned {
+							return true
+						}
+						why = note
+					}
+					out = append(out, Finding{
+						File: relSlash,
+						Line: fset.Position(pos).Line,
+						Func: fnName,
+						Call: canonicalName(pkgPath) + "." + fn,
+						Why:  why,
+					})
+
+				case *ast.SelectorExpr:
+					// Already handled above when this selector IS the thing
+					// being called (`os.WriteFile(...)`) — including the
+					// os.OpenFile case where the verdict depends on the call's
+					// flags argument, which only a *ast.CallExpr carries.
+					if isCallFun(parent, node) {
+						return true
+					}
+					pkgPath, fn, pos, ok := resolveExpr(node, named, dotted)
+					if !ok || !bannedPaths[pkgPath][fn] {
+						return true
+					}
+					out = append(out, Finding{
+						File: relSlash,
+						Line: fset.Position(pos).Line,
+						Func: fnName,
+						Call: canonicalName(pkgPath) + "." + fn,
+						Why:  "referenced as a value, not called directly — the guard cannot see how or whether it will be invoked",
+					})
+
+				case *ast.Ident:
+					// Two positions to exclude, both already resolved
+					// elsewhere: the Sel half of a SelectorExpr just visited
+					// above (re-checking the bare name "WriteFile" without
+					// its qualifier would either duplicate that finding or,
+					// worse, misfire on an unrelated dot-imported package
+					// that happens to share the name), and a bare call.Fun
+					// dot-import (`WriteFile(...)`), handled by the
+					// *ast.CallExpr case.
+					if isSelectorSel(parent, node) || isCallFun(parent, node) {
+						return true
+					}
+					pkgPath, fn, pos, ok := resolveExpr(node, named, dotted)
+					if !ok || !bannedPaths[pkgPath][fn] {
+						return true
+					}
+					out = append(out, Finding{
+						File: relSlash,
+						Line: fset.Position(pos).Line,
+						Func: fnName,
+						Call: canonicalName(pkgPath) + "." + fn,
+						Why:  "referenced as a value, not called directly — the guard cannot see how or whether it will be invoked",
+					})
 				}
-				out = append(out, Finding{
-					File: relSlash,
-					Line: fset.Position(pos).Line,
-					Func: fnName,
-					Call: canonicalName(pkgPath) + "." + fn,
-					Why:  why,
-				})
 				return true
 			})
 		}
@@ -325,22 +391,26 @@ func Scan(root string) ([]Finding, error) {
 	return out, nil
 }
 
-// resolveCallee maps a call expression back to (import path, function name)
-// when it is a call into one of the banned packages, however it is spelled.
+// resolveExpr maps an expression back to (import path, function name) when
+// it denotes one of the banned packages' functions, however it is spelled.
+// It is applied both to a call's Fun (an ordinary call) and to any other
+// expression position (a banned function referenced as a VALUE — see the
+// HIGH-1 escape check in Scan) — the resolution rule is the same either way,
+// only what the caller does with the answer differs.
 //
 // Two spellings reach the stdlib:
 //
-//	pkg.Fn(...)  — an *ast.SelectorExpr whose X is an identifier bound to an
+//	pkg.Fn       — an *ast.SelectorExpr whose X is an identifier bound to an
 //	               import in THIS file. The binding is what matters, not the
 //	               text: `import w "os"` makes w.Create an os.Create, and a
 //	               local `var os fakeOS` in a file that does not import "os"
 //	               is not one.
-//	Fn(...)      — a bare identifier, which resolves to the stdlib only when
+//	Fn           — a bare identifier, which resolves to the stdlib only when
 //	               the file dot-imports the package.
-func resolveCallee(call *ast.CallExpr, named map[string]string, dotted map[string]bool) (pkgPath, fn string, pos token.Pos, ok bool) {
-	switch fun := call.Fun.(type) {
+func resolveExpr(expr ast.Expr, named map[string]string, dotted map[string]bool) (pkgPath, fn string, pos token.Pos, ok bool) {
+	switch e := expr.(type) {
 	case *ast.SelectorExpr:
-		ident, isIdent := fun.X.(*ast.Ident)
+		ident, isIdent := e.X.(*ast.Ident)
 		if !isIdent {
 			return "", "", 0, false
 		}
@@ -348,14 +418,14 @@ func resolveCallee(call *ast.CallExpr, named map[string]string, dotted map[strin
 		if !bound {
 			return "", "", 0, false
 		}
-		return p, fun.Sel.Name, fun.Sel.Pos(), true
+		return p, e.Sel.Name, e.Sel.Pos(), true
 	case *ast.Ident:
 		// A dot import puts the package's exported names in file scope.
-		// Attribute the call to whichever dot-imported banned package
+		// Attribute the reference to whichever dot-imported banned package
 		// declares that name.
 		for p := range dotted {
-			if bannedPaths[p][fun.Name] {
-				return p, fun.Name, fun.Pos(), true
+			if bannedPaths[p][e.Name] {
+				return p, e.Name, e.Pos(), true
 			}
 		}
 		return "", "", 0, false
@@ -363,15 +433,61 @@ func resolveCallee(call *ast.CallExpr, named map[string]string, dotted map[strin
 	return "", "", 0, false
 }
 
+// isCallFun reports whether n is exactly the callee of parent — i.e. n is
+// being CALLED, not merely referenced. Used to keep the value-escape check
+// in Scan from re-flagging (or double-flagging) an ordinary `os.WriteFile(...)`
+// call, which the *ast.CallExpr case already handles with the extra
+// os.OpenFile flag analysis that only a call carries.
+func isCallFun(parent ast.Node, n ast.Expr) bool {
+	call, ok := parent.(*ast.CallExpr)
+	return ok && call.Fun == n
+}
+
+// isSelectorSel reports whether n is the Sel half of parent, e.g. the
+// "WriteFile" identifier inside "os.WriteFile". Used to keep a dot-imported
+// package name from colliding with an unrelated selector that merely shares
+// the banned function's bare name (`someOtherThing.WriteFile`) — the
+// *ast.SelectorExpr case already resolves that call correctly, by checking
+// what X is actually bound to.
+func isSelectorSel(parent ast.Node, n *ast.Ident) bool {
+	sel, ok := parent.(*ast.SelectorExpr)
+	return ok && sel.Sel == n
+}
+
+// openFileSafeFlags is the CLOSED set of flag-constant names that neither
+// create nor truncate: exactly the os package's own published constants
+// (https://pkg.go.dev/os#pkg-constants) minus O_CREATE and O_TRUNC, which
+// the switch in openFileVerdict below already bans by name before this set
+// is even consulted.
+//
+// Membership is checked by exact name, matching how the banning half of
+// this function already worked (openFileVerdict has never verified that an
+// "os.O_CREATE" selector's X actually resolves to the os import — it bans
+// on the name alone, which is deliberately over-inclusive). This whitelist
+// makes the SAFE half symmetric with that: an identifier passes only when
+// its name is a known non-creating flag, not merely when it happens to
+// start with "O_". A look-alike — a local `const O_LOOKALIKE = 0`, an
+// unrelated package's own O_-prefixed constant, a typo'd spelling — is not
+// in this set and falls through to the unresolvable-is-banned rule.
+var openFileSafeFlags = map[string]bool{
+	"O_RDONLY": true,
+	"O_WRONLY": true,
+	"O_RDWR":   true,
+	"O_APPEND": true,
+	"O_EXCL":   true,
+	"O_SYNC":   true,
+}
+
 // openFileVerdict decides whether an os.OpenFile call creates or truncates.
 //
 // The flags argument is read syntactically: every identifier appearing in it
 // is collected (os.O_CREATE, a dot-imported O_CREATE, syscall.O_CREAT, a
-// local variable). O_CREATE/O_CREAT/O_TRUNC means banned. An identifier that
-// is not an O_* constant means the flags are computed at runtime and this
-// cannot tell — banned too, deliberately, because "the audit could not read
-// it" must not be the quiet way past the audit. Purely non-creating flags
-// (O_RDONLY, O_RDWR, O_APPEND, ...) pass.
+// local variable). O_CREATE/O_CREAT/O_TRUNC means banned. Every other
+// identifier must match openFileSafeFlags BY NAME to pass — an identifier
+// that does not (a look-alike "O_"-prefixed spelling included) means the
+// flags cannot be verified safe, and this cannot tell — banned too,
+// deliberately, because "the audit could not read it" must not be the quiet
+// way past the audit.
 func openFileVerdict(call *ast.CallExpr) (bool, string) {
 	if len(call.Args) < 2 {
 		return true, "unreadable os.OpenFile call"
@@ -399,8 +515,9 @@ func openFileVerdict(call *ast.CallExpr) (bool, string) {
 		}
 	}
 	for _, n := range names {
-		if !strings.HasPrefix(n, "O_") {
-			return true, "os.OpenFile flags are computed at runtime and cannot be audited statically"
+		if !openFileSafeFlags[n] {
+			return true, fmt.Sprintf(
+				"os.OpenFile flag %q is not a recognized non-creating flag and cannot be verified safe", n)
 		}
 	}
 	return false, ""

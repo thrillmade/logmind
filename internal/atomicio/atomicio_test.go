@@ -374,6 +374,44 @@ func TestWriteFile_TempNameIsUnguessable(t *testing.T) {
 	}
 }
 
+// TestWriteFile_FsyncsBeforeRename is the HIGH-4 regression: the DURABILITY
+// promise in the package doc ("the temp file is fsynced before the
+// rename") was, until this test, backed by nothing but the mutation-testing
+// claim in the PR description. Deleting the tmp.Sync() call in write() is a
+// one-line, compiling change with no other observable effect in this
+// package's suite — no test here simulates a crash and re-reads through the
+// page cache — so that claim was not reproducible from the tree alone. This
+// substitutes a spy for the package-level syncFile hook and asserts it
+// fires, on the TEMP file, before the rename lands.
+func TestWriteFile_FsyncsBeforeRename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "durable.txt")
+
+	var syncedName string
+	orig := syncFile
+	syncFile = func(f *os.File) error {
+		syncedName = f.Name()
+		return orig(f) // still perform the real fsync; only observe, don't change behaviour
+	}
+	defer func() { syncFile = orig }()
+
+	if err := WriteFile(path, []byte("payload"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if syncedName == "" {
+		t.Fatal("syncFile was never called — the temp file was not fsynced before the rename; " +
+			"the DURABILITY promise in the package doc is broken")
+	}
+	if !strings.Contains(syncedName, ".tmp-") {
+		t.Errorf("syncFile was called on %q; want the TEMP sibling (name contains \".tmp-\") — "+
+			"fsync must happen on the temp file BEFORE the rename, not on the destination after it",
+			syncedName)
+	}
+	if _, err := os.Lstat(syncedName); err == nil {
+		t.Errorf("temp file %s still exists after WriteFile returned; want it renamed away", syncedName)
+	}
+}
+
 func assertContent(t *testing.T, path, want string) {
 	t.Helper()
 	got, err := os.ReadFile(path)
