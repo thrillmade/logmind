@@ -275,7 +275,8 @@ tests, release workflow).
 ## Documentation
 
 - **[Install](docs/install.md)** - Full install matrix (brew, curl, go install, manual, legacy Python)
-- **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
+- **[Architecture](docs/plan.md)** - Vision, approach, and technical details
+- **[Roadmap](docs/roadmap.md)** - What ships next, in what order, and why
 - **[AI Agent Files](docs/ai-agent-files.md)** - How logmind integrates with AI instruction files
 - **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
 
@@ -304,7 +305,8 @@ tests, release workflow).
 - **AI-friendly:** Recent decisions + file structure = complete context
 - **Automatic:** Commits and pushes on every log
 
-See [docs/plan.md](docs/plan.md) for complete architecture and roadmap.
+See [docs/plan.md](docs/plan.md) for the architecture and
+[docs/roadmap.md](docs/roadmap.md) for the roadmap.
 
 ## Legacy install (Python, frozen at v0.6.16)
 
