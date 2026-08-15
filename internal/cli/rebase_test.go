@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // TestRebaseNotARepo: rebase outside a git repo errors out cleanly.
@@ -31,14 +33,10 @@ func gitInit(t *testing.T) string {
 		t.Skip("git not on PATH")
 	}
 	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q", "-b", "main")
 	cmds := [][]string{
-		{"git", "init", "-q", "-b", "main"},
 		{"git", "config", "user.email", "test@example.com"},
 		{"git", "config", "user.name", "Test"},
-		// Both keys — see initLogTestGitRepo (log_test.go). maintenance.auto is
-		// the actual spawn gate; gc.auto alone does not suppress it.
-		{"git", "config", "gc.auto", "0"},
-		{"git", "config", "maintenance.auto", "false"},
 		{"git", "commit", "--allow-empty", "-q", "-m", "initial"},
 	}
 	for _, c := range cmds {
@@ -142,8 +140,8 @@ func TestRebaseSuccessNoPush(t *testing.T) {
 	// as origin. After cloning the upstream main has 1 commit; we add
 	// one more on the local feature branch.
 	remote := filepath.Join(t.TempDir(), "bare.git")
+	testgit.CloneRepo(t, remote, "--bare", "-q", cwd)
 	for _, c := range [][]string{
-		{"git", "clone", "--bare", "-q", cwd, remote},
 		{"git", "-C", cwd, "remote", "add", "origin", remote},
 		{"git", "-C", cwd, "fetch", "-q", "origin"},
 		{"git", "-C", cwd, "checkout", "-q", "-b", "feat/x"},

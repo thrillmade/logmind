@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // bareRemote creates a `git init --bare` repo under t.TempDir() and
@@ -18,10 +20,7 @@ func bareRemote(t *testing.T) string {
 		t.Skip("git not on PATH; skipping push integration test")
 	}
 	dir := t.TempDir()
-	cmd := exec.Command("git", "init", "--bare", "-q", dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
-	}
+	testgit.InitRepo(t, dir, "--bare", "-q")
 	return dir
 }
 

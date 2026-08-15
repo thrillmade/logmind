@@ -10,6 +10,7 @@ import (
 
 	"github.com/thrillmade/logmind/internal/agents"
 	"github.com/thrillmade/logmind/internal/gitcli"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // initRepo creates a fresh git repo at t.TempDir(), commits an initial
@@ -23,8 +24,8 @@ func initRepo(t *testing.T) string {
 		t.Skip("git not on PATH; skipping integration test")
 	}
 	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q")
 	for _, args := range [][]string{
-		{"init", "-q"},
 		{"config", "user.email", "test@test.com"},
 		{"config", "user.name", "test"},
 	} {
