@@ -37,3 +37,14 @@
 
 ---
 
+## 2026-08-15 13:53 - roadmap: make each shown command reproduce its own number, and drop a claim that was false when written
+
+**Reasoning:** The re-panel blocked on two defects. Both gh api calls over a pull request commit list omitted --paginate, so the command printed beside the number answered a different question than the number: PR 75 carries 63 commits over three pages, and without the flag gh returns only the first, which counts 15 against a stated 30. A command shown to make a number self-verifying is worse than no command when it does not reproduce it. Separately, the file asserted that issue 244 still contradicted Ruling 12 in its body. That body was corrected on 2026-08-01, two weeks before the claim was written, and I had verified it myself earlier in the same session and left the stale sentence standing.
+
+**Alternatives considered:** Drop the commands and keep only the prose numbers. Rejected because the command is the whole mechanism by which this file avoids the staleness that blocked it twice; the answer is to make the commands correct rather than to remove the check. Also rejected: leaving the 244 paragraph as a harmless overstatement, since a roadmap that invents remaining work is exactly as misleading as one that hides it.
+
+**Implications:**
+- Both aggregate and single-PR probes now carry --paginate, and re-running them yields 109 commits with 43 from the regen bot, a 39.4 percent share, matching what the file states. The control confirms the probe distinguishes bot from human rather than matching everything.
+
+---
+

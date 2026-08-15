@@ -105,8 +105,11 @@ The push has still never landed a commit, and the reason is *not* a refusal.
 ```sh
 $ git log origin/main --format='%s' | grep -c '^chore: regen derived docs$'
 0
-$ gh api repos/thrillmade/protocol/pulls/75/commits --jq '[.[] | select(.commit.author.name == "logmind-auto-regen[bot]")] | length'
+$ gh api repos/thrillmade/protocol/pulls/75/commits --paginate \
+    --jq '[.[] | select(.commit.author.name == "logmind-auto-regen[bot]")] | length'
 30
+# --paginate is load-bearing: PR#75 has 63 commits over 3 pages and `gh api`
+# returns only the first without it, which answers 15.
 $ gh api "repos/thrillmade/logmind/actions/workflows/277546816/runs?per_page=100&event=push" \
     --paginate --jq '.workflow_runs[] | .conclusion' | sort | uniq -c
      13 success
@@ -211,9 +214,9 @@ to unblock itself has bought exactly what §3.4's gate exists to prevent.
 
 **#244** — branch→issue binding plus comment-back on merge. Pre-tag by **Ruling
 12**, not by defect: nothing in current behaviour is wrong, the feature simply
-does not exist. Recorded here rather than in §5 so the ruling stays visible —
-its own issue body still says "after the v2.0.0 tag", which contradicts the
-ruling that governs it and needs correcting.
+does not exist. Recorded here rather than in §5 so the ruling stays visible.
+Its body no longer contradicts the ruling: it was corrected 2026-08-01 and now
+opens "Pre-tag — in v2.0.0 scope by Ruling 12." Nothing to do.
 
 **#241** — `logmind auto`. Also pre-tag by Ruling 12. It previously needed two
 skills that did not exist; those shipped in agent-skills#207 (merged
@@ -287,7 +290,7 @@ Two corrections to #257's original inventory:
 $ gh api "repos/thrillmade/protocol/pulls?state=closed&sort=created&direction=desc&per_page=30" \
     --jq '[.[] | select(.merged_at != null)] | .[0:10] | .[].number'
 $ for pr in 92 88 85 84 83 80 76 75 70 69; do
-    gh api "repos/thrillmade/protocol/pulls/$pr/commits" \
+    gh api "repos/thrillmade/protocol/pulls/$pr/commits" --paginate \
       --jq '[.[] | .commit.author.name]'
   done
 # 109 commits total, 43 with .commit.author.name == "logmind-auto-regen[bot]"
