@@ -28,23 +28,62 @@ func TestInit_CreatesDocsAndConfig(t *testing.T) {
 			t.Fatalf("init execute: %v\nstdout: %s\nstderr: %s", err, out.String(), errOut.String())
 		}
 		mustContain(t, out.String(), "✓ Created docs/")
-		mustContain(t, out.String(), "✓ Created docs/decisions.md")
-		mustContain(t, out.String(), "✓ Created docs/decisions-archive.md")
 		mustContain(t, out.String(), "✓ Created docs/file-structure.md")
 		mustContain(t, out.String(), "✓ Created docs/timeline.md")
+		mustContain(t, out.String(), "✓ Created docs/timeline-archive.md")
 		mustContain(t, out.String(), "✓ Created .logmind/config.yml")
 		mustContain(t, out.String(), "logmind initialized successfully!")
 	})
 
 	// Verify file contents on disk.
 	for _, rel := range []string{
-		"docs/decisions.md", "docs/decisions-archive.md",
-		"docs/file-structure.md", "docs/timeline.md",
+		"docs/file-structure.md", "docs/timeline.md", "docs/timeline-archive.md",
 		".logmind/config.yml", "AGENTS.md",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("expected %s after init; %v", rel, err)
 		}
+	}
+	// SPEC §3.2: nothing is archived, so init must not scaffold an archive
+	// back into existence. (docs/decisions.md IS written here — this init is
+	// --no-git, so there is no branch to name a file after and the first
+	// decision takes the branchless fallback. TestInit_InGitRepo_FirstDecision
+	// GoesToMainBranchFile covers the case that has a branch.)
+	if _, err := os.Stat(filepath.Join(dir, "docs/decisions-archive.md")); err == nil {
+		t.Errorf("init created docs/decisions-archive.md — that path is gone under §3.2")
+	}
+}
+
+// TestInit_InGitRepo_FirstDecisionGoesToMainBranchFile pins SPEC §3.2's one
+// path rule at the very first decision a repository ever records: on `main`,
+// `logmind init` writes it to docs/decisions-branches/main.md — the file
+// named for the branch it was made on — and creates no separate main log.
+//
+// Pinned on the files on disk after a real `logmind init`, not on
+// resolveDecisionsPath: a helper-level test would pass just as happily with
+// init still writing docs/decisions.md behind it.
+func TestInit_InGitRepo_FirstDecisionGoesToMainBranchFile(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		runQuiet(t, []string{"init", "--no-git"})
+	})
+
+	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions-branches", "main.md"))
+	if err != nil {
+		t.Fatalf("read docs/decisions-branches/main.md: %v", err)
+	}
+	if !strings.Contains(string(body), "Initialize logmind decision tracking") {
+		t.Errorf("main.md missing the first decision; body:\n%s", body)
+	}
+	// A branch file, opened like any other: backlink header + timeline marker.
+	if !strings.Contains(string(body), "← back to [docs/timeline.md](../timeline.md)") {
+		t.Errorf("main.md missing the branch-file backlink header; body:\n%s", body)
+	}
+	if !strings.Contains(string(body), "<!-- logmind-entry-start: ") {
+		t.Errorf("main.md missing its timeline entry-block marker; body:\n%s", body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "decisions.md")); err == nil {
+		t.Errorf("init wrote docs/decisions.md on a repo that has a branch — main is a branch like any other (§3.2)")
 	}
 }
 
@@ -114,6 +153,8 @@ func TestInit_RefreshMode_LeavesDocsAlone(t *testing.T) {
 		// First init.
 		runQuiet(t, []string{"init", "--no-git"})
 		// Stash a custom decision line so we can confirm refresh leaves it.
+		// --no-git means there is no branch, so init's first decision lands in
+		// the branchless fallback file.
 		dpath := "docs/decisions.md"
 		body, _ := os.ReadFile(dpath)
 		marker := "\n\n## 2099-12-31 — Sentinel decision\n"

@@ -223,18 +223,18 @@ func runTZSkewSpecPulseCase(t *testing.T, binPath, tz, specCommitRFC3339, decisi
 	mustWriteUnder(t, repo, ".logmind/config.yml", "context:\n  spec_file: SPEC.md\n")
 	commitFileWithDate(t, repo, "SPEC.md", "# Spec\n", specCommitRFC3339)
 
-	// Overwrite the init-scaffolded decisions.md (which carries init's own
-	// "first decision", logged at real current wall-clock time and irrelevant
-	// to this reproduction) with `specPulseThreshold` entries, all sharing the
-	// SAME fixed wall-clock header — its calendar day is the only decision-side
+	// Overwrite the branch file init logged its own "first decision" into
+	// (logged at real current wall-clock time and irrelevant to this
+	// reproduction) with `specPulseThreshold` entries, all sharing the SAME
+	// fixed wall-clock header — its calendar day is the only decision-side
 	// input to the verdict.
 	var b strings.Builder
 	b.WriteString("# Decisions\n\n")
 	for i := 0; i < specPulseThreshold; i++ {
 		fmt.Fprintf(&b, "## %s - tz skew filler decision %d\n\n**Reasoning:** filler\n\n---\n\n", decisionHeader, i)
 	}
-	if err := os.WriteFile(filepath.Join(repo, "docs", "decisions.md"), []byte(b.String()), 0o644); err != nil {
-		t.Fatalf("overwrite decisions.md: %v", err)
+	if err := os.WriteFile(filepath.Join(repo, "docs", "decisions-branches", "main.md"), []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("overwrite docs/decisions-branches/main.md: %v", err)
 	}
 
 	cmd := exec.Command(binPath, "log", "tz skew probe", "-r", "why", "--no-commit", "--no-interactive")

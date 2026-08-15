@@ -1,8 +1,8 @@
 // log_test.go — exercises `logmind log` end-to-end against tmpdir
 // fixtures. Specs cover:
 //
-//   - decision-file routing: default branch → docs/decisions.md;
-//     feature branch → docs/decisions-branches/<sanitized>.md
+//   - decision-file routing (SPEC §3.2, one rule): every branch —
+//     the default branch included — → docs/decisions-branches/<sanitized>.md
 //   - first-creation backlink header written on a fresh branch decision
 //     file, preserved (not duplicated) on subsequent appends
 //   - Layer 1 advisory printed when linkcheck has issues
@@ -127,10 +127,15 @@ func withFakeTTY(t *testing.T, asTTY bool, fn func()) {
 	fn()
 }
 
-// TestLog_DefaultBranch_WritesToDecisionsMd: on `main` (default
-// branch), the entry lands in docs/decisions.md — NOT under
-// docs/decisions-branches/.
-func TestLog_DefaultBranch_WritesToDecisionsMd(t *testing.T) {
+// TestLog_DefaultBranch_WritesToMainBranchFile pins SPEC §3.2's one path
+// rule where it used to have its exception: on `main`, the entry lands in
+// docs/decisions-branches/main.md — the file named for the branch it was
+// made on — and NOT in a separate docs/decisions.md.
+//
+// Pinned on the files `logmind log` leaves on disk, not on
+// resolveDecisionsPath: a test on that helper passes its own mutation and
+// still goes green if some later caller re-routes main somewhere else.
+func TestLog_DefaultBranch_WritesToMainBranchFile(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
@@ -146,24 +151,16 @@ func TestLog_DefaultBranch_WritesToDecisionsMd(t *testing.T) {
 			mustContain(t, out.String(), `✓ Logged decision: "Test decision"`)
 		})
 	})
-	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions.md"))
+	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions-branches", "main.md"))
 	if err != nil {
-		t.Fatalf("read decisions.md: %v", err)
+		t.Fatalf("read docs/decisions-branches/main.md: %v", err)
 	}
 	if !strings.Contains(string(body), "Test decision") {
-		t.Fatalf("decisions.md missing summary; body:\n%s", body)
+		t.Fatalf("main.md missing summary; body:\n%s", body)
 	}
-	// No branch directory created on default branch.
-	if _, err := os.Stat(filepath.Join(dir, "docs", "decisions-branches")); err == nil {
-		// docs/decisions-branches/ existing is fine (init may pre-create
-		// it); the relevant check is that no .md file was written under
-		// it for this decision.
-		entries, _ := os.ReadDir(filepath.Join(dir, "docs", "decisions-branches"))
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".md") {
-				t.Fatalf("unexpected branch decision file on default branch: %s", e.Name())
-			}
-		}
+	// And nothing was written to the separate main log that used to exist.
+	if _, err := os.Stat(filepath.Join(dir, "docs", "decisions.md")); err == nil {
+		t.Fatalf("docs/decisions.md was written on the default branch — §3.2 has one path rule and main is not an exception to it")
 	}
 }
 

@@ -122,7 +122,7 @@ func TestQuietEnabled_ExplicitFlagBeatsEnv(t *testing.T) {
 
 func TestQuiet_Timeline_StdoutSingleOK(t *testing.T) {
 	cwd := makeDocs(t,
-		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
+		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", nil)
 	var out, errBuf bytes.Buffer
 	if err := runTimeline(cwd, "", false, true, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline quiet: %v", err)
@@ -135,7 +135,7 @@ func TestQuiet_Timeline_StdoutSingleOK(t *testing.T) {
 
 func TestQuiet_Timeline_DefaultUnchanged(t *testing.T) {
 	cwd := makeDocs(t,
-		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
+		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", nil)
 	var out, errBuf bytes.Buffer
 	if err := runTimeline(cwd, "", false, false, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline default: %v", err)
@@ -207,7 +207,7 @@ func TestQuiet_Headline_DefaultUnchanged(t *testing.T) {
 	if strings.Contains(out.String(), "ok ") {
 		t.Errorf("default mode emitted an ok line it never had before: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "the default branch logs to docs/decisions.md") {
+	if !strings.Contains(out.String(), "the default branch has no in-flight work to summarize") {
 		t.Errorf("default mode dropped its guidance line: %q", out.String())
 	}
 }
@@ -309,7 +309,7 @@ func TestQuiet_Log_SingleOK(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log quiet: %v\n%s", err, errBuf.String())
 			}
-			assertSingleOK(t, out.String(), "logged", "path=docs/decisions.md", "committed=false")
+			assertSingleOK(t, out.String(), "logged", "path=docs/decisions-branches/main.md", "committed=false")
 			if strings.Contains(out.String(), "✓ Logged") {
 				t.Errorf("quiet log leaked the ✓ chatter to stdout: %q", out.String())
 			}

@@ -104,22 +104,22 @@ func TestSearch_LiteralSemantics(t *testing.T) {
 	}
 }
 
-// TestSearch_Scope_SpansMainAndBranch: search must span docs/decisions.md
-// (main's decisions) AND the current branch file even when checked out on an
-// unrelated feature branch — a term living ONLY in decisions.md is found, and
-// a term living ONLY in the branch file is found.
-func TestSearch_Scope_SpansMainAndBranch(t *testing.T) {
+// TestSearch_Scope_LegacyMainLogAndBranch: search must span the pre-§3.2
+// docs/decisions.md, where one still exists, AND the current branch file even
+// when checked out on an unrelated feature branch.
+func TestSearch_Scope_LegacyMainLogAndBranch(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		// A decision on main → docs/decisions.md.
-		withFakeTTY(t, false, func() { logOnce(t, "Use PostgreSQL for storage") })
+		// A leftover main log from before §3.2 collapsed the layout.
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - Use PostgreSQL for storage\n\n**Reasoning:** why\n\n---\n")
 
 		// Move to an unrelated feature branch and log there.
 		checkoutBranch(t, d, "feat/unrelated")
 		withFakeTTY(t, false, func() { logOnce(t, "Add rate limiting") })
 
-		// Main's decision IS found from the feature branch.
+		// The legacy main log IS still searched from the feature branch.
 		body := runSearchCmd(t, "PostgreSQL")
 		mustContain(t, body, "Found 1 match for: PostgreSQL")
 		mustContain(t, body, "docs/decisions.md")
@@ -145,8 +145,10 @@ func TestSearch_FlagMatrix(t *testing.T) {
 		{name: "case-insensitive default matches mixed case", query: "postgresql", wantHit: true},
 		{name: "case-sensitive rejects mismatched case", query: "postgresql", extraArgs: []string{"--case-sensitive"}, wantHit: false},
 		{name: "case-sensitive accepts exact case", query: "PostgreSQL", extraArgs: []string{"--case-sensitive"}, wantHit: true},
-		{name: "archive included by default", query: "archived-term", wantHit: true},
-		{name: "no-archive excludes the archive", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: false},
+		// §3.2 deleted docs/decisions-archive.md. A file left behind by an
+		// older binary is not a source, with or without the retired flag.
+		{name: "a leftover archive is not searched", query: "archived-term", wantHit: false},
+		{name: "the retired --no-archive flag is accepted and changes nothing", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -7,14 +7,14 @@
 // "skip malformed but keep going" error policy).
 //
 // The package also exposes Collect(), the multi-source aggregator that
-// reads decisions.md + decisions-archive.md + decisions-branches/*.md
+// reads decisions.md + decisions-branches/*.md
 // and returns a unified, source-tagged slice. The timeline subcommand
 // consumes that slice directly.
 //
 // SplitRaw / SplitRawBytes expose the same header boundaries as byte
-// ranges rather than just parsed fields — the primitive SPEC §1.3.2's
-// capacity rotation uses to relocate an overflowing entry to
-// docs/decisions-archive.md without ever re-rendering it.
+// ranges rather than just parsed fields — the primitive for moving an entry
+// between files (the §3.2 migration of a legacy main log into
+// docs/decisions-branches/main.md) without ever re-rendering it.
 package decisions
 
 import (
@@ -109,10 +109,10 @@ func Iter(path string, stderr io.Writer) ([]Entry, error) {
 // RawEntry pairs a parsed Entry with the exact bytes of the entry block it
 // was parsed from — from its "## YYYY-MM-DD HH:MM - <title>" header line
 // through (and including) everything up to the next entry's header line, or
-// EOF for the last entry in the file. SPEC §1.3.2 requires FIFO overflow
-// migration to "preserve byte-exact entry content"; RawEntry.Raw is what
-// callers relocate verbatim between docs/decisions.md and
-// docs/decisions-archive.md — it is never re-rendered.
+// EOF for the last entry in the file. RawEntry.Raw is the entry exactly as
+// it sits on disk, so a caller that re-emits it (`show`, the §3.2 migration
+// of a legacy main log into a branch file) does so byte-for-byte — it is
+// never re-rendered.
 type RawEntry struct {
 	Entry
 	Raw string
@@ -135,9 +135,8 @@ func SplitRaw(path string) (preamble string, entries []RawEntry, err error) {
 // SplitRawBytes splits already-loaded decisions-file content into a leading
 // preamble (the file's own top-of-file header block, or the whole content
 // when no entry header is found) and the entries that follow it, in on-disk
-// order. docs/decisions.md and docs/decisions-archive.md are both
-// append-only, so on-disk order is oldest-first — the FIFO overflow callers
-// need (§1.3.2: "the OLDEST entry MUST be moved ... Migration is FIFO").
+// order. Every decision file is append-only (§3.2), so on-disk order is
+// oldest-first.
 //
 // Boundaries are found by scanning line-by-line for the same decisionHeader
 // pattern Iter uses (so a header this misses, Iter misses too, and vice
@@ -208,8 +207,11 @@ func branchLabelFromFilename(name string) string {
 // Sources walked (read-only; never written):
 //
 //	docs/decisions.md                    → source_label="main"
-//	docs/decisions-archive.md            → source_label="archive"
 //	docs/decisions-branches/<branch>.md  → source_label="<branch>"
+//
+// docs/decisions.md is the pre-§3.2 separate main log. Nothing writes it any
+// more; it stays in the walk so a repository that has not yet appended its
+// entries to docs/decisions-branches/main.md keeps them visible.
 //
 // Missing files are tolerated; callers get whatever exists.
 func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
@@ -226,17 +228,6 @@ func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
 	for _, e := range mainEntries {
 		e.SourcePath = "decisions.md"
 		e.SourceLabel = "main"
-		out = append(out, e)
-	}
-
-	archive := filepath.Join(docsPath, "decisions-archive.md")
-	archiveEntries, err := Iter(archive, stderr)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range archiveEntries {
-		e.SourcePath = "decisions-archive.md"
-		e.SourceLabel = "archive"
 		out = append(out, e)
 	}
 

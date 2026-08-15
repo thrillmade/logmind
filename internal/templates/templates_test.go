@@ -226,8 +226,8 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 
 	// Marker bump v10 → v11 (push-refusal now fails the job; see v11 note
 	// above).
-	if !strings.Contains(body, "# logmind-template-version: v11") {
-		t.Errorf("regen-timeline template missing v11 marker")
+	if !strings.Contains(body, "# logmind-template-version: v12") {
+		t.Errorf("regen-timeline template missing v12 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
@@ -248,8 +248,11 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	if !strings.Contains(body, "gh pr diff") || !strings.Contains(body, "--name-only") {
 		t.Errorf("regen-timeline v10 PR gate must use `gh pr diff --name-only`")
 	}
-	if !strings.Contains(body, `grep -qxE 'docs/(timeline|file-structure)\.md'`) {
-		t.Errorf("regen-timeline v10 PR gate must match exactly the two derived docs as whole lines")
+	// All THREE derived docs of SPEC §3.3 — "the history, its archive, or
+	// the map" — as whole lines. A gate that names only two leaves the
+	// omitted one editable on a branch, undetected.
+	if !strings.Contains(body, `grep -qxE 'docs/(timeline|timeline-archive|file-structure)\.md'`) {
+		t.Errorf("regen-timeline PR gate must match exactly the three derived docs as whole lines")
 	}
 	// Event-gated jobs: gate runs only on pull_request, regen only on push.
 	if !strings.Contains(body, "github.event_name == 'pull_request'") ||
@@ -732,7 +735,7 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 		// gap 2: the single credential env var line (PAT vs STEWARD_TOKEN).
 		"        run: |\n" +
 			"          set -euo pipefail\n" +
-			"          if [ -z \"$(git status --porcelain -- docs/timeline.md docs/file-structure.md)\" ]; then\n" +
+			"          if [ -z \"$(git status --porcelain -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md)\" ]; then\n" +
 			"            echo \"Derived docs already current on main.\"\n" +
 			"            exit 0\n" +
 			"          fi\n",

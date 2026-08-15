@@ -99,22 +99,21 @@ the WHOLE branch does — `logmind headline "<one sentence>"`, or bundle it
 into a decision with `logmind log "..." -H "<one sentence>"`. It's stored
 at the top of the branch's decision file and copied verbatim into
 `docs/timeline.md`, so it's the FIRST thing the next agent reads. Refine
-it as the branch grows (the entry key stays stable). It's a no-op on the
-default branch, which logs to `docs/decisions.md` directly.
+it as the branch grows (the entry key stays stable). It applies on every
+branch — the default branch is a branch like any other.
 
 ### Required reading at task start
 
 Before starting any non-trivial task in this repo, **read these in order**:
 
-1. **[docs/timeline.md](docs/timeline.md)** — auto-generated chronological overview of every decision across all branches. Start here for the lay of the land.
-2. **[docs/decisions.md](docs/decisions.md)** — direct-on-main decisions in detail.
-3. **`docs/decisions-branches/<your-branch>.md`** if you're on a feature branch — decisions made earlier on the same branch.
-4. **[docs/file-structure.md](docs/file-structure.md)** — current project tree (regenerated on each main-branch log and after every PR merge).
+1. **[docs/timeline.md](docs/timeline.md)** — auto-generated chronological overview, the 50 most recent decisions across all branches. Start here for the lay of the land.
+2. **`docs/decisions-branches/<your-branch>.md`** — decisions made earlier on the branch you're on, in full detail.
+3. **[docs/file-structure.md](docs/file-structure.md)** — current project tree (regenerated on each main-branch log and after every PR merge).
 
 ```bash
 logmind show               # recent decisions on the current branch
-logmind show --all         # include archive
-logmind search "postgres"  # full-text across both files
+logmind show --all         # include every other branch's decision file
+logmind search "postgres"  # full-text across the decision log
 ```
 
 Working as an agent? Set `LOGMIND_QUIET=1` for terse, chainable machine output
@@ -128,8 +127,8 @@ the team already decided.
 
 ### Additional reference
 
-- **[docs/decisions-archive.md](docs/decisions-archive.md)** — historical decisions (searchable)
-- **docs/decisions-branches/** — per-branch decision logs from in-flight feature work
+- **`docs/timeline-archive.md`** — the history older than the 50 entries in `docs/timeline.md`, same format (written by the same regeneration)
+- **docs/decisions-branches/** — per-branch decision logs; the record itself, append-only and uncapped
 - **README.md** at the repo root — project overview, if present
 <!-- logmind-end -->
 
