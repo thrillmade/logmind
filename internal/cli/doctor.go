@@ -154,14 +154,14 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 
 // residualCause names WHY a residual probe is still drifted after --fix, so
 // the note printed for it is accurate rather than a one-size-fits-all guess.
-// The three residualProbes drift values mean three different things:
+// The four residualProbes drift values mean four different things:
 //
 //   - "stale" — an actual version mismatch --fix cannot resolve on its own
 //     (the PATH binary, or a hook whose installed version trails the one
 //     running).
 //   - "foreign" — a hand-written git hook occupies the path; --fix leaves a
 //     foreign hook alone by design (see probePreCommitHook).
-//   - "markerless" — SPEC §1.1: the artifact carries no marker (or a
+//   - "markerless" — SPEC §5.2: the artifact carries no marker (or a
 //     displaced one) --fix is willing to act on, so it is the user's and was
 //     left untouched. Before #306 this row was invisible because --fix
 //     silently overwrote exactly this case; now that it is refused and
@@ -169,12 +169,20 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 //     hook" is only true of the "foreign" case above, and a bare workflow or
 //     AGENTS.md block with no marker is neither PATH/version drift nor a
 //     hook at all.
+//   - "unreadable" — a logmind IS on PATH but its `--version` could not be
+//     executed or could not be parsed (probePathResolution). This case used
+//     to be filed as "markerless" too, which made the note above claim SPEC
+//     §5.2 ownership over a binary on PATH — an artifact that has no marker
+//     concept in the first place, and that logmind never claims to own. The
+//     row is real drift; only its stated cause was wrong.
 func residualCause(drift string) string {
 	switch drift {
 	case "foreign":
 		return "still drifted — a hand-written hook is installed in its place, which `doctor --fix` leaves alone"
 	case "markerless":
-		return "still drifted — it carries no logmind marker `doctor --fix` can act on, so SPEC §1.1 treats it as yours and leaves it alone"
+		return "still drifted — it carries no logmind marker `doctor --fix` can act on, so SPEC §5.2 treats it as yours and leaves it alone"
+	case "unreadable":
+		return "still drifted — a logmind is on PATH but its `--version` could not be read, so `doctor --fix` cannot tell whether it matches the running binary"
 	default: // "stale"
 		return "still drifted — not auto-fixable by `doctor --fix` (PATH/version)"
 	}
@@ -199,15 +207,16 @@ func driftCount(r doctor.StatusReport) int {
 
 // residualProbes returns the probes still drifted after a fix pass: PATH/
 // version drift ("stale"), an unmarked or displaced-marker artifact --fix
-// refuses to touch per SPEC §1.1 ("markerless"), and a hand-written hook
-// occupying a managed path ("foreign") — three different reasons --fix
+// refuses to touch per SPEC §5.2 ("markerless"), a hand-written hook
+// occupying a managed path ("foreign"), and a PATH binary whose --version
+// could not be read ("unreadable") — four different reasons --fix
 // deliberately leaves the row alone. Callers that need to explain WHY use
 // residualCause(wf.Drift) rather than assuming any single cause.
 func residualProbes(r doctor.StatusReport) []doctor.WorkflowStatus {
 	var out []doctor.WorkflowStatus
 	for _, t := range r.Tools {
 		for _, wf := range t.Workflows {
-			if wf.Drift == "stale" || wf.Drift == "markerless" || wf.Drift == "foreign" {
+			if wf.Drift == "stale" || wf.Drift == "markerless" || wf.Drift == "foreign" || wf.Drift == "unreadable" {
 				out = append(out, wf)
 			}
 		}

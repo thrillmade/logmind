@@ -423,7 +423,7 @@ const (
 	// declineDowngrade — the file carries a NEWER marker than this binary
 	// bundles (#286). Ours, but ahead of us.
 	declineDowngrade declineReason = iota
-	// declineUnmarked — no logmind marker at all. SPEC §1.1: the artifact
+	// declineUnmarked — no logmind marker at all. SPEC §5.2: the artifact
 	// belongs to the user and MUST NOT be overwritten.
 	declineUnmarked
 	// declineDisplaced — a marker exists but not on line 1 (#299). Neither
@@ -467,7 +467,17 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 		body := renderWorkflowTemplate(templates.Workflow(tmpl))
 		existing, err := os.ReadFile(target)
 		if errors.Is(err, fs.ErrNotExist) {
-			if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+			// ENOENT-AS-ABSENT (#306). os.ReadFile FOLLOWS a symlink, so a
+			// DANGLING symlink at target — one pointing at a path that does
+			// not exist — lands here reporting fs.ErrNotExist, exactly as a
+			// genuinely missing file does. A bare os.WriteFile then follows
+			// that same link and creates the rendered workflow wherever it
+			// points, which need not be inside the repo, while --fix reports
+			// `workflows=1` as though it had installed one. Same shape as
+			// inserter.EnsureDependabot's create branch. atomicio.WriteFile
+			// refuses instead (atomicio.RefuseSymlink) and makes its own
+			// parent directory.
+			if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
 				return nil, nil, nil, err
 			}
 			created = append(created, relativePath(repoRoot, target))
@@ -522,7 +532,13 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 				})
 				continue
 			}
-			if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+			// The refresh branch's symlink case (#306): a NON-dangling
+			// symlink at target reads fine through os.ReadFile above and
+			// carries a real, stale-looking marker, so control arrives here
+			// and a bare os.WriteFile would rewrite whatever file the link
+			// points at — a file logmind did not install and does not own.
+			// Refuse rather than guess, same as the create branch above.
+			if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
 				return nil, nil, nil, err
 			}
 			refreshed = append(refreshed, relativePath(repoRoot, target))
@@ -647,10 +663,13 @@ func ensureGitignoreBlock(path string) (bool, error) {
 	if existing != "" && !strings.HasSuffix(existing, "\n\n") {
 		existing += "\n"
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, err
-	}
-	if err := os.WriteFile(path, []byte(existing+b.String()), 0o644); err != nil {
+	// Through writeFile (atomicio) for the same reason as the workflow
+	// installs above: os.ReadFile at the top of this function follows a
+	// symlink, so a link planted at .gitignore reads as an ordinary file and
+	// a bare os.WriteFile would append logmind's block into whatever it
+	// points at. atomicio.WriteFile refuses, and makes its own parent
+	// directory — so the explicit MkdirAll this replaced is no longer needed.
+	if err := writeFile(path, existing+b.String()); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -673,7 +692,10 @@ func logFirstDecision(docsPath string) error {
 	// The template ends with `---\n`. Append entry directly so the
 	// `## YYYY-MM-DD ...` line sits on the next line, matching Python.
 	newContent := strings.TrimRight(string(existing), "\n") + "\n" + entry + "\n"
-	return os.WriteFile(path, []byte(newContent), 0o644)
+	// atomicio via writeFile: docs/decisions.md is the decision record itself,
+	// so a torn write here loses history, and a symlink at the path would send
+	// the first decision somewhere logmind does not own.
+	return writeFile(path, newContent)
 }
 
 // buildFirstDecisionEntry renders the same markdown shape Python's

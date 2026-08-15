@@ -90,7 +90,7 @@ func runSelfUpdate(cmd *cobra.Command) error {
 	// AGENTS.md a second time in the same command. FindOutdatedMarkerBlocks
 	// only ever reports AGENTS.md, and EnsureAgentsMD above has already
 	// refreshed it against the same classifier (planBlockRefresh) — so the
-	// loop was pure duplication, which SPEC §1.1 forbids outright ("Exactly
+	// loop was pure duplication, which SPEC §5.2 forbids outright ("Exactly
 	// one automation owns any generated or copied path. Two refreshers MUST
 	// NOT write the same path"). Being unreachable is also why nothing caught
 	// that it passed the BLOCK BODY where the WHOLE FILE belonged and wrote
@@ -98,8 +98,17 @@ func runSelfUpdate(cmd *cobra.Command) error {
 	//
 	// Deleting the duplicate is the fix, not repairing its arguments: the
 	// second writer had no work of its own to do, and a dead write path is
-	// exactly where an untested defect survives. EnsureAgentsMD is the single
-	// owner of this path, and it reports through `msg` above.
+	// exactly where an untested defect survives.
+	//
+	// Precisely what is single here, since "EnsureAgentsMD is the single owner
+	// of this path" overstated it: AGENTS.md's bytes have exactly one WRITE
+	// PRIMITIVE, inserter.RefreshMarkerBlockFile, which owns the read, requires
+	// the markers to be present, and writes the whole file back. Two commands
+	// route through it — this one via inserter.EnsureAgentsMD, and `logmind
+	// agents update --apply` via runAgentsUpdate — which is one owner reached
+	// from two surfaces, not two refreshers. What SPEC §5.2 forbids is the
+	// second REFRESHER, and within this command the call above is the only one.
+	// EnsureAgentsMD reports through `msg`.
 
 	// Refresh local hooks to match the running binary's body.
 	if _, err := os.Stat(filepath.Join(cwd, ".git")); err == nil {

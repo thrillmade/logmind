@@ -413,9 +413,9 @@ func TestProbePathResolution_MatchingVersionIsCurrent(t *testing.T) {
 // TestProbePathResolution_RealVersionFormatNotMarkerless is the direct #214
 // regression: a PATH binary whose `--version` prints the genuine
 // `logmind <ver> (spec <ver>)` line (root.go's versionLine) MUST classify as
-// current/stale — never markerless. The pre-fix regex (`version\s+(\S+)`)
-// found no "version" token in that line, so a real on-PATH Go logmind was
-// always mis-labeled markerless and the PATH-drift row went blind.
+// current/stale — never the unparseable fallback. The pre-fix regex
+// (`version\s+(\S+)`) found no "version" token in that line, so a real
+// on-PATH Go logmind was always mis-labeled and the PATH-drift row went blind.
 func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
@@ -430,8 +430,8 @@ func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
 	_ = os.Setenv("PATH", tmp)
 
 	row := probePathResolution()
-	if row.Drift == "markerless" {
-		t.Fatalf("Drift = markerless on a real `logmind <ver> (spec <ver>)` line; #214 regressed (marker=%v)", row.Marker)
+	if row.Drift == "unreadable" {
+		t.Fatalf("Drift = unreadable on a real `logmind <ver> (spec <ver>)` line; #214 regressed (marker=%v)", row.Marker)
 	}
 	if row.Drift != "stale" {
 		t.Errorf("Drift = %q; want stale (9.9.9-onpath != running %s)", row.Drift, version.Version)
@@ -444,8 +444,9 @@ func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
 // TestProbePathResolution_LegacyClickVersionClassified is the dual-review
 // follow-up to #214: a stale PYTHON (Click) binary on PATH prints
 // `logmind, version X`. The re-anchored regex must still parse it and
-// classify it stale/DRIFT — not silently degrade it to markerless, which
-// would blind the drift row to exactly the stale binary it exists to catch.
+// classify it stale/DRIFT — not silently degrade it to the unparseable
+// fallback, which would blind the drift row to exactly the stale binary it
+// exists to catch.
 func TestProbePathResolution_LegacyClickVersionClassified(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
@@ -458,8 +459,8 @@ func TestProbePathResolution_LegacyClickVersionClassified(t *testing.T) {
 	_ = os.Setenv("PATH", tmp)
 
 	row := probePathResolution()
-	if row.Drift == "markerless" {
-		t.Fatalf("Drift = markerless on legacy Click `logmind, version 0.6.16`; a stale Python binary must be classified, not blinded (marker=%v)", row.Marker)
+	if row.Drift == "unreadable" {
+		t.Fatalf("Drift = unreadable on legacy Click `logmind, version 0.6.16`; a stale Python binary must be classified, not blinded (marker=%v)", row.Marker)
 	}
 	if row.Drift != "stale" {
 		t.Errorf("Drift = %q; want stale (0.6.16 != running %s)", row.Drift, version.Version)
@@ -469,7 +470,15 @@ func TestProbePathResolution_LegacyClickVersionClassified(t *testing.T) {
 	}
 }
 
-func TestProbePathResolution_MarkerlessOnGarbageVersion(t *testing.T) {
+// TestProbePathResolution_UnreadableOnGarbageVersion — #306: a PATH binary
+// whose output carries no parseable version is "unreadable", NOT "markerless".
+// "markerless" is SPEC §5.2's OWNERSHIP verdict ("an artifact carrying no
+// marker at all belongs to the user and MUST NOT be overwritten") and callers
+// act on it as such — `doctor --fix` refuses to write the path and the
+// residual note tells the user logmind is leaving their file alone. A binary
+// on PATH is not a user-owned markerless artifact; reusing the ownership token
+// for it made --fix state a true drift with a false cause.
+func TestProbePathResolution_UnreadableOnGarbageVersion(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
 	// Output that doesn't include the `version ` token at all so the
@@ -483,8 +492,12 @@ func TestProbePathResolution_MarkerlessOnGarbageVersion(t *testing.T) {
 	_ = os.Setenv("PATH", tmp)
 
 	row := probePathResolution()
-	if row.Drift != "markerless" {
-		t.Errorf("Drift = %q; want markerless", row.Drift)
+	if row.Drift != "unreadable" {
+		t.Errorf("Drift = %q; want unreadable", row.Drift)
+	}
+	if row.Drift == "markerless" {
+		t.Error("Drift = markerless: an unreadable PATH binary is being reported under SPEC §5.2's " +
+			"user-ownership verdict, which is a different fact about a different kind of artifact")
 	}
 }
 

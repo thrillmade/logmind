@@ -4,7 +4,7 @@
 // Both defects wrote something partial over the whole of a user-owned file.
 // #297: `self-update` handed a BLOCK BODY to a function whose first parameter
 // is a WHOLE FILE, then wrote the fragment that came back over AGENTS.md.
-// #299: `doctor` classified a workflow as markerless (SPEC §1.1 — the user's,
+// #299: `doctor` classified a workflow as markerless (SPEC §5.2 — the user's,
 // MUST NOT be overwritten) using a first-line-only extractor, while
 // `doctor --fix` re-classified it as versioned-and-stale using an any-line
 // extractor and overwrote it.
@@ -16,10 +16,14 @@
 package cli
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -100,7 +104,7 @@ func TestSelfUpdate_PreservesAgentsMDOutsideBlock(t *testing.T) {
 	})
 }
 
-// TestSelfUpdate_LeavesMarkerlessAgentsMDContentIntact — SPEC §1.1 for the
+// TestSelfUpdate_LeavesMarkerlessAgentsMDContentIntact — SPEC §5.2 for the
 // self-update surface. An AGENTS.md the user wrote with no logmind block at
 // all gets the block ADDED (an insert preserves their content); what must
 // never happen is their prose being replaced.
@@ -167,7 +171,7 @@ func TestDoctorFix_LeavesDisplacedMarkerWorkflowAlone(t *testing.T) {
 	})
 }
 
-// TestDoctorFix_LeavesUnmarkedWorkflowAlone — the plain SPEC §1.1 case: a
+// TestDoctorFix_LeavesUnmarkedWorkflowAlone — the plain SPEC §5.2 case: a
 // workflow with no logmind marker anywhere is the user's, and --fix must both
 // leave it alone AND say that it did.
 func TestDoctorFix_LeavesUnmarkedWorkflowAlone(t *testing.T) {
@@ -317,74 +321,560 @@ func TestDoctorFix_StillRefreshesAWorkflowItOwns(t *testing.T) {
 	})
 }
 
-// TestSelfUpdate_HasNoSecondAgentsMDWriter guards the structural half of the
-// #297 fix. SPEC §1.1: "Exactly one automation owns any generated or copied
-// path. Two refreshers MUST NOT write the same path." The deleted loop was a
-// second refresher of AGENTS.md, and being unreachable is precisely why its
-// wrong-argument write survived untested — so the absence of a second writer
-// is the thing worth pinning, not the correctness of one that should not
-// exist.
-//
-// This started as a grep of exactly one file (self_update.go) for two exact
-// banned substrings ("inserter.FindOutdatedMarkerBlocks",
-// "os.WriteFile(entry.Path") — a second writer reintroduced under ANY OTHER
-// FILE, or under a differently-named variable in the same file, would have
-// passed it silently. Widened to scan every non-test .go source file under
-// internal/ (not just internal/cli) for the shape of a raw write to
-// AGENTS.md, allowlisting only internal/inserter/inserter.go — the one file
-// SPEC §1.1 permits to own that path (EnsureAgentsMD, RefreshMarkerBlockFile,
-// MigrateToAgentsMD's append). Every legitimate caller in this codebase
-// names the variable `agentsPath`; a second writer would either reuse that
-// convention (caught by the first alternative) or inline the path directly
-// (caught by the second).
-func TestSelfUpdate_HasNoSecondAgentsMDWriter(t *testing.T) {
-	// Control FIRST, on a synthetic fixture: prove the scanner actually
-	// flags the shape it exists to catch before trusting a clean result from
-	// the real tree below — an empty result from a broken scanner and an
-	// empty result from a clean tree look identical otherwise.
-	t.Run("control_detects_synthetic_second_writer", func(t *testing.T) {
-		dir := t.TempDir()
-		fixtures := map[string]string{
-			"by_convention.go": "package evil\n\nimport \"os\"\n\nfunc f(repoRoot string) {\n\tagentsPath := repoRoot + \"/AGENTS.md\"\n\tos.WriteFile(agentsPath, nil, 0o644)\n}\n",
-			"inlined.go":       "package evil\n\nimport (\"os\"; \"path/filepath\")\n\nfunc g(repoRoot string) {\n\tos.WriteFile(filepath.Join(repoRoot, \"AGENTS.md\"), nil, 0o644)\n}\n",
-		}
-		for name, body := range fixtures {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		got, err := findAgentsMDWriteViolations(dir)
-		if err != nil {
+// TestDoctorFix_RefusesDanglingWorkflowSymlink is the #306 live escape,
+// measured through the real command. os.ReadFile FOLLOWS a symlink, so a
+// DANGLING one at .github/workflows/check-decisions.yml returns fs.ErrNotExist
+// and the file reads as ABSENT — the same ENOENT-as-absent shape already fixed
+// in inserter.EnsureDependabot. installWorkflowTemplates then took its CREATE
+// branch and a bare os.WriteFile followed the link, landing the rendered
+// workflow wherever it pointed (a panel measured 6419 bytes written OUTSIDE
+// the repository) while --fix reported `workflows=1` as if it had installed
+// one. The refusal must be loud, and nothing may appear at the link target.
+func TestDoctorFix_RefusesDanglingWorkflowSymlink(t *testing.T) {
+	skipWithoutSymlinks(t)
+	outside := t.TempDir()
+	escapeTarget := filepath.Join(outside, "escaped-workflow.yml")
+
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		rel := filepath.Join(".github", "workflows", "check-decisions.yml")
+		if err := os.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != len(fixtures) {
-			t.Fatalf("control: scanner found %d violation(s) in %d synthetic fixtures; "+
-				"want %d — the scanner itself is broken, so a clean result below proves nothing",
-				len(got), len(fixtures), len(fixtures))
+		if err := os.Symlink(escapeTarget, rel); err != nil {
+			t.Fatalf("plant dangling symlink: %v", err)
+		}
+
+		root := NewRootCmd()
+		root.SetArgs([]string{"doctor", "--fix", "--offline"})
+		var out, errOut strings.Builder
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		err := root.Execute()
+
+		// THE HARM FIRST: nothing may exist outside the repository.
+		if _, statErr := os.Lstat(escapeTarget); statErr == nil {
+			body, _ := os.ReadFile(escapeTarget)
+			t.Fatalf("doctor --fix wrote %d bytes OUTSIDE the repo, through a dangling symlink, to %s",
+				len(body), escapeTarget)
+		}
+		// The link itself is untouched — refusing means leaving both the link
+		// and whatever it names exactly as found.
+		fi, lerr := os.Lstat(rel)
+		if lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("the planted symlink at %s was replaced rather than refused (lstat err=%v)", rel, lerr)
+		}
+		// And the refusal is REPORTED, not silent — a silent no-op here reads
+		// to the user exactly like a successful install.
+		if err == nil {
+			t.Error("doctor --fix exited 0 on a workflow it could not write; the refusal was silent")
+		}
+		mustContain(t, errOut.String(), "symlink")
+	})
+}
+
+// TestDoctorFix_RefusesSymlinkedExistingWorkflow is the same escape through
+// installWorkflowTemplates' OTHER branch. A NON-dangling symlink reads fine
+// through os.ReadFile, so the file looks present and its (stale, line-1,
+// therefore logmind-owned) marker routes control to the REFRESH write — where
+// a bare os.WriteFile rewrites whatever the link points at. The dangling case
+// above never reaches this branch, so without this test the refresh write can
+// be reverted to a raw primitive and every behavioural assertion stays green.
+func TestDoctorFix_RefusesSymlinkedExistingWorkflow(t *testing.T) {
+	skipWithoutSymlinks(t)
+	outside := t.TempDir()
+	realTarget := filepath.Join(outside, "someone-elses-workflow.yml")
+	// Marker on line 1 (so it is "ours" and writable) but an old version (so
+	// the refresh branch engages), with user content underneath to detect a
+	// rewrite.
+	const userContent = "# logmind-template-version: v0-ANCIENT\nname: not ours\nUSER_SENTINEL_OUTSIDE\n"
+	if err := os.WriteFile(realTarget, []byte(userContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		rel := filepath.Join(".github", "workflows", "check-decisions.yml")
+		if err := os.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(realTarget, rel); err != nil {
+			t.Fatalf("plant symlink: %v", err)
+		}
+
+		root := NewRootCmd()
+		root.SetArgs([]string{"doctor", "--fix", "--offline"})
+		var out, errOut strings.Builder
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		err := root.Execute()
+
+		got, readErr := os.ReadFile(realTarget)
+		if readErr != nil {
+			t.Fatalf("the file outside the repo vanished: %v", readErr)
+		}
+		if string(got) != userContent {
+			t.Fatalf("doctor --fix wrote through the symlink and rewrote a file outside the repo:\n got: %q\nwant: %q",
+				string(got), userContent)
+		}
+		if err == nil {
+			t.Error("doctor --fix exited 0 on a workflow it could not write; the refusal was silent")
+		}
+		mustContain(t, errOut.String(), "symlink")
+
+		// VACUITY CONTROL: the refresh branch has to actually be the branch
+		// under test. A marker logmind does NOT own would be refused earlier,
+		// by the ownership gate, and would prove nothing about the write.
+		if m := inserter.ExtractTemplateMarker(userContent); !m.Writable() {
+			t.Fatalf("fixture marker is not writable (%+v) — control never reached the refresh write", m)
 		}
 	})
+}
 
-	violations, err := findAgentsMDWriteViolations("..") // internal/
-	if err != nil {
-		t.Fatalf("scan internal/ for a second AGENTS.md writer: %v", err)
+// TestResidualCause_NamesADistinctCausePerDriftValue is the #306 HIGH on the
+// residual note. residualProbes emits four drift values and they mean four
+// different things; the note must not attribute one row's cause to another.
+//
+// The specific regression: probePathResolution filed BOTH "cannot exec
+// --version" and "no version parsed" as drift="markerless", so `doctor --fix`
+// told a user whose PATH binary was merely unreadable that logmind "treats it
+// as yours and leaves it alone" — SPEC §5.2's OWNERSHIP verdict, applied to a
+// binary that has no ownership marker concept at all.
+func TestResidualCause_NamesADistinctCausePerDriftValue(t *testing.T) {
+	drifts := []string{"stale", "foreign", "markerless", "unreadable"}
+	cause := map[string]string{}
+	byText := map[string]string{}
+	for _, d := range drifts {
+		c := residualCause(d)
+		cause[d] = c
+		if prev, dup := byText[c]; dup {
+			t.Errorf("drift %q and drift %q report the IDENTICAL cause %q; one of them is wrong "+
+				"about what happened", prev, d, c)
+		}
+		byText[c] = d
 	}
-	for _, v := range violations {
-		t.Errorf("raw AGENTS.md write outside internal/inserter/inserter.go: %s — "+
-			"route this through inserter.EnsureAgentsMD / RefreshMarkerBlockFile instead", v)
+
+	// The ownership sentence belongs to "markerless" and to nothing else.
+	const ownership = "treats it as yours"
+	if !strings.Contains(cause["markerless"], ownership) {
+		t.Errorf("markerless no longer states the SPEC §5.2 ownership verdict: %q", cause["markerless"])
+	}
+	for _, d := range []string{"stale", "foreign", "unreadable"} {
+		if strings.Contains(cause[d], ownership) {
+			t.Errorf("drift %q claims SPEC §5.2 user ownership, which is only true of a markerless "+
+				"artifact: %q", d, cause[d])
+		}
+	}
+
+	// The citation itself, since one of these strings is user-facing stderr:
+	// both sentences live at SPEC.md §5.2, never in §1.1.
+	if strings.Contains(cause["markerless"], "§1.1") {
+		t.Errorf("markerless cites SPEC §1.1; the marker-ownership rule is §5.2's: %q", cause["markerless"])
+	}
+	mustContain(t, cause["markerless"], "§5.2")
+
+	// And "unreadable" says what actually happened.
+	mustContain(t, cause["unreadable"], "on PATH")
+	mustContain(t, cause["unreadable"], "--version")
+}
+
+// TestDoctorFix_UnreadablePathBinaryReportsItsOwnCause walks the whole route —
+// a real binary on PATH whose --version output carries no version, through the
+// real `doctor --fix` — because residualCause being right is only useful if
+// the drift value reaching it is right too. Before #306 this row arrived as
+// "markerless" and got the user-ownership sentence.
+func TestDoctorFix_UnreadablePathBinaryReportsItsOwnCause(t *testing.T) {
+	skipWithoutSymlinks(t) // shell-script fixture; same non-Windows condition
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "logmind")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho some unrelated output\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// PREPEND rather than replace: doctor --fix shells out to git, which still
+	// has to resolve.
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	withTempCwd(t, func(_ string) {
+		gitInitCwd(t)
+		_, stderr := runDoctorFixCmd(t)
+
+		mustContain(t, stderr, "logmind on PATH")
+		mustContain(t, stderr, "--version")
+		if strings.Contains(stderr, `"logmind on PATH" still drifted — it carries no logmind marker`) {
+			t.Errorf("the PATH binary is reported as a markerless user-owned artifact; it is neither:\n%s", stderr)
+		}
+	})
+}
+
+// skipWithoutSymlinks skips on platforms where an unprivileged process cannot
+// create one (Windows), mirroring internal/inserter's helper of the same
+// purpose.
+func skipWithoutSymlinks(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevation on Windows")
 	}
 }
 
-// agentsMDWriteViolationRe matches a WriteFile call whose target is built
-// from AGENTS.md — either the conventional `agentsPath` variable name every
-// legitimate caller in this codebase uses, or the "AGENTS.md" literal
-// inlined directly into the call.
-var agentsMDWriteViolationRe = regexp.MustCompile(`WriteFile\(\s*agentsPath\b|WriteFile\(\s*filepath\.Join\([^)]*"AGENTS\.md"`)
+// ---------------------------------------------------------------------------
+// The structural half of the #297 fix: nothing may write a managed path except
+// through the one primitive that owns it.
+// ---------------------------------------------------------------------------
 
-// findAgentsMDWriteViolations scans every non-test .go file under root for
-// agentsMDWriteViolationRe, skipping internal/inserter/inserter.go — the one
-// file SPEC §1.1 permits to write AGENTS.md.
-func findAgentsMDWriteViolations(root string) ([]string, error) {
-	var hits []string
+// TestWriteSurfaces_UseNoRawWritePrimitive is the rebuilt #297 second-writer
+// guard, and it is deliberately NOT a scan for the AGENTS.md PATH.
+//
+// SPEC §5.2: "Exactly one automation owns any generated or copied path. Two
+// refreshers MUST NOT write the same path." The deleted #297 loop was a second
+// refresher of AGENTS.md, and being unreachable is precisely why its
+// wrong-argument write survived untested — so the absence of a second writer is
+// the thing worth pinning, not the correctness of one that should not exist.
+//
+// WHY THE PATH IS THE WRONG THING TO SCAN FOR. Two earlier versions of this
+// guard matched on the target expression: first two exact banned substrings in
+// one file, then a regexp for `WriteFile(agentsPath` / `WriteFile(filepath.
+// Join(…"AGENTS.md"`. A review panel walked through both. The set of ways to
+// spell a path is unbounded, and every one of these compiles and passed:
+//
+//	os.WriteFile(entry.Path, []byte(entry.NewBody), 0o644)  // the literal #297 loop
+//	os.WriteFile(repoRoot+"/AGENTS.md", …)                  // concatenated literal
+//	p := filepath.Join(root, "AGENTS.md"); os.WriteFile(p, …) // renamed variable
+//	writeAgentsFile(agentsPath, …)                          // one-line wrapper
+//	…and anything at all under cmd/, which the old scan root never visited.
+//
+// The first of those five is the worst case for a path scan: it never names
+// AGENTS.md at all — it takes the path back OUT of the inserter API. And it is
+// invisible to a behavioural test too, which is why one is not the answer
+// here: after EnsureAgentsMD refreshes the block, FindOutdatedMarkerBlocks
+// reports nothing, so the restored loop is a no-op and every outcome assertion
+// above it stays green. Measured, not assumed — with the loop restored,
+// TestSelfUpdate_PreservesAgentsMDOutsideBlock passes.
+//
+// WHAT IS SCANNED INSTEAD. The write PRIMITIVE, which unlike a path is a
+// closed, enumerable set. Every one of those five evasions must ultimately
+// call one, so banning the primitive catches all five however the path is
+// spelled — and it generalises: the same guard is what would have caught the
+// live symlink escape at installWorkflowTemplates, where a bare os.WriteFile
+// followed a dangling symlink out of the repo (see
+// TestDoctorFix_RefusesDanglingWorkflowSymlink).
+//
+// KNOWN BOUNDARY, stated rather than implied: a second writer that took the
+// path from inserter.OutdatedMarkerEntry.Path AND routed it through
+// atomicio.WriteFile would satisfy this guard. Closing that needs either
+// interprocedural dataflow or the removal of the Path field, whose only
+// consumer is runAgentsUpdate in internal/cli/agents.go.
+func TestWriteSurfaces_UseNoRawWritePrimitive(t *testing.T) {
+	root := moduleRoot(t)
+
+	// SCOPE CONTROL FIRST. Evasion five was purely a scope failure — a
+	// perfectly good scanner pointed at internal/ alone, so a second writer
+	// under cmd/ was never read. Assert the walk actually reaches specific
+	// NAMED files before trusting a clean result, one per directory the guard
+	// claims to cover. Naming the files rather than counting them matters:
+	// the cheapest way to make this guard green is to drop a directory from
+	// writeSurfaceDirs, and a non-empty count would not notice.
+	scanned := map[string]bool{}
+	for _, dir := range writeSurfaceDirs {
+		files, err := goSourceFiles(filepath.Join(root, dir))
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+		for _, f := range files {
+			rel, relErr := filepath.Rel(root, f)
+			if relErr != nil {
+				t.Fatal(relErr)
+			}
+			scanned[filepath.ToSlash(rel)] = true
+		}
+	}
+	for _, sentinel := range []string{
+		"cmd/logmind/main.go",             // the binary's own package — evasion five's home
+		"internal/cli/self_update.go",     // where the #297 second writer lived
+		"internal/inserter/inserter.go",   // the owner of the AGENTS.md write primitive
+		"internal/inserter/dependabot.go", // a sibling installer found by a later sweep
+	} {
+		if !scanned[sentinel] {
+			t.Fatalf("scope control: %s was never read by the scan — the guard's coverage has "+
+				"shrunk, so a clean result below proves nothing about it", sentinel)
+		}
+	}
+
+	// DETECTION CONTROL. One synthetic fixture per evasion the panel found,
+	// including one in a nested subdirectory (proving the walk recurses) and
+	// one negative fixture that must NOT be flagged (proving the scanner
+	// discriminates rather than flagging every file it reads).
+	t.Run("control_detects_every_known_evasion", func(t *testing.T) {
+		dir := t.TempDir()
+		type fixture struct {
+			rel, body string
+			wantHit   bool
+		}
+		fixtures := []fixture{
+			{"evasion1_inserter_supplied_path.go", `package evil
+
+import (
+	"os"
+
+	"github.com/thrillmade/logmind/internal/inserter"
+)
+
+func f(cwd string) {
+	entries, _, _ := inserter.FindOutdatedMarkerBlocks(cwd)
+	for _, entry := range entries {
+		_ = os.WriteFile(entry.Path, []byte(entry.NewBody), 0o644)
+	}
+}
+`, true},
+			{"evasion2_concatenated_literal.go", `package evil
+
+import "os"
+
+func g(repoRoot string) { _ = os.WriteFile(repoRoot+"/AGENTS.md", nil, 0o644) }
+`, true},
+			{"evasion3_renamed_variable.go", `package evil
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func h(repoRoot string) {
+	p := filepath.Join(repoRoot, "AGENTS.md")
+	_ = os.WriteFile(p, nil, 0o644)
+}
+`, true},
+			{"evasion4_helper_wrapper.go", `package evil
+
+import "os"
+
+func writeAgentsFile(path string, data []byte) error { return os.WriteFile(path, data, 0o644) }
+`, true},
+			{"nested/evasion5_under_a_subdirectory.go", `package nested
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func k(repoRoot string) {
+	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+	_ = os.WriteFile(agentsPath, nil, 0o644)
+}
+`, true},
+			{"other_primitives.go", `package evil
+
+import "os"
+
+func m(path string) {
+	f, _ := os.Create(path)
+	_ = f
+	g, _ := os.OpenFile(path, os.O_WRONLY, 0o644)
+	_ = g
+}
+`, true},
+			// NEGATIVE control: the sanctioned route. A guard that flags this
+			// too would "pass" every fixture above while measuring nothing.
+			{"sanctioned_route.go", `package evil
+
+import (
+	"path/filepath"
+
+	"github.com/thrillmade/logmind/internal/atomicio"
+)
+
+func n(repoRoot string) {
+	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+	_ = atomicio.WriteFile(agentsPath, nil, 0o644)
+}
+`, false},
+			// NEGATIVE control: the primitive named in a comment and a string,
+			// never called. An AST scan must not confuse mention with use — a
+			// regexp over the bytes would flag this file and, by flagging the
+			// codebase's own explanatory comments, force the guard to be
+			// weakened until it stopped working.
+			{"mentions_only.go", `package evil
+
+// This function deliberately does not call os.WriteFile.
+func p() string { return "os.WriteFile" }
+`, false},
+		}
+		var wantHits []string
+		for _, fx := range fixtures {
+			full := filepath.Join(dir, fx.rel)
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(fx.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if fx.wantHit {
+				wantHits = append(wantHits, fx.rel)
+			}
+		}
+
+		got, err := findRawWritePrimitives(dir, []string{"."})
+		if err != nil {
+			t.Fatalf("scan fixtures: %v", err)
+		}
+		hitFiles := map[string]bool{}
+		for _, v := range got {
+			hitFiles[v.File] = true
+		}
+		for _, want := range wantHits {
+			if !hitFiles[filepath.ToSlash(want)] {
+				t.Errorf("control: %s was NOT flagged — this evasion would ship undetected", want)
+			}
+		}
+		for _, fx := range fixtures {
+			if !fx.wantHit && hitFiles[filepath.ToSlash(fx.rel)] {
+				t.Errorf("control: %s WAS flagged — the scanner does not discriminate, so a "+
+					"clean tree result would only mean the allowlist is doing the work", fx.rel)
+			}
+		}
+	})
+
+	// THE REAL TREE.
+	violations, err := findRawWritePrimitives(root, writeSurfaceDirs)
+	if err != nil {
+		t.Fatalf("scan the write surfaces: %v", err)
+	}
+	exercised := map[string]bool{}
+	for _, v := range violations {
+		if _, ok := rawWriteAllowlist[v.File]; ok {
+			exercised[v.File] = true
+			continue
+		}
+		t.Errorf("%s:%d calls %s directly — route it through atomicio.WriteFile (or an "+
+			"inserter primitive), which refuses a symlink at the destination and writes "+
+			"whole-file-or-nothing. If this path is one logmind already owns elsewhere, the "+
+			"call is a SECOND writer of it, which SPEC §5.2 forbids outright.",
+			v.File, v.Line, v.Call)
+	}
+
+	// STALENESS. An allowlist entry that no longer names a real violation is
+	// either a fix nobody deleted the exemption for, or a file that moved out
+	// from under it — and in the second case the exemption now covers nothing
+	// while the moved file goes unguarded. Either way it has to be noticed, so
+	// an unused entry fails rather than lingers.
+	for path, reason := range rawWriteAllowlist {
+		if !exercised[path] {
+			t.Errorf("allowlist entry %q (%s) matched no raw write — delete the entry if the "+
+				"call is gone, or update it if the file moved; a stale exemption widens this "+
+				"guard without anyone deciding to", path, reason)
+		}
+	}
+}
+
+// writeSurfaceDirs are the trees this guard covers: the command layer, the
+// artifact-installer package, and the binary's own main package. cmd/ is here
+// because its absence from the previous scan root was one of the five ways a
+// second writer got in.
+var writeSurfaceDirs = []string{
+	filepath.Join("internal", "cli"),
+	filepath.Join("internal", "inserter"),
+	"cmd",
+}
+
+// rawWriteAllowlist maps a REPO-RELATIVE PATH to the reason its raw write
+// primitive is permitted. Paths, not base names: a base-name key silently
+// exempts any future file that happens to share the name, which is the same
+// "matches more than it means" failure that let five second writers past the
+// previous version of this guard.
+//
+// Every entry is a standing finding, not an endorsement — and every entry is
+// checked for staleness below, so one whose violation is fixed, or whose file
+// moves, fails this test rather than quietly widening it.
+var rawWriteAllowlist = map[string]string{
+	// Opens a lock file for flock(2). No content is ever written through the
+	// descriptor, so there is no torn-write or symlink-follow exposure to fix.
+	"internal/cli/filelock_unix.go": "lock-file open, not a content write",
+
+	// FINDING, not a fix: os.WriteFile on a CI workflow pin path. Same
+	// ENOENT-as-absent / follow-the-symlink exposure as the two writes fixed
+	// in init.go on this branch. Owned by another in-flight lane (PR #313),
+	// so it is recorded here rather than routed around.
+	"internal/cli/agents.go": "workflow-pin write; raw primitive owned by PR #313's lane",
+
+	// FINDING, same as above: two raw hook writes, PR #313's lane.
+	"internal/cli/install_hook.go": "git-hook write; raw primitive owned by PR #313's lane",
+}
+
+// rawWriteViolation is one call to a banned primitive.
+type rawWriteViolation struct {
+	File string // repo-relative, slash-separated
+	Line int
+	Call string // e.g. "os.WriteFile"
+}
+
+// bannedWritePrimitives are the stdlib calls that write (or truncate) a file
+// at a path directly. Unlike a path expression, this set is CLOSED — which is
+// the whole reason the guard scans for it instead of for "AGENTS.md".
+//
+// os.Rename is absent deliberately: it is the second half of atomicio's own
+// temp-file-plus-rename, so banning it would ban the sanctioned route.
+var bannedWritePrimitives = map[string]map[string]bool{
+	"os":     {"WriteFile": true, "Create": true, "OpenFile": true, "Truncate": true},
+	"ioutil": {"WriteFile": true},
+}
+
+// findRawWritePrimitives parses every non-test .go file under root and returns
+// each CALL to a banned write primitive. Files whose base name is in allow are
+// skipped.
+//
+// AST, not regexp, and that is load-bearing rather than fastidious: this
+// codebase's comments discuss `os.WriteFile` constantly — describing exactly
+// the defect this guard pins — so a byte-level scan would flag its own
+// explanations, and the only way to make it green would be to weaken it.
+func findRawWritePrimitives(root string, dirs []string) ([]rawWriteViolation, error) {
+	var files []string
+	for _, dir := range dirs {
+		found, err := goSourceFiles(filepath.Join(root, dir))
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, found...)
+	}
+	var out []rawWriteViolation
+	fset := token.NewFileSet()
+	for _, path := range files {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil, err
+		}
+		rel = filepath.ToSlash(rel)
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if bannedWritePrimitives[pkg.Name][sel.Sel.Name] {
+				out = append(out, rawWriteViolation{
+					File: rel,
+					Line: fset.Position(sel.Pos()).Line,
+					Call: pkg.Name + "." + sel.Sel.Name,
+				})
+			}
+			return true
+		})
+	}
+	return out, nil
+}
+
+// goSourceFiles lists every non-test .go file under root, recursively.
+func goSourceFiles(root string) ([]string, error) {
+	var out []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -395,17 +885,30 @@ func findAgentsMDWriteViolations(root string) ([]string, error) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		if filepath.Base(path) == "inserter.go" && filepath.Base(filepath.Dir(path)) == "inserter" {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if agentsMDWriteViolationRe.Match(data) {
-			hits = append(hits, path)
-		}
+		out = append(out, path)
 		return nil
 	})
-	return hits, err
+	return out, err
+}
+
+// moduleRoot walks up from the test's working directory to the directory
+// holding go.mod. Scanning from the module root — rather than from a relative
+// "..", which is how cmd/ came to be excluded — is what makes the guard's
+// coverage a property of the repository instead of of the test's location.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("no go.mod found above the test's working directory")
+		}
+		dir = parent
+	}
 }

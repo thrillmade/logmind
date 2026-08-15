@@ -614,7 +614,7 @@ func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 
 	// `owned` is what the DRIFT VERDICT is computed from, and it is non-nil
 	// only when the file is ours to refresh. classifyMarker's nil case is the
-	// SPEC §1.1 "belongs to the user" verdict, so routing anything the writer
+	// SPEC §5.2 "belongs to the user" verdict, so routing anything the writer
 	// would refuse through nil is what keeps the reader's answer identical to
 	// the writer's — the disagreement between them WAS #299.
 	var owned *string
@@ -908,8 +908,18 @@ func probeClaudePreToolUseHook(projectRoot string) WorkflowStatus {
 //     can act on it without invoking `which -a`.
 //   - drift="missing"   when no logmind found on PATH (merge driver
 //     shell-outs will fail).
-//   - drift="markerless" when the PATH binary exists but its
-//     --version is unreadable / unparseable.
+//   - drift="unreadable" when the PATH binary exists but its
+//     --version cannot be executed or cannot be parsed.
+//
+// "unreadable" is deliberately NOT "markerless" (#306). Everywhere else in
+// this file "markerless" carries SPEC §5.2's OWNERSHIP verdict — "an artifact
+// carrying no marker at all belongs to the user and MUST NOT be overwritten"
+// — and callers act on it as such: `doctor --fix` refuses to write the path,
+// and the residual note tells the user logmind is leaving their file alone. A
+// binary on PATH is not a user-owned markerless artifact and has no marker
+// concept at all; what happened is that logmind could not read its version.
+// Reusing the ownership token for it made --fix report a true fact ("still
+// drifted") with a false cause.
 //
 // Errors are best-effort: every failure path produces a status row
 // (no panics). This is the v0.6.16 carry-forward that bubbles up
@@ -942,7 +952,7 @@ func probePathResolution() WorkflowStatus {
 		marker := fmt.Sprintf("%s (cannot exec --version)", pathBin)
 		return WorkflowStatus{
 			Name: "logmind on PATH", Installed: true,
-			Marker: &marker, BundledMarker: &running, Drift: "markerless",
+			Marker: &marker, BundledMarker: &running, Drift: "unreadable",
 		}
 	}
 	text := strings.TrimSpace(string(out))
@@ -951,7 +961,7 @@ func probePathResolution() WorkflowStatus {
 		marker := fmt.Sprintf("%s (no version parsed from %q)", pathBin, text)
 		return WorkflowStatus{
 			Name: "logmind on PATH", Installed: true,
-			Marker: &marker, BundledMarker: &running, Drift: "markerless",
+			Marker: &marker, BundledMarker: &running, Drift: "unreadable",
 		}
 	}
 	pathVer := strings.TrimRight(m[1], ",")
@@ -993,6 +1003,8 @@ func formatDrift(drift string) string {
 		return "current"
 	case "markerless":
 		return "markerless"
+	case "unreadable":
+		return "version unreadable"
 	case "missing":
 		return "—"
 	case "foreign":

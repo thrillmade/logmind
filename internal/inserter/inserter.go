@@ -165,7 +165,7 @@ func ExtractMarkerBlock(content string) (string, bool) {
 // ErrNoMarkerBlock is returned by RefreshMarkerBlockFile when the file on
 // disk carries no well-formed logmind marker block. It is a REFUSAL, not a
 // failure to write: a file with no block is not logmind's to rewrite (SPEC
-// §1.1 — "An artifact carrying no marker at all belongs to the user and MUST
+// §5.2 — "An artifact carrying no marker at all belongs to the user and MUST
 // NOT be overwritten"), so the bytes are left exactly as found.
 var ErrNoMarkerBlock = errors.New("no logmind marker block")
 
@@ -463,7 +463,7 @@ func EnsureAgentsMD(repoRoot string) (string, *AgentsBlockRefusal, error) {
 	if tok && strings.TrimSpace(installedBlock) != strings.TrimSpace(templateBlock) {
 		// Routed through the one write primitive rather than doing its own
 		// read/replace/write — EnsureAgentsMD is the SINGLE refresher of this
-		// path (SPEC §1.1: "Exactly one automation owns any generated or
+		// path (SPEC §5.2: "Exactly one automation owns any generated or
 		// copied path. Two refreshers MUST NOT write the same path"), and it
 		// gets the markers-required refusal for free.
 		if err := RefreshMarkerBlockFile(agentsPath, templateBlock); err != nil {
@@ -768,7 +768,7 @@ const (
 	// MarkerOwned — the logmind marker is on line 1. logmind installed this
 	// file and MAY refresh it (subject to the ordering guard, #286).
 	MarkerOwned MarkerOwnership = iota
-	// MarkerAbsent — no logmind marker anywhere. SPEC §1.1: "An artifact
+	// MarkerAbsent — no logmind marker anywhere. SPEC §5.2: "An artifact
 	// carrying no marker at all belongs to the user and MUST NOT be
 	// overwritten."
 	MarkerAbsent

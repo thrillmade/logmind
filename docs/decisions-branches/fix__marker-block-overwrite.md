@@ -11,7 +11,7 @@
 **Alternatives considered:** Correct the argument at the call site and align the two regexes. Rejected: both defects existed because the shapes permitted them. ReplaceMarkerBlock is now unexported, since returning its input unchanged when markers are absent is a safe contract for a pure function and a data-loss contract for anything that writes the result. RefreshMarkerBlockFile owns the read, so no whole-file parameter is left to get wrong, and OutdatedMarkerEntry's OldBody field is deleted because a struct offering a path and a body side by side is what made the wrong call look plausible.
 
 **Implications:**
-- The self-update call site was deleted rather than repaired: FindOutdatedMarkerBlocks only ever reported AGENTS.md, which EnsureAgentsMD had already refreshed through the same classifier, making it a second refresher of one path against SPEC 1.1. Being unreachable is why its wrong argument survived untested. First-line-only extraction wins, because any-line makes ownership a substring search and a substring search over a user's file claims it; a workflow merely quoting the marker in a heredoc would be adopted and then overwritten. Displacement becomes its own reported state rather than collapsing into markerless. Four mutations, all compiled, all died.
+- The self-update call site was deleted rather than repaired: FindOutdatedMarkerBlocks only ever reported AGENTS.md, which EnsureAgentsMD had already refreshed through the same classifier, making it a second refresher of one path against SPEC 5.2. Being unreachable is why its wrong argument survived untested. First-line-only extraction wins, because any-line makes ownership a substring search and a substring search over a user's file claims it; a workflow merely quoting the marker in a heredoc would be adopted and then overwritten. Displacement becomes its own reported state rather than collapsing into markerless. Four mutations, all compiled, all died.
 
 ---
 
@@ -34,6 +34,17 @@
 
 **Implications:**
 - Both are whole-file overwrites with no append or partial semantics, so neither earns an exception. The explicit directory creation before the first was removed as redundant, since the primitive makes its own parent. Two mutations, both compiled, both died. One of the new tests plants a non-dangling symlink pointing at a real file elsewhere, which is the harder case: the read succeeds, so a guard that only considers dangling links would pass it.
+
+---
+
+## 2026-08-15 15:48 - guard the write primitive rather than the path, and close the escape doctor --fix still had
+
+**Reasoning:** The test I had accepted as strengthened was weaker than the one it replaced: the panel restored the literal defect this branch exists to fix and the test passed, as it did for four other real second writers, because it matched on how the path was spelled. Path spellings are unbounded and write primitives are a closed set, so the guard now parses the syntax tree for the primitives instead. All five evasions were replanted individually, each compiled, each went red. Separately the panel found doctor --fix still writing six thousand bytes outside the repository through a dangling symlink, in two branches of init that this branch had not touched.
+
+**Alternatives considered:** Replace the source scan with a behavioural test that fails when the file is written twice. Rejected on measurement rather than taste: with the defect restored, the byte-survival test still passes, because the offending loop finds nothing to do once the earlier refresh has run. That is precisely why the original defect survived untested, and it means no behavioural test can cover this class. The guard states that limit rather than implying completeness.
+
+**Implications:**
+- Seventeen citations pointing at section 1.1 were corrected to 5.2, including one in a string the user reads, after checking both sentences against the live specification rather than against another comment. The unreadable-binary case now reports that a logmind on the path could not be asked its version, instead of claiming the user owns an unmarked artifact. Two write sites in another lane's files are recorded in the allowlist with the finding written down rather than edited across a boundary, and a second guard of the same kind now exists in that lane, which is one list too many and is being folded into one.
 
 ---
 

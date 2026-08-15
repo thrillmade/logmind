@@ -154,7 +154,7 @@ func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 	for _, d := range declined {
 		switch d.Reason {
 		case declineUnmarked:
-			// SPEC §1.1: "An artifact carrying no marker at all belongs to
+			// SPEC §5.2: "An artifact carrying no marker at all belongs to
 			// the user and MUST NOT be overwritten." Saying so is what makes
 			// the refusal auditable rather than a silent no-op.
 			//

@@ -88,7 +88,7 @@ func TestRefreshMarkerBlockFile_PreservesBytesOutsideBlock(t *testing.T) {
 	}
 }
 
-// TestRefreshMarkerBlockFile_RefusesMarkerlessFile is SPEC §1.1's rule made
+// TestRefreshMarkerBlockFile_RefusesMarkerlessFile is SPEC §5.2's rule made
 // executable: "An artifact carrying no marker at all belongs to the user and
 // MUST NOT be overwritten." The bytes must be identical afterwards, and the
 // caller must get an error rather than a silent no-op.
