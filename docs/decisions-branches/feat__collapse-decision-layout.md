@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-15 09:05 - timeline: conform to SPEC line 646 — a markerless branch dates by its FIRST decision
+
+**Reasoning:** The panel caught that dating a markerless branch row by its newest decision violates a normative MUST at SPEC line 646: "Where none exists the producer MUST derive the sentence from the branch's first decision title, so a summary always resolves without a model call." I verified the line independently — fence parity 20 (even, so not inside a code fence) and it sits among six other MUSTs. Code conforms to the SPEC as written; the SPEC change is filed at thrillmade/protocol#97, not assumed.
+
+**Alternatives considered:** Ship the newest-entry behaviour anyway, since it is better for main.md — the one branch file that never closes, so its first decision is permanently its date. Rejected: a producer that diverges from a normative MUST makes every other producer's output unpredictable, which is the whole point of a spec. The argument belongs in the issue, not in a silent divergence.
+
+**Implications:**
+- main.md keeps dating by its oldest decision until protocol#97 is ruled on. The code comment cites the issue so the divergence is a decision on record rather than a bug someone re-fixes.
+
+---
+
