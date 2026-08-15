@@ -125,20 +125,27 @@ coverage.
 
 Why the wider blast radius is acceptable:
 
-- **Branch rulesets force PRs on every repo.** Only
-  `thrillmade/homebrew-tap` carries the App as a ruleset bypass actor (see
-  "Ruleset bypass" below); every other repo in the org rejects a direct
-  push from the App's installation token and requires the write to land
-  through a reviewed PR like anyone else's. Installing on `all` repos does
-  not mean the App can direct-write to all of them.
+- **Branch rulesets do NOT force PRs on every repo — 13 of 20 accept a
+  direct push from the App.** Bypass is evaluated per ruleset, and rulesets
+  *aggregate*: a push must satisfy every ruleset matching the ref. The
+  steward is a bypass actor on both **organization-level** rulesets
+  (`18502737 org-baseline`, `16898453 org-default-protection`), which apply
+  everywhere. A repo is protected from the App only if it *additionally*
+  carries its own ruleset requiring pull requests without naming the steward.
+  Seven do: `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
+  `homebrew-logmind`, `setup-logmind`, `tremendous-machine`. The other
+  thirteen — including `logmind`, `protocol`, `skdd`, `reporulez` and
+  `homebrew-tap` — do not, and accept a direct push. See "Ruleset bypass"
+  below for the commands.
 - **All-repos is what the census reads today, and what the catalog
   fan-out / chore loop will require** — see "Purpose" above.
 
 **Residual risk, stated plainly:** a compromised App private key can mint
 an installation token scoped to every repository in the org, for that
-token's 1-hour lifetime. `homebrew-tap`'s bypass actor means that one repo
-is exposed to a direct, unreviewed push even under compromise; every other
-repo is limited by required PR review on merge — real exposure (an
+token's 1-hour lifetime. **Thirteen of the org's twenty repos are exposed to
+a direct, unreviewed push under compromise** — not one. The org-level
+bypass, not `homebrew-tap`'s own entry, is what grants it; only the seven
+repos carrying their own PR-requiring ruleset are limited by required review on merge — real exposure (an
 attacker could open PRs, comment, file issues, read contents across the
 org), but gated by human review rather than by installation scope.
 
@@ -194,10 +201,11 @@ required_linear_history + pull_request (0 reviews, squash only). The
 steward App is added as a bypass actor so its direct pushes are exempt;
 human pushes still go through PR review. The bypass IS the audit trail —
 every direct push appears in the org audit log under the App identity.
-**`homebrew-tap` is no longer the only repo with a bypass entry, and has not
-been for some time.** The steward now bypasses in every repo in the org,
-because the entry rides on the two *organization-level* rulesets rather than
-on any repo's own:
+**`homebrew-tap` IS the only repo whose own ruleset names the steward as a
+bypass actor** — that part was right, and an earlier revision of this section
+wrongly called it false. What it omitted is that the steward ALSO bypasses via
+two *organization-level* rulesets that apply to every repo, so a repo's own
+ruleset is not the only thing granting exemption:
 
 ```sh
 gh api repos/thrillmade/<repo>/rulesets --jq '.[] | "\(.id) \(.name)"'
@@ -206,16 +214,29 @@ gh api repos/thrillmade/<repo>/rulesets/<id> \
 gh api /apps/skdd-steward --jq .id     # the id to look for
 ```
 
-Measured 2026-08-15 across all seven org repos: `18502737 org-baseline` and
-`16898453 org-default-protection` both list the steward App with
-`bypass_mode: always`, and both appear in every repo. The repo-specific
-rulesets (`20570854`, `18292238`, `16434011`) do **not** list it — which is
-what makes the measurement above meaningful rather than a probe that matches
-everything.
+Measured 2026-08-15 across all **20** org repos: `18502737 org-baseline` and
+`16898453 org-default-protection` both list the steward with
+`bypass_mode: always`, and both apply everywhere. Control: `20570854`,
+`18292238`, `16434011` and `17128312` all have a `bypass_actors` key, and the
+first three hold zero entries — so the empty result is a real zero, not a
+missing field.
 
-So `regen-on-main`'s direct push to `main` is exempt in any org repo, not just
-the tap. See "Installation scope" above for why that follows from the App
-installing `all` repos rather than a selected list.
+**Rulesets aggregate.** A push must satisfy every ruleset matching the ref, so
+bypassing the org pair is not sufficient where a repo adds its own. Seven
+repos do — `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
+`homebrew-logmind`, `setup-logmind`, `tremendous-machine` — and the steward is
+blocked in those. The remaining thirteen accept a direct push.
+
+`logmind` is in the second group: it carries no repo-level ruleset, so
+`regen-on-main`'s push to its default branch is exempt. That is the fact the
+release path depends on, and it is measured rather than generalised — an
+earlier revision of this section claimed exemption "in any org repo", which is
+wrong for the seven above.
+
+Corroboration, and a caution: `homebrew-tap` is the only default branch in the
+org carrying direct steward commits. `logmind`, `agent-skills` and `clud-bug`
+have zero. So for every repo except the tap this exemption is inferred from
+configuration and has never actually been exercised.
 
 The GitHub Rulesets API requires a full ruleset body on `PUT` — it does
 not accept a partial patch. Use a read-merge-PUT pattern: fetch the

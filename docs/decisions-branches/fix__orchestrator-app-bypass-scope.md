@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-15 15:15 - orchestrator-app: rulesets aggregate, so the org-level bypass alone does not decide exemption
+
+**Reasoning:** My previous correction replaced one over-claim with another. It was right that the steward bypasses two organisation-level rulesets applying to every repository, and wrong to conclude that a direct push is therefore exempt anywhere. Bypass is evaluated per ruleset and rulesets aggregate, so a repository that additionally carries its own pull-request rule without naming the steward still blocks it. Seven do. The original sentence I called false was true under its natural reading: the tap is the only repository whose own ruleset names the steward.
+
+**Alternatives considered:** Revert to the original sentence. Rejected, because it was true but incomplete in a way that mattered: read alongside the risk paragraph it produced a materially wrong picture of blast radius. The fix is to state the aggregation rule that makes both facts consistent, not to choose between them.
+
+**Implications:**
+- The load-bearing copy of this fact sat in the installation-scope section and said every other repository rejects a direct push from the App, which understated exposure. Measured across all twenty repositories rather than the seven previously recited: thirteen accept a direct push, including logmind, protocol, skdd and reporulez, and seven are blocked. The residual-risk paragraph said one repository is exposed under key compromise; it is thirteen. Both copies now derive from the same measurement, and the tap is noted as the only default branch that has ever carried a direct steward commit, so for every other repository the exemption is inferred from configuration and never exercised.
+
+---
+
