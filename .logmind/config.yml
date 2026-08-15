@@ -4,7 +4,6 @@ git:
   commit_message_template: 'logmind: {decision}'
   auto_rebase: false
 decisions:
-  max_recent: 20
   branch_aware: true
 file_structure:
   auto_update: true

@@ -69,10 +69,11 @@ pointed to from the `AGENTS.md` block:
 
 - **[docs/timeline.md](timeline.md)** — auto-generated, main-canonical
   union of every decision across every branch; start here
-- **[docs/decisions.md](decisions.md)** — 20 most recent decisions on the
-  default branch
+- **`docs/timeline-archive.md`** — the history older than the 50 entries in
+  `docs/timeline.md`, same format (both are written by one regeneration)
 - **[docs/decisions-branches/](decisions-branches/)** — per-branch
-  decision logs for in-flight feature work
+  decision logs; the record itself, one file per branch (the default
+  branch included), append-only and uncapped
 - **[docs/file-structure.md](file-structure.md)** — current project tree
 
 ## CLI Commands
@@ -137,10 +138,9 @@ $ logmind init
 Initializing logmind...
 
 ✓ Created docs/
-✓ Created docs/decisions.md
-✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
 ✓ Created docs/timeline.md
+✓ Created docs/timeline-archive.md
 ✓ Created .logmind/config.yml
 Created AGENTS.md (canonical agent instructions)
 ✓ Created CLAUDE.md
@@ -169,10 +169,9 @@ $ logmind init --agents claude,cursor,windsurf
 Initializing logmind...
 
 ✓ Created docs/
-✓ Created docs/decisions.md
-✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
 ✓ Created docs/timeline.md
+✓ Created docs/timeline-archive.md
 ✓ Created .logmind/config.yml
 Created AGENTS.md (canonical agent instructions)
 ✓ Created CLAUDE.md

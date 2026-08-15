@@ -50,7 +50,7 @@ func TestConfigList_DefaultsMatchPython(t *testing.T) {
 		mustContain(t, got, "  auto_push: true\n")
 		mustContain(t, got, "  commit_message_template: 'logmind: {decision}'\n")
 		mustContain(t, got, "decisions:\n")
-		mustContain(t, got, "  max_recent: 20\n")
+		mustContain(t, got, "  branch_aware: true\n")
 		mustContain(t, got, "agents:\n")
 		mustContain(t, got, "  claude: true\n")
 		mustContain(t, got, "  cursor: true\n")
@@ -77,7 +77,7 @@ func TestConfigGet_Boolean(t *testing.T) {
 func TestConfigGet_Int(t *testing.T) {
 	withTempCwd(t, func(_ string) {
 		root := NewRootCmd()
-		root.SetArgs([]string{"config", "get", "decisions.max_recent"})
+		root.SetArgs([]string{"config", "get", "git.commit_line_threshold"})
 		var out bytes.Buffer
 		root.SetOut(&out)
 		root.SetErr(&out)
@@ -85,7 +85,7 @@ func TestConfigGet_Int(t *testing.T) {
 			t.Fatalf("execute: %v", err)
 		}
 		if got := strings.TrimSpace(out.String()); got != "20" {
-			t.Errorf("get decisions.max_recent = %q; want 20", got)
+			t.Errorf("get git.commit_line_threshold = %q; want 20", got)
 		}
 	})
 }
@@ -128,19 +128,19 @@ func TestConfigSet_BooleanCoercion(t *testing.T) {
 func TestConfigSet_IntCoercion(t *testing.T) {
 	withTempCwd(t, func(dir string) {
 		root := NewRootCmd()
-		root.SetArgs([]string{"config", "set", "decisions.max_recent", "42"})
+		root.SetArgs([]string{"config", "set", "git.commit_line_threshold", "42"})
 		var out bytes.Buffer
 		root.SetOut(&out)
 		root.SetErr(&out)
 		if err := root.Execute(); err != nil {
 			t.Fatalf("execute: %v", err)
 		}
-		mustContain(t, out.String(), "Set decisions.max_recent = 42")
+		mustContain(t, out.String(), "Set git.commit_line_threshold = 42")
 		data, err := os.ReadFile(filepath.Join(dir, ".logmind", "config.yml"))
 		if err != nil {
 			t.Fatalf("read config: %v", err)
 		}
-		mustContain(t, string(data), "max_recent: 42")
+		mustContain(t, string(data), "commit_line_threshold: 42")
 	})
 }
 
@@ -176,7 +176,7 @@ func TestConfigSet_PreservesUnrelatedKeys(t *testing.T) {
 		mustContain(t, body, "auto_push: false")
 		mustContain(t, body, "claude: false")
 		// Defaults should still be merged in.
-		mustContain(t, body, "max_recent: 20")
+		mustContain(t, body, "branch_aware: true")
 		mustContain(t, body, "cursor: true")
 	})
 }

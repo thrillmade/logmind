@@ -244,7 +244,22 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 	// true merge-base, actively writing wrong bytes. HEAD has no such
 	// dependency. The repair capability moved to `logmind warp`, the one
 	// surface that fetches before it restores (see internal/cli/warp.go).
-	const restore = `git checkout HEAD -- docs/timeline.md docs/file-structure.md`
+	// All THREE derived docs (SPEC §3.3: "the history, its archive, or the
+	// map") — a restore that names only two leaves the omitted one free to
+	// ride into a commit on a branch, which is the exact state the gate
+	// exists to make impossible.
+	// ONE path per checkout — a combined `git checkout HEAD -- a b c` is
+	// all-or-nothing and restores NOTHING when any pathspec is untracked
+	// (which docs/timeline-archive.md is, in every repo that has not
+	// regenerated on main since it was introduced).
+	const restoreLoop = `for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do`
+	if !strings.Contains(body, restoreLoop) {
+		t.Fatalf("pre-commit body missing the per-path restore loop %q", restoreLoop)
+	}
+	if strings.Contains(body, `git checkout HEAD -- docs/timeline.md docs`) {
+		t.Errorf("pre-commit body restores several paths in ONE `git checkout` — that is all-or-nothing and restores nothing when any path is untracked")
+	}
+	const restore = `git checkout HEAD -- "$d"`
 	ri := strings.Index(body, restore)
 	if ri < 0 {
 		t.Fatalf("pre-commit body missing the restore command %q", restore)
@@ -412,7 +427,10 @@ func TestPostRewriteHook_NonDefaultBranchAlwaysSkipsRegen(t *testing.T) {
 	for _, action := range []string{
 		"logmind timeline --write docs/timeline.md",
 		"logmind file-structure --write docs/file-structure.md",
-		"git add docs/timeline.md docs/file-structure.md",
+		// Staged one path at a time: `git add a b c` is all-or-nothing and
+		// stages NOTHING when any pathspec is untracked.
+		"for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do",
+		`git add "$d"`,
 	} {
 		if n := strings.Count(body, action); n != 1 {
 			t.Errorf("action %q appears %d time(s); want exactly 1", action, n)

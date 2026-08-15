@@ -12,11 +12,11 @@
 //
 // Behavior overview:
 //
-//   - Branch-aware routing. On a feature branch with branch_aware=true
-//     in config, writes to docs/decisions-branches/<sanitized-branch>.md.
-//     On the default branch, in non-git dirs, on detached HEAD, or when
-//     branch_aware is off, writes to docs/decisions.md. Matches Python
-//     logger._resolve_decisions_path.
+//   - Branch routing (SPEC §3.2). A decision goes in a file named for the
+//     branch it was made on — docs/decisions-branches/<sanitized-branch>.md
+//     — and the default branch is not an exception to that rule. Only a
+//     directory with no branch at all (non-git, detached HEAD, unborn repo)
+//     or an explicit branch_aware:false falls back to docs/decisions.md.
 //
 //   - First-write backlink header. When creating a branch decision file
 //     for the first time, prepends `← back to [docs/timeline.md]` so
@@ -63,12 +63,11 @@
 // carry as "out of scope"): suppresses the auto-push step. gitcli.Push
 // wraps the underlying `git push`.
 //
-// decisions-archive rotation (SPEC §1.3.2): when appending the new entry
-// would push docs/decisions.md's count above decisions.max_recent, the
-// OLDEST entry (or entries, if more than one overflow needs migrating at
-// once) is moved verbatim to docs/decisions-archive.md before the new entry
-// is appended — see rotateDecisions / appendToArchive below. Branch decision
-// files never rotate (SPEC §1.4 — no capacity cap there).
+// No rotation, no archive (SPEC §3.2). Every decision file is append-only
+// and uncapped: "a decision written is a decision kept." What is bounded is
+// the VIEW — docs/timeline.md renders the 50 most recent entries and
+// docs/timeline-archive.md the remainder (§3.3, internal/timeline) — and
+// that split is a rendering, so nothing here moves, peels or overflows.
 //
 // Out of scope for v1.2.0 (carried until v1.3.x or folded into a follow-up):
 //
@@ -89,7 +88,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
-	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/linkcheck"
 	"github.com/thrillmade/logmind/internal/templates"
@@ -169,11 +167,10 @@ func newLogCmd() *cobra.Command {
 		Long: `Log a decision to the decision log.
 
 Writes a dated entry (summary + reasoning + alternatives + implications) to
-either docs/decisions.md (default branch / non-git / detached HEAD) or
-docs/decisions-branches/<sanitized-branch>.md (feature branch with
-branch_aware=true). When creating a branch decision file for the first
-time, prepends a backlink header pointing at docs/timeline.md so the
-two files cross-link bidirectionally.
+docs/decisions-branches/<sanitized-branch>.md — the file named for the branch
+you are on, with the default branch treated like any other. When creating a
+branch decision file for the first time, prepends a backlink header pointing
+at docs/timeline.md so the two files cross-link bidirectionally.
 
 After committing (unless --no-commit), pushes (unless --no-push or
 git.auto_push: false in .logmind/config.yml), then runs linkcheck.Check()
@@ -344,22 +341,6 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 		existing = data
 	}
 
-	// SPEC §1.3.2 capacity — docs/decisions.md only. Branch files have no
-	// cap: §1.4 states plainly "Branch decision files have no capacity cap
-	// (no archive overflow)." Rotate BEFORE composing body below, so the
-	// archive gets the oldest entry (or entries) FIRST and only THEN does
-	// the new one get appended — the SPEC's own ordering: "the OLDEST entry
-	// MUST be moved verbatim to docs/decisions-archive.md ... before the new
-	// entry is appended."
-	if !isBranchFile {
-		if kept, migrated := rotateDecisions(existing, cfg.Decisions.MaxRecent); migrated != "" {
-			if err := appendToArchive(docsPath, migrated); err != nil {
-				return fmt.Errorf("archive overflow decisions: %w", err)
-			}
-			existing = kept
-		}
-	}
-
 	// Compose: header (if first-creation branch file) + the §1.6.3 timeline
 	// marker (unconditional since v2.0) + existing + entry. Header is the
 	// templates.DecisionsBranchHeader() POSIX-terminated single line +
@@ -450,8 +431,16 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	lines := newStdinLines(stdin)
 	stdinOK := stdinReadable(stdin)
 
+	// The summary captions the ONE timeline row a branch contributes, so it
+	// is asked for on a branch that has such a row to caption. The default
+	// branch is skipped — not because §3.2 treats it differently (it does
+	// not; its decisions live in its own branch file like everyone else's),
+	// but because there is no in-flight unit of work there to summarise: main
+	// is permanent, its file is never "the branch this PR is about", and
+	// prompting for a one-sentence summary of it on every direct-to-main log
+	// asks for a sentence nobody can write.
 	summaryEdited := false
-	if isBranchFile && f.headline == "" && !quiet {
+	if branchSummaryApplies(cwd, isBranchFile) && f.headline == "" && !quiet {
 		summaryEdited = nudgeBranchSummary(target, f.noInteractive, stdinOK, lines, stderr)
 	}
 
@@ -540,31 +529,35 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	return nil
 }
 
-// resolveDecisionsPath mirrors Python's logger._resolve_decisions_path
-// branch-aware routing. Returns the target file path AND a bool
-// indicating whether it's a branch-specific file (used to decide
-// whether to write the backlink header on first creation).
+// resolveDecisionsPath implements SPEC §3.2's ONE path rule: a decision goes
+// in a file named for the branch it was made on, and the default branch is
+// not an exception to it. Returns the target file path AND a bool indicating
+// whether it's a branch-specific file (used to decide whether to write the
+// backlink header + timeline marker on first creation).
 //
-//	on default branch / non-git / detached HEAD / branch_aware off
-//	  → docs/decisions.md, isBranchFile=false
-//	on feature branch with branch_aware=true
+//	on any branch (main included), branch_aware on
 //	  → docs/decisions-branches/<sanitized>.md, isBranchFile=true
+//	where there is no branch at all — non-git, detached HEAD, unborn repo —
+//	or branch_aware is explicitly off
+//	  → docs/decisions.md, isBranchFile=false
+//
+// The remaining docs/decisions.md cases are not a default-branch special
+// case: they are the states where no branch NAME exists to name a file
+// after. `main` used to be routed here too, which is what made the main log
+// look like a second kind of decision file with its own conventions; that
+// case is gone, and main's decisions live in main's own branch file.
 func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target string, isBranchFile bool) {
-	defaultPath := filepath.Join(docsPath, "decisions.md")
+	branchlessPath := filepath.Join(docsPath, "decisions.md")
 	if !cfg.Decisions.BranchAware {
-		return defaultPath, false
+		return branchlessPath, false
 	}
 	if !gitcli.IsRepo(cwd) {
-		return defaultPath, false
+		return branchlessPath, false
 	}
 	branch := gitcli.CurrentBranch(cwd)
 	if branch == "" {
 		// Detached HEAD or unborn repo.
-		return defaultPath, false
-	}
-	defaultBranch := gitcli.DefaultBranch(cwd)
-	if branch == defaultBranch {
-		return defaultPath, false
+		return branchlessPath, false
 	}
 	branchFile := filepath.Join(docsPath, "decisions-branches",
 		sanitizeBranchName(branch)+".md")
@@ -628,75 +621,6 @@ func buildDecisionEntry(summary, reasoning string, alternatives, implications []
 
 	b.WriteString("---\n\n")
 	return b.String()
-}
-
-// rotateDecisions applies SPEC §1.3.2 capacity to decisionsMD's current raw
-// bytes: when adding ONE more entry (the one `logmind log` is about to
-// append) would push the count above maxRecent, it peels enough of the
-// OLDEST entries off the front — decisions.md is append-only, so the
-// oldest entry is always the first one after the header — to bring the
-// count back down to maxRecent, and returns:
-//
-//   - kept: decisionsMD with the peeled entries removed (its preamble +
-//     the remaining entries' RAW bytes, concatenated verbatim). No entry is
-//     ever re-rendered here — only the set of entries present changes.
-//   - migrated: the peeled entries' raw bytes, concatenated in FIFO
-//     (oldest-first) order, ready to append to docs/decisions-archive.md
-//     verbatim. "" means nothing needed to move.
-//
-// maxRecent <= 0 disables rotation entirely — treating 0 as "archive
-// everything currently on file" would be a destructive surprise no config
-// author setting decisions.max_recent is likely to intend, and the SPEC's
-// default is a positive 20.
-func rotateDecisions(decisionsMD []byte, maxRecent int) (kept []byte, migrated string) {
-	if maxRecent <= 0 {
-		return decisionsMD, ""
-	}
-	preamble, entries := decisions.SplitRawBytes(string(decisionsMD))
-	// +1 accounts for the new entry this call to `logmind log` is about to
-	// append on top of what's already on disk.
-	overflow := len(entries) + 1 - maxRecent
-	if overflow <= 0 {
-		return decisionsMD, ""
-	}
-	if overflow > len(entries) {
-		overflow = len(entries) // defensive: never migrate more than exists
-	}
-
-	var mig strings.Builder
-	for _, e := range entries[:overflow] {
-		mig.WriteString(e.Raw)
-	}
-
-	var keptBuf strings.Builder
-	keptBuf.WriteString(preamble)
-	for _, e := range entries[overflow:] {
-		keptBuf.WriteString(e.Raw)
-	}
-	return []byte(keptBuf.String()), mig.String()
-}
-
-// appendToArchive appends migrated (already newline-terminated, verbatim
-// entry bytes — see rotateDecisions) to docs/decisions-archive.md, creating
-// it from the standard template first if it doesn't exist yet (mirrors
-// `logmind init`'s scaffold, so a repo that somehow reaches rotation without
-// ever having run init still ends up with a valid, headed archive file
-// rather than a bare entry dump).
-//
-// Always a pure byte append — never re-sorts existing content. SPEC §1.5:
-// "Archive ordering is append-on-overflow. Tools MUST NOT re-sort the
-// archive on write."
-func appendToArchive(docsPath, migrated string) error {
-	archivePath := filepath.Join(docsPath, "decisions-archive.md")
-	existing := templates.DecisionsArchiveTemplate()
-	if pathExists(archivePath) {
-		data, err := os.ReadFile(archivePath)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", archivePath, err)
-		}
-		existing = string(data)
-	}
-	return writeAtomic(archivePath, existing+migrated)
 }
 
 // buildTimelineMarker renders the §1.6.3 entry-block headline that opens a
@@ -1026,7 +950,7 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// v2.0.0 4b-quater — the L1-vs-`warp` seam, and its fix: moving the
 	// repair to `logmind warp` (above) reintroduced the exact bug that move
 	// was meant to avoid, one level up. `warp`'s repair DELIBERATELY STAGES
-	// the two derived docs (`git checkout <merge-base> -- <path>`, which
+	// the derived docs (`git checkout <merge-base> -- <path>`, which
 	// writes the index too — see runWarp) so the fix rides into the
 	// caller's NEXT commit. But this restore ran unconditionally, so the
 	// remediation sequence the CI gate's own failure message tells a user

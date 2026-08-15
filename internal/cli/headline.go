@@ -37,7 +37,9 @@ decision file and copied verbatim into docs/timeline.md. The <date>-<slug>
 key stays stable — only the sentence changes, so you can refine it as the
 branch grows.
 
-A no-op on the default branch (which logs to docs/decisions.md directly).
+A no-op on the default branch: main's decisions live in its own branch file
+like every other branch's (SPEC §3.2), but there is no in-flight unit of work
+there for a one-sentence summary to describe.
 Set LOGMIND_PR to append a (#NN) suffix to the visible line.
 
 Example:
@@ -86,8 +88,8 @@ func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr i
 	} else {
 		docsPath := filepath.Join(cwd, "docs")
 		t, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
-		if !isBranchFile {
-			q.chat("Branch summaries apply on a feature branch; the default branch logs to docs/decisions.md directly.\n")
+		if !branchSummaryApplies(cwd, isBranchFile) {
+			q.chat("Branch summaries apply on a feature branch; the default branch has no in-flight work to summarize.\n")
 			if quiet {
 				q.ok("headline state=skipped reason=default-branch")
 			}
@@ -160,4 +162,19 @@ func relForOk(cwd, target string) string {
 		return target
 	}
 	return filepath.ToSlash(rel)
+}
+
+// branchSummaryApplies reports whether the one-sentence branch-summary
+// surface applies where `logmind log` would write right now: the two entry
+// points into it — this command and log.go's post-log nudge — share this one
+// answer so they can never disagree about where a summary is wanted.
+//
+// It is NOT a decision-routing rule. SPEC §3.2 has exactly one of those and
+// the default branch is not an exception to it (resolveDecisionsPath). This
+// is about the summary itself: it captions the single timeline row a branch
+// contributes while its work is in flight, and the default branch has no such
+// unit of work — asking for one sentence describing all of main is asking for
+// a sentence nobody can write.
+func branchSummaryApplies(cwd string, isBranchFile bool) bool {
+	return isBranchFile && onNonDefaultBranch(cwd)
 }

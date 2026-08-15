@@ -1,20 +1,17 @@
-# Decision Log
+← back to [docs/timeline.md](../timeline.md)
 
-This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
-
----
 ## 2026-05-15 04:30 - Merged: dogfood-workflows (#15)
 
 - **PR:** https://github.com/thrillmade/logmind/pull/15
 - **Decisions:** 1 from this branch
-- **Detail:** [decisions-branches/dogfood-workflows.md](decisions-branches/dogfood-workflows.md)
+- **Detail:** [decisions-branches/dogfood-workflows.md](dogfood-workflows.md)
 
 ---
 ## 2026-05-15 17:34 - Merged: footer-polish (#32)
 
 - **PR:** https://github.com/thrillmade/logmind/pull/32
 - **Decisions:** 1 from this branch
-- **Detail:** [decisions-branches/footer-polish.md](decisions-branches/footer-polish.md)
+- **Detail:** [decisions-branches/footer-polish.md](footer-polish.md)
 
 ---
 ## 2026-05-28 11:28 - 0.A.9 audit: all 7 consuming repos pass Q4 + <200-line CLAUDE.md; zero Q5 path-scope candidates found

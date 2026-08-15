@@ -10,7 +10,7 @@
 # regenerations.
 #
 # v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook
-# auto-staged docs/timeline.md + docs/file-structure.md, but the
+# auto-staged the derived docs, but the
 # staged-but-uncommitted files then blocked `git checkout main` on
 # every PR cycle (post-merge fires from `git pull --rebase` after a
 # squash merge — there's no commit being constructed, so staging was
