@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/atomicio"
 )
 
 // errSharingViolation is Windows ERROR_SHARING_VIOLATION (0x20 = 32),
@@ -49,6 +51,13 @@ func acquireRepoLock(cwd string) (*fileLock, error) {
 	lockPath := repoLockPath(cwd)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(lockPath), err)
+	}
+	// See filelock_unix.go's matching check: a symlink at lockPath would
+	// make OPEN_ALWAYS follow it (and, for a dangling reparse point,
+	// create whatever it points to) instead of locking the file this
+	// tool actually manages.
+	if err := atomicio.RefuseSymlink(lockPath); err != nil {
+		return nil, err
 	}
 	namePtr, err := syscall.UTF16PtrFromString(lockPath)
 	if err != nil {

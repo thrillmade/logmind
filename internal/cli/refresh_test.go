@@ -9,14 +9,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // gitInitCwd runs `git init` (+ identity) in the current working dir so
 // merge-driver config and hook installation have a real repo to act on.
 func gitInitCwd(t *testing.T) {
 	t.Helper()
+	testgit.InitRepo(t, "")
 	for _, args := range [][]string{
-		{"init"},
 		{"config", "user.email", "t@example.com"},
 		{"config", "user.name", "logmind-test"},
 	} {

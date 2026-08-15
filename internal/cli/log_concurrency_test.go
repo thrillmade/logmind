@@ -48,6 +48,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // TestLogConcurrent_NoCrashes_NoLostDecisions is the mandatory
@@ -305,18 +307,14 @@ func newConcurrencyTestRepo(t *testing.T, binPath string) string {
 	t.Helper()
 	repo := t.TempDir()
 
-	runGitCmd(t, repo, "init", "-q", "-b", "main")
+	// testgit.InitRepo disables git's background maintenance in the new
+	// repo (see its package doc) — this suite is the most exposed of any
+	// to issue #271's race, since it drives many concurrent commits into
+	// one repo.
+	testgit.InitRepo(t, repo, "-q", "-b", "main")
 	runGitCmd(t, repo, "config", "user.email", "test@test.com")
 	runGitCmd(t, repo, "config", "user.name", "test")
 	runGitCmd(t, repo, "config", "commit.gpgsign", "false")
-	// Both keys — see initLogTestGitRepo (log_test.go) for the full write-up
-	// and the GIT_TRACE2 evidence. Short version: `git commit` spawns
-	// `git maintenance run --auto`, gated by maintenance.auto and NOT by
-	// gc.auto; the spawned process can daemonize and is still writing into
-	// .git/objects when t.TempDir() cleanup runs. This suite is the most
-	// exposed of any — it drives many concurrent commits into one repo.
-	runGitCmd(t, repo, "config", "gc.auto", "0")
-	runGitCmd(t, repo, "config", "maintenance.auto", "false")
 
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("test repo\n"), 0o644); err != nil {
 		t.Fatalf("seed README.md: %v", err)

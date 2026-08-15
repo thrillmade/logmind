@@ -18,6 +18,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 func TestCommitMsgHook_RealGitCommit_EnforcesAndCarveOuts(t *testing.T) {
@@ -263,6 +265,11 @@ func newEnforcingRepo(t *testing.T, binDir string) string {
 	t.Helper()
 	dir := t.TempDir()
 	runGitIn(t, dir, binDir, nil, "init", "-q")
+	// Disable background maintenance — see testgit's package doc (issue
+	// #271). `git config` needs no special PATH/env, so this can go
+	// straight through testgit rather than this file's binDir-aware
+	// runGitIn wrapper.
+	testgit.DisableMaintenance(t, dir)
 	runGitIn(t, dir, binDir, nil, "config", "user.email", "t@t.com")
 	runGitIn(t, dir, binDir, nil, "config", "user.name", "t")
 	if _, err := InstallCommitMsg(dir); err != nil {

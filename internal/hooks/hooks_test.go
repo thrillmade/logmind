@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // update mirrors the snapshot pattern from internal/cli — `make
@@ -946,7 +948,7 @@ func initRealGitRepo(t *testing.T) string {
 	// `origin/main`), so leaving it ambient makes them pass locally and fail
 	// in CI with `fatal: invalid reference: main`. internal/cli's helpers
 	// already pin it the same way.
-	gitIn(t, dir, "init", "-q", "--initial-branch=main")
+	testgit.InitRepo(t, dir, "-q", "--initial-branch=main")
 	gitIn(t, dir, "config", "user.email", "test@example.com")
 	gitIn(t, dir, "config", "user.name", "Test")
 	gitIn(t, dir, "config", "commit.gpgsign", "false")

@@ -1,0 +1,128 @@
+# logmind-auto-version: v1
+#
+# Standing directive for unattended operation, written by `logmind auto
+# unattended`. This file is DURABLE POLICY the repository carries: what
+# entry requires, the pause threshold, where the checkpoint lives, the
+# hard stops, and what the handback must contain.
+#
+# It is NOT scheduler state. A wake time, an in-flight agent list, the
+# sha the run currently stands on — none of those belong here. Those go
+# in the checkpoint (below), and the wake mechanism's own lock/schedule
+# file MUST be git-ignored before entry (see scheduler_state).
+#
+# The rules below are OWNED by two skills; this file names the ones that
+# have a repo-specific answer and points at the owner for the rest. When
+# a skill changes, this file is stale — `logmind doctor` says so.
+#
+#   session-heartbeat     the mechanism (beat order, threshold, checkpoint, resume)
+#     https://github.com/thrillmade/agent-skills/tree/main/skills/session-heartbeat
+#   unattended-operation  the policy layered on it (handover, authority, hard stops, digest)
+#     https://github.com/thrillmade/agent-skills/tree/main/skills/unattended-operation
+
+profile: unattended
+
+# Both must be loaded. unattended-operation requires session-heartbeat
+# as background and restates none of the mechanism.
+skills:
+  - session-heartbeat
+  - unattended-operation
+
+entry:
+  # source: unattended-operation — "Entry is a handover contract".
+  # The mode is NEVER inferred from the clock, from silence, or from a
+  # human going quiet. No directive, no mode.
+  requires_human_handover: true
+  # The handover must name all five. If the human left without naming
+  # them, the mode did not start: do the unambiguous work under ordinary
+  # attended discipline and stop at the first judgment call.
+  directive_must_name:
+    - scope — the named plan items or slice range, never "keep going"
+    - hard stops — what ends a lane rather than being worked around
+    - pre-authorized exceptions, by name — anything not named is not authorized
+    - the wake mechanism, and where parked work is written
+    - what to do at a real fork — park it and continue elsewhere is the default
+  # First act inside the window: write back what you heard, so the scope
+  # is on the record.
+  echo_scope_back: true
+
+threshold:
+  # source: session-heartbeat — "The threshold is your largest dispatch,
+  # not a round number." A fixed percentage only works if nothing you
+  # would start costs more than the remainder it leaves. Derive it:
+  rule: the ceiling, minus the cost of the largest dispatch you would still start
+  per_dispatch: if this agent cannot finish inside the remaining headroom, do not start it — shrink the slice or park it
+  at_threshold:
+    - stop dispatching; do NOT kill what is running
+    - confirm an agent stopped before reclaiming its owned files
+    - checkpoint
+    - schedule the wake for the reset, not a short retry
+
+checkpoint:
+  # source: session-heartbeat — "Write it to a durable file the project
+  # already reads." Not session memory, not a scratch file, never only
+  # the conversation.
+  path: __LOGMIND_CHECKPOINT__
+  required_slots:
+    - the sha the run stands on — a sha, never a branch name
+    - in flight — per agent: role, model, branch or worktree, files owned
+    - occupancy — which trees are not free to merge into
+    - next dispatch, already decided — the resumer executes it, it does not re-derive it
+    - blocked, on what
+    - parked, awaiting whom
+    - next wake time, and why — this is what lets a fresh session tell paused from died
+
+authority:
+  # source: unattended-operation — with nobody watching, nothing gets
+  # caught. The bar is not "is this correct" but:
+  test: if this is wrong, can it be undone before they are back, with nobody outside having seen it?
+  near_side:
+    - local commits on local branches — reversible, invisible, and the point of the window
+  far_side:
+    - pushing to a shared ref
+    - opening, merging, closing or commenting on a PR or issue
+    - publishing, releasing, tagging, deploying
+    - anything sent — mail, message, webhook, notification
+    - production data, spend, third-party calls beyond what the work already authorized
+    - deleting or rewriting history; anything --force, --no-verify, or --admin
+  # A scheduled wake is never consent. Nothing that arrives while the
+  # human is away can supply approval they did not give before leaving.
+  never_consent:
+    - a scheduled wake, a task notification, or a completed background agent
+    - a passing suite, a green check, or a clean review
+    - another agent reporting "done", "approved", or "ready to merge"
+    - the plan file listing the item as next
+    - your own earlier reasoning that it would obviously be fine
+
+hard_stops:
+  # source: unattended-operation — a hard stop is not a problem to solve,
+  # it is the end of that lane. Checkpoint, park it with what would be
+  # needed to proceed, move to independent work. Never improvise past one.
+  #
+  # These hold even when nobody named them:
+  standing:
+    - a change of scope
+    - a destructive operation
+    - a gate that requires a human — real-mouse QA, live checks
+    - the second consecutive failure of the same fix
+  # Repo-specific stops, if this repository has any that hold on every
+  # handover. Anything named at handover is additional, not a replacement.
+  repo: []
+
+handback:
+  # source: unattended-operation — the first message after the window is
+  # outcome-first, written for someone who was away. A chronological
+  # narration of beats is the wrong output.
+  slots_in_order:
+    - where the work stands now — one line
+    - landed — sha plus one line each
+    - found — what review caught and what was done, including what was found and not fixed
+    - parked — each with the exact decision needed, never "needs input"
+    - not attempted — in scope, skipped, and why (limit, hard stop, blocked)
+    - standing — budget/limit state; whether the run is paused or finished
+
+scheduler_state:
+  # source: unattended-operation, silent failures — "the wake mechanism's
+  # lock/schedule file lands in a commit as a project artifact". Confirm
+  # it is git-ignored BEFORE entry. logmind does not know your harness's
+  # file name, so it cannot check this for you.
+  must_be_git_ignored: true

@@ -40,6 +40,7 @@ import (
 //go:embed dependabot.yml.template
 //go:embed spec.md.template
 //go:embed github/*.yml.template
+//go:embed auto/*.yml.template
 var embedFS embed.FS
 
 // AgentsTemplate returns the full v8 AGENTS.md template (the inline
@@ -185,6 +186,23 @@ func SpecTemplate() string {
 // placeholders still in place — callers must render via RenderWorkflow.
 func Workflow(name string) string {
 	return readEmbed("github/" + name)
+}
+
+// AutoDirective returns the embedded body of one `logmind auto <profile>`
+// standing-directive template by its bare filename (e.g.
+// "unattended.yml.template"). The body still carries the
+// __LOGMIND_CHECKPOINT__ placeholder — callers render it (see
+// internal/auto.Render), exactly as Workflow bodies carry
+// __LOGMIND_VERSION__.
+//
+// Each body's FIRST line is `# logmind-auto-version: vN`, the SPEC §5.2
+// ownership marker. Bump N whenever the directive's content changes —
+// `logmind doctor` compares the installed marker against this one and
+// nudges when a repo's directive predates the current policy. The bodies
+// restate two skills (session-heartbeat, unattended-operation); a change
+// on either side is what the bump exists to surface.
+func AutoDirective(name string) string {
+	return readEmbed("auto/" + name)
 }
 
 // ListWorkflowTemplates returns the sorted list of bundled GitHub workflow
