@@ -516,6 +516,133 @@ func viaSafeFlags() error {
 	}
 }
 
+// TestScan_AcceptsSymlinkSafeOpenFlags is the LOW regression: the whitelist
+// used to ban syscall.O_NOFOLLOW and syscall.O_CLOEXEC even though neither
+// can create or truncate a file — O_NOFOLLOW is the flag a defensive,
+// symlink-refusing open uses BY DESIGN, so the guard was flagging the most
+// correct possible call and pushing its author toward a permanent allowlist
+// entry instead. This plants exactly that call and requires it clean.
+func TestScan_AcceptsSymlinkSafeOpenFlags(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "safe.go", `package probe
+
+import (
+	"os"
+	"syscall"
+)
+
+func viaNoFollow() error {
+	f, err := os.OpenFile("/tmp/x", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Scan found %v; want no findings — O_NOFOLLOW|O_CLOEXEC neither creates nor "+
+			"truncates, and O_NOFOLLOW is THE flag a symlink-safe open uses", got)
+	}
+}
+
+// TestScan_AcceptsLiteralZeroFlags is the literal-0 half of the LOW
+// regression: a bare `0` as the flags argument to os.OpenFile IS O_RDONLY —
+// Go and POSIX both fix O_RDONLY at 0 on every platform this ships to — so
+// it can no more create or truncate than spelling out os.O_RDONLY would.
+func TestScan_AcceptsLiteralZeroFlags(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "safe.go", `package probe
+
+import "os"
+
+func viaLiteralZero() error {
+	f, err := os.OpenFile("/tmp/x", 0, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Scan found %v; want no findings — a literal 0 flags argument is O_RDONLY and "+
+			"cannot create or truncate", got)
+	}
+}
+
+// TestScan_RejectsUnresolvedNonZeroLiteralFlags is the control for the
+// literal-0 acceptance above: it must not generalize to "any integer
+// literal is safe". A non-zero literal could be a platform-specific magic
+// number this scan cannot verify — including one that happens to include
+// O_CREAT's bit — so it must still fall through to unresolvable-is-banned.
+func TestScan_RejectsUnresolvedNonZeroLiteralFlags(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "magic.go", `package probe
+
+import "os"
+
+func viaMagicNumber() error {
+	f, err := os.OpenFile("/tmp/x", 577, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 1 || got[0].Site() != "viaMagicNumber:os.OpenFile" {
+		t.Fatalf("Scan found %v; want exactly one finding at viaMagicNumber:os.OpenFile — a "+
+			"non-zero integer literal is an unverifiable magic number, not the special-cased "+
+			"literal 0, and must stay banned", got)
+	}
+}
+
+// TestScan_RejectsOTmpfile is the control for what stays banned in the
+// widened whitelist: O_TMPFILE creates an unnamed inode despite the
+// name-shape match with the rest of openFileSafeFlags, and must not be
+// mistaken for a non-creating flag the way O_NOFOLLOW/O_CLOEXEC are.
+func TestScan_RejectsOTmpfile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module example.com/probe\n\ngo 1.21\n")
+	write(t, dir, "tmpfile.go", `package probe
+
+import (
+	"os"
+	"syscall"
+)
+
+func viaOTmpfile() error {
+	f, err := os.OpenFile("/tmp", syscall.O_TMPFILE|syscall.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+`)
+	got, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 1 || got[0].Site() != "viaOTmpfile:os.OpenFile" {
+		t.Fatalf("Scan found %v; want exactly one finding at viaOTmpfile:os.OpenFile — "+
+			"O_TMPFILE creates an unnamed inode and must stay banned despite the name-shape "+
+			"match with the rest of the whitelist", got)
+	}
+}
+
 func scanOne(t *testing.T, src string) Finding {
 	t.Helper()
 	dir := t.TempDir()

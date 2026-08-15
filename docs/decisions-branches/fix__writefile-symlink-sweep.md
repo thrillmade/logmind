@@ -48,3 +48,14 @@
 
 ---
 
+## 2026-08-15 16:59 - atomicio: pin the fsync's order, not its presence, and stop banning the flag a safe open needs
+
+**Reasoning:** The test I accepted for the durability promise could not see the thing it promised. Moving the sync to after the rename compiled and the whole suite stayed green, because the file handle reports the name it was opened with, so a check for the temporary suffix still matched and a stat of that name still failed. Deleting the call was the only breakage it could detect, and deleting the call was not the only way to break it. Separately the open-file whitelist banned the flag that opens a path without following a symlink, which is the exact defence this change exists to encourage, so the most careful possible caller would have been flagged and would most likely have answered with an allowlist entry exempting their file forever.
+
+**Alternatives considered:** Widen the whitelist by name shape, since the safe flags share a prefix. Rejected because a constant can be named like a safe flag and not be one: the flag that creates an unnamed inode matches the shape and is now excluded deliberately, with a test asserting it stays excluded so the widening cannot drift into accepting anything that merely looks right.
+
+**Implications:**
+- The spy now asserts the destination does not yet exist at the moment the sync fires, which is the ordering signal rather than a proxy for it, and both mutations die: moving the call after the rename and removing it entirely. A bare zero is accepted as read-only, on the same reasoning as the symlink flag, while any other unlabelled number stays banned because an unverifiable constant must not be the quiet way past the audit.
+
+---
+

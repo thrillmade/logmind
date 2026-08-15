@@ -455,10 +455,30 @@ func isSelectorSel(parent ast.Node, n *ast.Ident) bool {
 }
 
 // openFileSafeFlags is the CLOSED set of flag-constant names that neither
-// create nor truncate: exactly the os package's own published constants
-// (https://pkg.go.dev/os#pkg-constants) minus O_CREATE and O_TRUNC, which
-// the switch in openFileVerdict below already bans by name before this set
-// is even consulted.
+// create nor truncate. It starts from the os package's own published
+// constants (https://pkg.go.dev/os#pkg-constants) minus O_CREATE and
+// O_TRUNC, which the switch in openFileVerdict below already bans by name
+// before this set is even consulted, and adds two syscall/x/sys/unix flags
+// that are not exported from os at all but are exactly the ones a
+// symlink-safe open needs:
+//
+//   - O_NOFOLLOW refuses to follow a symlink at the final path component —
+//     it IS the flag this package's own RefuseSymlink-style defense is
+//     built around, at the syscall layer. Banning it because it is not
+//     spelled "os.O_something" punished exactly the caller doing the most
+//     defensive possible thing, and their only way out was an allowlist
+//     entry that permanently exempts that file from every future edit —
+//     training people around the guard instead of through it.
+//   - O_CLOEXEC sets the close-on-exec bit on the returned descriptor. It is
+//     a process/fd-table property, orthogonal to what ends up on disk: it
+//     cannot create a file, cannot truncate one, and cannot make an
+//     existing file's bytes visible or invisible to this program.
+//
+// Deliberately NOT added: O_TMPFILE. Despite the name-shape match with the
+// rest of this set, O_TMPFILE creates an unnamed inode — it is a creating
+// flag in every sense that matters here, just spelled differently than
+// O_CREATE, and adding it would reopen exactly the hole this package exists
+// to close.
 //
 // Membership is checked by exact name, matching how the banning half of
 // this function already worked (openFileVerdict has never verified that an
@@ -470,12 +490,14 @@ func isSelectorSel(parent ast.Node, n *ast.Ident) bool {
 // unrelated package's own O_-prefixed constant, a typo'd spelling — is not
 // in this set and falls through to the unresolvable-is-banned rule.
 var openFileSafeFlags = map[string]bool{
-	"O_RDONLY": true,
-	"O_WRONLY": true,
-	"O_RDWR":   true,
-	"O_APPEND": true,
-	"O_EXCL":   true,
-	"O_SYNC":   true,
+	"O_RDONLY":   true,
+	"O_WRONLY":   true,
+	"O_RDWR":     true,
+	"O_APPEND":   true,
+	"O_EXCL":     true,
+	"O_SYNC":     true,
+	"O_NOFOLLOW": true,
+	"O_CLOEXEC":  true,
 }
 
 // openFileVerdict decides whether an os.OpenFile call creates or truncates.
@@ -500,6 +522,24 @@ func openFileVerdict(call *ast.CallExpr) (bool, string) {
 			return false
 		case *ast.Ident:
 			names = append(names, e.Name)
+		case *ast.BasicLit:
+			// A bare literal 0 IS os.O_RDONLY — Go and POSIX both fix
+			// O_RDONLY at 0 on every platform this ships to, so an
+			// unadorned `0` flags argument is exactly as safe as spelling
+			// out os.O_RDONLY and just as unable to create or truncate.
+			// Accept it here — banning it would reproduce the same "guard
+			// punishes the correct pattern" problem O_NOFOLLOW had, this
+			// time against the plainest possible read-only open. Any
+			// OTHER integer literal (a raw
+			// platform-specific magic number) is deliberately left
+			// unhandled: it falls through to the same names-is-empty /
+			// unresolvable-is-banned path a look-alike identifier does,
+			// because this scan cannot verify what an arbitrary number
+			// means and "could not verify" must stay banned.
+			if e.Kind == token.INT && e.Value == "0" {
+				names = append(names, "O_RDONLY")
+			}
+			return false
 		}
 		return true
 	})

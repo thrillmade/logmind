@@ -383,6 +383,16 @@ func TestWriteFile_TempNameIsUnguessable(t *testing.T) {
 // page cache — so that claim was not reproducible from the tree alone. This
 // substitutes a spy for the package-level syncFile hook and asserts it
 // fires, on the TEMP file, before the rename lands.
+//
+// The syncedName/tmp-residue checks below pin PRESENCE — that syncFile was
+// called, and on a temp-shaped name — not ORDER: os.File.Name() returns the
+// name the file was opened with, so it still reads ".tmp-*" and the temp
+// path still Lstats as gone even if the call were moved to fire AFTER
+// os.Rename. The destination-does-not-exist-yet check inside the spy is
+// what actually pins "before": at the instant syncFile fires, os.Rename
+// must not have run, so path must not exist yet. If the sync call moves
+// after the rename, path already exists when the spy runs and this fails —
+// where the two checks above would still pass.
 func TestWriteFile_FsyncsBeforeRename(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "durable.txt")
@@ -391,6 +401,11 @@ func TestWriteFile_FsyncsBeforeRename(t *testing.T) {
 	orig := syncFile
 	syncFile = func(f *os.File) error {
 		syncedName = f.Name()
+		if _, err := os.Lstat(path); err == nil {
+			t.Errorf("destination %s already exists when syncFile fired — the rename has already "+
+				"happened, so this is a fsync-AFTER-rename, not a fsync-BEFORE-rename; the "+
+				"DURABILITY promise in the package doc is broken", path)
+		}
 		return orig(f) // still perform the real fsync; only observe, don't change behaviour
 	}
 	defer func() { syncFile = orig }()
