@@ -29,12 +29,12 @@
 package tree
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
@@ -513,16 +513,17 @@ func WriteFileStructure(targetPath, repoRoot string, maxDepth int) (bool, error)
 	if string(existing) == rendered {
 		return false, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+	// atomicio.WriteFile replaces a hand-rolled temp+rename that wrote to
+	// the PREDICTABLE name targetPath+".tmp" with a bare os.WriteFile. Two
+	// bugs in one: os.WriteFile follows symlinks, and the temp name was
+	// guessable, so a dangling symlink planted at docs/file-structure.md.tmp
+	// took the rendered tree straight outside the repository — and the
+	// following os.Rename then renamed the LINK into place, leaving
+	// file-structure.md itself pointing off-tree for every later write.
+	// atomicio uses os.CreateTemp (unpredictable suffix, O_EXCL), does the
+	// MkdirAll, and renames onto the destination NAME.
+	if err := atomicio.WriteFile(targetPath, []byte(rendered), 0o644); err != nil {
 		return false, err
-	}
-	// Atomic-ish: write to .tmp, fsync, rename. Errors propagated.
-	tmp := targetPath + ".tmp"
-	if err := os.WriteFile(tmp, []byte(rendered), 0o644); err != nil {
-		return false, err
-	}
-	if err := os.Rename(tmp, targetPath); err != nil {
-		return false, fmt.Errorf("rename tmp file: %w", err)
 	}
 	return true, nil
 }

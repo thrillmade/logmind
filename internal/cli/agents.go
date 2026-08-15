@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/version"
 )
@@ -389,13 +390,20 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io
 	}
 
 	// Apply path: rewrite each file in place.
+	//
+	// atomicio.WriteFile, not os.WriteFile: these paths come from a scan
+	// of a repository logmind did not necessarily write, and os.WriteFile
+	// follows symlinks. A symlinked AGENTS.md / workflow file would have
+	// its logmind block rewritten through the link, outside the repo.
+	// The rename lands on the NAME instead. (Also makes the rewrite
+	// crash-safe — the user's AGENTS.md is never a truncated stub.)
 	for _, e := range outdated {
 		data, err := os.ReadFile(e.Path)
 		if err != nil {
 			return err
 		}
 		refreshed := inserter.ReplaceMarkerBlock(string(data), e.NewBody)
-		if err := os.WriteFile(e.Path, []byte(refreshed), 0o644); err != nil {
+		if err := atomicio.WriteFile(e.Path, []byte(refreshed), 0o644); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, e.Path)
@@ -407,7 +415,7 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io
 			return err
 		}
 		rewritten, _ := inserter.UpdateWorkflowPin(string(data), p.NewVersion)
-		if err := os.WriteFile(p.Path, []byte(rewritten), 0o644); err != nil {
+		if err := atomicio.WriteFile(p.Path, []byte(rewritten), 0o644); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, p.Path)

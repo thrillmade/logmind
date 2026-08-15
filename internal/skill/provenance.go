@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/thrillmade/logmind/internal/atomicio"
 )
 
 // provenanceTemplate is the empty PROVENANCE.md skeleton emitted
@@ -55,5 +57,10 @@ func WriteProvenanceSkeleton(skillMDPath, name string) error {
 		return fmt.Errorf("PROVENANCE.md already exists at %s: %w", target, os.ErrExist)
 	}
 	body := fmt.Sprintf(provenanceTemplate, name)
-	return os.WriteFile(target, []byte(body), 0o644)
+	// atomicio.WriteFile, not os.WriteFile: the os.Stat guard above reports
+	// "absent" for a DANGLING symlink at PROVENANCE.md (Stat follows the
+	// link and the target is missing), so we fall through to the write with
+	// a symlink sitting on the destination. os.WriteFile would follow it and
+	// write outside the repository; the rename replaces the link.
+	return atomicio.WriteFile(target, []byte(body), 0o644)
 }

@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/thrillmade/logmind/internal/atomicio"
 )
 
 // SkillsDir returns the canonical location for SKILL.md files in a repo.
@@ -105,10 +107,6 @@ func ScaffoldBasic(repoRoot, name, description string) (string, error) {
 			name, target, os.ErrExist)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return target, err
-	}
-
 	if description == "" {
 		// Python's auto-TODO description — keep byte-identical so the
 		// generated SKILL.md matches.
@@ -124,7 +122,12 @@ func ScaffoldBasic(repoRoot, name, description string) (string, error) {
 	body = strings.ReplaceAll(body, "{DESC}", description)
 	body = strings.ReplaceAll(body, "{TITLE}", titleCase(name))
 
-	if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+	// atomicio.WriteFile (which does the MkdirAll itself), not os.WriteFile:
+	// the os.Stat guard at the top of this function reports "absent" for a
+	// DANGLING symlink at SKILL.md, so we arrive here with a symlink on the
+	// destination. os.WriteFile follows it and writes the scaffold outside
+	// the repository; the rename replaces the link.
+	if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
 		return target, err
 	}
 	return target, nil

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/clierr"
 )
 
@@ -545,7 +546,11 @@ func pushWith(opts PushOptions, git gitRunner, gh ghRunner) (PushResult, error) 
 	// into a consumer repo).
 	provPath := filepath.Join(targetDir, "PROVENANCE-push.yml")
 	provBody := renderProvenance(opts.SkillName, res, opts.Now, summarizeDescription(string(body)))
-	if err := os.WriteFile(provPath, []byte(provBody), 0o644); err != nil {
+	// atomicio.WriteFile, not os.WriteFile: targetDir lives inside a repo we
+	// just `git clone`d from a user-supplied --catalog-target, and git checks
+	// out symlinks verbatim. A catalog carrying skills/<name>/PROVENANCE-push.yml
+	// as a symlink would otherwise have this write follow it off-tree.
+	if err := atomicio.WriteFile(provPath, []byte(provBody), 0o644); err != nil {
 		return res, err
 	}
 
@@ -660,16 +665,18 @@ func copyTree(src, dst string, paths []string) error {
 		// — they don't have a portable meaning in a markdown-skill
 		// catalog and dropping them keeps the copy minimal-surprise.
 		perm := info.Mode().Perm()
-		if err := os.WriteFile(dp, data, perm); err != nil {
-			return err
-		}
-		// os.WriteFile only honours `perm` when it creates a new file
-		// via OpenFile(O_CREATE). If `dp` already existed (e.g., the
-		// dest tree was pre-staged), the create flag is a no-op for
-		// mode. An explicit Chmod after the write makes the mode
-		// outcome consistent regardless of whether dp was new or
-		// pre-existing — the executable bit lands either way.
-		if err := os.Chmod(dp, perm); err != nil {
+		// atomicio.WriteFile, not os.WriteFile, for two reasons:
+		//   1. `dst` is inside a repo just `git clone`d from a user-supplied
+		//      --catalog-target, and git checks out symlinks verbatim. A
+		//      catalog shipping skills/<name>/notes.md as a symlink would
+		//      make os.WriteFile write the copied body through it, outside
+		//      the clone (and outside the repository logmind was run in).
+		//   2. It chmods the temp file to `perm` before the rename, so the
+		//      mode lands whether or not `dp` already existed. That subsumes
+		//      the explicit os.Chmod this call site used to need — os.WriteFile
+		//      only honours `perm` on create, so a pre-staged dest kept its
+		//      old mode and the executable bit went missing without it.
+		if err := atomicio.WriteFile(dp, data, perm); err != nil {
 			return err
 		}
 	}

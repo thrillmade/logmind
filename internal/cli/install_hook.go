@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/clierr"
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
@@ -113,6 +114,20 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// (Python appended a bare `logmind check-decisions` line here; #213
 		// upgrades that to the deadline-wrapped invocation).
 		newContent := strings.TrimRight(content, "\n") + "\n" + preCommitGuardedCall
+		// DELIBERATELY os.WriteFile, not atomicio.WriteFile. This is the
+		// append-onto-an-existing-hook branch, and it is the one place in
+		// the tree where write-through is the correct behaviour:
+		//   - The dangling-symlink attack cannot reach here. We are on the
+		//     ReadFile-succeeded branch, so the path resolves to a real
+		//     file; the exploit needs ReadFile to report ErrNotExist (see
+		//     the fresh-install branch below, which IS routed atomically).
+		//   - Symlinking .git/hooks/pre-commit at a shared/tracked script
+		//     is a common, deliberate setup (husky, dotfile-managed hooks).
+		//     atomicio renames onto the NAME, which would silently detach
+		//     that link and leave the user with a private copy.
+		//   - atomicio unconditionally chmods to the perm argument, which
+		//     would clobber the mode-preservation contract documented just
+		//     below.
 		if err := os.WriteFile(hookPath, []byte(newContent), 0o755); err != nil {
 			return err
 		}
@@ -120,16 +135,22 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// already had its exec bit when read). Mirror that — don't
 		// chmod here either; if the user had a non-exec custom
 		// hook, we preserve their mode (best-effort, matches Python).
+		// os.WriteFile's perm argument above is inert for the same
+		// reason: it only applies on create.
 		fmt.Fprintln(stdout, "✓ Added logmind check-decisions to existing pre-commit hook.")
 		return nil
 
 	case errors.Is(readErr, os.ErrNotExist):
 		// Fresh install. Python writes parent dir + "#!/bin/sh\n" + hook_line + chmod 0o755.
-		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
-			return err
-		}
+		//
+		// atomicio.WriteFile (which does the MkdirAll itself), not
+		// os.WriteFile: ErrNotExist here does NOT mean "nothing is at this
+		// path". A dangling symlink at .git/hooks/pre-commit lands us on
+		// exactly this branch, and a bare os.WriteFile would follow it and
+		// drop an executable 0o755 shell script wherever it points. The
+		// rename replaces the link itself.
 		body := "#!/bin/sh\n" + preCommitGuardedCall
-		if err := os.WriteFile(hookPath, []byte(body), 0o755); err != nil {
+		if err := atomicio.WriteFile(hookPath, []byte(body), 0o755); err != nil {
 			return err
 		}
 		// WriteFile only honours perm bits on CREATE; chmod
