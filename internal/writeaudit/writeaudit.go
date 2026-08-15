@@ -80,7 +80,7 @@ var Allowlist = map[string]Exception{
 
 	// ---- LANE HANDOFFS: delete each entry as its PR lands. ----
 	"internal/cli/init.go": {
-		Count:  5,
+		Count:  4,
 		Reason: "LANE HANDOFF to PR #306, which owns internal/cli/init.go. Vulnerable; not converted here to avoid an edit collision.",
 	},
 	"internal/cli/self_update.go": {

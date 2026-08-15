@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-15 15:08 - writeaudit: the stale-entry check fired on its first real handoff, exactly as intended
+
+**Reasoning:** CI went red on this branch while the same suite was green in the worktree it was built in, because CI tests the merge with the default branch and that branch had moved. The 300 lane routed one of init.go's writes through the primitive, taking that file from five raw calls to four, and the allowlist still claimed five. The audit refuses a listed file whose count has dropped as well as one whose count has risen, so it reported the entry as stale rather than quietly permitting a number that no longer described the file.
+
+**Alternatives considered:** Make the allowlist a ceiling rather than an exact count, so a file getting safer never fails. Rejected: an entry that keeps passing after the reason for it disappears is how a temporary exemption becomes permanent permission, which is the specific decay this audit exists to prevent. The lane-handoff entries are supposed to be deleted as their branches land, and the only thing that reliably forces a deletion is a failure.
+
+**Implications:**
+- The count is lowered to four rather than removed, because the remaining calls are still real and still belong to another lane. When that lane lands the entry must disappear entirely, and the audit will say so by failing rather than by staying quiet. Full suite after merging the default branch: twenty-three packages passing, none failing.
+
+---
+
