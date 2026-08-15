@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-15 14:55 - inserter: two more raw writes in dependabot.go, found by a sweep of the whole tree rather than of this package
+
+**Reasoning:** The earlier pass routed five sites and recorded that as the whole of this package, which was wrong. A tree-wide sweep found two more in dependabot.go: a create branch reading not-exist as absent, the same shape as the AGENTS.md create path, and a merge branch overwriting the whole file after a successful read. Neither was in the panel report or in my brief, because both were derived from a list of this file rather than from a search of the package. A count taken from a report is not a measurement.
+
+**Alternatives considered:** Leave them to the sweep lane that found them. Rejected: that lane deliberately reported them as an unowned gap rather than editing a package another branch held, which is the right instinct, and the fix belongs where the surrounding tests and the rest of the routing already are.
+
+**Implications:**
+- Both are whole-file overwrites with no append or partial semantics, so neither earns an exception. The explicit directory creation before the first was removed as redundant, since the primitive makes its own parent. Two mutations, both compiled, both died. One of the new tests plants a non-dangling symlink pointing at a real file elsewhere, which is the harder case: the read succeeds, so a guard that only considers dangling links would pass it.
+
+---
+

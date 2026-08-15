@@ -272,3 +272,85 @@ func TestMigrateToAgentsMD_RefusesSymlinkedAGENTSMD(t *testing.T) {
 		t.Errorf("migrate wrote through the AGENTS.md symlink:\n got: %q\nwant: %q", string(got), current)
 	}
 }
+
+// TestEnsureDependabot_RefusesDanglingSymlink is dependabot.go's create
+// branch — the same ENOENT-as-absent shape as EnsureAgentsMD's create
+// branch above, missed by both the original panel report and the first
+// #306 sweep because dependabot.go sits in this package but wasn't among
+// the five inserter.go call sites already fixed. .github/dependabot.yml is
+// a dangling symlink; os.ReadFile returns fs.ErrNotExist, the file looks
+// "absent", and a bare os.WriteFile would create the bundled template
+// wherever the link points.
+func TestEnsureDependabot_RefusesDanglingSymlink(t *testing.T) {
+	skipSymlinkTestsOnWindows(t)
+
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	escapeTarget := filepath.Join(outside, "escaped-dependabot.yml")
+
+	githubDir := filepath.Join(repoRoot, ".github")
+	if err := os.MkdirAll(githubDir, 0o755); err != nil {
+		t.Fatalf("mkdir .github: %v", err)
+	}
+	dependabotPath := filepath.Join(githubDir, "dependabot.yml")
+	if err := os.Symlink(escapeTarget, dependabotPath); err != nil {
+		t.Fatalf("plant dangling symlink: %v", err)
+	}
+
+	_, err := EnsureDependabot(repoRoot)
+
+	if err == nil {
+		t.Fatal("EnsureDependabot did not error on a dangling dependabot.yml symlink; " +
+			"the write either silently followed the link or silently no-opped")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error does not name the actual cause (symlink): %v", err)
+	}
+	assertNotCreated(t, escapeTarget)
+	assertStillDanglingSymlink(t, dependabotPath, escapeTarget)
+}
+
+// TestEnsureDependabot_RefusesSymlinkedExistingFile is dependabot.go's
+// merge branch: a NON-dangling symlink at .github/dependabot.yml, pointing
+// at a real file elsewhere that already has content but no github-actions
+// ecosystem entry — os.ReadFile follows the link and succeeds, so this
+// reaches appendGithubActionsEntry and the write that follows, which must
+// refuse rather than merge the entry through the link into a file this
+// tool does not own.
+func TestEnsureDependabot_RefusesSymlinkedExistingFile(t *testing.T) {
+	skipSymlinkTestsOnWindows(t)
+
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	realTarget := filepath.Join(outside, "real-dependabot.yml")
+	const userContent = "version: 2\nupdates:\n  - package-ecosystem: \"gomod\"\n    directory: \"/\"\n    schedule:\n      interval: \"daily\"\n"
+	if err := os.WriteFile(realTarget, []byte(userContent), 0o644); err != nil {
+		t.Fatalf("seed real target: %v", err)
+	}
+
+	githubDir := filepath.Join(repoRoot, ".github")
+	if err := os.MkdirAll(githubDir, 0o755); err != nil {
+		t.Fatalf("mkdir .github: %v", err)
+	}
+	dependabotPath := filepath.Join(githubDir, "dependabot.yml")
+	if err := os.Symlink(realTarget, dependabotPath); err != nil {
+		t.Fatalf("plant symlink: %v", err)
+	}
+
+	_, err := EnsureDependabot(repoRoot)
+
+	if err == nil {
+		t.Fatal("EnsureDependabot did not error on a symlinked dependabot.yml")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error does not name the actual cause (symlink): %v", err)
+	}
+	got, readErr := os.ReadFile(realTarget)
+	if readErr != nil {
+		t.Fatalf("real target vanished: %v", readErr)
+	}
+	if string(got) != userContent {
+		t.Errorf("EnsureDependabot wrote through the symlink and modified user content:\n got: %q\nwant: %q",
+			string(got), userContent)
+	}
+}
