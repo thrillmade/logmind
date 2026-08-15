@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-15 09:18 - roadmap: state the command, not the answer, for every fact git already owns
+
+**Reasoning:** This file went stale twice, the second time during the adversarial panel that was checking it, which blocked it. The cause was structural rather than careless: the file copied SHAs, commit counts, ahead-counts and open-PR counts that git and gh already own, and a hand-kept second copy reads as true until one quietly is not. That is the one-owner-per-fact rule the file exists to enforce, and it was not being applied to the file itself. The State section and the landed-commits table now carry the commands that produce those numbers instead of the numbers.
+
+**Alternatives considered:** Correct the numbers a third time and keep the shape. Rejected because the failure repeats on a timescale shorter than the review that catches it. The nine findings the panel raised were almost all instances of one defect wearing nine faces, and correcting instances leaves the tenth to be found by a reader who trusts it.
+
+**Implications:**
+- Numbers that survive are load-bearing for a judgment rather than descriptive of the moment, and each is stamped with the date it was measured and the command that measures it again. Also corrected in this pass, all re-measured against live gh: the protocol bot-commit share is 43 of 109 on the last ten merged pull requests rather than 42 of 98, there are two push failures rather than one, skdd carries regen-timeline at v11 rather than nothing, check-decisions has no push trigger at all, and agent-skills 207 is merged.
+
+---
+

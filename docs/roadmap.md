@@ -17,7 +17,7 @@
 > from memory or from an issue body. A claimed zero is stated with the control
 > that proves the probe finds a non-zero when one exists.
 
-**Verified 2026-08-14** against `origin/dev 7b2b4f8`, `origin/main 0aa9049`, and
+**Verified 2026-08-15** against `origin/dev 2a8e10a`, `origin/main 0aa9049`, and
 the live SPEC at `thrillmade/protocol` blob `cd64e5c` (1,475 lines, Sections 0–8,
 no appendices).
 
@@ -25,40 +25,45 @@ no appendices).
 
 ## State
 
-| | |
-|---|---|
-| latest **release** | **v1.2.0** (2026-06-07) — what `brew install` gives |
-| `main` | `0aa9049` |
-| `dev` | `a0f6339`, **7 ahead** of main |
-| open issues | 31 |
-| open PRs | 0 |
+**This file does not carry SHAs, counts, or "N ahead".** Two revisions tried and
+both were stale within hours — once *during* the review that checked them. Git
+already owns those facts, and a hand-kept second copy reads as true until one
+quietly isn't. That is the same one-owner-per-fact rule this file was created to
+enforce, applied to itself.
 
-Everything built since June is unreleased. The released binary predates the
-commit gate, the harness guard, the zero-conflict invariant, and the `areas:`
-declaration.
+Run these instead:
+
+```sh
+git fetch origin --prune
+git log --oneline origin/main..origin/dev          # what is on dev, not yet on main
+gh issue list --state open --limit 60              # open issues
+gh pr list --state open                            # open pull requests
+gh release list --limit 1                          # what `brew install` gives
+```
+
+The one durable fact worth stating: **everything built since June is unreleased.**
+The released binary predates the commit gate, the harness guard, the zero-conflict
+invariant and the `areas:` declaration — so `brew install` does not get any of
+them until the tag.
 
 ### How work is verified
 
-`dev` deliberately has **no CI** — both workflows trigger on
-`push: branches: [main]` only. The bar is a **local adversarial panel** per
-change, plus the full suite run against integrated `dev`. Pull requests into
-`dev` still get CI on their own merge-ref (the `pull_request` trigger carries no
-branch filter); what the panel and the local suite cover is the *integrated*
-result, which PR-level CI never sees.
+`dev` deliberately has **no CI** — of the two workflows, only
+`check-derived-docs` (`regen-timeline.yml`) carries a `push: branches: [main]`
+trigger. `check-decisions` has **no push trigger at all**; it runs only on
+`pull_request`. The bar is a **local adversarial panel** per change, plus the
+full suite run against integrated `dev`. Pull requests into `dev` still get
+CI on their own merge-ref (both workflows' `pull_request` trigger carries no
+`branches:` filter); what the panel and the local suite cover is the
+*integrated* result, which PR-level CI never sees.
 
 ---
 
 ## Landed on `dev`, not yet on `main`
 
-| commit | what | closes on merge to main |
-|---|---|---|
-| `a0f6339` | CI gate calls the verb it claimed to mirror | #278, #260, #284 |
-| `4499da1` | file-structure root from the repository, not the checkout dir | #285 |
-| `4120584` | refuse to move a workflow template backwards | #286 |
-| `9889a25` | one shared §3.4 evaluation | — |
-| `575272b` | 19 documentation claims corrected | — |
-| `46a3a58` | `plan.md` refreshed against SPEC 2.0 | — |
-| `d79c430` | declare spec 2.0.0 + the §7.3 `areas:` line | #264 |
+```sh
+git log --oneline origin/main..origin/dev
+```
 
 Those issues stay **open** until `dev` reaches `main` — `closes #N` only fires on
 the default branch. That is expected, not drift.
@@ -93,21 +98,36 @@ here and no longer covers this repository. Both survivors carry
 
 ### What is actually unresolved
 
-The push has still never landed a commit, and the reason is *not* a refusal:
+The push has still never landed a commit, and the reason is *not* a refusal.
+**Measured 2026-08-15** against `logmind / check-derived-docs`
+(`.github/workflows/regen-timeline.yml`, workflow id `277546816`):
+
+```sh
+$ git log origin/main --format='%s' | grep -c '^chore: regen derived docs$'
+0
+$ gh api repos/thrillmade/protocol/pulls/75/commits --jq '[.[] | select(.commit.author.name == "logmind-auto-regen[bot]")] | length'
+30
+$ gh api "repos/thrillmade/logmind/actions/workflows/277546816/runs?per_page=100&event=push" \
+    --paginate --jq '.workflow_runs[] | .conclusion' | sort | uniq -c
+     13 success
+      2 failure
+```
 
 | probe | result |
 |---|---|
-| regen commits on `main`, by subject line | **0** |
-| control — same probe, protocol PR#75 | **30** |
-| `regen-timeline` runs, all events | 503 |
-| runs on the `push` event | **15** |
+| regen commits on `main`, by exact subject line | **0** |
+| control — same probe, protocol PR#75 bot commits | **30** |
+| `push`-event runs of `regen-timeline` | **15** |
 | `push` runs that **succeeded** | **13** |
+| `push` runs that **failed** | **2** |
 
 Thirteen green push runs and zero commits means the job runs, finds the derived
 docs already current, and exits 0 on that path — it never reaches the push at
-all. The one `push` failure, on `0aa9049`, carried the GH013 annotation and dates
-to **2026-08-01**, six days *before* the bypass was added. So the original
-diagnosis was correct when filed and the remedy has since been applied.
+all. **Both** `push` failures carry the GH013 `Changes must be made through a
+pull request` refusal: `fcf7268` (**2026-07-25**) and `0aa9049`
+(**2026-08-01**), each dated *before* the bypass was added
+(**2026-08-07**). So the original diagnosis was correct when filed and the
+remedy has since been applied.
 
 **The bypass is therefore untested, not missing.** It gets exercised the first
 time `main` receives a merge that leaves a derived doc stale — which is the
@@ -132,7 +152,13 @@ time `main` receives a merge that leaves a derived doc stale — which is the
 
 ### #241 — pre-tag by Ruling 12, but unbuildable as written
 
-Underspecified, and blocked on agent-skills#173 and #174, both unbuilt.
+Underspecified — the setup surface itself has open questions (profile
+vocabulary, whether the limit-watch is tooled or purely behavioural). It is
+**no longer blocked on missing skills**: agent-skills#207 (merged
+2026-08-15) shipped both `session-heartbeat` and `unattended-operation`,
+implementing agent-skills#173 and #174. Those two tracking issues remain
+open on GitHub — that is bookkeeping, not a build blocker; the skills exist
+in the catalog today.
 
 ---
 
@@ -144,11 +170,19 @@ repo and must then be fixed twice.
 
 ### 1 — Gate integrity ✅ on `dev`
 
-#278 · #260 · #284 · #286 · #285. All landed.
+#278 · #260 · #284 · #286 · #285 · #267 · #270. All landed.
 
 ### 2 — Prerequisites for the fleet migration
 
-Each is a hard gate on #257, not a parallel cleanup.
+Each is a hard gate on #257, not a parallel cleanup. **#257 itself is
+post-tag, not pre-tag** — `setup-logmind` installs from `/releases/latest`,
+and the released v1.2.0 answers `logmind check-decisions --base` with
+`Error: unknown flag: --base` (ruling recorded in #243). The fleet cannot
+take the new gate template until v2.0.0 exists, so this whole cluster —
+including #288 below and #265+#257 in §4 — runs after the tag by
+construction, even though it is numbered ahead of "§3 — Remaining pre-tag
+work" in this list: numbering here is dependency order, not calendar order
+across the tag boundary.
 
 | | why it blocks |
 |---|---|
@@ -162,16 +196,6 @@ Each is a hard gate on #257, not a parallel cleanup.
 ahead of the gate cluster; doing it after means relocating a **correct**
 evaluation rather than a wrong one. Its remedy restructures `regen-timeline.yml`,
 so that file moves twice regardless of what else we do.
-
-**#267** — `EnsureAgentsMD` silently downgrades a newer `AGENTS.md` block. Same
-*shape* as #286 but a different root cause: `matchingTemplate` recognises markers
-by hardcoded `strings.Contains` of known generations, so an unknown newer marker
-returns `""` and the slim default is applied. No version compare exists to fix.
-Fires exactly during a staggered rollout — the condition #257 creates.
-
-**#270** — hooks resolve their engine by bare name, so PATH skew silently
-disables the local gate. §3.4 requires fail-open *and* requires that failing open
-not be silent; today it is.
 
 **#269** — `ignore_patterns` replaces the 16 built-in defaults instead of merging.
 §1.4 line 202 says the three sources are **merged**, so this is a spec violation,
@@ -191,14 +215,17 @@ does not exist. Recorded here rather than in §5 so the ruling stays visible —
 its own issue body still says "after the v2.0.0 tag", which contradicts the
 ruling that governs it and needs correcting.
 
-**#241** — `logmind auto`. Also pre-tag by Ruling 12, and the longest pole among
-them: it installs two skills that did not exist, so those had to be written
-first (agent-skills#207, open). Build once that merges.
+**#241** — `logmind auto`. Also pre-tag by Ruling 12. It previously needed two
+skills that did not exist; those shipped in agent-skills#207 (merged
+2026-08-15). What remains is #241's own underspecification — see above.
 
 **#279** — the site's `--version` example is one line; §7.3 requires two, and the
-tag-time flip will not add the `areas:` line.
+tag-time flip would not have added the `areas:` line. **Built and on `dev`**
+(#302). The issue stays open until `dev` reaches `main`, per the rule above.
+The panel verified it by building the site in both states rather than reading
+the JSX, and by byte-comparing the page's `AREAS` against `version.go`.
 
-### 4 — #265 + #257, together
+### 4 — #265 + #257, together (post-tag — see §2)
 
 One fleet move, per standing constraint. #265 collapses the decision layout —
 main is a branch like any other, no cap, no archive, `rotateDecisions` deleted
@@ -232,7 +259,7 @@ ships.
 | clud-bug-app | `v2` | `v4` | **yes** |
 | agent-skills | `v2` | `v4` | **yes** |
 | reporulez | *unversioned* | *unmarked* | no |
-| skdd | *absent* on `main`, **`v4`** on `dev` | — | no |
+| skdd | *absent* on `main`, **`v4`** on `dev` | *absent* on `main`, **`v11`** on `dev` | no |
 
 **logmind ships** `check-decisions` at **`v5`** and `regen-timeline` at `v11`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
@@ -253,11 +280,24 @@ Two corrections to #257's original inventory:
 
 ### The cost of not migrating
 
-`thrillmade/protocol`, last 10 pull requests: **98 commits, 42 of them
-`logmind-auto-regen[bot]` — 42%.** PR#75 alone carries 30, every subject
-byte-identical. 1:1 alternation confirmed by timestamp. PR#70 contains a *human*
-commit titled `[skip-logmind] chore: regen derived docs` — someone hand-running
-the regeneration to pre-empt the bot.
+`thrillmade/protocol`, last 10 **merged** pull requests by creation date
+(#92, #88, #85, #84, #83, #80, #76, #75, #70, #69) — **measured 2026-08-15**:
+
+```sh
+$ gh api "repos/thrillmade/protocol/pulls?state=closed&sort=created&direction=desc&per_page=30" \
+    --jq '[.[] | select(.merged_at != null)] | .[0:10] | .[].number'
+$ for pr in 92 88 85 84 83 80 76 75 70 69; do
+    gh api "repos/thrillmade/protocol/pulls/$pr/commits" \
+      --jq '[.[] | .commit.author.name]'
+  done
+# 109 commits total, 43 with .commit.author.name == "logmind-auto-regen[bot]"
+```
+
+**109 commits, 43 of them `logmind-auto-regen[bot]` — 39%.** PR#75 alone
+carries 30, every subject byte-identical (`chore: regen derived docs`); its 63
+commits alternate human/bot 1:1 for the first 60, confirmed by commit order.
+PR#70 contains a *human* commit titled `[skip-logmind] chore: regen derived docs` —
+someone hand-running the regeneration to pre-empt the bot.
 
 It has already produced one governance failure: **protocol#75, the SPEC 2.0
 rewrite itself, merged over a red required `check-derived-docs` via admin
@@ -273,7 +313,7 @@ bypassing gates.
 
 ## Pre-tag checklist
 
-1. `dev` → `main`, which closes #264, #278, #260, #284, #285, #286.
+1. `dev` → `main`, which closes #264, #278, #260, #284, #285, #286, #267, #270.
 2. Run `release.yml` with `dry_run=true`.
 3. **Separately** re-confirm the homebrew-tap ruleset bypass — the dry run skips
    that push, so it never exercises the identity that failed with GH013.
