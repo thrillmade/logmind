@@ -661,3 +661,51 @@ func TestIsSectionHeader(t *testing.T) {
 		}
 	}
 }
+
+// TestSubstantiveLines_RenameOutOfDocsIsCounted pins the gate hole a
+// retrospective panel found on `dev` after PR #287 unified the numstat
+// flag lists and dropped --no-renames in the process.
+//
+// With rename detection ON, git renders a cross-directory rename as ONE
+// row whose path field is `old => new`:
+//
+//	150	0	docs/notes.md => src/payload.go
+//
+// IsExcludedPath prefix-matches that whole string, so the row was
+// excluded as `docs/...` and 550 lines of new Go counted zero — the gate
+// passed exactly the change it exists to stop. gitcli.numstatFlags now
+// carries --no-renames on every count, which splits the row into a
+// deletion under docs/ (excluded) and an addition under src/ (counted).
+//
+// This test pins the CONSUMER side: whatever git hands us, a path that
+// still carries the `=>` rename rendering must not be silently treated as
+// living under an excluded prefix.
+func TestSubstantiveLines_RenameOutOfDocsIsCounted(t *testing.T) {
+	// The exact shape git emits when rename detection is on.
+	rows := []gitcli.NumstatLine{
+		{Added: "150", Removed: "0", Path: "docs/notes.md => src/payload.go"},
+	}
+	if got := SubstantiveLines(rows); got == 0 {
+		t.Errorf("a rename OUT of docs/ counted 0 lines — the gate would pass "+
+			"550 lines of new code; got %d, want non-zero", got)
+	}
+
+	// Control: a genuine docs-only row must still be excluded, or the fix
+	// has simply broken the exclusion it was meant to preserve.
+	docsOnly := []gitcli.NumstatLine{
+		{Added: "550", Removed: "0", Path: "docs/notes.md"},
+	}
+	if got := SubstantiveLines(docsOnly); got != 0 {
+		t.Errorf("a docs-only change must stay excluded (SPEC §3.4); got %d, want 0", got)
+	}
+
+	// Control: the compact rename rendering, which git uses when the two
+	// paths share a prefix. It never looked like a bare docs/ path, so it
+	// was never part of the hole — but it must not regress either.
+	compact := []gitcli.NumstatLine{
+		{Added: "150", Removed: "0", Path: "{docs => src}/sub/notes.md"},
+	}
+	if got := SubstantiveLines(compact); got == 0 {
+		t.Errorf("compact rename rendering counted 0; got %d, want non-zero", got)
+	}
+}

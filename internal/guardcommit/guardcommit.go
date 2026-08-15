@@ -393,6 +393,24 @@ var excludedFiles = func() map[string]bool {
 // markdown wholesale switches the rule off in the repositories where
 // writing *is* the work." Do not add a "*.md" arm here.
 func IsExcludedPath(path string) bool {
+	// A path carrying git's rename rendering is never excluded.
+	//
+	// gitcli.numstatFlags passes --no-renames, so in practice git does not
+	// hand us this shape at all. This is the second line of defence, and it
+	// exists because the first one was removed once already: when the flag
+	// went missing, `docs/notes.md => src/payload.go` prefix-matched
+	// `docs/` and the gate counted 550 lines of new Go as zero.
+	//
+	// Deliberately a refusal rather than a parser. Git has at least two
+	// renderings — `old => new` and the compact `{docs => src}/sub/file` —
+	// so parsing owes both plus whatever git adds later, and a parser that
+	// falls behind fails OPEN. Refusing to exclude fails CLOSED: the worst
+	// case is counting a rename that a correct parser would have excluded,
+	// which asks an author for a decision they did not owe. That is a far
+	// cheaper error than waving through the change the gate exists to stop.
+	if strings.Contains(path, " => ") {
+		return false
+	}
 	if strings.HasPrefix(path, docsPrefix) || strings.HasPrefix(path, configPrefix) {
 		return true
 	}

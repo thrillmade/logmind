@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -523,5 +524,109 @@ func TestDefaultBranchMergeBase_FallsBackToHEAD_WhenUnresolvable(t *testing.T) {
 
 	if got := DefaultBranchMergeBase(repo); got != "HEAD" {
 		t.Fatalf("DefaultBranchMergeBase = %q; want the \"HEAD\" fallback", got)
+	}
+}
+
+// TestNumstat_RenameOutOfDocsIsSplit runs against a REAL git repository
+// with a REAL rename, and is the pin that the earlier synthetic test was
+// not.
+//
+// The regression it guards: #287 unified the numstat flag lists and
+// dropped --no-renames. With rename detection on, git renders a
+// cross-directory rename as ONE row whose path is `old => new`, so
+// `docs/notes.md => src/payload.go` prefix-matched `docs/` and hundreds
+// of lines of new code counted zero. An adversarial review found that the
+// fix's own test — asserting on synthetic NumstatLine values — stayed
+// GREEN when --no-renames was removed again, because it never invoked
+// git. A test on the helper you fixed is not a test on the bug.
+//
+// This one drives the actual command. Remove --no-renames from
+// numstatFlags and it goes red, because git's output shape changes.
+//
+// The file must be large enough that appending to it stays above git's
+// ~50% rename-similarity threshold; a small file plus many added lines is
+// simply not detected as a rename and the test would pass vacuously.
+func TestNumstat_RenameOutOfDocsIsSplit(t *testing.T) {
+	repo := initRepo(t)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	var big strings.Builder
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&big, "original line %d\n", i)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "docs", "notes.md"), []byte(big.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-q", "-m", "add docs/notes.md")
+
+	// Move it into src/ and append, keeping similarity high enough that
+	// git still calls it a rename.
+	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("mv", "docs/notes.md", "src/payload.go")
+	f, err := os.OpenFile(filepath.Join(repo, "src", "payload.go"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 150; i++ {
+		fmt.Fprintf(f, "// added %d\n", i)
+	}
+	f.Close()
+	run("add", "-A")
+
+	// POSITIVE CONTROL FIRST. Assert that git, left to itself, DOES render
+	// this as a rename. Without it the whole test is vacuous: an adversarial
+	// review showed that under `diff.renames=false` in a user's gitconfig,
+	// the "no => rows" assertion below passes even with --no-renames removed,
+	// because git never emitted a rename in the first place. Absence of the
+	// rendering only means something once we know it would otherwise appear.
+	bare := exec.Command("git", "diff", "--cached", "--numstat")
+	bare.Dir = repo
+	bareOut, err := bare.Output()
+	if err != nil {
+		t.Fatalf("bare numstat: %v", err)
+	}
+	if !strings.Contains(string(bareOut), " => ") {
+		t.Skipf("git did not render this as a rename (diff.renames disabled, or "+
+			"similarity below threshold) — the test cannot prove anything about "+
+			"--no-renames here. Bare numstat was:\n%s", bareOut)
+	}
+
+	rows := DiffCachedNumstat(repo)
+
+	// Now the real assertion: our flags must suppress what the control just
+	// proved git would otherwise emit.
+	var renameRows int
+	for _, r := range rows {
+		if strings.Contains(r.Path, " => ") {
+			renameRows++
+		}
+	}
+	if renameRows > 0 {
+		t.Fatalf("numstat still carries a rename rendering (%d rows) — --no-renames is not in effect:\n%+v", renameRows, rows)
+	}
+
+	// The substantive half must be attributed to src/, not swallowed by
+	// the docs/ prefix.
+	var sawSrc bool
+	for _, r := range rows {
+		if r.Path == "src/payload.go" {
+			sawSrc = true
+		}
+	}
+	if !sawSrc {
+		t.Fatalf("no row for src/payload.go — the rename was not split:\n%+v", rows)
 	}
 }

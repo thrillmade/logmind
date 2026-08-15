@@ -427,6 +427,13 @@ func revParse(t *testing.T, repo, ref string) string {
 // check" and exited 0. Every pull request would have gone green
 // regardless of size, while reporting success.
 func TestCheckDecisions_RangeMode_RefusesLocalAllowances(t *testing.T) {
+	// Created at PARENT scope on purpose. t.TempDir() names the directory
+	// after the calling test, so creating it inside a subtest named
+	// "--no-fail …" yields a path containing "--no-fail" — and the
+	// not-a-repo error echoes opts.cwd. That is how the original version of
+	// this test passed while the guard it claimed to cover was deleted.
+	dir := t.TempDir()
+
 	t.Run("not a git repository is a hard error in range mode", func(t *testing.T) {
 		dir := t.TempDir() // deliberately not a git repo
 		var out bytes.Buffer
@@ -450,7 +457,12 @@ func TestCheckDecisions_RangeMode_RefusesLocalAllowances(t *testing.T) {
 	})
 
 	t.Run("--no-fail is refused in range mode", func(t *testing.T) {
-		dir := t.TempDir()
+		// dir comes from the PARENT scope deliberately. t.TempDir() names the
+		// directory after the subtest, so a subtest called "--no-fail …"
+		// produces a path CONTAINING "--no-fail" — and the not-a-repo error
+		// echoes opts.cwd. An adversarial review found the original assertion
+		// matching that path rather than the guard: deleting the guard
+		// entirely left this test green.
 		var out bytes.Buffer
 		err := runCheckDecisions(checkDecisionsOpts{
 			cwd: dir, base: "a", head: "b", noFail: true,
@@ -458,8 +470,53 @@ func TestCheckDecisions_RangeMode_RefusesLocalAllowances(t *testing.T) {
 		if err == nil {
 			t.Fatal("--no-fail with --base/--head returned nil; it is a third thing clearing the gate")
 		}
+		// Assert on text unique to the guard, not on a flag name that can
+		// appear in an incidental path.
+		if !strings.Contains(err.Error(), "cannot be combined with --base/--head") {
+			t.Errorf("error is not the guard's refusal, got %v", err)
+		}
 		if !strings.Contains(err.Error(), "--no-fail") {
-			t.Errorf("error should name the refused flag, got %v", err)
+			t.Errorf("refusal should name the flag, got %v", err)
+		}
+	})
+}
+
+// TestCheckDecisions_RangeMode_RefusesThreshold pins the fourth
+// gate-clearer. Its sibling --no-fail refusal was tested; this one shipped
+// untested and an adversarial review caught the gap.
+//
+// SPEC §3.4 pins the gate's threshold to git.commit_line_threshold and
+// nothing else. --threshold is worse than --no-fail as an escape because
+// it does not look like one: `--threshold 999999` reads as configuration
+// rather than a bypass, so it is the version a reviewer waves through.
+func TestCheckDecisions_RangeMode_RefusesThreshold(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("--threshold is refused in range mode", func(t *testing.T) {
+		var out bytes.Buffer
+		err := runCheckDecisions(checkDecisionsOpts{
+			cwd: dir, base: "a", head: "b",
+			threshold: 999999, thresholdExplicit: true,
+		}, &out)
+		if err == nil {
+			t.Fatal("--threshold with --base/--head returned nil; it is a third thing clearing the gate")
+		}
+		if !strings.Contains(err.Error(), "cannot be combined with --base/--head") {
+			t.Errorf("error is not the guard's refusal, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "--threshold") {
+			t.Errorf("refusal should name the flag, got %v", err)
+		}
+	})
+
+	t.Run("--threshold is still allowed locally", func(t *testing.T) {
+		var out bytes.Buffer
+		// Not a repo, so the local path returns its skip message rather
+		// than evaluating — enough to prove the flag is not refused.
+		if err := runCheckDecisions(checkDecisionsOpts{
+			cwd: dir, threshold: 999999, thresholdExplicit: true,
+		}, &out); err != nil {
+			t.Fatalf("--threshold alone must not be refused, got %v", err)
 		}
 	})
 }

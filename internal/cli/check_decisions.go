@@ -112,6 +112,29 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 		return fmt.Errorf("--base and --head must be given together")
 	}
 
+	// §3.4 again: exactly two things clear the gate. --no-fail is a third,
+	// and although it is set by whoever wrote the workflow rather than by
+	// the pull request's author, a repository that adds it has a gate that
+	// reports and never blocks. Refuse the combination outright so the
+	// escape cannot be added quietly to a workflow file.
+	if rangeMode && opts.noFail {
+		return fmt.Errorf("--no-fail cannot be combined with --base/--head: SPEC §3.4 allows exactly two things to clear the gate — the change carries a decision, or it falls under the threshold")
+	}
+
+	// --threshold is the fourth, by exactly the same argument, and it is
+	// worse than --no-fail because it does not look like an escape:
+	// `--threshold 999999` reads as configuration. §3.4 pins the gate's
+	// threshold to `git.commit_line_threshold` and to nothing else, so in
+	// range mode the flag has no legitimate use — the repository already
+	// has a way to say what its threshold is, read from the base ref
+	// precisely so the change under judgement cannot forge it.
+	//
+	// Refused rather than ignored: silently discarding a flag someone
+	// passed deliberately is its own way of lying about what ran.
+	if rangeMode && opts.thresholdExplicit {
+		return fmt.Errorf("--threshold cannot be combined with --base/--head: SPEC §3.4 pins the gate's threshold to git.commit_line_threshold; set it in the repository's .logmind/config.yml instead")
+	}
+
 	// Running outside a repository is one of §3.4's SIX local allowances,
 	// and like the other five it MUST NOT reach the gate: "every allowance
 	// above that depends on local process state — the environment
@@ -131,15 +154,6 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 		// Local path only. Python: click.echo(...) to stdout, no exit.
 		fmt.Fprintln(stdout, "Not a git repository, skipping check.")
 		return nil
-	}
-
-	// §3.4 again: exactly two things clear the gate. --no-fail is a third,
-	// and although it is set by whoever wrote the workflow rather than by
-	// the pull request's author, a repository that adds it has a gate that
-	// reports and never blocks. Refuse the combination outright so the
-	// escape cannot be added quietly to a workflow file.
-	if rangeMode && opts.noFail {
-		return fmt.Errorf("--no-fail cannot be combined with --base/--head: SPEC §3.4 allows exactly two things to clear the gate — the change carries a decision, or it falls under the threshold")
 	}
 
 	// One repository root for the config read AND every git command
