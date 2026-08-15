@@ -11,6 +11,7 @@ package auto
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -201,17 +202,38 @@ func TestDirective_SaysWhatTheSkillsSay(t *testing.T) {
 	}
 }
 
+// percentageShapedRe is the CLASS TestDirective_DoesNotHardcodeAPercentageThreshold
+// guards against: any digit-led percentage notation ("85%", "12.5 %",
+// "90 percent") or a bare 0.NN decimal fraction, in any key, anywhere in
+// the rendered body — not three enumerated literals.
+//
+// This replaces a check that listed "90%", "0.9", and "90 percent" by
+// name. Mutation M300-B shipped `pause_at: 85%` and stayed green: "85%"
+// is the same hardcoded-percentage defect as "90%" but isn't one of the
+// three strings the old check happened to spell out. Matching the SHAPE
+// closes that — any number in that notation fails it, under any key,
+// because the guarantee is "no fixed percentage", not "not these three".
+//
+// The bare-decimal alternative (0.NN with no "%"/"percent" attached) is
+// deliberately kept in scope: "0.9" was one of the three original
+// literals, so dropping decimal notation here would silently narrow the
+// guarantee the original test already covered. It's restricted to the
+// 0.NN shape specifically (not any float) so it only fires on the
+// fraction-of-one notation a percentage threshold would actually use —
+// this directive has no other reason to carry a bare decimal.
+var percentageShapedRe = regexp.MustCompile(`(?i)\d+(\.\d+)?\s*(%|percent\b)|\b0\.\d+\b`)
+
 // TestDirective_DoesNotHardcodeAPercentageThreshold — the issue sketched
 // "90% of session window"; session-heartbeat explicitly refutes that
 // ("Stopping at 90% used only works if nothing you would start costs more
-// than the remaining 10%"). The directive must carry the derivation.
+// than the remaining 10%"). The directive must carry the derivation, not
+// any fixed percentage — see percentageShapedRe for why this pins the
+// class rather than a handful of literal strings.
 func TestDirective_DoesNotHardcodeAPercentageThreshold(t *testing.T) {
 	p, _ := Lookup("unattended")
 	body := BundledBody(p, "docs/plan.md")
-	for _, bad := range []string{"90%", "0.9", "90 percent"} {
-		if strings.Contains(body, bad) {
-			t.Errorf("directive hardcodes %q as the pause threshold; session-heartbeat derives it from the largest dispatch", bad)
-		}
+	if bad := percentageShapedRe.FindString(body); bad != "" {
+		t.Errorf("directive hardcodes %q, a percentage-shaped pause threshold; session-heartbeat derives it from the largest dispatch instead of a fixed number", bad)
 	}
 }
 
@@ -369,5 +391,50 @@ func TestApply_DoesNotFetchSkills(t *testing.T) {
 	if cmd := InstallCommand("session-heartbeat"); !strings.Contains(cmd, "session-heartbeat") ||
 		!strings.Contains(cmd, "thrillmade/agent-skills") {
 		t.Errorf("InstallCommand = %q; want it to name the skill and the catalog", cmd)
+	}
+}
+
+// TestApply_RefusesADanglingSymlinkAtTheDirectivePath is the regression
+// for the symlink-escape finding: a dangling symlink planted at
+// .logmind/auto.yml (by anything that can drop a file into a repo a user
+// did not write — a malicious archive, a compromised dependency's
+// postinstall, a crafted PR checked out locally) must not turn Apply's
+// write into an arbitrary-write primitive that lands the directive body
+// wherever the link points, outside .logmind/ entirely.
+//
+// Pinned on Apply — the actual write path `logmind auto` runs, not on
+// atomicio.WriteFile directly, so this fails if a future call site starts
+// bypassing the shared primitive.
+func TestApply_RefusesADanglingSymlinkAtTheDirectivePath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".logmind"), 0o755); err != nil {
+		t.Fatalf("mkdir .logmind: %v", err)
+	}
+	// The escape: .logmind/auto.yml resolves OUTSIDE the repo entirely,
+	// to a path that does not exist yet.
+	outside := filepath.Join(dir, "..", "escaped-auto.yml")
+	if err := os.Symlink(outside, DirectivePath(dir)); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	p, _ := Lookup("unattended")
+	_, err := Apply(dir, p)
+	if err == nil {
+		t.Fatal("Apply returned no error for a dangling symlink at the directive path; want a clear refusal")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("Apply error = %q; want it to name the symlink so the user knows what to remove", err)
+	}
+	if _, statErr := os.Lstat(outside); statErr == nil {
+		t.Errorf("Apply created %s outside .logmind/ by following the symlink", outside)
+	}
+	// The symlink itself is left exactly as found — Apply neither writes
+	// through it nor silently replaces it.
+	fi, err := os.Lstat(DirectivePath(dir))
+	if err != nil {
+		t.Fatalf("lstat directive path: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf(".logmind/auto.yml was replaced by a regular file; want the symlink left alone for the user to remove")
 	}
 }

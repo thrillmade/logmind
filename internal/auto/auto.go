@@ -37,6 +37,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/skill"
 	"github.com/thrillmade/logmind/internal/templates"
@@ -311,10 +312,11 @@ func Apply(repoRoot string, p Profile) (Result, error) {
 	case !state.Present:
 		body := BundledBody(p, checkpoint)
 		target := DirectivePath(repoRoot)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return res, err
-		}
-		if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+		// atomicio.WriteFile refuses a symlink at target (dangling or
+		// not) instead of following it — see internal/atomicio.
+		// RefuseSymlink. It also creates .logmind/ if missing, so no
+		// separate MkdirAll is needed here.
+		if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
 			return res, err
 		}
 		res.Outcome = Created

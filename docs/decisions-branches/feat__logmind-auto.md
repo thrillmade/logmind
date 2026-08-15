@@ -22,3 +22,14 @@ back — which is #267 and #286's rule, now applied a third time.
 
 ---
 
+## 2026-08-15 13:59 - auto: refuse to write through a symlink, and pin the percentage guard on the class rather than three literals
+
+**Reasoning:** The panel returned merge with two low findings, and low described the blast radius rather than the standard of the fix. A dangling symlink planted at the directive path made os.WriteFile follow it and create a file outside the logmind directory, which hands anything that can drop a symlink into a repository an arbitrary write out of a tool people run in repositories they did not write. Separately, the guard meant to keep a context percentage out of the directive compared against three literal strings, so a mutation adding pause_at 85 percent shipped green; reinstating the old test against that same mutation confirmed it stayed green while the new one goes red.
+
+**Alternatives considered:** Guard the one call site the finding named. Rejected: a patch at each site plus a promise to remember is how the next writer reintroduces it. The refusal lives inside atomicio.WriteFile itself, so every existing caller inherits it without being touched, and the two lock file paths that cannot use a whole-content replace call the same exported check directly.
+
+**Implications:**
+- A repo-wide audit found no other write targeting the logmind directory: os.Create has zero hits and os.OpenFile only the unix lock, with the Windows path using syscall.CreateFile and checked by reading it. The grep was controlled first against the line the finding named. The percentage guard now matches any digit-led percent or percent-word notation under any key plus bare fractions between zero and one; the fraction case is deliberately kept because one of the three original literals was already a decimal, and dropping it would have narrowed the guarantee while appearing to widen it.
+
+---
+
