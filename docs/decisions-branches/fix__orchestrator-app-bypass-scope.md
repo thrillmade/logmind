@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-15 16:11 - orchestrator-app: rulesets are not the only mechanism, and checking only them is how this section was wrong twice
+
+**Reasoning:** The correction I made was itself wrong, in the same shape as the thing it corrected. I swept every repository's rulesets and concluded thirteen accept a direct push. A panel checked classic branch protection as well and found arlyn-working carries it with admin enforcement on, which nothing bypasses without an administration permission the steward does not hold. The real split is twelve accepting and eight blocked. Measuring one mechanism and reporting a total is the same defect as reading one copy of a fact and believing it.
+
+**Alternatives considered:** State the ruleset finding and note that other mechanisms were out of scope. Rejected: this section is read to answer whether a push will land, and a number qualified by a methodology footnote will be quoted without the footnote. The section now names both mechanisms and shows the command for each, so the next audit cannot repeat the omission by accident.
+
+**Implications:**
+- Both probes are written into the document rather than only their answers. The steward's permission set is quoted, because the reason admin enforcement blocks it is that it holds contents, issues, metadata and pull requests and nothing else, which is checkable rather than assumed. This is the third revision of one paragraph; the first two were each internally consistent and each wrong against something they had not measured.
+
+---
+

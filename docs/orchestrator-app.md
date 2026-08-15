@@ -125,7 +125,7 @@ coverage.
 
 Why the wider blast radius is acceptable:
 
-- **Branch rulesets do NOT force PRs on every repo — 13 of 20 accept a
+- **Branch rulesets do NOT force PRs on every repo — 12 of 20 accept a
   direct push from the App.** Bypass is evaluated per ruleset, and rulesets
   *aggregate*: a push must satisfy every ruleset matching the ref. The
   steward is a bypass actor on both **organization-level** rulesets
@@ -133,19 +133,21 @@ Why the wider blast radius is acceptable:
   everywhere. A repo is protected from the App only if it *additionally*
   carries its own ruleset requiring pull requests without naming the steward.
   Seven do: `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
-  `homebrew-logmind`, `setup-logmind`, `tremendous-machine`. The other
-  thirteen — including `logmind`, `protocol`, `skdd`, `reporulez` and
-  `homebrew-tap` — do not, and accept a direct push. See "Ruleset bypass"
+  `homebrew-logmind`, `setup-logmind`, `tremendous-machine`. An eighth, `arlyn-working`, is protected by **classic branch protection**
+  instead of a ruleset (`enforce_admins: true`), and the steward holds no
+  Administration permission to override it. The other twelve — including
+  `logmind`, `protocol`, `skdd`, `reporulez` and `homebrew-tap` — accept a
+  direct push. See "Ruleset bypass"
   below for the commands.
 - **All-repos is what the census reads today, and what the catalog
   fan-out / chore loop will require** — see "Purpose" above.
 
 **Residual risk, stated plainly:** a compromised App private key can mint
 an installation token scoped to every repository in the org, for that
-token's 1-hour lifetime. **Thirteen of the org's twenty repos are exposed to
+token's 1-hour lifetime. **Twelve of the org's twenty repos are exposed to
 a direct, unreviewed push under compromise** — not one. The org-level
-bypass, not `homebrew-tap`'s own entry, is what grants it; only the seven
-repos carrying their own PR-requiring ruleset are limited by required review on merge — real exposure (an
+bypass, not `homebrew-tap`'s own entry, is what grants it; only the eight repos carrying either their own
+PR-requiring ruleset or classic branch protection are limited by required review on merge — real exposure (an
 attacker could open PRs, comment, file issues, read contents across the
 org), but gated by human review rather than by installation scope.
 
@@ -225,7 +227,21 @@ missing field.
 bypassing the org pair is not sufficient where a repo adds its own. Seven
 repos do — `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
 `homebrew-logmind`, `setup-logmind`, `tremendous-machine` — and the steward is
-blocked in those. The remaining thirteen accept a direct push.
+blocked in those.
+
+**Rulesets are not the only mechanism, and checking only them is how this
+section was wrong twice.** `arlyn-working` carries no ruleset but is protected
+by classic branch protection with `enforce_admins: true`, which nothing bypasses
+without Administration permission — and the steward has none
+(`gh api /apps/skdd-steward --jq .permissions` → contents, issues, metadata,
+pull_requests). Any audit here MUST check both:
+
+```sh
+gh api repos/thrillmade/<repo>/rulesets              # mechanism 1
+gh api repos/thrillmade/<repo>/branches/main/protection   # mechanism 2
+```
+
+So eight are blocked and the remaining twelve accept a direct push.
 
 `logmind` is in the second group: it carries no repo-level ruleset, so
 `regen-on-main`'s push to its default branch is exempt. That is the fact the
