@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-15 14:26 - testgit: close the last unguarded committing test repo, so the sweep claim is true
+
+**Reasoning:** The panel found the claim that one helper creates every test repository was false while tree_rootlabel_test.go still ran its own init, config, commit and worktree add with no suppression. It predates this branch and the diff never touched it, which is exactly why a completeness claim needs its own check rather than inheriting the diff's. Re-swept afterwards: of the seven remaining files matching a crude init probe, none call git commit, and only a commit triggers run_auto_maintenance, so none can lose the race. The control confirms the probe finds real git-exec files rather than matching nothing.
+
+**Alternatives considered:** File it as a follow-up and merge with the hole open, which is what the panel proposed. Rejected: the entire point of this change is that the race cannot be reintroduced a file at a time, and shipping a known unguarded committing repo alongside that claim makes the claim the thing people trust instead of the code.
+
+**Implications:**
+- This one file keeps its local run helper rather than adopting testgit.InitRepo, because it also needs git worktree add against the same handle; it calls DisableMaintenance directly instead, which is the shared primitive both wrappers use.
+
+---
+
