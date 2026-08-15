@@ -131,7 +131,14 @@ type DecisionsConfig struct {
 
 // FileStructureConfig mirrors the `file_structure:` section.
 type FileStructureConfig struct {
-	AutoUpdate     bool     `yaml:"auto_update"`
+	AutoUpdate bool `yaml:"auto_update"`
+	// IgnorePatterns is the CONFIG pattern source of SPEC §1.4 — one of
+	// three, not the effective set. yaml.Unmarshal replaces a slice rather
+	// than appending, so a config that sets this key at all lands here
+	// alone, without the defaults DefaultConfig seeded; the merge with the
+	// built-in defaults and .gitignore happens once, in tree.ResolveRules,
+	// which every consumer routes through. Read this field directly to
+	// decide what to ignore and you reopen #269.
 	IgnorePatterns []string `yaml:"ignore_patterns"`
 	// RootLabel overrides the file-structure tree's root line. Default ""
 	// = the checkout directory's basename (today's behavior); a fixed

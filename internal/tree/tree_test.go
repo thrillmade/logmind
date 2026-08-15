@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -86,7 +87,7 @@ func TestRenderIgnoreDefault(t *testing.T) {
 		"__pycache__/foo.py": "p",
 		"node_modules/lib":   "n",
 	})
-	rules := IgnoreRules{Ignore: []string{"__pycache__", "node_modules"}}
+	rules := IgnoreRules{{Pattern: "__pycache__"}, {Pattern: "node_modules"}}
 	got, err := Render(root, rules, -1)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +107,7 @@ func TestRenderIgnoreGlob(t *testing.T) {
 		"sub/x.pyc": "p",
 		"sub/x.py":  "p",
 	})
-	rules := IgnoreRules{Ignore: []string{"*.pyc"}}
+	rules := IgnoreRules{{Pattern: "*.pyc"}}
 	got, err := Render(root, rules, -1)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +128,7 @@ func TestRenderIgnorePathPattern(t *testing.T) {
 		"other/.next/keep":   "k",
 	})
 	// Path-shaped ignore: site/.next should match only under site/.
-	rules := IgnoreRules{Ignore: []string{"site/.next"}}
+	rules := IgnoreRules{{Pattern: "site/.next"}}
 	got, err := Render(root, rules, -1)
 	if err != nil {
 		t.Fatal(err)
@@ -147,8 +148,8 @@ func TestRenderNegate(t *testing.T) {
 		"keep.log": "k",
 	})
 	rules := IgnoreRules{
-		Ignore: []string{"*.log"},
-		Negate: []string{"keep.log"},
+		{Pattern: "*.log"},
+		{Pattern: "keep.log", Negate: true},
 	}
 	got, err := Render(root, rules, -1)
 	if err != nil {
@@ -196,8 +197,10 @@ func TestRenderMaxDepthZeroRootOnly(t *testing.T) {
 	}
 }
 
-// TestReadGitignorePatterns exercises the gitignore parser's trim logic.
-func TestReadGitignorePatterns(t *testing.T) {
+// TestReadGitignoreRules exercises the gitignore parser's trim logic, and
+// that it hands rules back in FILE order — with last-match-wins resolution
+// a negation's position relative to its neighbours is the whole answer.
+func TestReadGitignoreRules(t *testing.T) {
 	dir := t.TempDir()
 	body := "# comment\n" +
 		"\n" +
@@ -209,30 +212,20 @@ func TestReadGitignorePatterns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ig, neg, err := readGitignorePatterns(dir)
+	got, err := readGitignoreRules(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantIg := []string{"__pycache__", "foo", "*.log", "bare"}
-	wantNeg := []string{"keep.log"}
-	if !equalStrings(ig, wantIg) {
-		t.Errorf("ignore = %v; want %v", ig, wantIg)
+	want := []Rule{
+		{Pattern: "__pycache__"},
+		{Pattern: "foo"},
+		{Pattern: "*.log"},
+		{Pattern: "keep.log", Negate: true},
+		{Pattern: "bare"},
 	}
-	if !equalStrings(neg, wantNeg) {
-		t.Errorf("negate = %v; want %v", neg, wantNeg)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v; want %v", got, want)
 	}
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // TestFileStructureTemplate pins the template head + tail bytes so
