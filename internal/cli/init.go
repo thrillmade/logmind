@@ -28,6 +28,10 @@
 //	--spec                Scaffold docs/spec.md (if absent) and point
 //	                       context.spec_file at it (if unset). Idempotent;
 //	                       works in both fresh-install and refresh mode.
+//	--refresh             Force-re-render the workflow files logmind owns,
+//	                       even at a matching template version. This is the
+//	                       command the shipped workflows' branch-drift
+//	                       warning names; see workflowForceRender.
 //
 // Run `logmind install-hook` separately to set up the local pre-commit
 // hook; that is a real top-level subcommand, not an init flag.
@@ -65,6 +69,7 @@ type initFlags struct {
 	allAgents     bool
 	githubActions bool
 	spec          bool
+	refresh       bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -88,6 +93,8 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.githubActions, "github-actions", true, "Install logmind GitHub Actions (decision aggregator, link checker). Default on.")
 	cmd.Flags().BoolVar(&f.spec, "spec", false,
 		"Scaffold docs/spec.md (only if absent) and set context.spec_file: docs/spec.md in .logmind/config.yml (only if unset). Idempotent; works in both fresh-install and refresh mode.")
+	cmd.Flags().BoolVar(&f.refresh, "refresh", false,
+		"Re-render the GitHub workflow files logmind owns even when their template version already matches — the fix for a scaffolded `on: push:` branch filter that went stale (e.g. the default branch was renamed). Never touches a workflow that carries no logmind template marker, and still refuses to downgrade one carrying a newer marker.")
 	return cmd
 }
 
@@ -362,11 +369,29 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 		applyInitSpec(cmd, cwd)
 	}
 
+	// Workflow templates. Exactly ONE of the two paths below writes
+	// .github/workflows/:
+	//
+	//   - default: applyRefresh's version-ordered refresh, shared verbatim
+	//     with `doctor --fix`.
+	//   - --refresh: a forced re-render of the files logmind owns. Kept out
+	//     of applyRefresh deliberately — `doctor --fix`'s contract is "move
+	//     a stale marker forward", and a repair the user asked for by name
+	//     must not become something a drift-remediation pass does on its
+	//     own. See workflowForceRender for why a version-ordered refresh
+	//     cannot repair a stale scaffold-time render.
 	res, err := applyRefresh(cwd, refreshOpts{
-		githubActions:      f.githubActions,
+		githubActions:      f.githubActions && !f.refresh,
 		git:                true,
 		claudeAgentEnabled: claudeAgentEnabled,
 	})
+	if f.githubActions && f.refresh {
+		created, refreshed, declined, werr := installWorkflowTemplatesMode(cwd, workflowForceRender)
+		res.WorkflowsCreated, res.WorkflowsRefreshed, res.WorkflowsDeclined = created, refreshed, declined
+		if err == nil {
+			err = werr
+		}
+	}
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: refresh failed:", err)
 	}
@@ -423,17 +448,55 @@ type templateDowngrade struct {
 	Bundled   string // marker this binary ships, e.g. "v4"
 }
 
-// installWorkflowTemplates copies internal/templates/github/*.yml.template
-// into .github/workflows/. Two modes:
-//
-//   - refresh=false: don't overwrite existing files.
-//   - refresh=true: overwrite when the installed marker is OLDER than the
-//     bundled marker. (Go-era workflows use thrillmade/setup-logmind and
-//     carry no pip-install pin, so a matching marker is left as-is.)
+// workflowInstallMode selects how installWorkflowTemplatesMode treats a
+// workflow file that ALREADY exists. Creating a missing file is the same
+// in all three.
+type workflowInstallMode int
+
+const (
+	// workflowCreateOnly: never overwrite an existing file. Fresh `logmind
+	// init`.
+	workflowCreateOnly workflowInstallMode = iota
+	// workflowRefreshStale: overwrite when the installed marker is OLDER
+	// than the bundled one. `logmind init` in refresh mode, `doctor --fix`.
+	workflowRefreshStale
+	// workflowForceRender: additionally re-render files whose marker
+	// MATCHES the bundled one. `logmind init --refresh`.
+	//
+	// This exists because a workflow can be stale at the current version:
+	// the `on: push:` branch filter is rendered at scaffold time (an `on:`
+	// filter takes no expression), so renaming the default branch leaves a
+	// v12 file that is version-current and wired to a branch that no longer
+	// exists. The regen then silently stops firing — which is exactly what
+	// the shipped workflows' drift warning tells the user to run `logmind
+	// init --refresh` to repair. A version-ordered refresh cannot repair
+	// it, because no version moved.
+	//
+	// It does NOT widen ownership: a file with no `# logmind-template-version:`
+	// marker is the user's and is still never touched (SPEC §5.2), and a
+	// marker NEWER than the bundled one is still declined rather than
+	// downgraded (#286).
+	workflowForceRender
+)
+
+// installWorkflowTemplates is the boolean-shaped entry point kept for the
+// two existing callers (fresh init, applyRefresh). See
+// installWorkflowTemplatesMode for the real thing.
+func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string, []templateDowngrade, error) {
+	mode := workflowCreateOnly
+	if refresh {
+		mode = workflowRefreshStale
+	}
+	return installWorkflowTemplatesMode(repoRoot, mode)
+}
+
+// installWorkflowTemplatesMode copies
+// internal/templates/github/*.yml.template into .github/workflows/,
+// treating existing files according to mode (see workflowInstallMode).
 //
 // Returns (created, refreshed, declined, err). Each list is a slice of
 // relative paths from cwd; declined additionally names both markers.
-func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string, []templateDowngrade, error) {
+func installWorkflowTemplatesMode(repoRoot string, mode workflowInstallMode) ([]string, []string, []templateDowngrade, error) {
 	workflowsDir := filepath.Join(repoRoot, ".github", "workflows")
 	if err := os.MkdirAll(workflowsDir, 0o755); err != nil {
 		return nil, nil, nil, err
@@ -457,12 +520,21 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if !refresh {
+		if mode == workflowCreateOnly {
 			continue
 		}
 		installedVer := extractTemplateVersion(string(existing))
 		bundledVer := extractTemplateVersion(body)
-		if installedVer != "" && bundledVer != "" && installedVer != bundledVer {
+		if installedVer == "" || bundledVer == "" {
+			// OWNERSHIP, and it binds every mode including the forced one
+			// (SPEC §5.2): the `# logmind-template-version:` marker is the
+			// only thing that makes a file in .github/workflows/ logmind's to
+			// rewrite. A file that has none — the user stripped it, or wrote
+			// their own workflow under a name we happen to ship — belongs to
+			// them. `--refresh` is a bigger hammer, not a wider claim.
+			continue
+		}
+		if installedVer != bundledVer {
 			// ORDER, not inequality (#286). A released binary bundles OLDER
 			// markers than dev (`brew install logmind` → v1.2.0 → v4 while
 			// dev is on v11), so an inequality test makes every refresh run
@@ -489,8 +561,23 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 			refreshed = append(refreshed, relativePath(repoRoot, target))
 			continue
 		}
-		// Body marker matches the bundled template — leave the installed
-		// file untouched (no pip-install pin to reconcile anymore).
+		// Markers match. A version-ordered refresh stops here — there is no
+		// generation to move the file to. `--refresh` does not, because the
+		// scaffold-time render (the `on: push:` branch filter) can be stale
+		// at the current version and nothing else can repair it.
+		if mode != workflowForceRender {
+			continue
+		}
+		if string(existing) == body {
+			// Already exactly what this binary would write. Re-writing it
+			// would report "↻ Refreshed" for a file nothing changed about,
+			// which trains the reader to ignore the line.
+			continue
+		}
+		if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+			return nil, nil, nil, err
+		}
+		refreshed = append(refreshed, relativePath(repoRoot, target))
 	}
 	return created, refreshed, declined, nil
 }
@@ -516,8 +603,11 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 // removes), and broadening the filter to `branches: ['**']` would put a
 // SECOND `check-derived-docs` check run on every pull-request head SHA —
 // one skipped by its own `if:`, and a conditionally-skipped job reports
-// SUCCESS to required status checks, which would turn a PR-blocking gate
-// into one that passes without evaluating anything.
+// SUCCESS rather than skipped. Whether that is a bypassed gate or merely a
+// misleading green is the repo owner's configuration, not this function's:
+// `check-derived-docs` blocks by failing the run, and only a repo that has
+// added it to a ruleset's required status checks (logmind's own `main`
+// ruleset has not) turns that green into a merge.
 //
 // Everything the workflow does at RUNTIME still reads the live
 // `github.event.repository.default_branch`, so a stale value here can only

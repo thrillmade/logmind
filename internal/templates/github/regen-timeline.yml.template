@@ -27,10 +27,18 @@ name: logmind / check-derived-docs
 # configured, else a PAT if one is, else the workflow's own GITHUB_TOKEN,
 # which always exists. The App rung is an OPTIMIZATION, never a dependency:
 # logmind must work in a repo with no App, no PAT, and no organization
-# behind it. What v11 established survives unchanged — no credential at all
-# still degrades (warning + exit 0), a push that was attempted and refused
-# still fails the job (::error + exit 1) — the chain only changes which
-# credential is tried, never how the outcomes are reported.
+# behind it. A push that was attempted and refused still fails the job
+# (::error + exit 1), exactly as v11 established.
+#
+# What v11's OTHER outcome — "no credential: warn and exit 0" — means does
+# change, and the change is the point rather than a side effect. v11 reached
+# it whenever no PAT was configured, which was most repos; adding rung 3
+# means "configured nothing" now ATTEMPTS the push, so on GitHub-hosted
+# Actions, where `github.token` is always populated, the warn-and-exit-0
+# branch is UNREACHABLE. It is kept, not preserved-in-name: a runner that
+# injects no token at all (`act`, a self-hosted harness) still lands there,
+# and it is what stops `set -u` from aborting on an unbound $TOKEN with a
+# message that names nothing. The branch is documented at its own site.
 #
 # v12 also stops assuming the default branch is called `main`. It was
 # hardcoded in four operative places — the push refspec (`HEAD:main`), the
@@ -56,11 +64,18 @@ on:
     # name written in.
     #
     # Broadening this to `branches: ['**']` and gating the job instead is
-    # NOT an option here: this file also carries `check-derived-docs`, a
-    # PR-blocking required check, and a job skipped by its own `if:`
-    # reports SUCCESS to required status checks. Every push to a PR branch
-    # would then add a second `check-derived-docs` run on the same head SHA
-    # that passed without evaluating anything.
+    # NOT an option here: this file also carries `check-derived-docs`, and a
+    # job skipped by its own `if:` reports SUCCESS rather than skipped. Every
+    # push to a PR branch would then add a second `check-derived-docs` run on
+    # the same head SHA that passed without evaluating anything — and where
+    # the check has been made a required status check, that green run is what
+    # the branch rule reads.
+    #
+    # Required is the repo owner's call, not this file's: logmind's own
+    # `main` ruleset configures no required status checks at all, so here
+    # `check-derived-docs` blocks by failing the run and by nothing else.
+    # A misleading green is the cost in this repo and a bypassed gate is the
+    # cost in one that made it required; neither is acceptable.
     #
     # If the default branch is renamed later, this line goes stale and the
     # regen simply stops firing — so the PR gate below compares it against
@@ -190,6 +205,15 @@ jobs:
             TOKEN="$DEFAULT_TOKEN"
             RUNG="the workflow's own GITHUB_TOKEN"
           else
+            # UNREACHABLE on GitHub-hosted Actions: `github.token` is
+            # populated for every workflow run, so rung 3 above always fires
+            # and nothing reaches this. Kept anyway, for two reasons that are
+            # not "it might come back": a runner that injects no token (`act`,
+            # a self-hosted harness) does land here, and without it the
+            # `set -u` in effect would abort on the unbound $TOKEN below with
+            # a message naming neither the job nor the cause. Do NOT read this
+            # branch as v11's live "no credential" degradation — since rung 3
+            # exists, "configured nothing" attempts the push instead.
             echo "::warning title=Derived docs stale on the default branch::No credential of any kind is available to push the regen — no GitHub App token, no LOGMIND_AUTO_REGEN_PAT, and not even the workflow's own GITHUB_TOKEN. This will keep failing on every run until one is configured — it will NOT self-heal on the next merge. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
             exit 0
           fi
@@ -205,8 +229,10 @@ jobs:
           # SPEC-2 §3.3: "Three outcomes, and they MUST NOT look alike."
           # Nothing-to-push exits 0 quietly. No credential at all (above)
           # degrades — a warning and a successful exit, because a merge that
-          # was otherwise fine should not fail over it. A push that was
-          # attempted and refused is different: "a refused write is the job
+          # was otherwise fine should not fail over it — though on a
+          # GitHub-hosted runner rung 3 makes that outcome unreachable, so
+          # the two outcomes actually observable here are this one and the
+          # next. A push that was attempted and refused is different: "a refused write is the job
           # not doing its job", so unlike the no-credential case this one
           # MUST fail the job, loudly. If your default branch is protected by
           # a "changes must be made through a pull request" rule, a plain

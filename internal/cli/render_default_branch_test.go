@@ -9,6 +9,7 @@ import (
 
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/templates"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // gitIn runs a git command in dir. Local to this file so it does not
@@ -104,9 +105,23 @@ func TestRenderedWorkflow_TriggersOnTheRepositorysOwnBranch(t *testing.T) {
 	trunkRepo := t.TempDir()
 	seedRepo(t, trunkRepo, "trunk")
 
+	// A `master` repo carrying a stray local `main`. This is the case the
+	// old `branches: [main, master]` literal covered by accident and a
+	// single rendered name does not: the resolver has to pick the right one,
+	// and a fixed main-before-master preference picked `main` here, wiring
+	// the trigger to a branch nothing is ever pushed to. Rendering one name
+	// is only better than guessing two if the one rendered is correct, so
+	// the end-to-end render is pinned on exactly that repo shape.
+	masterRepo := t.TempDir()
+	seedRepo(t, masterRepo, "master")
+	if out, err := gitIn(masterRepo, "branch", "main"); err != nil {
+		t.Fatalf("create the stray local main: %v\n%s", err, out)
+	}
+
 	for _, tc := range []struct{ label, dir, want string }{
 		{"default branch is main", mainRepo, "main"},
 		{"default branch is trunk", trunkRepo, "trunk"},
+		{"default branch is master, with a stray local main", masterRepo, "master"},
 	} {
 		got := gitcli.DefaultBranch(tc.dir)
 		if got != tc.want {
@@ -143,7 +158,11 @@ func seedRepo(t *testing.T, dir, branch string) {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
-	run("init", ".")
+	// Through testgit, never bare `git init`: a repo missing gc.auto=0 +
+	// maintenance.auto=false lets `git commit` spawn a detached
+	// `git maintenance` that is still writing into .git/objects when
+	// t.TempDir()'s cleanup runs (#271).
+	testgit.InitRepo(t, dir, "-q")
 	run("config", "user.email", "t@example.com")
 	run("config", "user.name", "t")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# t\n"), 0o644); err != nil {
