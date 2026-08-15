@@ -2,12 +2,10 @@
 //
 // SKILL.md / AGENTS.md / internal/templates/logmind-section.md document
 // `logmind search "keyword"` with `--case-sensitive` and `--no-archive`.
-// This is the v2 implementation. SPEC §3.2 made every decision file
-// append-only and uncapped, so nothing rotates into docs/decisions-archive.md
-// any more and no NEW repo grows one; `--no-archive` is therefore a no-op —
-// see its flag registration below. An archive left behind by a pre-§3.2
-// binary is still SEARCHED: it holds real decisions, and "a decision written
-// is a decision kept" outranks the flag's original meaning.
+// This is the v2 implementation. Both flags do what they say: `--no-archive`
+// drops the legacy docs/decisions-archive.md from the scan, and the quiet
+// receipt's `archive=` reports whether an archive was ACTUALLY scanned, not
+// merely which way the flag was pointed.
 //
 // MATCHING IS LITERAL SUBSTRING, not regex. "Full-text search" means the
 // query is matched verbatim: `search "cost($)"` finds a line containing the
@@ -17,30 +15,25 @@
 // (metacharacters), both surprising for a keyword search. Case-insensitive by
 // default; --case-sensitive requires an exact-case match.
 //
-// SCOPE (deterministic source order, existence-checked, deduped by path):
+// SCOPE: every decision file that exists, discovered by decisions.ListSources
+// — docs/decisions.md and docs/decisions-archive.md where they exist, then
+// every docs/decisions-branches/*.md. `search` answers "was this decided
+// before?", and every one of those files holds decisions that were.
 //
-//  1. docs/decisions.md          — the pre-§3.2 main log. Still written where
-//     no branch NAME exists to name a file after (non-git, detached HEAD,
-//     unborn repo, branch_aware off — see resolveDecisionsPath in log.go),
-//     and read so an un-migrated repo's entries stay findable.
-//  2. docs/decisions-archive.md  — the retired rotation overflow. Nothing
-//     writes it; read so a repo that rotated under the old `max_recent: 20`
-//     default keeps its archived decisions findable.
-//  3. the DEFAULT branch's file (docs/decisions-branches/<default>.md),
-//     scanned whatever branch is checked out.
-//  4. the CURRENT branch's file from resolveDecisionsPath, IF it differs
-//     from #3.
+// It ENUMERATES rather than resolving a branch name, and that is load-bearing.
+// This function used to build the default branch's path out of
+// gitcli.DefaultBranch, whose fallback chain ends "single-branch repo → that
+// branch IS the default → 'main'": wherever origin/HEAD is unset — a
+// `git clone --single-branch`, an `actions/checkout` working copy, every
+// locally-created repo (`git init -b trunk` + `git remote add origin`) — the
+// resolved name collapsed onto the current branch or onto a non-existent
+// main.md, and the default branch's file was dropped from the scan while
+// sitting on disk. `show --all` and `timeline` never had that bug because
+// they enumerate. So `search` enumerates too, through the same primitive, and
+// the four read paths can no longer disagree about which files exist.
 //
-// #1 and #2 come from decisions.NonBranchSources(), the single owner of that
-// list. #3 exists because §3.2 made main a branch: without it, an agent on a
-// feature branch — which is where agents work — got zero hits for every
-// decision ever logged on the default branch. Sources collapse to one entry
-// wherever they resolve to the same path, so being on the default branch does
-// not double its hits.
-//
-// File SELECTION reuses resolveDecisionsPath (the same helper `logmind log`/
-// `headline`/`show` use). There is no existing decisions-package helper for
-// full-text grep-with-context — decisions.Iter only extracts header metadata
+// There is no existing decisions-package helper for full-text
+// grep-with-context — decisions.Iter only extracts header metadata
 // (date/title), not line-level content — so the line scan here is new.
 package cli
 
@@ -53,7 +46,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
 )
 
@@ -88,14 +80,17 @@ func newSearchCmd() *cobra.Command {
 		Short: "Full-text search across the decision log",
 		Long: `Full-text search across the decision log for a keyword or phrase.
 
-Searches, in order: docs/decisions.md (the pre-v2 main log, where one still
-exists), docs/decisions-archive.md (a legacy archive, where one still exists),
-the DEFAULT branch's decision file, and the current branch's decision file.
-The default branch's history is searched from every branch, so a decision
-logged on main stays findable from a feature branch.
+Searches EVERY decision file that exists, in this order: docs/decisions.md
+(the pre-v2 main log, where one still exists), docs/decisions-archive.md (a
+legacy archive, where one still exists), then every
+docs/decisions-branches/*.md sorted by filename. Files are enumerated, never
+resolved from a branch name, so a decision logged on any branch — the default
+branch included — stays findable from every other branch and in every clone
+shape.
 
-Decision files are append-only and uncapped, so nothing is archived any more
-and --no-archive does nothing.
+Pass --no-archive to leave the legacy docs/decisions-archive.md out of the
+scan. Decision files are append-only and uncapped as of v2.0.0, so nothing
+rotates into an archive any more and no new repo grows one.
 
 The query is matched as a LITERAL substring (not a regex): "cost($)" finds the
 literal text "cost($)". Matching is case-insensitive by default — pass
@@ -104,7 +99,7 @@ literal text "cost($)". Matching is case-insensitive by default — pass
 Examples:
     logmind search "postgres"
     logmind search "API" --case-sensitive
-    logmind search "database"`,
+    logmind search "database" --no-archive`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -116,14 +111,17 @@ Examples:
 	}
 	cmd.Flags().BoolVar(&f.caseSensitive, "case-sensitive", false,
 		"Require an exact-case match (default: case-insensitive).")
-	// --no-archive is accepted but ignored. SPEC §3.2 stopped rotation, so no
-	// repo grows a new docs/decisions-archive.md and there is nothing for the
-	// flag to exclude going forward; a LEGACY archive is searched regardless,
-	// because excluding real decisions from the "was this decided before?"
-	// surface is the loss this flag was never meant to cause. Kept registered
-	// so existing scripts and agent skills that still pass it don't error.
+	// --no-archive EXCLUDES docs/decisions-archive.md, as its name and as
+	// every shipped AGENTS.md (internal/templates/logmind-section.md's
+	// `logmind search "database" --no-archive` line) say it does. It was
+	// briefly a no-op on the theory that §3.2 retired rotation so there is
+	// nothing left to exclude — but a pre-§3.2 repo still HAS an archive, the
+	// flag is in instructions already sitting in consumers' repos, and a flag
+	// that silently ignores what it was asked is worse than one with a small
+	// well-defined effect. The archive is searched BY DEFAULT ("a decision
+	// written is a decision kept"); this is the opt-out.
 	cmd.Flags().BoolVar(&f.noArchive, "no-archive", false,
-		"No-op (kept for backward compatibility). Decision files are uncapped; a legacy archive is always searched.")
+		"Exclude the legacy docs/decisions-archive.md from the search (it is searched by default).")
 	return cmd
 }
 
@@ -142,7 +140,10 @@ func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.
 		return ErrSilent
 	}
 
-	files := searchSources(cwd, docsPath)
+	files, archiveScanned, err := searchSources(docsPath, f.noArchive)
+	if err != nil {
+		return err
+	}
 
 	var results []searchResult
 	for _, file := range files {
@@ -154,7 +155,10 @@ func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.
 	}
 
 	if quiet {
-		q.ok("search matches=%d sources=%d archive=%t case_sensitive=%t", len(results), len(files), !f.noArchive, f.caseSensitive)
+		// archive= reports whether an archive was actually scanned — not the
+		// flag's position. With no archive on disk it is false whichever way
+		// --no-archive points, which is the truth a caller needs.
+		q.ok("search matches=%d sources=%d archive=%t case_sensitive=%t", len(results), len(files), archiveScanned, f.caseSensitive)
 		return nil
 	}
 
@@ -174,54 +178,40 @@ func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.
 	return nil
 }
 
-// searchSources returns the deterministic, existence-checked, path-deduped
-// list of decision files `search` scans:
+// searchSources returns the decision files `search` scans, in
+// decisions.ListSources order, plus whether the legacy archive is among them.
 //
-//  1. every decisions.NonBranchSources() file — docs/decisions.md (the
-//     pre-§3.2 main log) then docs/decisions-archive.md (the retired
-//     rotation overflow)
-//  2. the DEFAULT branch's file (defaultBranchDecisionsPath) — unconditionally,
-//     not only while it is checked out
-//  3. the CURRENT branch's file (resolveDecisionsPath), if != #2
+// It does no discovery of its own: ListSources is the ONE primitive Collect,
+// the timeline, `show` and this command share, so a file that exists is a file
+// all four find. The only thing decided here is the --no-archive filter.
 //
-// #2 is the whole point of this function and must not be dropped back to "the
-// current branch only". §3.2 moved the default branch's decisions into
-// docs/decisions-branches/main.md, so scanning only the current branch made
-// `search` — the primary "was this decided before?" surface — return zero for
-// everything ever logged on main the moment an agent checked out a feature
-// branch, which is where agents work. The default branch is resolved, never
-// hardcoded to "main"; see defaultBranchDecisionsPath.
-//
-// Missing files are dropped silently — a repo with no legacy main log, no
-// archive, or a brand-new branch with no decisions file yet, still searches
-// whatever exists. Paths are deduped, so on the default branch #2 and #3
-// collapse to one source and hits are never doubled.
-func searchSources(cwd, docsPath string) []string {
-	cfg, _ := config.Load(cwd)
-	branchPath, _ := resolveDecisionsPath(cwd, docsPath, cfg)
-
-	var candidates []string
-	for _, src := range decisions.NonBranchSources() {
-		candidates = append(candidates, filepath.Join(docsPath, src.File))
+// It takes no branch name, no config and no repo — nothing about which files
+// hold decisions depends on which branch is checked out, and the previous
+// version's attempt to name the default branch's file is exactly what made
+// `search` return zero in every clone shape without origin/HEAD. Ordering or
+// labelling by default branch, if ever wanted, belongs after this returns.
+func searchSources(docsPath string, noArchive bool) (files []string, archiveScanned bool, err error) {
+	srcs, err := decisions.ListSources(docsPath)
+	if err != nil {
+		return nil, false, err
 	}
-	if defaultPath, ok := defaultBranchDecisionsPath(cwd, docsPath, cfg); ok {
-		candidates = append(candidates, defaultPath)
-	}
-	candidates = append(candidates, branchPath)
-
-	seen := make(map[string]bool, len(candidates))
-	var files []string
-	for _, p := range candidates {
-		if seen[p] {
-			continue
+	for _, s := range srcs {
+		if s.Label == archiveSourceLabel {
+			if noArchive {
+				continue
+			}
+			archiveScanned = true
 		}
-		seen[p] = true
-		if pathExists(p) {
-			files = append(files, p)
-		}
+		files = append(files, s.Path)
 	}
-	return files
+	return files, archiveScanned, nil
 }
+
+// archiveSourceLabel is the §3.2 source-grammar token
+// decisions.NonBranchSources() stamps on docs/decisions-archive.md. Named here
+// so --no-archive filters on the OWNER's label rather than re-deriving the
+// filename.
+const archiveSourceLabel = "archive"
 
 // lineMatches reports whether query occurs as a literal substring of line,
 // honoring case sensitivity. This is the single source of truth for match

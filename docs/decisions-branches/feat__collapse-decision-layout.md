@@ -48,3 +48,14 @@
 
 ---
 
+## 2026-08-15 15:21 - decisions: one primitive enumerates every source, so the four read paths cannot disagree again
+
+**Reasoning:** Search was the only read path that guessed a branch name instead of enumerating what exists, and the guess collapsed wherever origin/HEAD is unset: a single-branch clone, the shape actions/checkout produces, and any locally created repository. Measured before and after in four clone shapes, each with an in-repo control term that hit in both runs: three of the four returned nothing for a decision logged on the default branch and now return it. A second finding from another lane makes the guess worse than it looked, since init.defaultBranch equal to main ships inside Apple's command line tools gitconfig and a system-scope check misses it, so the resolver's last fallback is unreachable on a macOS machine and a test written against it passes for the wrong reason.
+
+**Alternatives considered:** Harden the branch-name resolver so its answer can be trusted. Rejected: the other three read paths never needed a name, because listing the files that exist answers the question directly, and every additional fallback step is another way for the answer to be confidently wrong. Discovery now consults no resolver at all, which is why the gitconfig finding needed no work rather than a workaround.
+
+**Implications:**
+- The timeline archive gains a merge driver registration and stops being derived from the docs directory rather than from the write path, which had it reverting a tracked file while merging a scratch one. A half flag exists because the driver is handed a scratch file at the worktree root, where writing the pair would drop a stray. The no-archive flag keeps its meaning rather than becoming inert, because it already ships in consumers' instructions and cobra errors on an unknown flag, so removing it would break repositories we do not control; the archive stays searched by default and the receipt now reports whether one was actually scanned rather than echoing the flag. Ten mutations, all compiled, all died.
+
+---
+

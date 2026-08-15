@@ -119,25 +119,35 @@ func TestShow_NoDecisionsYetOnBranch(t *testing.T) {
 // holds real decisions, and `--all` must stream it under its banner. A repo
 // that never rotated has no archive, and its absence is not reported as a
 // missing thing.
+//
+// The `ok show:` trailer is asserted in BOTH directions, restoring the
+// assertion the collapse PR dropped: a body that streams the archive while the
+// receipt says nothing extra was read is exactly the half-fix this catches.
+// The wording moved from "+ archive"/"(no archive)" to the count form the
+// v2 trailer uses, which pins strictly more (the count, not just the word).
 func TestShow_All_StreamsALegacyArchive(t *testing.T) {
-	for _, writeArchive := range []bool{true, false} {
-		name := "legacy archive present"
-		if !writeArchive {
-			name = "no archive file"
-		}
-		t.Run(name, func(t *testing.T) {
+	cases := []struct {
+		name         string
+		writeArchive bool
+		wantOkSuffix string
+	}{
+		{name: "legacy archive present", writeArchive: true, wantOkSuffix: "+ 1 legacy file(s)"},
+		{name: "no archive file", writeArchive: false, wantOkSuffix: "(no other branch files)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			withTempCwd(t, func(d string) {
 				mustMkdir(t, filepath.Join(d, "docs"))
 				mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
 					"## 2026-06-01 10:00 - Main decision\n")
-				if writeArchive {
+				if tc.writeArchive {
 					mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 						"## 2025-01-01 09:00 - Archived decision\n")
 				}
 
 				body := runShowCmd(t, "--all")
 				mustContain(t, body, "Main decision")
-				if writeArchive {
+				if tc.writeArchive {
 					mustContain(t, body, "ARCHIVED DECISIONS")
 					mustContain(t, body, "Archived decision")
 				} else {
@@ -148,9 +158,69 @@ func TestShow_All_StreamsALegacyArchive(t *testing.T) {
 						t.Errorf("--all invented archived content:\n%s", body)
 					}
 				}
+				mustContain(t, body, tc.wantOkSuffix)
 			})
 		})
 	}
+}
+
+// TestShow_Bare_ReachesALegacyMainLog is the HIGH 4 regression.
+//
+// A repo that upgraded across §3.2 has its main-branch history in
+// docs/decisions.md and no docs/decisions-branches/main.md yet. Bare `logmind
+// show` — the command the docs put first, and the one a reader least likely to
+// know a second command exists will run — answered
+// "No decisions logged yet on this branch." over a file full of them, while
+// `search` and `show --all` found them.
+//
+// Asserted on the rendered output of the real command in a real git repo on
+// the default branch.
+func TestShow_Bare_ReachesALegacyMainLog(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// The pre-§3.2 shape: a main log at docs/decisions.md, and no
+		// docs/decisions-branches/main.md — that file only appears once a
+		// post-§3.2 binary logs on the default branch.
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"# Decisions\n\n## 2024-03-04 08:00 - Chose Postgres over MySQL\n\n**Reasoning:** pre-upgrade-rationale\n\n---\n")
+		mainFile := filepath.Join(d, "docs", "decisions-branches", "main.md")
+		if err := os.Remove(mainFile); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove %s: %v", mainFile, err)
+		}
+		if pathExists(mainFile) {
+			t.Fatal("fixture precondition: this repo must have no main.md, so bare show has nothing else to find")
+		}
+
+		body := runShowCmd(t)
+		mustContain(t, body, "Chose Postgres over MySQL")
+		mustContain(t, body, "pre-upgrade-rationale")
+		mustContain(t, body, "LEGACY MAIN LOG")
+		// The receipt must not claim the branch file was all there was.
+		mustContain(t, body, "legacy file(s)")
+
+		// CONTROLS: the paths that already worked still do, in the same repo.
+		mustContain(t, runSearchCmd(t, "pre-upgrade-rationale"), "docs/decisions.md")
+		mustContain(t, runShowCmd(t, "--all"), "Chose Postgres over MySQL")
+	})
+}
+
+// TestShow_Bare_UnchangedWhereThereIsNoLegacyLog: the flip side. A repo
+// scaffolded by a current `logmind init` has no docs/decisions.md and no
+// archive, so bare `show` keeps its historical output exactly — friendly empty
+// message, bare "(N bytes)" trailer, no banners.
+func TestShow_Bare_UnchangedWhereThereIsNoLegacyLog(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		checkoutBranch(t, d, "feat/empty")
+
+		body := runShowCmd(t)
+		mustContain(t, body, "No decisions logged yet on this branch.")
+		mustNotContain(t, body, "LEGACY MAIN LOG")
+		mustNotContain(t, body, "legacy file(s)")
+		mustNotContain(t, body, "(no other branch files)")
+	})
 }
 
 // TestShow_Quiet_EmitsOneOkLine: --quiet suppresses the verbatim body —
@@ -273,8 +343,13 @@ func TestShow_Brief_TitleAndTimestampOnly(t *testing.T) {
 }
 
 // TestShow_Brief_All_GroupsBySource: under --all, --brief groups lines under
-// a "[source]" tag per source, in main → branch order, and the tag text
-// matches the --json "source" value exactly.
+// a "[source]" tag per source, in main → branch → archive order, and the tag
+// text matches the --json "source" value exactly.
+//
+// The full three-way ordering is asserted, restoring the `branchIdx <
+// archiveIdx` half the collapse PR dropped: the source ORDER is the contract
+// the raw stream, --brief and --json all share, and a change that reordered
+// the extras would otherwise ship silently.
 func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
@@ -297,9 +372,10 @@ func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 
 		mainIdx := strings.Index(body, "[main]")
 		branchIdx := strings.Index(body, "[branch:feat/other]")
-		if !(mainIdx >= 0 && mainIdx < branchIdx) {
-			t.Errorf("want [main] < [branch:feat/other] ordering, got indices %d, %d:\n%s",
-				mainIdx, branchIdx, body)
+		archiveIdx := strings.Index(body, "[archive]")
+		if !(mainIdx >= 0 && mainIdx < branchIdx && branchIdx < archiveIdx) {
+			t.Errorf("want [main] < [branch:feat/other] < [archive] ordering, got indices %d, %d, %d:\n%s",
+				mainIdx, branchIdx, archiveIdx, body)
 		}
 	})
 }

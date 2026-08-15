@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -301,17 +300,22 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 	}
 	var items []marked
 
-	// (1) Branch detail pages: use their entry-block markers when present;
-	// otherwise (markerless legacy file) synthesize one row from the first
-	// decision header so existing repos render with zero file edits.
-	branchesDir := filepath.Join(docsPath, "decisions-branches")
-	branchFiles, err := decisions.ListBranchFiles(branchesDir)
+	// One enumeration, shared with every other read path — see
+	// decisions.ListSources. Both passes below range over THIS slice; neither
+	// discovers files of its own.
+	srcs, err := decisions.ListSources(docsPath)
 	if err != nil {
 		return nil, err
 	}
-	for _, bf := range branchFiles {
-		base := filepath.Base(bf)
-		rel := "decisions-branches/" + base
+
+	// (1) Branch detail pages: use their entry-block markers when present;
+	// otherwise (markerless legacy file) synthesize one row from the first
+	// decision header so existing repos render with zero file edits.
+	for _, src := range srcs {
+		if !src.IsBranch {
+			continue
+		}
+		bf, rel := src.Path, src.Rel
 		data, err := os.ReadFile(bf)
 		if err != nil {
 			return nil, err
@@ -363,14 +367,17 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 	// that upgrades the binary before migrating its pre-§3.2 history does not
 	// silently lose it from the timeline. One synthesized row per decision
 	// header — neither source ever carried entry-block markers.
-	for _, src := range decisions.NonBranchSources() {
-		entries, err := decisions.Iter(filepath.Join(docsPath, src.File), stderr)
+	for _, src := range srcs {
+		if src.IsBranch {
+			continue
+		}
+		entries, err := decisions.Iter(src.Path, stderr)
 		if err != nil {
 			return nil, err
 		}
 		for _, e := range entries {
 			d := dateOnly(e.Date)
-			items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: src.File})
+			items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: src.Rel})
 		}
 	}
 

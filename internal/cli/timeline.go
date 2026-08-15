@@ -28,6 +28,7 @@ func newTimelineCmd() *cobra.Command {
 	var writePath string
 	var check bool
 	var full bool
+	var half string
 	cmd := &cobra.Command{
 		Use:   "timeline",
 		Short: "Print or regenerate the high-level decision timeline",
@@ -37,30 +38,40 @@ Reads every docs/decisions-branches/*.md as sources; renders a chronological
 timeline grouped by year-month. Sources are never modified.
 
 --write renders BOTH halves of the SPEC §3.3 split from one read of those
-sources: the 50 most recent entries to the given PATH, and everything older
-to docs/timeline-archive.md. Neither file is ever read to decide what the
-other holds, so the two are a split in a rendering, not a move.
+sources: the 50 most recent entries to the given PATH, and everything older to
+timeline-archive.md NEXT TO IT. Neither file is ever read to decide what the
+other holds, so the two are a split in a rendering, not a move — and the pair
+always lands together, in one directory, the one you named.
+
+--half writes exactly ONE of them to PATH and touches nothing else. That is
+what the merge drivers use, where PATH is git's scratch file for a single
+conflicted path and a sibling write would leave a stray behind.
 
 Examples:
     logmind timeline                              # to stdout
     logmind timeline --write docs/timeline.md     # on disk (+ the archive)
-    logmind timeline --write docs/timeline.md --check  # CI gate`,
+    logmind timeline --write docs/timeline.md --check  # CI gate
+    logmind timeline --write %A --half archive    # merge driver, archive only`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			return runTimeline(cwd, writePath, check, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runTimeline(cwd, writePath, half, check, quietEnabled(cmd), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&writePath, "write", "",
 		"Write the rendered timeline to PATH (typically docs/timeline.md), and "+
-			"the entries older than the 50 most recent to docs/timeline-archive.md. "+
-			"Without this flag, prints to stdout.")
+			"the entries older than the 50 most recent to timeline-archive.md in "+
+			"the same directory. Without this flag, prints to stdout.")
+	cmd.Flags().StringVar(&half, "half", "",
+		"Restrict --write/--check to ONE half of the SPEC §3.3 split: "+
+			"\"recent\" (the file at PATH) or \"archive\" (everything older). "+
+			"Default: both, as a pair.")
 	cmd.Flags().BoolVar(&check, "check", false,
-		"Exit nonzero if the file at --write or docs/timeline-archive.md is "+
-			"stale (would differ from a fresh render), without writing either.")
+		"Exit nonzero if the file at --write or its sibling timeline-archive.md "+
+			"is stale (would differ from a fresh render), without writing either.")
 	// --full is accepted but ignored as of v2.0.0: the timeline is now a
 	// single format (the main-canonical entry-block union), so there is no
 	// brief/full distinction to select. Kept registered so existing scripts,
@@ -70,8 +81,39 @@ Examples:
 	return cmd
 }
 
-func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Writer) error {
+// Timeline halves — the two renderings of the SPEC §3.3 split. `--half`
+// selects one; the empty value means both, as a pair, which is what every
+// human and CI caller wants.
+const (
+	halfBoth    = ""
+	halfRecent  = "recent"
+	halfArchive = "archive"
+)
+
+// archiveSiblingPath is where the older half of the §3.3 split goes when
+// --write names the recent half: timeline-archive.md in the SAME directory.
+//
+// It follows --write rather than being pinned to <cwd>/docs, and that is the
+// whole point. Pinned, `logmind timeline --write /somewhere/else.md` rendered
+// the file it was asked for AND silently rewrote the repo's tracked
+// docs/timeline-archive.md on the way past — a side-channel write no caller
+// asked for and none could see coming. It fired on every merge-driver run,
+// which invokes `--write <git scratch file>`: the driver reported
+// "✓ Regenerated .../docs/timeline-archive.md" while merging a temp file.
+// A command writes where it is told, and its derived sibling lands next to
+// what it wrote.
+func archiveSiblingPath(writePath string) string {
+	return filepath.Join(filepath.Dir(writePath), "timeline-archive.md")
+}
+
+func runTimeline(cwd, writePath, half string, check, quiet bool, stdout, stderr io.Writer) error {
 	q := newQout(quiet, stdout, stderr)
+	switch half {
+	case halfBoth, halfRecent, halfArchive:
+	default:
+		q.fail("Error: --half must be %q or %q (omit it for both).\n", halfRecent, halfArchive)
+		return ErrSilent
+	}
 	docsPath := filepath.Join(cwd, "docs")
 	if !pathExists(docsPath) {
 		// Python: click.secho fg=red + sys.exit(1). secho defaults to
@@ -85,12 +127,23 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 	// receipt token so the `ok timeline …` trailer keeps its shape.
 	const mode = "canonical"
 
-	// The archive half of the §3.3 split is a fixed, spec-named path under
-	// docs/ — not a second output the caller chooses. That is what makes
-	// "both regenerate together" structural rather than a convention every
-	// call site has to remember: there is no way to ask for one without the
-	// other, so neither can go stale while the other is refreshed.
-	archivePath := filepath.Join(docsPath, "timeline-archive.md")
+	// Where each half of the §3.3 split lands. Without --half, --write
+	// produces the PAIR — the recent half at the path the caller named, the
+	// archive half beside it — and there is no way to ask for one without the
+	// other, so neither can go stale while the other is refreshed. "Both
+	// regenerate together" is structural, not a convention every call site has
+	// to remember. --half is the one deliberate exception: it collapses the
+	// pair onto the single file --write named and writes no sibling at all,
+	// which is what a merge driver needs when PATH is git's scratch file for
+	// one conflicted path. An empty target means "this half is not this
+	// invocation's business".
+	recentTarget, archiveTarget := writePath, archiveSiblingPath(writePath)
+	switch half {
+	case halfRecent:
+		archiveTarget = ""
+	case halfArchive:
+		recentTarget, archiveTarget = "", writePath
+	}
 
 	if check {
 		if writePath == "" {
@@ -104,15 +157,19 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 		if err != nil {
 			return err
 		}
-		existing, _ := os.ReadFile(writePath)
-		if string(existing) != rendered {
-			q.fail("✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", writePath, writePath)
-			return ErrSilent
+		if recentTarget != "" {
+			existing, _ := os.ReadFile(recentTarget)
+			if string(existing) != rendered {
+				q.fail("✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", recentTarget, writePath)
+				return ErrSilent
+			}
 		}
-		existingArchive, _ := os.ReadFile(archivePath)
-		if string(existingArchive) != renderedArchive {
-			q.fail("✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", archivePath, writePath)
-			return ErrSilent
+		if archiveTarget != "" {
+			existingArchive, _ := os.ReadFile(archiveTarget)
+			if string(existingArchive) != renderedArchive {
+				q.fail("✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", archiveTarget, writePath)
+				return ErrSilent
+			}
 		}
 		q.chat("✓ %s is up to date\n", writePath)
 		if quiet {
@@ -153,29 +210,32 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	existing, _ := os.ReadFile(writePath)
-	changed := string(existing) != rendered
-	if changed {
-		if err := writeAtomic(writePath, rendered); err != nil {
-			return err
-		}
-		q.chat("✓ Regenerated %s\n", writePath)
-	} else {
-		q.chat("  %s already up to date\n", writePath)
-	}
-	// Written unconditionally alongside the recent half, including when the
-	// archive body is empty: the recent half links to it, so the file has to
-	// exist for that link to resolve (and for the restore paths and the
+	changed := false
+	// Each half is written unconditionally where it is in play, including when
+	// the archive body is empty: the recent half links to it, so the file has
+	// to exist for that link to resolve (and for the restore paths and the
 	// check-derived-docs gate to have something to pin).
-	existingArchive, _ := os.ReadFile(archivePath)
-	if string(existingArchive) != renderedArchive {
-		if err := writeAtomic(archivePath, renderedArchive); err != nil {
+	writeHalf := func(target, body string) error {
+		if target == "" {
+			return nil
+		}
+		existing, _ := os.ReadFile(target)
+		if string(existing) == body {
+			q.chat("  %s already up to date\n", target)
+			return nil
+		}
+		if err := writeAtomic(target, body); err != nil {
 			return err
 		}
 		changed = true
-		q.chat("✓ Regenerated %s\n", archivePath)
-	} else {
-		q.chat("  %s already up to date\n", archivePath)
+		q.chat("✓ Regenerated %s\n", target)
+		return nil
+	}
+	if err := writeHalf(recentTarget, rendered); err != nil {
+		return err
+	}
+	if err := writeHalf(archiveTarget, renderedArchive); err != nil {
+		return err
 	}
 	st, err := os.Stat(writePath)
 	if err != nil {

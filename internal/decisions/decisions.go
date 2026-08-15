@@ -78,6 +78,78 @@ func NonBranchSources() []NonBranchSource {
 	}
 }
 
+// Source is one decision file that exists on disk right now, as discovered by
+// ListSources.
+//
+//   - Path is absolute (join of docsPath and Rel), the value a reader opens.
+//   - Rel is the docs-relative, forward-slash path readers quote in output
+//     ("decisions.md", "decisions-branches/feat__x.md").
+//   - Label is the SPEC §3.2 source-grammar token for the file: "main" or
+//     "archive" for a non-branch source, the un-sanitized branch name for a
+//     branch file. `show` prefixes branch labels with "branch:" for its own
+//     NORMATIVE --json grammar; the raw name is kept here so every caller can
+//     render it its own way.
+//   - IsBranch distinguishes docs/decisions-branches/*.md from the two files
+//     that are named after no branch, which is the only distinction the read
+//     paths actually make.
+type Source struct {
+	Path     string
+	Rel      string
+	Label    string
+	IsBranch bool
+}
+
+// ListSources is THE source-discovery primitive. Every read path — Collect,
+// the timeline's collectMarked, `logmind search`, `logmind show` — finds its
+// decision files here and nowhere else.
+//
+// It ENUMERATES: the NonBranchSources() files that exist, then every
+// docs/decisions-branches/*.md ListBranchFiles reports, sorted by filename.
+// Nothing is resolved, guessed, or named in advance.
+//
+// That is the whole point, and it is a regression fence. `search` used to
+// discover the default branch's file by RESOLVING a branch name
+// (gitcli.DefaultBranch) and joining it into a path. That resolver's fallback
+// chain ends "…→ single-branch repo → that branch IS the default → 'main'", so
+// wherever origin/HEAD is unset — a `git clone --single-branch`, an
+// `actions/checkout` working copy, and EVERY locally-created repo (`git init -b
+// trunk` + `git remote add origin`) — the resolved name collapsed onto the
+// current branch or onto a "main" that does not exist, and the default
+// branch's decision file was silently dropped from the search even though it
+// was sitting on disk. `show --all` and `timeline` never had the bug, because
+// they enumerate. Enumeration cannot miss a file that exists; name resolution
+// can, and did.
+//
+// A caller that still wants a default-branch-aware ORDER or LABEL resolves
+// that AFTER this returns — never as a precondition for finding the file.
+//
+// Missing files are dropped silently: a repo with no legacy main log, no
+// archive, or no branches directory at all still reads whatever exists.
+func ListSources(docsPath string) ([]Source, error) {
+	var out []Source
+	for _, src := range NonBranchSources() {
+		p := filepath.Join(docsPath, src.File)
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		out = append(out, Source{Path: p, Rel: src.File, Label: src.Label})
+	}
+	branchFiles, err := ListBranchFiles(filepath.Join(docsPath, "decisions-branches"))
+	if err != nil {
+		return nil, err
+	}
+	for _, bf := range branchFiles {
+		base := filepath.Base(bf)
+		out = append(out, Source{
+			Path:     bf,
+			Rel:      "decisions-branches/" + base,
+			Label:    BranchLabelFromFilename(base),
+			IsBranch: true,
+		})
+	}
+	return out, nil
+}
+
 // decisionHeader mirrors Python's DECISION_HEADER regex
 // (core/parser.py:9). Captures:
 //
@@ -229,7 +301,7 @@ func SplitRawBytes(content string) (preamble string, entries []RawEntry) {
 	return preamble, entries
 }
 
-// branchLabelFromFilename reverses logger._sanitize_branch's escaping.
+// BranchLabelFromFilename reverses logger._sanitize_branch's escaping.
 //
 // Mirror of Python core/timeline.py _branch_label_from_filename:
 //   - strip ".md" suffix
@@ -237,7 +309,10 @@ func SplitRawBytes(content string) (preamble string, entries []RawEntry) {
 //
 // Imperfect (the original sanitize step also catches `\` and `:`) but
 // covers the 99% case of feat__auth → feat/auth.
-func branchLabelFromFilename(name string) string {
+//
+// Exported because ListSources stamps it onto every branch Source, so the
+// read paths share one filename→label reversal instead of each keeping a copy.
+func BranchLabelFromFilename(name string) string {
 	stem := strings.TrimSuffix(name, ".md")
 	return strings.ReplaceAll(stem, "__", "/")
 }
@@ -251,8 +326,9 @@ func branchLabelFromFilename(name string) string {
 //	docs/decisions-archive.md            → source_label="archive"
 //	docs/decisions-branches/<branch>.md  → source_label="<branch>"
 //
-// The first two come from NonBranchSources() — see it for why each is still
-// read and which of them is still written.
+// Discovery is ListSources's job, not this function's — see it for why every
+// read path enumerates instead of resolving a branch name, and NonBranchSources()
+// for why each of the first two is still read and which is still written.
 //
 // Missing files are tolerated; callers get whatever exists.
 func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
@@ -261,34 +337,18 @@ func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
 	}
 	var out []Entry
 
-	for _, src := range NonBranchSources() {
-		entries, err := Iter(filepath.Join(docsPath, src.File), stderr)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range entries {
-			e.SourcePath = src.File
-			e.SourceLabel = src.Label
-			out = append(out, e)
-		}
-	}
-
-	branchesDir := filepath.Join(docsPath, "decisions-branches")
-	branchFiles, err := ListBranchFiles(branchesDir)
+	srcs, err := ListSources(docsPath)
 	if err != nil {
 		return nil, err
 	}
-	for _, bf := range branchFiles {
-		base := filepath.Base(bf)
-		entries, err := Iter(bf, stderr)
+	for _, src := range srcs {
+		entries, err := Iter(src.Path, stderr)
 		if err != nil {
 			return nil, err
 		}
-		label := branchLabelFromFilename(base)
-		rel := "decisions-branches/" + base
 		for _, e := range entries {
-			e.SourcePath = rel
-			e.SourceLabel = label
+			e.SourcePath = src.Rel
+			e.SourceLabel = src.Label
 			out = append(out, e)
 		}
 	}

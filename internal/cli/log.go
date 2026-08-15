@@ -564,43 +564,19 @@ func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target strin
 	return branchFile, true
 }
 
-// defaultBranchDecisionsPath returns the decision file belonging to the repo's
-// DEFAULT branch, whatever branch is checked out right now, and whether one
-// could be resolved at all.
+// DELIBERATELY ABSENT: a defaultBranchDecisionsPath helper.
 //
-// §3.2 made main a branch like any other, which moved its decisions from
-// docs/decisions.md into docs/decisions-branches/main.md. A read path that
-// only ever opens resolveDecisionsPath's answer therefore sees the default
-// branch's history ONLY while the default branch happens to be checked out —
-// and agents work on feature branches, so "was this decided before?" silently
-// answered no for everything ever logged on main. Any read path that wants
-// the repo's accumulated history, not just the working branch's, resolves it
-// here.
+// A read path that wants the repo's accumulated history — not just the
+// working branch's — must ENUMERATE the decision files
+// (decisions.ListSources), never build one out of a resolved branch name.
+// `search` did the latter, and gitcli.DefaultBranch's fallback chain ends
+// "single-branch repo → that branch IS the default → 'main'": wherever
+// origin/HEAD is unset (a `git clone --single-branch`, an `actions/checkout`
+// working copy, every locally-created repo), the name collapsed onto the
+// current branch or onto a main.md that does not exist, and the default
+// branch's file was dropped from the read while sitting on disk. Enumeration
+// cannot miss a file that exists. See decisions.ListSources.
 //
-// The default branch is resolved by gitcli.DefaultBranch (origin/HEAD →
-// local main/master → single-branch repo → init.defaultBranch → "main"), NOT
-// by hardcoding "main": a repo whose default is `master`, `trunk`, or
-// anything else must find its own history, and DefaultBranch is already the
-// resolver `rebase`, `warp`, `pulse`, and onNonDefaultBranch share.
-//
-// ok=false where the branch-file layout does not apply — branch_aware off, or
-// not a git repo — because in those states there is no default-branch file to
-// name; the caller falls back to the non-branch sources.
-func defaultBranchDecisionsPath(cwd, docsPath string, cfg config.Config) (path string, ok bool) {
-	if !cfg.Decisions.BranchAware {
-		return "", false
-	}
-	if !gitcli.IsRepo(cwd) {
-		return "", false
-	}
-	def := gitcli.DefaultBranch(cwd)
-	if def == "" {
-		return "", false
-	}
-	return filepath.Join(docsPath, "decisions-branches",
-		sanitizeBranchName(def)+".md"), true
-}
-
 // sanitizeBranchName mirrors Python's logger._sanitize_branch:
 // `/` → `__`, `\` → `__`, `:` → `_`. Everything else passes through
 // (most VCS-legal branch names use those three plus dashes and dots,

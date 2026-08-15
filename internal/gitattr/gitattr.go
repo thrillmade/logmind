@@ -51,8 +51,22 @@ const BlockEnd = "# <<< logmind <<<"
 // default. Each line is `<path-pattern> merge=<driver-name>` and must
 // match the column alignment used in the Python source — agents and
 // doctor compare bytes, not parsed structure.
+//
+// EVERY derived doc belongs here. The list must stay in step with
+// internal/cli/derived.go's derivedDocPaths: a purely-derived file with no
+// driver conflicts on an ordinary parallel merge and hands the user conflict
+// markers inside a file they are told never to edit by hand. That is exactly
+// what happened to docs/timeline-archive.md, which was added to
+// derivedDocPaths, the pre-commit restore, warp and the CI gate — and to
+// nothing here.
+//
+// docs/timeline-archive.md gets its OWN driver, not logmind-timeline's:
+// git hands a driver the scratch file for one conflicted path, so the driver
+// has to render the half that belongs in THAT file. `--half archive` is how
+// it says which.
 var DefaultLines = []string{
 	"docs/timeline.md          merge=logmind-timeline",
+	"docs/timeline-archive.md  merge=logmind-timeline-archive",
 	"docs/file-structure.md    merge=logmind-file-structure",
 }
 
@@ -64,21 +78,28 @@ var DefaultLines = []string{
 // Order is preserved from the Python source so a `git config --list
 // --local` diff between a Python-installed repo and a Go-installed
 // repo shows the keys in the same sequence.
+// Both timeline drivers pass `--half`: %A is git's scratch file for ONE
+// conflicted path, so each driver must render exactly the half that belongs
+// in that path and write nothing else. Without it, `logmind timeline --write
+// %A` also drops a timeline-archive.md next to the scratch file — at the
+// worktree root, untracked, on every merge.
 var MergeDriverConfig = []struct {
 	Key   string
 	Value string
 }{
-	{"merge.logmind-timeline.driver", "logmind timeline --write %A"},
+	{"merge.logmind-timeline.driver", "logmind timeline --write %A --half recent"},
 	{"merge.logmind-timeline.name", "Regenerate logmind timeline"},
+	{"merge.logmind-timeline-archive.driver", "logmind timeline --write %A --half archive"},
+	{"merge.logmind-timeline-archive.name", "Regenerate logmind timeline archive"},
 	{"merge.logmind-file-structure.driver", "logmind file-structure --write %A"},
 	{"merge.logmind-file-structure.name", "Regenerate logmind file structure"},
 }
 
 // EnsureBlock makes sure path (a `.gitattributes`) contains the
-// logmind-managed block. Returns (true, nil) if the file was created
-// or had the block appended, (false, nil) if the block was already
-// present (in which case manual edits inside it are preserved
-// verbatim — we only ever APPEND, never rewrite).
+// logmind-managed block AND that every line in DefaultLines is registered
+// inside it. Returns (true, nil) if the file was created, had the block
+// appended, or had a missing registration added; (false, nil) when there was
+// nothing to do.
 //
 // Byte-identical to src/logmind/core/gitattributes.ensure_block:
 //
@@ -97,7 +118,7 @@ func ensureBlockWithLines(path string, lines []string) (bool, error) {
 	}
 	existing := string(data)
 	if strings.Contains(existing, BlockStart) {
-		return false, nil
+		return addMissingLines(path, existing, lines)
 	}
 
 	var b strings.Builder
@@ -126,6 +147,58 @@ func ensureBlockWithLines(path string, lines []string) (bool, error) {
 		return false, err
 	}
 	if err := os.WriteFile(path, []byte(existing+block), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// addMissingLines registers any `lines` entry whose PATH PATTERN is absent
+// from an existing logmind block, inserting it just before the closing
+// sentinel. Returns (true, nil) when it wrote.
+//
+// This is how a repo initialised by an older binary picks up a newly-shipped
+// merge driver. Without it, EnsureBlock's "block present → nothing to do"
+// meant docs/timeline-archive.md would only ever get a driver in repos
+// created after this release — every existing repo would keep handing its
+// users conflict markers in a derived file forever, and nothing in the
+// system would ever say so.
+//
+// It matches on the path pattern (the line's first field), never on the whole
+// line, so a user who retargeted or renamed a driver keeps their edit: this
+// only ever ADDS a pattern logmind owns and has no registration for. Nothing
+// inside the block is rewritten or removed, which is the same promise
+// EnsureBlock has always made about manual edits.
+func addMissingLines(path, existing string, lines []string) (bool, error) {
+	startIdx := strings.Index(existing, BlockStart)
+	endIdx := strings.Index(existing[startIdx:], BlockEnd)
+	if endIdx < 0 {
+		// Malformed (unterminated) block — leave it for the user, same as
+		// RemoveBlock does.
+		return false, nil
+	}
+	endIdx += startIdx
+	block := existing[startIdx:endIdx]
+
+	registered := make(map[string]bool)
+	for _, l := range strings.Split(block, "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			registered[f[0]] = true
+		}
+	}
+	var missing []string
+	for _, l := range lines {
+		f := strings.Fields(l)
+		if len(f) == 0 || registered[f[0]] {
+			continue
+		}
+		missing = append(missing, l)
+	}
+	if len(missing) == 0 {
+		return false, nil
+	}
+
+	updated := existing[:endIdx] + strings.Join(missing, "\n") + "\n" + existing[endIdx:]
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

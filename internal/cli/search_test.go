@@ -148,10 +148,15 @@ func TestSearch_FlagMatrix(t *testing.T) {
 		{name: "case-sensitive accepts exact case", query: "PostgreSQL", extraArgs: []string{"--case-sensitive"}, wantHit: true},
 		// §3.2 stopped rotation, so nothing writes docs/decisions-archive.md
 		// any more — but a file left behind by a pre-§3.2 binary holds real
-		// decisions and IS searched. "A decision written is a decision kept."
-		// --no-archive is retired: it changes nothing, in either direction.
-		{name: "a leftover archive IS searched", query: "archived-term", wantHit: true},
-		{name: "the retired --no-archive flag is accepted and changes nothing", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: true},
+		// decisions and IS searched by default. "A decision written is a
+		// decision kept."
+		{name: "a leftover archive IS searched by default", query: "archived-term", wantHit: true},
+		// --no-archive means what its name and every shipped AGENTS.md say:
+		// the archive comes OUT of the scan. The pair above/below is the
+		// control — same repo, same query, only the flag differs — so a
+		// no-op implementation cannot pass both.
+		{name: "--no-archive excludes the archive", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: false},
+		{name: "--no-archive leaves the non-archive sources alone", query: "PostgreSQL", extraArgs: []string{"--no-archive"}, wantHit: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -123,8 +123,12 @@ orient in:
 
 ### 4. Reading and auditing decisions
 
-`logmind show` (recent decisions on the current branch), `logmind search
-"<keyword>"` (full-text across recent + archive), `logmind headline`
+`logmind show` (this branch's decisions, plus any legacy `docs/decisions.md` /
+`docs/decisions-archive.md` — those are named after no branch, so no branch
+file supersedes them; `--all` adds every other branch's file), `logmind search
+"<keyword>"` (full-text across every decision file that exists, enumerated —
+never resolved from a branch name; `--no-archive` opts the legacy archive
+out), `logmind headline`
 (sets/reads the agent-authored branch summary), and `logmind doctor
 [--fix]` (stack-status: version drift, hook drift, missing markers —
 `--fix` backfills what it safely can, including timeline markers and

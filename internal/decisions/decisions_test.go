@@ -244,9 +244,9 @@ func TestBranchLabelFromFilename(t *testing.T) {
 		{"foo__bar__baz.md", "foo/bar/baz"},
 	}
 	for _, c := range cases {
-		got := branchLabelFromFilename(c.in)
+		got := BranchLabelFromFilename(c.in)
 		if got != c.want {
-			t.Errorf("branchLabelFromFilename(%q) = %q; want %q", c.in, got, c.want)
+			t.Errorf("BranchLabelFromFilename(%q) = %q; want %q", c.in, got, c.want)
 		}
 	}
 }
