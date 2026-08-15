@@ -70,7 +70,7 @@ func NewRootCmd() *cobra.Command {
 
 	// Persistent --quiet flag (token-killer Phase 1b). Registered on root so
 	// cobra accepts it ahead of every subcommand's own flags, but only the
-	// WIRED verbs (doctor, file-structure, guard-commit, headline, log,
+	// WIRED verbs (auto, doctor, file-structure, guard-commit, headline, log,
 	// repomap, search, show, timeline) actually read it — §14.1 makes quiet
 	// a SHOULD, not a MUST, so the remaining verbs are free to ignore it.
 	// Opt-in twin of the LOGMIND_QUIET env var — the default (unset) path
@@ -83,7 +83,7 @@ func NewRootCmd() *cobra.Command {
 	// verb" unqualified: cobra shows this same text under every subcommand's
 	// Global Flags section, including the 13 verbs that don't honor it yet.
 	root.PersistentFlags().Bool(quietFlagName, false,
-		"Terse machine output on the read/emit verbs (doctor, file-structure, guard-commit, headline, log, repomap, search, show, timeline): suppress progress chatter, emit one chainable 'ok <k=v>' line (env: LOGMIND_QUIET=1). Errors still go to stderr. Other verbs currently ignore this flag.")
+		"Terse machine output on the read/emit verbs (auto, doctor, file-structure, guard-commit, headline, log, repomap, search, show, timeline): suppress progress chatter, emit one chainable 'ok <k=v>' line (env: LOGMIND_QUIET=1). Errors still go to stderr. Other verbs currently ignore this flag.")
 
 	root.AddCommand(newVersionCmd())
 	// B2: git integration + hooks subcommands.
@@ -136,6 +136,11 @@ func NewRootCmd() *cobra.Command {
 	// resolveDecisionsPath, not the old hardcoded docs/decisions.md.
 	root.AddCommand(newShowCmd())
 	root.AddCommand(newSearchCmd())
+	// #241: one-command setup for a repo that will be handed over to run
+	// unattended — writes the standing directive, reports which required
+	// skills are installed, and PRINTS the handover for a human to give.
+	// It never starts the mode; see internal/cli/auto.go.
+	root.AddCommand(newAutoCmd())
 
 	// Top-level --version flag mirrors `logmind version` so both
 	// `logmind --version` and `logmind version` produce the same line.

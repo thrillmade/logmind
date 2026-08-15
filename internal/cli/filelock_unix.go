@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/atomicio"
 )
 
 // acquireRepoLock takes an OS-advisory flock on .logmind/.lock inside
@@ -35,6 +37,13 @@ func acquireRepoLock(cwd string) (*fileLock, error) {
 	lockPath := repoLockPath(cwd)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(lockPath), err)
+	}
+	// A symlink at lockPath would make O_CREATE follow it and open (and,
+	// for a dangling one, create) whatever it points to — the same class
+	// of escape atomicio.WriteFile refuses for content writes under
+	// .logmind/. Refuse here too rather than silently flock'ing through it.
+	if err := atomicio.RefuseSymlink(lockPath); err != nil {
+		return nil, err
 	}
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
