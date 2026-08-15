@@ -224,10 +224,10 @@ func TestWorkflowTemplates_SetupLogmindStepsCarryToken(t *testing.T) {
 func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	body := Workflow("regen-timeline.yml.template")
 
-	// Marker bump v10 → v11 (push-refusal now fails the job; see v11 note
-	// above).
-	if !strings.Contains(body, "# logmind-template-version: v11") {
-		t.Errorf("regen-timeline template missing v11 marker")
+	// Marker bump v11 → v12 (the push credential is now a degrading chain;
+	// see TestRegenTimelineTemplate_V12_CredentialChainDegrades).
+	if !strings.Contains(body, "# logmind-template-version: v12") {
+		t.Errorf("regen-timeline template missing v12 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
@@ -257,12 +257,13 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 		t.Errorf("regen-timeline v10 must event-gate the two jobs (pull_request gate / push regen)")
 	}
 	// The main regen commit carries the [skip-logmind] convention and pushes
-	// via the explicit PAT URL (never a persisted/GITHUB_TOKEN credential).
+	// via an explicit credentialed URL built from the chain's chosen rung —
+	// never a persisted credential.
 	if !strings.Contains(body, "[skip-logmind]") {
 		t.Errorf("regen-timeline v10 main regen commit missing the [skip-logmind] prefix")
 	}
-	if !strings.Contains(body, "x-access-token:${PAT}") {
-		t.Errorf("regen-timeline v10 main push must use the explicit PAT URL")
+	if !strings.Contains(body, "x-access-token:${TOKEN}") {
+		t.Errorf("regen-timeline v12 main push must use the explicit credentialed URL built from the chain's chosen rung")
 	}
 	if !strings.Contains(body, "persist-credentials: false") {
 		t.Errorf("regen-timeline v10 must set persist-credentials: false on regen-on-main's checkout")
@@ -273,21 +274,27 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	if !strings.Contains(body, "pull-requests: read") {
 		t.Errorf("regen-timeline v10 must grant pull-requests: read (else gh pr diff 403s and blocks every PR)")
 	}
-	// No-PAT is a freshness-only gap, not a failure: warn + exit 0 (never blocks
-	// the push event; the invariant guarantee lives in the PR gate, not here).
-	// Scoped to the no-credential branch specifically — SPEC-2 §3.3 requires
-	// the push-refusal branch below to look visibly different, not merely
-	// for "::warning" to appear somewhere in the file.
-	_, noPATBlock, found := strings.Cut(body, `if [ -z "${PAT:-}" ]; then`)
+	// No credential AT ALL is a freshness-only gap, not a failure: warn +
+	// exit 0 (never blocks the push event; the invariant guarantee lives in
+	// the PR gate, not here). Scoped to the no-credential branch
+	// specifically — SPEC-2 §3.3 requires the push-refusal branch below to
+	// look visibly different, not merely for "::warning" to appear somewhere
+	// in the file. v12 keeps this branch even though rung 3 (GITHUB_TOKEN)
+	// makes it nearly unreachable: a workflow whose token was scoped away
+	// must still degrade rather than fail.
+	_, noCredBlock, found := strings.Cut(body, "\n          else\n")
 	if !found {
-		t.Fatalf("regen-timeline v11 missing the no-PAT credential check")
+		t.Fatalf("regen-timeline v12 missing the no-credential fall-through of the chain")
 	}
-	noPATBlock, _, found = strings.Cut(noPATBlock, "fi\n")
+	noCredBlock, _, found = strings.Cut(noCredBlock, "fi\n")
 	if !found {
-		t.Fatalf("regen-timeline v11: could not find the end of the no-PAT block")
+		t.Fatalf("regen-timeline v12: could not find the end of the no-credential block")
 	}
-	if !strings.Contains(noPATBlock, "::warning") || !strings.Contains(noPATBlock, "exit 0") {
-		t.Errorf("regen-timeline v11 regen-on-main must warn + exit 0 when no PAT (freshness-only)")
+	if !strings.Contains(noCredBlock, "::warning") || !strings.Contains(noCredBlock, "exit 0") {
+		t.Errorf("regen-timeline v12 regen-on-main must warn + exit 0 when NO credential of any kind is available (freshness-only)")
+	}
+	if strings.Contains(noCredBlock, "::error") || strings.Contains(noCredBlock, "exit 1") {
+		t.Errorf("regen-timeline v12 no-credential branch must degrade, not fail — it MUST NOT look like the push-refusal case")
 	}
 
 	// SPEC-2 §3.3 (logmind#262): "A push that was attempted and refused is
@@ -296,27 +303,27 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	// (::error + exit 1), never degrade quietly (::warning + exit 0) —
 	// that conflation is exactly what let the regen job stay green for
 	// eleven days while doing nothing.
-	_, pushBlock, found := strings.Cut(body, `if ! git push "https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"; then`)
+	_, pushBlock, found := strings.Cut(body, `if ! git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${DEFAULT_BRANCH}"; then`)
 	if !found {
-		t.Fatalf("regen-timeline v11 missing the push-refusal check")
+		t.Fatalf("regen-timeline v12 missing the push-refusal check")
 	}
 	if !strings.Contains(pushBlock, "::error") {
-		t.Errorf("regen-timeline v11 push-refusal must be reported with ::error — it MUST NOT look like the no-credential ::warning case")
+		t.Errorf("regen-timeline v12 push-refusal must be reported with ::error — it MUST NOT look like the no-credential ::warning case")
 	}
 	if !strings.Contains(pushBlock, "exit 1") {
-		t.Errorf("regen-timeline v11 push-refusal must fail the job (exit 1), not degrade (exit 0)")
+		t.Errorf("regen-timeline v12 push-refusal must fail the job (exit 1), not degrade (exit 0)")
 	}
 	if strings.Contains(pushBlock, "::warning") {
-		t.Errorf("regen-timeline v11 push-refusal must not also emit a ::warning — the two outcomes must be visibly distinct")
+		t.Errorf("regen-timeline v12 push-refusal must not also emit a ::warning — the two outcomes must be visibly distinct")
 	}
 	// The push-rejection error must not promise self-healing — a missing
 	// ruleset bypass (GH013) is a POLICY refusal that repeats every cycle,
 	// not a transient one-off; see docs/orchestrator-app.md.
 	if !strings.Contains(body, "GH013") {
-		t.Errorf("regen-timeline v11 push-rejection error must name GH013 as the likely cause")
+		t.Errorf("regen-timeline v12 push-rejection error must name GH013 as the likely cause")
 	}
 	if !strings.Contains(body, "NOT self-heal") {
-		t.Errorf("regen-timeline v11 messaging must not promise the staleness resolves itself on the next merge")
+		t.Errorf("regen-timeline v12 messaging must not promise the staleness resolves itself on the next merge")
 	}
 
 	// v10 removes the entire adoption gate: no per-repo config read, no
@@ -365,9 +372,9 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 func TestCheckDocLinksTemplate_V8_AdvisoryNoStrand(t *testing.T) {
 	body := Workflow("check-doc-links.yml.template")
 
-	// Marker bump v7 → v8 (setup-logmind#4: added `token: ${{ github.token }}`).
-	if !strings.Contains(body, "# logmind-template-version: v8") {
-		t.Errorf("check-doc-links template missing v8 marker")
+	// Marker bump v8 → v9 (setup-logmind action pin v1.0.0 → v1.0.1).
+	if !strings.Contains(body, "# logmind-template-version: v9") {
+		t.Errorf("check-doc-links template missing v9 marker")
 	}
 
 	// Advisory: the old `exit $rc` (re-raise the linkcheck exit) red-lit
@@ -476,9 +483,9 @@ func TestCheckDecisionsTemplate_V5_CallsTheVerb(t *testing.T) {
 	// names every removed mechanism, and naming them is the point.
 	active := stripCommentLines(body)
 
-	// Marker bump v4 → v5.
-	if !strings.Contains(body, "# logmind-template-version: v5") {
-		t.Errorf("check-decisions template missing v5 marker")
+	// Marker bump v5 → v6 (setup-logmind action pin v1.0.0 → v1.0.1).
+	if !strings.Contains(body, "# logmind-template-version: v6") {
+		t.Errorf("check-decisions template missing v6 marker")
 	}
 
 	// The one thing this workflow does: call the verb over the PR's range.
@@ -640,34 +647,46 @@ func repoRootFromCaller(t *testing.T) string {
 // (internal/templates/github/regen-timeline.yml.template) — that parity
 // was maintained by hand, silently, which is how they drift.
 //
-// The two files are DELIBERATELY not byte-identical in exactly 3 ways:
+// v12 narrowed the permitted divergence from three ways to two, and the
+// one it removed is the one that mattered. Until v12 the entire
+// credential block was free to differ: the template shipped a raw
+// LOGMIND_AUTO_REGEN_PAT while this repo had already moved to a
+// short-lived GitHub App installation token, and NOTHING failed, because
+// the anchor list stopped before that block. `logmind init` was therefore
+// deploying to the whole fleet the credential path this repo had
+// abandoned. The mechanism is now identical on both sides — one degrading
+// chain (App token → PAT → GITHUB_TOKEN) — and this test diffs it
+// BYTE-FOR-BYTE, so the next edit to it on one side and not the other
+// fails here instead of shipping.
+//
+// What may still differ, and only this:
 //
 //  1. The template's leading `# logmind-template-version: vN` marker
 //     line — the installed workflow isn't scaffolded from a template
 //     version, it IS the checked-in source of truth this repo runs on
 //     itself.
-//  2. The build mechanism: a consumer repo installs a released logmind
+//  2. The scaffold-time default-branch placeholder
+//     (__LOGMIND_DEFAULT_BRANCH__), which `logmind init` renders into each
+//     consumer repo. This repo is not scaffolded, so its copy carries the
+//     rendered value; the test renders the template the same way before
+//     comparing, so this costs no permitted divergence at all.
+//  3. Two lines: the names of the secrets holding the OPTIONAL GitHub App
+//     credentials (a consumer repo uses LOGMIND_APP_ID /
+//     LOGMIND_APP_PRIVATE_KEY; this repo's org secrets keep their legacy
+//     THRILLMADE_ORCHESTRATOR_* names — see docs/orchestrator-app.md).
+//     Names only: the keys, their order, and every line of logic that
+//     reads them are identical, and this test proves it.
+//  4. The build mechanism: a consumer repo installs a released logmind
 //     binary via `thrillmade/setup-logmind`; this repo instead builds
 //     its own in-tree source (`actions/setup-go` + `make build` +
 //     `./bin/logmind`) so its own CI always exercises the code under
 //     review, never a stale release.
-//  3. The credential block: a consumer repo configures a
-//     LOGMIND_AUTO_REGEN_PAT secret directly; this repo mints a
-//     short-lived `skdd-steward[bot]` GitHub App installation token
-//     instead (see docs/orchestrator-app.md) — a different identity, the
-//     same push-outcome contract (SPEC-2 §3.3, logmind#262): no
-//     credential still degrades (warn + exit 0), but a push that was
-//     attempted and refused now fails the job (error + exit 1) — those
-//     two outcomes MUST NOT look alike, on either side of this pair.
 //
-// Everything else — MOST IMPORTANTLY the check-derived-docs job, which
-// is the actual PR-blocking enforcement logic — must be byte-identical,
-// or logmind's own CI would be exercising different gate behavior than
-// what every other repo installs. This test fails loudly if an edit to
-// either file's gate logic isn't mirrored on the other side, and it
-// fails loudly (pointing at the stale literal) if one of the 3
-// documented differences itself changes shape, forcing a human to
-// re-verify the divergence is still exactly what's documented above.
+// Everything else — the header, the check-derived-docs job (the actual
+// PR-blocking enforcement logic), the checkout stanza, and the whole
+// credential mechanism through EOF — must be byte-identical, or logmind's
+// own CI would be exercising different behaviour than what every other
+// repo installs.
 func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	repoRoot := repoRootFromCaller(t)
 	wfBytes, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "regen-timeline.yml"))
@@ -686,91 +705,572 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	}
 	tmplBody := tmpl[nl+1:]
 
-	// --- Job 1: check-derived-docs (the PR gate) + everything above
-	// regen-on-main (name, header comments, on:, permissions:). This
-	// slice carries NONE of the 3 documented differences, so it must be
-	// byte-identical between the two files.
-	const splitAnchor = "  regen-on-main:\n"
-	tmplGateEnd := strings.Index(tmplBody, splitAnchor)
-	wfGateEnd := strings.Index(workflow, splitAnchor)
-	if tmplGateEnd < 0 {
-		t.Fatalf("template missing %q — regen-timeline.yml.template structure drifted", splitAnchor)
+	// Difference 2: the scaffold-time default-branch placeholder. The
+	// installed file is this repo's own copy, so it carries the RENDERED
+	// value where the template carries the placeholder. Substituting it
+	// here — rather than carving out another region the pair is allowed to
+	// differ in — keeps every region below byte-identical, which is the
+	// stronger property. The guard above it is what stops this substitution
+	// from becoming a way to hide a re-hardcoded `main`: if the placeholder
+	// ever disappears from the template, this fails loudly rather than
+	// quietly comparing two hardcoded copies.
+	const branchPlaceholder = "__LOGMIND_DEFAULT_BRANCH__"
+	if !strings.Contains(tmplBody, branchPlaceholder) {
+		t.Fatalf("regen-timeline template no longer contains %s — the default branch has been "+
+			"hardcoded again, which is the defect this placeholder exists to prevent", branchPlaceholder)
 	}
-	if wfGateEnd < 0 {
-		t.Fatalf("installed workflow missing %q — regen-timeline.yml structure drifted", splitAnchor)
-	}
-	tmplGate := tmplBody[:tmplGateEnd]
-	wfGate := workflow[:wfGateEnd]
-	if tmplGate != wfGate {
-		t.Fatalf("regen-timeline.yml's header/check-derived-docs job (the PR gate) drifted from its "+
-			"template — a gate-logic edit on one side wasn't mirrored on the other:\n"+
-			"--- template ---\n%s\n--- installed workflow ---\n%s", tmplGate, wfGate)
-	}
+	tmplBody = strings.ReplaceAll(tmplBody, branchPlaceholder, "main")
 
-	// --- Job 2: regen-on-main. Walk a fixed sequence of anchors that
-	// MUST appear, in order, identically in both files' regen-on-main
-	// section. The gaps between anchors are exactly where the build
-	// mechanism (gap 1), the credential env var (gap 2), and the rest of
-	// the credential block through EOF (gap 3, unanchored) are allowed
-	// to diverge. Anything else — an anchor going missing or moving —
-	// means the surrounding structure itself changed on only one side.
-	anchors := []string{
-		splitAnchor +
-			"    name: regen-on-main\n" +
-			"    if: github.event_name == 'push'\n" +
-			"    runs-on: ubuntu-latest\n" +
-			"    steps:\n" +
-			"      - uses: actions/checkout@v7\n" +
-			"        with:\n" +
-			"          fetch-depth: 0\n" +
-			"          persist-credentials: false\n",
-		// gap 1: build mechanism (setup-logmind vs setup-go+make build)
-		// and the "Regenerate derived docs" step body (logmind vs
-		// ./bin/logmind).
-		"      - name: Commit + push if changed\n" +
-			"        env:\n",
-		// gap 2: the single credential env var line (PAT vs STEWARD_TOKEN).
-		"        run: |\n" +
-			"          set -euo pipefail\n" +
-			"          if [ -z \"$(git status --porcelain -- docs/timeline.md docs/file-structure.md)\" ]; then\n" +
-			"            echo \"Derived docs already current on main.\"\n" +
-			"            exit 0\n" +
-			"          fi\n",
-		// gap 3: the credential-missing check, the git identity, the
-		// push-failure comment prose, and the push URL's token variable —
-		// all keyed on which identity this repo vs. a consumer repo
-		// pushes as.
-		"            exit 1\n" +
-			"          fi\n",
-		// The trailing anchor above pins the one thing gap 3 must NOT be
-		// free to diverge on: a push that was attempted and refused MUST
-		// fail the job (exit 1) on both sides of this pair, per SPEC-2
-		// §3.3 (logmind#262) — a fix landed on only one side would leave
-		// that repo's own CI exercising the old silent-success behavior
-		// while claiming to match its template.
-	}
-	requireAnchorsInOrder(t, "template", tmplBody[tmplGateEnd:], anchors)
-	requireAnchorsInOrder(t, "installed workflow", workflow[wfGateEnd:], anchors)
+	// The four boundaries that carve both files into the same regions. Each
+	// must appear exactly once in each file, or the structure this test
+	// reasons about has changed on one side only.
+	// Each carries a leading newline so the indentation is part of the
+	// match: bare "    env:\n" is a substring of the push step's
+	// "        env:\n" and would silently pick the wrong boundary.
+	const (
+		jobAnchor    = "\n  regen-on-main:\n"
+		envAnchor    = "\n    env:\n"
+		stepsAnchor  = "\n    steps:\n"
+		buildEnd     = "\n      # Rung 1: mint a short-lived (1 hour) App installation token"
+		checkoutTail = "\n          persist-credentials: false\n"
+	)
+
+	// --- Region A: header + check-derived-docs (the PR gate). Carries none
+	// of the permitted differences → byte-identical.
+	tmplA, tmplRest := splitOnceOrFail(t, "template", tmplBody, jobAnchor)
+	wfA, wfRest := splitOnceOrFail(t, "installed workflow", workflow, jobAnchor)
+	requireIdentical(t, "header + check-derived-docs job (the PR gate)", tmplA, wfA)
+
+	// --- Region B: regen-on-main's preamble through `env:`. This is the
+	// prose that tells a repo owner the App rung is optional, so it must
+	// read identically in both.
+	tmplB, tmplRest := splitOnceOrFail(t, "template", tmplRest, envAnchor)
+	wfB, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, envAnchor)
+	requireIdentical(t, "regen-on-main preamble (through `env:`)", jobAnchor+tmplB, jobAnchor+wfB)
+
+	// --- Region C (difference 2): the App-credential env block. The two
+	// sides name different secrets; they must NOT differ in any other way.
+	tmplC, tmplRest := splitOnceOrFail(t, "template", tmplRest, stepsAnchor)
+	wfC, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, stepsAnchor)
+	requireAppCredentialEnvBlock(t, "template", tmplC)
+	requireAppCredentialEnvBlock(t, "installed workflow", wfC)
+
+	// --- Region D: the checkout stanza. Identical.
+	tmplD, tmplRest := splitOnceOrFail(t, "template", tmplRest, checkoutTail)
+	wfD, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, checkoutTail)
+	requireIdentical(t, "regen-on-main checkout stanza", stepsAnchor+tmplD, stepsAnchor+wfD)
+
+	// --- Region E (difference 3): the build mechanism. Free to diverge —
+	// but each side must still be the mechanism it claims to be, or a
+	// silent swap here would go unnoticed.
+	_, tmplRest = splitOnceOrFail(t, "template", tmplRest, buildEnd)
+	_, wfRest = splitOnceOrFail(t, "installed workflow", wfRest, buildEnd)
+
+	// --- Region F: the credential mechanism, through EOF. THE region this
+	// test exists for. Byte-identical.
+	requireIdentical(t, "regen-on-main credential mechanism (App token → PAT → GITHUB_TOKEN, and the push)",
+		buildEnd+tmplRest, buildEnd+wfRest)
 }
 
-// requireAnchorsInOrder asserts every string in anchors appears in body,
-// in order, as an exact substring — t.Fatal with the first one that
-// doesn't, naming which anchor and where the search gave up.
-func requireAnchorsInOrder(t *testing.T, label, body string, anchors []string) {
+// splitOnceOrFail cuts body at sep, requiring sep to appear EXACTLY once.
+// Returns the part before sep and the part after. A second occurrence
+// means the region boundaries no longer carve the file the way this test
+// assumes, which is itself a drift worth failing on.
+func splitOnceOrFail(t *testing.T, label, body, sep string) (before, after string) {
 	t.Helper()
-	pos := 0
-	for i, a := range anchors {
-		idx := strings.Index(body[pos:], a)
-		if idx < 0 {
-			end := pos + 200
-			if end > len(body) {
-				end = len(body)
-			}
-			t.Fatalf("%s: regen-on-main anchor %d not found at/after offset %d "+
-				"(regen-timeline.yml structure drifted from the lockstep test's anchors — "+
-				"update TestRegenTimelineWorkflow_LockstepWithTemplate):\nwant substring:\n%q\n"+
-				"--- body from offset %d ---\n%s", label, i, pos, a, pos, body[pos:end])
+	if n := strings.Count(body, sep); n != 1 {
+		t.Fatalf("%s: expected exactly 1 occurrence of the region boundary %q in the remaining body, got %d — "+
+			"regen-timeline's structure drifted from the lockstep test's regions "+
+			"(update TestRegenTimelineWorkflow_LockstepWithTemplate)", label, sep, n)
+	}
+	before, after, _ = strings.Cut(body, sep)
+	return before, after
+}
+
+// requireIdentical fails with a readable pair-diff when two regions that
+// MUST be byte-identical are not.
+func requireIdentical(t *testing.T, region, tmpl, workflow string) {
+	t.Helper()
+	if tmpl == workflow {
+		return
+	}
+	t.Fatalf("regen-timeline.yml's %s drifted from its template — an edit on one side "+
+		"wasn't mirrored on the other:\n--- template ---\n%s\n--- installed workflow ---\n%s",
+		region, tmpl, workflow)
+}
+
+// requireAppCredentialEnvBlock pins the ONE region the pair is allowed to
+// differ in beyond the build mechanism: the job-level env block naming the
+// optional GitHub App credentials. Both sides must declare exactly APP_ID
+// and APP_PRIVATE_KEY, in that order, each sourced from a `secrets.*`
+// expression — the secret NAMES may differ, nothing else may. Without this
+// the "two lines" claim in the doc comment above would be unenforced, and
+// a whole mechanism could reappear inside this gap, which is exactly how
+// v11 shipped a PAT the repo had stopped using.
+func requireAppCredentialEnvBlock(t *testing.T, label, block string) {
+	t.Helper()
+	var keys []string
+	for _, line := range strings.Split(block, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
 		}
-		pos += idx + len(a)
+		key, value, ok := strings.Cut(trimmed, ": ")
+		if !ok {
+			t.Errorf("%s: unparseable line in the App-credential env block: %q", label, line)
+			continue
+		}
+		if !strings.HasPrefix(value, "${{ secrets.") || !strings.HasSuffix(value, " }}") {
+			t.Errorf("%s: App-credential env value for %q must be a `${{ secrets.* }}` expression, got %q",
+				label, key, value)
+		}
+		keys = append(keys, key)
+	}
+	want := []string{"APP_ID", "APP_PRIVATE_KEY"}
+	if len(keys) != len(want) {
+		t.Fatalf("%s: App-credential env block must declare exactly %v, got %v — "+
+			"anything else here is mechanism escaping the region this pair is allowed to differ in",
+			label, want, keys)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Errorf("%s: App-credential env block key %d is %q, want %q", label, i, keys[i], want[i])
+		}
+	}
+}
+
+// TestRegenTimelineTemplate_V12_CredentialChainDegrades pins the v12
+// credential contract as BEHAVIOUR rather than as one secret's name.
+//
+// The ruling this encodes: logmind must work standalone. It is not a
+// thrillmade-only tool and must not require an organization or a GitHub
+// App, so the push credential degrades — App installation token if App
+// credentials are configured, else a PAT if one is, else the workflow's
+// own GITHUB_TOKEN — and it MUST NEVER silently do nothing. The App rung
+// is an optimization (it is the only identity that can be granted a
+// ruleset bypass), never a dependency: nothing may break when the App
+// secrets are absent, which is the common case for every repo outside
+// thrillmade.
+//
+// v11's shape — one hardcoded `secrets.LOGMIND_AUTO_REGEN_PAT`, with "no
+// PAT" meaning "warn and do nothing" — is asserted GONE, since that is
+// the regression this guards.
+func TestRegenTimelineTemplate_V12_CredentialChainDegrades(t *testing.T) {
+	body := Workflow("regen-timeline.yml.template")
+
+	// Rung 1 — the App token, and it must be OPTIONAL on both axes: the
+	// step is skipped when no App credentials are configured, AND a
+	// configured-but-broken App degrades instead of failing the job.
+	appStep, _, found := strings.Cut(body, "\n      - name: Commit + push if changed\n")
+	if !found {
+		t.Fatalf("regen-timeline v12: could not locate the push step")
+	}
+	_, appStep, found = strings.Cut(appStep, "\n      - name: Mint GitHub App installation token")
+	if !found {
+		t.Fatalf("regen-timeline v12 missing the App-token rung of the credential chain")
+	}
+	if !strings.Contains(appStep, "uses: actions/create-github-app-token@v") {
+		t.Errorf("regen-timeline v12 App rung must mint the token via actions/create-github-app-token")
+	}
+	if !strings.Contains(appStep, "if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''") {
+		t.Errorf("regen-timeline v12 App rung must be skipped when no App credentials are configured — " +
+			"the App is an optimization, not a dependency, and an unconfigured repo must not see a failing step")
+	}
+	if !strings.Contains(appStep, "continue-on-error: true") {
+		t.Errorf("regen-timeline v12 App rung must be continue-on-error — a misconfigured or expired App " +
+			"must degrade to the next rung, never fail the job")
+	}
+	// A shipped template must not hardcode one organization's App
+	// installation: `owner`/`repositories` default to the current repo.
+	for _, banned := range []string{"owner:", "repositories:"} {
+		if strings.Contains(appStep, banned) {
+			t.Errorf("regen-timeline v12 App rung must not pin %q — it defaults to the current repository, "+
+				"and a shipped template has no business naming someone else's org", banned)
+		}
+	}
+
+	// The three rungs are wired into the push step's env, and only there.
+	push := body[strings.Index(body, "\n      - name: Commit + push if changed\n"):]
+	for _, want := range []string{
+		"APP_TOKEN: ${{ steps.app_token.outputs.token }}",
+		"PAT: ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}",
+		"DEFAULT_TOKEN: ${{ github.token }}",
+	} {
+		if !strings.Contains(push, want) {
+			t.Errorf("regen-timeline v12 push step missing credential-chain input %q", want)
+		}
+	}
+
+	// ORDER is the contract, not merely presence: App, then PAT, then
+	// GITHUB_TOKEN. A chain that tried GITHUB_TOKEN first would push as an
+	// identity that can never hold a ruleset bypass and would fail forever
+	// on a protected branch while an App token sat unused.
+	rungs := []string{
+		`if [ -n "${APP_TOKEN:-}" ]; then`,
+		`elif [ -n "${PAT:-}" ]; then`,
+		`elif [ -n "${DEFAULT_TOKEN:-}" ]; then`,
+	}
+	pos := 0
+	for i, r := range rungs {
+		idx := strings.Index(push[pos:], r)
+		if idx < 0 {
+			t.Fatalf("regen-timeline v12 credential chain: rung %d (%q) missing or out of order — "+
+				"the order App → PAT → GITHUB_TOKEN is the contract", i+1, r)
+		}
+		pos += idx + len(r)
+	}
+
+	// Rung 3 always exists, so "configured nothing" ATTEMPTS the push. A
+	// template that only ever warned when no PAT was configured is exactly
+	// the v11 defect: never silently do nothing.
+	if strings.Contains(body, `if [ -z "${PAT:-}" ]; then`) {
+		t.Errorf("regen-timeline v12 must not gate the whole push on a PAT being configured — " +
+			"that is v11's shape, where a repo with no PAT warned and did nothing")
+	}
+
+	// The push uses whichever rung won, and the failure message names it,
+	// so a red run says which identity was refused rather than assuming a
+	// PAT.
+	if !strings.Contains(push, `git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${DEFAULT_BRANCH}"`) {
+		t.Errorf("regen-timeline v12 push must authenticate with ${TOKEN} — the rung the chain selected")
+	}
+	if !strings.Contains(push, "$RUNG") {
+		t.Errorf("regen-timeline v12 must report WHICH rung it used — a refusal that does not name the " +
+			"identity it tried is not actionable")
+	}
+}
+
+// TestRegenTimelineTemplate_V12_DefaultBranchIsResolvedNotHardcoded pins
+// the second half of the standalone ruling: logmind must assume nothing
+// about how a repository is set up, and "the default branch is called
+// main" is that assumption in the same shape as the abandoned credential
+// path.
+//
+// v11 hardcoded `main` in four operative places — the push refspec
+// (`HEAD:main`), the `on: push:` filter, the PR gate's remediation
+// command (`git checkout origin/main -- …`), and the GH013 ruleset error.
+// A repo on `master` or `trunk` therefore either pushed the regen to a
+// branch it does not have, or never ran the regen at all.
+//
+// Everything evaluated at RUNTIME now reads
+// `github.event.repository.default_branch` (verified present on both the
+// push and pull_request webhook payloads). The `on:` filter is the one
+// thing that cannot — GitHub evaluates no context there — so it is a
+// scaffold-time placeholder, and the gate warns when the two drift.
+func TestRegenTimelineTemplate_V12_DefaultBranchIsResolvedNotHardcoded(t *testing.T) {
+	body := Workflow("regen-timeline.yml.template")
+
+	// No literal `main` may survive anywhere the workflow ACTS on it. Run
+	// against the workflow with whole-line comments stripped, the same way
+	// the check-decisions test does: the v12 header names every hardcoded
+	// form it removed, and naming them is the point — what must not come
+	// back is the form that EXECUTES. The job id/name also keep the word,
+	// since the decision log refers to them by it.
+	active := stripCommentLines(body)
+	for _, banned := range []string{
+		"HEAD:main",                // the push refspec — the wrong-ref write
+		"origin/main",              // the PR gate's remediation command
+		"branches: [main]",         // the trigger
+		"branches: [main, master]", // a longer guess is still a guess
+	} {
+		if strings.Contains(active, banned) {
+			t.Errorf("regen-timeline v12 still hardcodes the default branch as %q — "+
+				"a repo on master/trunk is broken by this", banned)
+		}
+	}
+
+	// The trigger is scaffolded, not guessed. `logmind init` substitutes
+	// the repository's real default branch here.
+	if !strings.Contains(body, "branches: [__LOGMIND_DEFAULT_BRANCH__]") {
+		t.Errorf("regen-timeline v12 `on: push:` filter must be the scaffold placeholder " +
+			"`branches: [__LOGMIND_DEFAULT_BRANCH__]` — an `on:` filter cannot take an expression, " +
+			"so this is the only way it is not a hardcoded guess")
+	}
+
+	// Runtime reads the live value, in both jobs.
+	if !strings.Contains(body, "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}") {
+		t.Errorf("regen-timeline v12 must resolve the default branch from the event payload")
+	}
+	// …and it reaches the script through env, never `${{ }}` inside `run:`
+	// — a branch name is attacker-influenceable text and `run:` is a
+	// script-injection site.
+	if strings.Contains(body, "${{ github.event.repository.default_branch }}\n          run:") ||
+		strings.Contains(body, "HEAD:${{") {
+		t.Errorf("regen-timeline v12 must not interpolate the branch name directly into a `run:` block")
+	}
+
+	// The regen job is gated on the live value, so a stale scaffolded
+	// trigger can cost a run but can never cause a push to a non-default
+	// branch.
+	if !strings.Contains(body, "github.ref_name == github.event.repository.default_branch") {
+		t.Errorf("regen-timeline v12 regen job must additionally gate on the pushed ref actually " +
+			"BEING the default branch — the trigger is a scaffold-time literal and may be stale")
+	}
+
+	// A stale scaffolded trigger is otherwise silent: the job simply never
+	// fires. The PR gate — which runs in every repo on every PR — compares
+	// the two and says so.
+	if !strings.Contains(body, "SCAFFOLDED_BRANCH: __LOGMIND_DEFAULT_BRANCH__") {
+		t.Errorf("regen-timeline v12 PR gate must carry the scaffolded branch so it can detect drift")
+	}
+	if !strings.Contains(body, `if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then`) {
+		t.Errorf("regen-timeline v12 PR gate must compare the scaffolded trigger against the live " +
+			"default branch — a renamed default branch otherwise silently stops the regen forever")
+	}
+	driftBlock, _, found := strings.Cut(body, "changed=$(gh pr diff")
+	if !found {
+		t.Fatalf("regen-timeline v12: could not locate the PR gate's diff call")
+	}
+	_, driftBlock, _ = strings.Cut(driftBlock, `if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then`)
+	if !strings.Contains(driftBlock, "::warning") {
+		t.Errorf("regen-timeline v12 trigger-drift must surface as a ::warning")
+	}
+	if strings.Contains(driftBlock, "exit 1") {
+		t.Errorf("regen-timeline v12 trigger-drift must NOT fail the gate — it is a freshness problem " +
+			"in this repo's own configuration, not a defect in the PR being judged")
+	}
+	if !strings.Contains(driftBlock, "logmind init --refresh") {
+		t.Errorf("regen-timeline v12 trigger-drift warning must name the command that fixes it")
+	}
+}
+
+// TestWorkflowTemplates_NoTemplateGuessesTheDefaultBranch is the CLASS
+// guard for the branch-name assumption, as opposed to the site guard above.
+//
+// The site guard was written for regen-timeline, where the assumption did
+// real damage (a push refspec pointing at a branch the repo may not have).
+// check-doc-links carried the same class in a milder form — `on: push:
+// branches: [main, master]`, a two-name guess that silently dropped
+// default-branch link checking in a repo called anything else. Fixing the
+// site the defect was noticed at and leaving the other is how the class
+// survives, so this walks EVERY workflow template that filters on a branch
+// and requires the scaffold placeholder rather than any literal.
+//
+// Measured before removing `master`: all 8 repositories running these
+// workflows (the 7 consumers plus logmind) default to `main`, so the second
+// name was covering nothing. The asymmetry was the tell — regen-timeline,
+// the workflow that WRITES, shipped `[main]` alone while the advisory
+// read-only check shipped `[main, master]`. A deliberate hedge would have
+// gone the other way round.
+func TestWorkflowTemplates_NoTemplateGuessesTheDefaultBranch(t *testing.T) {
+	const placeholder = "__LOGMIND_DEFAULT_BRANCH__"
+	// Every literal branch filter this repo has ever shipped, plus the
+	// obvious next guesses. A `branches:` line naming ANY of them is the
+	// assumption coming back.
+	guesses := []string{
+		"branches: [main]",
+		"branches: [master]",
+		"branches: [main, master]",
+		"branches: [trunk]",
+		"branches: [develop]",
+	}
+	sawAFilter := false
+	for _, name := range []string{
+		"check-doc-links.yml.template",
+		"regen-timeline.yml.template",
+		"logmind-self-update.yml.template",
+		"check-decisions.yml.template",
+	} {
+		body := Workflow(name)
+		// Comments stripped: each template's header names the literal it
+		// replaced, and naming it is the point.
+		active := stripCommentLines(body)
+		if !strings.Contains(active, "branches:") {
+			continue // no branch filter at all (check-decisions is PR-only)
+		}
+		sawAFilter = true
+		for _, guess := range guesses {
+			if strings.Contains(active, guess) {
+				t.Errorf("%s hardcodes a branch filter (%q) — an `on:` filter cannot take an "+
+					"expression, so it must be the %s scaffold placeholder or it is a guess "+
+					"about how someone else's repository is set up", name, guess, placeholder)
+			}
+		}
+		if !strings.Contains(active, "branches: ["+placeholder+"]") {
+			t.Errorf("%s has an `on:` branch filter that is not the scaffold placeholder %s",
+				name, placeholder)
+		}
+		// A scaffolded trigger can go stale when the default branch is
+		// renamed, and a check that stops running reports nothing at all.
+		// Every template that filters on a branch must therefore also carry
+		// the drift sentinel.
+		if !strings.Contains(body, "SCAFFOLDED_BRANCH: "+placeholder) {
+			t.Errorf("%s filters on a scaffolded branch but carries no SCAFFOLDED_BRANCH sentinel — "+
+				"a default-branch rename would silently stop it forever", name)
+		}
+		if !strings.Contains(body, `if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then`) {
+			t.Errorf("%s does not compare its scaffolded trigger against the live default branch", name)
+		}
+		if !strings.Contains(body, "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}") {
+			t.Errorf("%s must read the live default branch from the event payload", name)
+		}
+		if !strings.Contains(body, "logmind init --refresh") {
+			t.Errorf("%s drift warning must name the command that fixes it", name)
+		}
+	}
+	// Control: if the loop above never found a branch filter, every
+	// assertion in it was vacuous and this test proves nothing.
+	if !sawAFilter {
+		t.Fatalf("no workflow template contains a `branches:` filter — this test's search is " +
+			"broken, not the tree")
+	}
+}
+
+// TestRegenTimelineWorkflows_ShareOneCredentialChain is the class guard
+// the v11 defect asks for, stated in terms of what went wrong rather than
+// of any one file's bytes: the shipped template and the workflow logmind
+// itself runs MUST NOT diverge on the credential MECHANISM. v11 did
+// exactly that — the template pushed with a raw PAT while this repo minted
+// a GitHub App token — and every existing test passed, because each file
+// was only ever checked against itself.
+//
+// TestRegenTimelineWorkflow_LockstepWithTemplate proves the two are
+// byte-identical through that region. This one is deliberately independent
+// of it: it asserts the same chain, rung by rung, is present in BOTH
+// files, so the property survives even if the region boundaries above are
+// ever renegotiated.
+func TestRegenTimelineWorkflows_ShareOneCredentialChain(t *testing.T) {
+	repoRoot := repoRootFromCaller(t)
+	wfBytes, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "regen-timeline.yml"))
+	if err != nil {
+		t.Fatalf("read installed workflow: %v", err)
+	}
+	// Every rung of the chain, the outcome split, and the push itself.
+	// Neither file may implement a credential path the other does not.
+	chain := []string{
+		"uses: actions/create-github-app-token@v",
+		"if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''",
+		"continue-on-error: true",
+		"APP_TOKEN: ${{ steps.app_token.outputs.token }}",
+		"PAT: ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}",
+		"DEFAULT_TOKEN: ${{ github.token }}",
+		`if [ -n "${APP_TOKEN:-}" ]; then`,
+		`elif [ -n "${PAT:-}" ]; then`,
+		`elif [ -n "${DEFAULT_TOKEN:-}" ]; then`,
+		`git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${DEFAULT_BRANCH}"`,
+	}
+	for _, side := range []struct {
+		label string
+		body  string
+	}{
+		{"shipped template", Workflow("regen-timeline.yml.template")},
+		{"logmind's own .github/workflows/regen-timeline.yml", string(wfBytes)},
+	} {
+		for _, want := range chain {
+			if !strings.Contains(side.body, want) {
+				t.Errorf("%s is missing credential-chain element %q — the shipped template and the "+
+					"workflow logmind runs on itself must not diverge on the credential mechanism",
+					side.label, want)
+			}
+		}
+	}
+}
+
+// TestSelfUpdateWorkflow_ByteIdenticalToTemplate answers the one-owner
+// question for logmind-self-update: unlike regen-timeline (which
+// deliberately builds from in-tree source here), this repo runs the
+// SCAFFOLDED workflow — `.github/workflows/logmind-self-update.yml` is an
+// installed copy of the template, marker line and all. So there is nothing
+// to permit: it must be byte-identical, and this test is the owner of that
+// fact.
+//
+// It had silently drifted on two action pins — `actions/checkout` (v6 in
+// the template, v7 installed) and `thrillmade/setup-logmind` (v1.0.0 vs
+// v1.0.1) — because the installed copy was hand-edited without the
+// template following, and the marker was never bumped, so `logmind doctor`
+// reported the pair "current" while they differed.
+func TestSelfUpdateWorkflow_ByteIdenticalToTemplate(t *testing.T) {
+	repoRoot := repoRootFromCaller(t)
+	installed, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "logmind-self-update.yml"))
+	if err != nil {
+		t.Fatalf("read installed workflow: %v", err)
+	}
+	tmpl := Workflow("logmind-self-update.yml.template")
+	if string(installed) == tmpl {
+		return
+	}
+	t.Errorf("`.github/workflows/logmind-self-update.yml` is not byte-identical to " +
+		"internal/templates/github/logmind-self-update.yml.template. This repo runs the scaffolded " +
+		"workflow, so the two are one artifact with one owner — copy the template over the installed " +
+		"file (and bump the template's marker so every consumer repo picks the change up too).")
+	// Point at the first differing line rather than dumping both files.
+	instLines := strings.Split(string(installed), "\n")
+	tmplLines := strings.Split(tmpl, "\n")
+	for i := 0; i < len(instLines) || i < len(tmplLines); i++ {
+		var a, b string
+		if i < len(tmplLines) {
+			a = tmplLines[i]
+		}
+		if i < len(instLines) {
+			b = instLines[i]
+		}
+		if a != b {
+			t.Errorf("first divergence at line %d:\n  template:  %q\n  installed: %q", i+1, a, b)
+			return
+		}
+	}
+}
+
+// TestWorkflowTemplates_SetupLogmindPinIsUniformAndCurrent pins the
+// action-pin axis. Two failures it would have caught:
+//
+//   - the templates shipping `thrillmade/setup-logmind@v1.0.0` while every
+//     repo already running these workflows had been moved to v1.0.1 by
+//     Dependabot — a freshly scaffolded repo installed a pin older than the
+//     fleet's on day one, and nothing said so;
+//   - the pin drifting between templates, so which workflow you looked at
+//     determined which version of the action you thought was current.
+//
+// The assertion is a property, not a literal: every setup-logmind call
+// site in every template, AND every one in this repo's own
+// `.github/workflows`, must agree on ONE version. Dependabot bumps the
+// installed copies; this test is what makes a Dependabot bump that landed
+// on the workflows but not the templates visible.
+func TestWorkflowTemplates_SetupLogmindPinIsUniformAndCurrent(t *testing.T) {
+	const usesPrefix = "uses: thrillmade/setup-logmind@"
+	pins := map[string][]string{}
+	collect := func(label, body string) {
+		for _, line := range strings.Split(body, "\n") {
+			_, after, ok := strings.Cut(line, usesPrefix)
+			if !ok {
+				continue
+			}
+			pin := strings.Fields(after)[0]
+			pins[pin] = append(pins[pin], label)
+		}
+	}
+	for _, name := range []string{
+		"check-doc-links.yml.template",
+		"regen-timeline.yml.template",
+		"logmind-self-update.yml.template",
+		"check-decisions.yml.template",
+	} {
+		collect("template "+name, Workflow(name))
+	}
+	repoRoot := repoRootFromCaller(t)
+	entries, err := os.ReadDir(filepath.Join(repoRoot, ".github", "workflows"))
+	if err != nil {
+		t.Fatalf("read .github/workflows: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		collect(".github/workflows/"+e.Name(), string(data))
+	}
+	if len(pins) == 0 {
+		t.Fatalf("found no `%s` call sites at all — this test's search is broken, not the tree", usesPrefix)
+	}
+	if len(pins) > 1 {
+		t.Errorf("the `thrillmade/setup-logmind` pin is not uniform — %d different versions are in use, "+
+			"so a freshly scaffolded repo gets a different action version than the ones already running "+
+			"these workflows:", len(pins))
+		for pin, sites := range pins {
+			t.Errorf("  %s ← %v", pin, sites)
+		}
 	}
 }

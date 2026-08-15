@@ -439,11 +439,12 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 	}
 	var created, refreshed []string
 	var declined []templateDowngrade
+	defaultBranch := gitcli.DefaultBranch(repoRoot)
 	for _, tmpl := range templates.ListWorkflowTemplates() {
 		// `tmpl` includes the `.template` suffix; strip for the install name.
 		targetName := strings.TrimSuffix(tmpl, ".template")
 		target := filepath.Join(workflowsDir, targetName)
-		body := renderWorkflowTemplate(templates.Workflow(tmpl))
+		body := renderWorkflowTemplate(templates.Workflow(tmpl), defaultBranch)
 		existing, err := os.ReadFile(target)
 		if errors.Is(err, fs.ErrNotExist) {
 			if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
@@ -493,12 +494,48 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 	return created, refreshed, declined, nil
 }
 
-// renderWorkflowTemplate substitutes install-time placeholders. Currently:
+// renderWorkflowTemplate substitutes install-time placeholders:
 //
-//	__LOGMIND_VERSION__ → the current binary's version constant
-func renderWorkflowTemplate(text string) string {
-	return strings.ReplaceAll(text, "__LOGMIND_VERSION__", version.Version)
+//	__LOGMIND_VERSION__        → the current binary's version constant
+//	__LOGMIND_DEFAULT_BRANCH__ → this repository's default branch
+//
+// NOTE: as of the v12/v9 template generation NO bundled template contains
+// __LOGMIND_VERSION__ — the version pin it existed for went away when CI
+// moved to `thrillmade/setup-logmind`, which resolves `latest` itself. The
+// substitution is kept as a working extension point, but nothing exercises
+// it against a real template today, and init_test.go's "never lands on
+// disk" assertion for it currently cannot fail. Filed rather than removed
+// here; removing it is a separate call.
+//
+// The default branch is substituted here, at scaffold time, because a
+// workflow's `on:` trigger CANNOT take an expression — GitHub evaluates no
+// context under `on:`, so `branches: [${{ ... }}]` is not a thing. The
+// alternatives were both worse: hardcoding `main` breaks every repo whose
+// default branch is `master`/`trunk`/anything else (the assumption this
+// removes), and broadening the filter to `branches: ['**']` would put a
+// SECOND `check-derived-docs` check run on every pull-request head SHA —
+// one skipped by its own `if:`, and a conditionally-skipped job reports
+// SUCCESS to required status checks, which would turn a PR-blocking gate
+// into one that passes without evaluating anything.
+//
+// Everything the workflow does at RUNTIME still reads the live
+// `github.event.repository.default_branch`, so a stale value here can only
+// cost a trigger, never a wrong-ref write — and the PR gate compares the
+// two and warns when they drift.
+func renderWorkflowTemplate(text, defaultBranch string) string {
+	text = strings.ReplaceAll(text, "__LOGMIND_VERSION__", version.Version)
+	return strings.ReplaceAll(text, "__LOGMIND_DEFAULT_BRANCH__", defaultBranch)
 }
+
+// NOTE on the branch value: gitcli.DefaultBranch owns this fact and its
+// documented 5-step resolution ends in a hard "main" fallback, so it never
+// returns "". This file deliberately does NOT wrap it in a second
+// empty-check — a duplicated fallback is a second copy of the same rule
+// that reads as a safety net while being unreachable, and the invariant
+// belongs to the resolver, not to every caller. What depends on it (an
+// empty value renders `branches: []`, a filter matching no branch, which
+// is a silently dead workflow rather than a merely wrong one) is pinned by
+// TestRenderedWorkflow_TriggersOnTheRepositorysOwnBranch.
 
 // extractTemplateVersion reads the `# logmind-template-version: vN` line.
 // Returns "" when no marker is present (the user stripped it; treat as
