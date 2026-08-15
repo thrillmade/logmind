@@ -6,10 +6,10 @@
 // Mirrors src/logmind/core/parser.py (the DECISION_HEADER regex + the
 // "skip malformed but keep going" error policy).
 //
-// The package also exposes Collect(), the multi-source aggregator that
-// reads decisions.md + decisions-branches/*.md
-// and returns a unified, source-tagged slice. The timeline subcommand
-// consumes that slice directly.
+// The package also exposes Collect(), the multi-source aggregator that reads
+// every NonBranchSources() file (decisions.md + decisions-archive.md) plus
+// decisions-branches/*.md and returns a unified, source-tagged slice. The
+// timeline subcommand consumes that slice directly.
 //
 // SplitRaw / SplitRawBytes expose the same header boundaries as byte
 // ranges rather than just parsed fields — the primitive for moving an entry
@@ -35,6 +35,47 @@ type Entry struct {
 	Title       string
 	SourcePath  string
 	SourceLabel string
+}
+
+// NonBranchSource names a decision file that the SPEC §3.2 branch-file layout
+// does not name after a branch. File is relative to docsPath; Label is the
+// §3.2 source grammar token ("main" | "archive") a reader tags its entries
+// with.
+type NonBranchSource struct {
+	File  string
+	Label string
+}
+
+// NonBranchSources returns, in deterministic read order, every decision file
+// that lives outside docs/decisions-branches/ and that EVERY read path
+// (Collect, the timeline's collectMarked, `search`, `show --all`) MUST read.
+//
+// This is the single owner of that list. A read path that hardcodes one of
+// these filenames instead of ranging over this function is the bug class this
+// exists to make unrepresentable: §3.2 collapsed the layout by dropping
+// docs/decisions-archive.md from four read paths independently, and a repo
+// that had rotated under the old `max_recent: 20` default silently lost every
+// archived decision from `search`, `show --all`, and the timeline.
+//
+//   - decisions.md — the pre-§3.2 main log. Still WRITTEN, but only where no
+//     branch NAME exists to name a file after: a non-git directory, a
+//     detached HEAD, an unborn repo, or decisions.branch_aware explicitly off
+//     (resolveDecisionsPath in internal/cli/log.go routes those here). It is
+//     no longer where a decision made ON the default branch goes — that is
+//     docs/decisions-branches/main.md like any other branch.
+//   - decisions-archive.md — the pre-§3.2 rotation overflow, written by the
+//     retired `max_recent` cap. NOTHING writes it now, in any state. It is
+//     read-only legacy: a repo that rotated before upgrading keeps every
+//     archived decision findable. Nothing here migrates its contents into
+//     main.md — rewriting a user-owned artifact is not this code's business
+//     (SPEC line 1101); the read paths simply surface it where it lies.
+//
+// Order is the read order callers append in, so output stays deterministic.
+func NonBranchSources() []NonBranchSource {
+	return []NonBranchSource{
+		{File: "decisions.md", Label: "main"},
+		{File: "decisions-archive.md", Label: "archive"},
+	}
 }
 
 // decisionHeader mirrors Python's DECISION_HEADER regex
@@ -204,14 +245,14 @@ func branchLabelFromFilename(name string) string {
 // Collect walks the canonical logmind sources under docsPath and
 // returns every entry, sorted newest-first.
 //
-// Sources walked (read-only; never written):
+// Sources walked (Collect itself never writes):
 //
 //	docs/decisions.md                    → source_label="main"
+//	docs/decisions-archive.md            → source_label="archive"
 //	docs/decisions-branches/<branch>.md  → source_label="<branch>"
 //
-// docs/decisions.md is the pre-§3.2 separate main log. Nothing writes it any
-// more; it stays in the walk so a repository that has not yet appended its
-// entries to docs/decisions-branches/main.md keeps them visible.
+// The first two come from NonBranchSources() — see it for why each is still
+// read and which of them is still written.
 //
 // Missing files are tolerated; callers get whatever exists.
 func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
@@ -220,15 +261,16 @@ func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
 	}
 	var out []Entry
 
-	main := filepath.Join(docsPath, "decisions.md")
-	mainEntries, err := Iter(main, stderr)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range mainEntries {
-		e.SourcePath = "decisions.md"
-		e.SourceLabel = "main"
-		out = append(out, e)
+	for _, src := range NonBranchSources() {
+		entries, err := Iter(filepath.Join(docsPath, src.File), stderr)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			e.SourcePath = src.File
+			e.SourceLabel = src.Label
+			out = append(out, e)
+		}
 	}
 
 	branchesDir := filepath.Join(docsPath, "decisions-branches")

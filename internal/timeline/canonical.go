@@ -354,22 +354,23 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 		items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: rel})
 	}
 
-	// (2) docs/decisions.md — the pre-§3.2 separate main log. Nothing WRITES
-	// it any more (a decision made on main goes in main's branch file like
-	// any other), but it is still read here so a repository that upgrades the
-	// binary before it appends its old main-log entries to
-	// docs/decisions-branches/main.md does not silently lose them from its
-	// history. One synthesized row per decision header — this source never
-	// carried entry-block markers.
-	{
-		const legacyMainLog = "decisions.md"
-		entries, err := decisions.Iter(filepath.Join(docsPath, legacyMainLog), stderr)
+	// (2) The decision files that are not named after a branch —
+	// docs/decisions.md and docs/decisions-archive.md. See
+	// decisions.NonBranchSources() for the list and for which of them is
+	// still written: a decision made on main goes in main's branch file like
+	// any other, but decisions.md still receives the branchless cases, and
+	// the archive receives nothing at all. Both are read here so a repository
+	// that upgrades the binary before migrating its pre-§3.2 history does not
+	// silently lose it from the timeline. One synthesized row per decision
+	// header — neither source ever carried entry-block markers.
+	for _, src := range decisions.NonBranchSources() {
+		entries, err := decisions.Iter(filepath.Join(docsPath, src.File), stderr)
 		if err != nil {
 			return nil, err
 		}
 		for _, e := range entries {
 			d := dateOnly(e.Date)
-			items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: legacyMainLog})
+			items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: src.File})
 		}
 	}
 

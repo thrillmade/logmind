@@ -37,3 +37,14 @@
 
 ---
 
+## 2026-08-15 13:55 - decisions: read the default branch's log and the legacy archive from every branch, not just the one checked out
+
+**Reasoning:** The panel blocked this branch on a regression it introduced. Moving main's decisions into a branch file left search scanning only the legacy top-level log and whichever branch happened to be checked out, so from a feature branch, which is where agents always are, searching main's entire history returned nothing. Measured in a real repository: main's decision matched zero times from a feature branch and once after the fix, with a control confirming the branch's own decision still matched and a token present in no file still matched nothing. The archive had the same shape of defect from a different cause: all four read paths stopped reading docs/decisions-archive.md, and the old default rotated at twenty entries, so any repository that had rotated lost that history from the timeline, from search and from show.
+
+**Alternatives considered:** Migrate the archive's contents into the branch file on upgrade. Rejected: that is a write over an artifact the user owns, which is the exact class two other lanes are fixing this cycle, and SPEC line 1101 forbids it. The archive becomes a legacy read source instead, read by everything and written by nothing. Also rejected: hardcoding main as the default branch, since a repository whose default is trunk must find its own history; resolution goes through the same helper rebase, warp and pulse already share.
+
+**Implications:**
+- NonBranchSources becomes the single owner of the two legacy paths so a fifth read path cannot be added while forgetting one. Five mutations, all compiled, all died, including one that removes the archive and turns six tests red across all four read paths. Six existing tests asserted the bug and were inverted. A doctor check announcing a migratable archive is deliberately not built here: with the read paths restored there is no silent loss left to announce, and advising a migration with no safe tool to perform it invites hand edits.
+
+---
+

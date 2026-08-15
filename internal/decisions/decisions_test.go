@@ -89,9 +89,10 @@ func TestCollectAllSources(t *testing.T) {
 		[]byte("## 2026-06-01 10:00 - main entry\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A leftover docs/decisions-archive.md must NOT be collected: §3.2
-	// removed the archive outright, and a file left behind by an older
-	// binary is not a source.
+	// A legacy docs/decisions-archive.md MUST be collected. §3.2 stopped
+	// WRITING the archive; it did not make the decisions already in one stop
+	// counting. A repo that rotated under the retired `max_recent: 20`
+	// default would otherwise lose them all on upgrade.
 	if err := os.WriteFile(filepath.Join(docs, "decisions-archive.md"),
 		[]byte("## 2026-05-01 09:00 - archived entry\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -106,8 +107,8 @@ func TestCollectAllSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("got %d; want 2 (the branch file + the legacy main log — never the archive)", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("got %d; want 3 (the branch file + the legacy main log + the legacy archive)", len(entries))
 	}
 	// Newest-first
 	if entries[0].SourceLabel != "feat/alpha" {
@@ -119,10 +120,14 @@ func TestCollectAllSources(t *testing.T) {
 	if entries[1].SourceLabel != "main" {
 		t.Errorf("entries[1].SourceLabel = %q; want main", entries[1].SourceLabel)
 	}
-	for _, e := range entries {
-		if e.SourceLabel == "archive" || strings.Contains(e.SourcePath, "decisions-archive") {
-			t.Errorf("Collect returned an entry from the deleted archive: %+v", e)
-		}
+	if entries[2].SourceLabel != "archive" {
+		t.Errorf("entries[2].SourceLabel = %q; want archive", entries[2].SourceLabel)
+	}
+	if entries[2].SourcePath != "decisions-archive.md" {
+		t.Errorf("entries[2].SourcePath = %q; want decisions-archive.md", entries[2].SourcePath)
+	}
+	if !strings.Contains(entries[2].Title, "archived entry") {
+		t.Errorf("entries[2].Title = %q; want the archived entry's title", entries[2].Title)
 	}
 }
 
