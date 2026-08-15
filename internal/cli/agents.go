@@ -388,14 +388,11 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io
 		return nil
 	}
 
-	// Apply path: rewrite each file in place.
+	// Apply path: rewrite each file in place through the one write
+	// primitive, which owns the read, requires the markers to actually be
+	// there, and writes the WHOLE file back (#297).
 	for _, e := range outdated {
-		data, err := os.ReadFile(e.Path)
-		if err != nil {
-			return err
-		}
-		refreshed := inserter.ReplaceMarkerBlock(string(data), e.NewBody)
-		if err := os.WriteFile(e.Path, []byte(refreshed), 0o644); err != nil {
+		if err := inserter.RefreshMarkerBlockFile(e.Path, e.NewBody); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, e.Path)

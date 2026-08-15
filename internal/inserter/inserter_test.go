@@ -37,15 +37,15 @@ func TestReplaceMarkerBlock_RoundTrip(t *testing.T) {
 			}
 			// Replace with garbage.
 			garbageBody := "\n!! WRECK !!\n"
-			wrecked := ReplaceMarkerBlock(tc.content, garbageBody)
+			wrecked := replaceMarkerBlock(tc.content, garbageBody)
 			if !strings.Contains(wrecked, garbageBody) {
-				t.Fatalf("ReplaceMarkerBlock didn't insert garbage body")
+				t.Fatalf("replaceMarkerBlock didn't insert garbage body")
 			}
 			if wrecked == tc.content {
-				t.Fatalf("ReplaceMarkerBlock didn't change content")
+				t.Fatalf("replaceMarkerBlock didn't change content")
 			}
 			// Restore.
-			restored := ReplaceMarkerBlock(wrecked, orig)
+			restored := replaceMarkerBlock(wrecked, orig)
 			if restored != tc.content {
 				t.Fatalf("round-trip drift:\n--- want ---\n%s\n--- got ---\n%s",
 					tc.content, restored)
@@ -63,7 +63,7 @@ func TestReplaceMarkerBlock_PreservesOuterBytes(t *testing.T) {
 	body := startMarker + "\nold body\n" + endMarker
 	c0 := above + body + below
 
-	c1 := ReplaceMarkerBlock(c0, "\nNEW BODY OF DIFFERENT LENGTH\n")
+	c1 := replaceMarkerBlock(c0, "\nNEW BODY OF DIFFERENT LENGTH\n")
 	if !strings.HasPrefix(c1, above) {
 		t.Fatalf("prefix bytes were modified:\n--- want ---\n%q\n--- got ---\n%q",
 			above, c1[:len(above)])
@@ -79,7 +79,7 @@ func TestReplaceMarkerBlock_PreservesOuterBytes(t *testing.T) {
 // the file format drifts.
 func TestReplaceMarkerBlock_NoMarkers(t *testing.T) {
 	in := "# Plain markdown\n\nNo markers here.\n"
-	out := ReplaceMarkerBlock(in, "NEW")
+	out := replaceMarkerBlock(in, "NEW")
 	if out != in {
 		t.Fatalf("input was mutated despite missing markers:\n--- want ---\n%q\n--- got ---\n%q",
 			in, out)
@@ -300,7 +300,7 @@ func TestEnsureAgentsMD_FullBlockRefreshesFullNotSlim(t *testing.T) {
 	dir := t.TempDir()
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	// A stale v6 full block: correct FULL marker flavour, differing bytes.
-	staleFull := ReplaceMarkerBlock(templates.AgentsTemplate(),
+	staleFull := replaceMarkerBlock(templates.AgentsTemplate(),
 		"\n<!-- logmind-block-version: v6 -->\n## Decision Logging (logmind) — REQUIRED for substantive commits\nstale full body\n")
 	if err := os.WriteFile(agentsPath, []byte(staleFull), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -572,7 +572,7 @@ func TestFindOutdatedMarkerBlocks_CurrentNoop(t *testing.T) {
 func TestFindOutdatedMarkerBlocks_DriftedDetected(t *testing.T) {
 	dir := t.TempDir()
 	driftedBody := "\n<!-- logmind-block-version: v8-pointer -->\nDIFFERENT CONTENT BUT SAME VERSION\n"
-	wrecked := ReplaceMarkerBlock(templates.AgentsSlimTemplate(), driftedBody)
+	wrecked := replaceMarkerBlock(templates.AgentsSlimTemplate(), driftedBody)
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -583,8 +583,18 @@ func TestFindOutdatedMarkerBlocks_DriftedDetected(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("expected 1 outdated entry; got %d", len(out))
 	}
-	if !strings.Contains(out[0].OldBody, "DIFFERENT CONTENT") {
-		t.Errorf("OldBody = %q; want to contain DIFFERENT CONTENT", out[0].OldBody)
+	// The entry names WHICH file is stale and WHAT belongs in it. It
+	// deliberately no longer carries the body currently on disk (#297): that
+	// field's only consumer passed it where a whole file belonged. Assert the
+	// replacement body instead — it is what the write path actually installs.
+	// Derived from the template, never restated: a marker bump must not need
+	// this assertion re-pointed.
+	wantBody, _ := ExtractMarkerBlock(templates.AgentsSlimTemplate())
+	if out[0].NewBody != wantBody {
+		t.Errorf("NewBody = %q; want the current slim block body %q", out[0].NewBody, wantBody)
+	}
+	if filepath.Base(out[0].Path) != "AGENTS.md" {
+		t.Errorf("Path = %q; want AGENTS.md", out[0].Path)
 	}
 }
 
@@ -657,7 +667,7 @@ func TestFindOutdatedMarkerBlocks_OldFullRefreshesToCurrent(t *testing.T) {
 	// Synthesize a v5-shaped block body. The byte content differs from
 	// the current template, so the drift compare must fire.
 	v5Body := "\n<!-- logmind-block-version: v5 -->\n## Decision Logging (logmind)\nold v5 body\n"
-	wrecked := ReplaceMarkerBlock(templates.AgentsTemplate(), v5Body)
+	wrecked := replaceMarkerBlock(templates.AgentsTemplate(), v5Body)
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -693,7 +703,7 @@ func TestFindOutdatedMarkerBlocks_PriorFullRefreshesToCurrent(t *testing.T) {
 	dir := t.TempDir()
 	// Synthesize a v6-shaped full block body (older marker, differing bytes).
 	v6Body := "\n<!-- logmind-block-version: v6 -->\n## Decision Logging (logmind) — REQUIRED for substantive commits\nold v6 body without the branch-summary convention\n"
-	wrecked := ReplaceMarkerBlock(templates.AgentsTemplate(), v6Body)
+	wrecked := replaceMarkerBlock(templates.AgentsTemplate(), v6Body)
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -734,7 +744,7 @@ func TestFindOutdatedMarkerBlocks_V7RefreshesToV8(t *testing.T) {
 	// Synthesize a v7-shaped full block body (older marker, pre-enforcement
 	// prose, differing bytes).
 	v7Body := "\n<!-- logmind-block-version: v7 -->\n## Decision Logging (logmind) — REQUIRED for substantive commits\nold v7 body: the commit-msg hook only warns\n"
-	wrecked := ReplaceMarkerBlock(templates.AgentsTemplate(), v7Body)
+	wrecked := replaceMarkerBlock(templates.AgentsTemplate(), v7Body)
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -772,7 +782,7 @@ func TestFindOutdatedMarkerBlocks_V7RefreshesToV8(t *testing.T) {
 func TestFindOutdatedMarkerBlocks_OldSlimRefreshesToCurrent(t *testing.T) {
 	dir := t.TempDir()
 	v7Body := "\n<!-- logmind-block-version: v7-pointer -->\n## Decision logging — `logmind log` is the commit primitive\nold v7 body\n"
-	wrecked := ReplaceMarkerBlock(templates.AgentsSlimTemplate(), v7Body)
+	wrecked := replaceMarkerBlock(templates.AgentsSlimTemplate(), v7Body)
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -800,7 +810,7 @@ func TestFindOutdatedMarkerBlocks_OldSlimRefreshesToCurrent(t *testing.T) {
 func TestFindOutdatedMarkerBlocks_V8PointerRefreshesToV9Pointer(t *testing.T) {
 	dir := t.TempDir()
 	v8Body := "\n<!-- logmind-block-version: v8-pointer -->\n## Decision logging — `logmind log` is the commit primitive\nold v8-pointer body: the commit-msg hook only warns\n"
-	wrecked := ReplaceMarkerBlock(templates.AgentsSlimTemplate(), v8Body)
+	wrecked := replaceMarkerBlock(templates.AgentsSlimTemplate(), v8Body)
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(wrecked), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -826,17 +836,17 @@ func TestFindOutdatedMarkerBlocks_V8PointerRefreshesToV9Pointer(t *testing.T) {
 
 // TestReplaceMarkerBlock_InvertedMarkers — when end marker appears
 // BEFORE start marker (malformed input), the function MUST return
-// content unchanged. Without this guard, ReplaceMarkerBlock would
+// content unchanged. Without this guard, replaceMarkerBlock would
 // silently corrupt by duplicating the inter-marker region.
 //
 // Flagged by clud-bug-review on PR #118 — ExtractMarkerBlock already
-// had this guard; ReplaceMarkerBlock did not. Pinned by this test.
+// had this guard; replaceMarkerBlock did not. Pinned by this test.
 func TestReplaceMarkerBlock_InvertedMarkers(t *testing.T) {
 	// End marker appears BEFORE start marker — corrupt file shape.
 	content := "PREFIX\n<!-- /logmind-block-version -->\nMIDDLE\n<!-- logmind-block-version: v8-pointer -->\nSUFFIX"
-	got := ReplaceMarkerBlock(content, "WOULD-OVERWRITE")
+	got := replaceMarkerBlock(content, "WOULD-OVERWRITE")
 	if got != content {
-		t.Errorf("ReplaceMarkerBlock on inverted markers must return content unchanged.\nWant: %q\nGot:  %q", content, got)
+		t.Errorf("replaceMarkerBlock on inverted markers must return content unchanged.\nWant: %q\nGot:  %q", content, got)
 	}
 }
 
