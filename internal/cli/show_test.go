@@ -60,9 +60,10 @@ func runShowCmd(t *testing.T, extraArgs ...string) string {
 	return out.String()
 }
 
-// TestShow_DefaultBranch_StreamsDecisionsMd: on the default branch, `show`
-// streams docs/decisions.md verbatim and prints the ok-trailer.
-func TestShow_DefaultBranch_StreamsDecisionsMd(t *testing.T) {
+// TestShow_DefaultBranch_StreamsMainBranchFile: on the default branch, `show`
+// streams docs/decisions-branches/main.md — the file `logmind log` just wrote
+// to, main being a branch like any other (§3.2) — and prints the ok-trailer.
+func TestShow_DefaultBranch_StreamsMainBranchFile(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
@@ -71,7 +72,7 @@ func TestShow_DefaultBranch_StreamsDecisionsMd(t *testing.T) {
 		body := runShowCmd(t)
 		mustContain(t, body, "## ")
 		mustContain(t, body, "Use PostgreSQL")
-		mustContain(t, body, "ok show: docs/decisions.md")
+		mustContain(t, body, "ok show: docs/decisions-branches/main.md")
 		mustContain(t, body, "bytes")
 	})
 }
@@ -90,9 +91,9 @@ func TestShow_FeatureBranch_StreamsBranchFile(t *testing.T) {
 		body := runShowCmd(t)
 		mustContain(t, body, "Add JWT auth")
 		mustContain(t, body, "ok show: docs/decisions-branches/feat__login.md")
-		// The default-branch decisions.md content must NOT leak in.
+		// main's own branch file must NOT leak in.
 		if strings.Contains(body, "Initialize logmind decision tracking") {
-			t.Errorf("feature-branch show leaked docs/decisions.md content:\n%s", body)
+			t.Errorf("feature-branch show leaked docs/decisions-branches/main.md content:\n%s", body)
 		}
 	})
 }
@@ -112,39 +113,34 @@ func TestShow_NoDecisionsYetOnBranch(t *testing.T) {
 	})
 }
 
-// TestShow_All_ArchiveVariants: --all appends the archive under a banner
-// when it exists, and degrades gracefully (no banner, "(no archive)"
-// ok-suffix) when it doesn't.
-func TestShow_All_ArchiveVariants(t *testing.T) {
-	cases := []struct {
-		name         string
-		writeArchive bool
-		wantBanner   bool
-		wantOkSuffix string
-	}{
-		{name: "archive present", writeArchive: true, wantBanner: true, wantOkSuffix: "+ archive"},
-		{name: "archive absent", writeArchive: false, wantBanner: false, wantOkSuffix: "(no archive)"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+// TestShow_All_NeverStreamsALeftoverArchive: §3.2 deleted
+// docs/decisions-archive.md. --all covers the branch files and nothing else,
+// so a stale archive file left behind by an older binary must not be streamed
+// under a banner — and its absence is not reported as a missing thing.
+func TestShow_All_NeverStreamsALeftoverArchive(t *testing.T) {
+	for _, writeArchive := range []bool{true, false} {
+		name := "leftover archive present"
+		if !writeArchive {
+			name = "no archive file"
+		}
+		t.Run(name, func(t *testing.T) {
 			withTempCwd(t, func(d string) {
 				mustMkdir(t, filepath.Join(d, "docs"))
 				mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
 					"## 2026-06-01 10:00 - Main decision\n")
-				if tc.writeArchive {
+				if writeArchive {
 					mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 						"## 2025-01-01 09:00 - Archived decision\n")
 				}
 
 				body := runShowCmd(t, "--all")
 				mustContain(t, body, "Main decision")
-				if tc.wantBanner {
-					mustContain(t, body, "ARCHIVED DECISIONS")
-					mustContain(t, body, "Archived decision")
-				} else if strings.Contains(body, "ARCHIVED DECISIONS") {
-					t.Errorf("did not expect ARCHIVED DECISIONS banner:\n%s", body)
+				if strings.Contains(body, "ARCHIVED DECISIONS") {
+					t.Errorf("--all streamed an ARCHIVED DECISIONS banner; the archive is gone (§3.2):\n%s", body)
 				}
-				mustContain(t, body, tc.wantOkSuffix)
+				if strings.Contains(body, "Archived decision") {
+					t.Errorf("--all streamed a leftover docs/decisions-archive.md:\n%s", body)
+				}
 			})
 		})
 	}
@@ -230,12 +226,15 @@ func TestShow_All_ExcludesCurrentBranchFile(t *testing.T) {
 		mustContain(t, body, "BRANCH DECISIONS: feat/other")
 		mustContain(t, body, "Other branch decision")
 
-		// Exactly one BRANCH DECISIONS banner (feat/other) — the current
-		// branch's own file must not ALSO get a "BRANCH DECISIONS: feat/login"
-		// section (its content is already the primary body above).
-		if n := strings.Count(body, "BRANCH DECISIONS:"); n != 1 {
-			t.Errorf("want exactly 1 BRANCH DECISIONS banner, got %d:\n%s", n, body)
+		// One banner per OTHER branch file — feat/other plus main, whose own
+		// file carries the first decision `logmind init` logged (§3.2: main is
+		// a branch like any other). The current branch's file must not ALSO
+		// get a "BRANCH DECISIONS: feat/login" section, since its content is
+		// already the primary body above.
+		if n := strings.Count(body, "BRANCH DECISIONS:"); n != 2 {
+			t.Errorf("want exactly 2 BRANCH DECISIONS banners (feat/other, main), got %d:\n%s", n, body)
 		}
+		mustContain(t, body, "BRANCH DECISIONS: main")
 		if strings.Contains(body, "BRANCH DECISIONS: feat/login") {
 			t.Errorf("current branch file re-shown under its own BRANCH DECISIONS banner:\n%s", body)
 		}
@@ -267,8 +266,8 @@ func TestShow_Brief_TitleAndTimestampOnly(t *testing.T) {
 }
 
 // TestShow_Brief_All_GroupsBySource: under --all, --brief groups lines under
-// a "[source]" tag per source, in main → branch → archive order, and the
-// tag text matches the --json "source" value exactly.
+// a "[source]" tag per source, in main → branch order, and the tag text
+// matches the --json "source" value exactly.
 func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
@@ -276,23 +275,24 @@ func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 			"## 2026-06-01 10:00 - Main decision\n")
 		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__other.md"),
 			"## 2026-06-02 11:00 - Branch decision\n")
+		// A leftover archive from an older binary — never a source (§3.2).
 		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 			"## 2025-01-01 09:00 - Archived decision\n")
 
 		body := runShowCmd(t, "--brief", "--all")
 		mustContain(t, body, "[main]")
 		mustContain(t, body, "[branch:feat/other]")
-		mustContain(t, body, "[archive]")
 		mustContain(t, body, "2026-06-01 10:00 - Main decision")
 		mustContain(t, body, "2026-06-02 11:00 - Branch decision")
-		mustContain(t, body, "2025-01-01 09:00 - Archived decision")
+		if strings.Contains(body, "[archive]") || strings.Contains(body, "Archived decision") {
+			t.Errorf("--brief --all grouped a leftover archive under its own tag:\n%s", body)
+		}
 
 		mainIdx := strings.Index(body, "[main]")
 		branchIdx := strings.Index(body, "[branch:feat/other]")
-		archiveIdx := strings.Index(body, "[archive]")
-		if !(mainIdx >= 0 && mainIdx < branchIdx && branchIdx < archiveIdx) {
-			t.Errorf("want [main] < [branch:feat/other] < [archive] ordering, got indices %d, %d, %d:\n%s",
-				mainIdx, branchIdx, archiveIdx, body)
+		if !(mainIdx >= 0 && mainIdx < branchIdx) {
+			t.Errorf("want [main] < [branch:feat/other] ordering, got indices %d, %d:\n%s",
+				mainIdx, branchIdx, body)
 		}
 	})
 }
@@ -392,8 +392,8 @@ func TestShow_JSON_MachineCleanOutput(t *testing.T) {
 }
 
 // TestShow_JSON_All_SourceValues: under --all --json, every decision's
-// "source" value matches SPEC section sec-3-2's grammar exactly:
-// "main" | "archive" | "branch:<name>".
+// "source" value matches the grammar exactly: "main" | "branch:<name>".
+// "archive" is no longer in it — §3.2 deleted the file that produced it.
 func TestShow_JSON_All_SourceValues(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
@@ -401,6 +401,7 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 			"## 2026-06-03 09:00 - Main decision\n")
 		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__widget.md"),
 			"## 2026-06-02 08:00 - Branch decision\n")
+		// A leftover archive from an older binary — never a source (§3.2).
 		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 			"## 2025-01-01 07:00 - Archived decision\n")
 
@@ -415,10 +416,13 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 		for _, e := range doc.Decisions {
 			got[e["source"].(string)] = true
 		}
-		for _, want := range []string{"main", "branch:feat/widget", "archive"} {
+		for _, want := range []string{"main", "branch:feat/widget"} {
 			if !got[want] {
 				t.Errorf("missing source %q; got sources %v", want, got)
 			}
+		}
+		if got["archive"] {
+			t.Errorf(`--all --json emitted source "archive"; that source is gone under §3.2 (got %v)`, got)
 		}
 	})
 }

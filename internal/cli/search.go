@@ -1,8 +1,11 @@
 // search.go — `logmind search <query>` subcommand.
 //
 // SKILL.md / AGENTS.md / internal/templates/logmind-section.md document
-// `logmind search "keyword"` as "full-text search across recent + archive"
-// with `--case-sensitive` and `--no-archive`. This is the v2 implementation.
+// `logmind search "keyword"` with `--case-sensitive` and `--no-archive`.
+// This is the v2 implementation. There is no decision archive to search any
+// more (SPEC §3.2: every decision file is append-only and uncapped, and
+// docs/decisions-archive.md is gone), so `--no-archive` is now a no-op —
+// see its flag registration below.
 //
 // MATCHING IS LITERAL SUBSTRING, not regex. "Full-text search" means the
 // query is matched verbatim: `search "cost($)"` finds a line containing the
@@ -14,15 +17,15 @@
 //
 // SCOPE (deterministic source order, existence-checked, deduped by path):
 //
-//  1. docs/decisions.md            — main's recent decisions (always)
-//  2. the current feature-branch file from resolveDecisionsPath, IF it
-//     differs from decisions.md (i.e. only when on a feature branch)
-//  3. docs/decisions-archive.md    — unless --no-archive
+//  1. docs/decisions.md            — the pre-§3.2 main log, where one still
+//     exists (nothing writes it now; it is read so an un-migrated repo's
+//     entries stay findable)
+//  2. the current branch's file from resolveDecisionsPath, IF it differs
+//     from #1
 //
-// So a feature-branch agent searching finds main's decisions AND its own
-// branch's in-flight decisions AND the archive — the union the docs promise
-// ("across recent + archive"). On the default branch, (1) and (2) collapse to
-// a single decisions.md entry.
+// So an agent searching finds any legacy main-log decisions AND its own
+// branch's in-flight decisions. The two collapse to one entry wherever they
+// resolve to the same path.
 //
 // File SELECTION reuses resolveDecisionsPath (the same helper `logmind log`/
 // `headline`/`show` use). There is no existing decisions-package helper for
@@ -70,14 +73,13 @@ func newSearchCmd() *cobra.Command {
 	f := &searchFlags{}
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Full-text search across recent decisions and the archive",
+		Short: "Full-text search across the decision log",
 		Long: `Full-text search across the decision log for a keyword or phrase.
 
-Searches, in order: docs/decisions.md (main's recent decisions), the current
-feature branch's decision file (docs/decisions-branches/<branch>.md, when on a
-feature branch), and docs/decisions-archive.md — so a feature-branch agent
-finds main's decisions, its own branch's in-flight decisions, and the archive.
-Pass --no-archive to skip the archive.
+Searches, in order: docs/decisions.md (the pre-v2 main log, where one still
+exists) and the current branch's decision file
+(docs/decisions-branches/<branch>.md). Decision files are append-only and
+uncapped, so there is no archive to include or skip.
 
 The query is matched as a LITERAL substring (not a regex): "cost($)" finds the
 literal text "cost($)". Matching is case-insensitive by default — pass
@@ -86,7 +88,7 @@ literal text "cost($)". Matching is case-insensitive by default — pass
 Examples:
     logmind search "postgres"
     logmind search "API" --case-sensitive
-    logmind search "database" --no-archive`,
+    logmind search "database"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -98,8 +100,12 @@ Examples:
 	}
 	cmd.Flags().BoolVar(&f.caseSensitive, "case-sensitive", false,
 		"Require an exact-case match (default: case-insensitive).")
+	// --no-archive is accepted but ignored: docs/decisions-archive.md no
+	// longer exists (SPEC §3.2 — nothing rotates, nothing is archived), so
+	// there is nothing for it to exclude. Kept registered so existing
+	// scripts and agent skills that still pass it don't error.
 	cmd.Flags().BoolVar(&f.noArchive, "no-archive", false,
-		"Skip docs/decisions-archive.md (search only decisions.md + the current branch file).")
+		"No-op (kept for backward compatibility). Decision files are uncapped; there is no archive.")
 	return cmd
 }
 
@@ -118,7 +124,7 @@ func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.
 		return ErrSilent
 	}
 
-	files := searchSources(cwd, docsPath, !f.noArchive)
+	files := searchSources(cwd, docsPath)
 
 	var results []searchResult
 	for _, file := range files {
@@ -153,24 +159,18 @@ func runSearch(cwd, query string, f *searchFlags, quiet bool, stdout, stderr io.
 // searchSources returns the deterministic, existence-checked, path-deduped
 // list of decision files `search` scans:
 //
-//  1. docs/decisions.md (main's recent decisions)
-//  2. the current feature-branch file (resolveDecisionsPath), if != #1
-//  3. docs/decisions-archive.md, when includeArchive
+//  1. docs/decisions.md (the pre-§3.2 main log, where one still exists)
+//  2. the current branch's file (resolveDecisionsPath), if != #1
 //
-// On the default branch #1 and #2 resolve to the same path and collapse to a
-// single entry. Missing files are dropped silently — a repo without an archive
-// (or a brand-new branch with no decisions file yet) still searches whatever
-// exists.
-func searchSources(cwd, docsPath string, includeArchive bool) []string {
+// Missing files are dropped silently — a repo with no legacy main log, or a
+// brand-new branch with no decisions file yet, still searches whatever exists.
+func searchSources(cwd, docsPath string) []string {
 	cfg, _ := config.Load(cwd)
 	branchPath, _ := resolveDecisionsPath(cwd, docsPath, cfg)
 
 	candidates := []string{
 		filepath.Join(docsPath, "decisions.md"),
-		branchPath, // == decisions.md on the default branch (deduped below)
-	}
-	if includeArchive {
-		candidates = append(candidates, filepath.Join(docsPath, "decisions-archive.md"))
+		branchPath,
 	}
 
 	seen := make(map[string]bool, len(candidates))

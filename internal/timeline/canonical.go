@@ -195,7 +195,7 @@ func joinBodyLines(lines []string) string {
 // marked is one timeline row: its date+slug identity, the link-free headline
 // body rendered between the entry-block markers, and its source path (the
 // detail-page link target, AND the deterministic collision tiebreak — both
-// relative to docs/, e.g. "decisions-branches/feat__x.md" or "decisions.md").
+// relative to docs/, e.g. "decisions-branches/feat__x.md").
 type marked struct {
 	date   time.Time
 	slug   string
@@ -246,15 +246,42 @@ func collapseToLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// Generate builds the §1.6.4 deterministic-union timeline from the full
-// source set (decisions.md + decisions-archive.md + decisions-branches/*),
-// rendered in entry-block format. This is the sole timeline generator.
-func Generate(docsPath string, stderr io.Writer) (string, error) {
+// Generate builds the §1.6.4 deterministic-union timeline from the branch
+// files under docsPath and returns BOTH renderings of it: `recent` (the
+// RecentLimit newest entries → docs/timeline.md) and `archive` (everything
+// older → docs/timeline-archive.md). This is the sole timeline generator.
+//
+// Returning both from one call is the mechanism §3.3 asks for: "a producer
+// renders the newest 50 to one path and the remainder to the other, every
+// time, from the branch files that hold the actual record." There is no
+// second entry point that produces one half on its own, so the two can never
+// be rendered from different reads of the sources — and neither rendering is
+// ever an INPUT here, so an entry cannot change hands between them.
+func Generate(docsPath string, stderr io.Writer) (recent, archive string, err error) {
+	return generateAt(docsPath, RecentLimit, stderr)
+}
+
+// generateAt is Generate with the split point as a parameter. Only Generate
+// (with RecentLimit) and the tests that prove the bound is a pure rendering
+// choice call it: one source read, one sorted union, sliced in two.
+//
+// The slice is the whole of the split. Nothing reads either output file to
+// decide what belongs in it, so changing `limit` is a regeneration and never
+// a migration — the union is identical, only the cut moves.
+func generateAt(docsPath string, limit int, stderr io.Writer) (recent, archive string, err error) {
 	items, err := collectMarked(docsPath, stderr)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return renderCanonical(items), nil
+	if limit < 0 {
+		limit = 0
+	}
+	if limit > len(items) {
+		limit = len(items)
+	}
+	return renderCanonical(header, emptyBody, items[:limit]),
+		renderCanonical(archiveHeader, emptyArchiveBody, items[limit:]),
+		nil
 }
 
 // dateOnly truncates a timestamp to midnight in its own location, so a
@@ -312,16 +339,22 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 		items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: rel})
 	}
 
-	// (2) Direct-to-main + archive: one synthesized row per decision header
-	// (these sources carry no entry-block markers under the newspaper model).
-	for _, file := range []string{"decisions.md", "decisions-archive.md"} {
-		entries, err := decisions.Iter(filepath.Join(docsPath, file), stderr)
+	// (2) docs/decisions.md — the pre-§3.2 separate main log. Nothing WRITES
+	// it any more (a decision made on main goes in main's branch file like
+	// any other), but it is still read here so a repository that upgrades the
+	// binary before it appends its old main-log entries to
+	// docs/decisions-branches/main.md does not silently lose them from its
+	// history. One synthesized row per decision header — this source never
+	// carried entry-block markers.
+	{
+		const legacyMainLog = "decisions.md"
+		entries, err := decisions.Iter(filepath.Join(docsPath, legacyMainLog), stderr)
 		if err != nil {
 			return nil, err
 		}
 		for _, e := range entries {
 			d := dateOnly(e.Date)
-			items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: file})
+			items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: legacyMainLog})
 		}
 	}
 
@@ -426,12 +459,18 @@ func dedupeAndSuffix(items []marked) []marked {
 	return out
 }
 
-// renderCanonical assembles the entry-block-format timeline: the shared
+// renderCanonical assembles the entry-block-format timeline: the given
 // header, `## YYYY-MM` month landmarks (OUTSIDE the markers, §1.6.3.2), and
 // each row wrapped in its `<date>-<slug>` entry-block markers (§1.6.3.1).
-func renderCanonical(items []marked) string {
+//
+// Both halves of the §3.3 split render through this one function, differing
+// only in their preface — that is what "the same format under the same
+// rules" means concretely, and it is why a reader who reaches the end of
+// docs/timeline.md continues in docs/timeline-archive.md without changing
+// how they read.
+func renderCanonical(header, empty string, items []marked) string {
 	if len(items) == 0 {
-		return header + emptyBody
+		return header + empty
 	}
 	var b strings.Builder
 	b.WriteString(header)

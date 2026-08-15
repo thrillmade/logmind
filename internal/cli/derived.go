@@ -4,12 +4,18 @@ import (
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
-// derivedDocPaths are the two committed, purely-derived context docs governed by
+// derivedDocPaths are the committed, purely-derived context docs governed by
 // the zero-conflict invariant: on any non-default branch they MUST stay
 // byte-identical to their merge-base-with-main version (the branch never edits
 // them), so git's 3-way merge is conflict-free. They are regenerated only at the
 // integration point (main). Repo-relative, forward-slash (git pathspec form).
-var derivedDocPaths = []string{"docs/timeline.md", "docs/file-structure.md"}
+//
+// docs/timeline-archive.md is the older half of the SPEC §3.3 rendering split
+// and is governed exactly as docs/timeline.md is — §3.3 names all three:
+// "A non-default branch MUST NOT modify any derived file — the history, its
+// archive, or the map." Every restore path takes this list rather than naming
+// files itself, so a doc added here is picked up by all of them at once.
+var derivedDocPaths = []string{"docs/timeline.md", "docs/timeline-archive.md", "docs/file-structure.md"}
 
 // onNonDefaultBranch reports whether cwd is a git repo currently on a branch
 // other than the default branch. Best-effort: false on a non-repo, detached
@@ -37,7 +43,7 @@ func onNonDefaultBranch(cwd string) bool {
 // L1 restore (log.go) and guardCommitHarness's L2b restore
 // (guard_commit.go) — see either call site for the full seam this closes:
 // `logmind warp`'s merge-base repair (runWarp, warp.go) deliberately STAGES
-// the two derived docs so the fix survives into the next commit, and an
+// the derived docs so the fix survives into the next commit, and an
 // unconditional restore-to-HEAD would silently undo it, re-committing the
 // very divergence the CI gate's remediation advice ("run `logmind warp`,
 // then `logmind log`") told the user to fix.

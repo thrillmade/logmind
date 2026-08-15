@@ -73,7 +73,7 @@ func Pack(ranked []FileSymbols, maxTokens int) (kept []FileSymbols, omitted int)
 // Deterministic: reads committed docs in a fixed order.
 func decisionLinkedPaths(repoRoot string, files []FileSymbols) map[string]bool {
 	var corpus strings.Builder
-	for _, p := range []string{"decisions.md", "decisions-archive.md", "timeline.md"} {
+	for _, p := range []string{"decisions.md", "timeline.md", "timeline-archive.md"} {
 		if data, err := os.ReadFile(filepath.Join(repoRoot, "docs", p)); err == nil {
 			corpus.Write(data)
 			corpus.WriteByte('\n')

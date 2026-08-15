@@ -35,7 +35,7 @@ import (
 )
 
 //go:embed AGENTS.md.template AGENTS.md.slim.template agent-stub.md logmind-section.md
-//go:embed config.yml.template decisions.md.template decisions-archive.md.template file-structure.md.template
+//go:embed config.yml.template file-structure.md.template
 //go:embed decisions-branch-header.md.template
 //go:embed dependabot.yml.template
 //go:embed spec.md.template
@@ -125,16 +125,6 @@ func readEmbed(name string) string {
 // src/logmind/templates/config.yml.template.
 func ConfigTemplate() string {
 	return readEmbed("config.yml.template")
-}
-
-// DecisionsTemplate returns the bundled docs/decisions.md seed.
-func DecisionsTemplate() string {
-	return readEmbed("decisions.md.template")
-}
-
-// DecisionsArchiveTemplate returns the bundled docs/decisions-archive.md seed.
-func DecisionsArchiveTemplate() string {
-	return readEmbed("decisions-archive.md.template")
 }
 
 // FileStructureTemplate returns the bundled docs/file-structure.md seed

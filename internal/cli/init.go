@@ -2,8 +2,8 @@
 //
 // Scaffolds a fresh logmind install into the current repository:
 //
-//   - docs/decisions.md, docs/decisions-archive.md, docs/file-structure.md,
-//     docs/timeline.md (seed contents from embedded templates)
+//   - docs/file-structure.md, docs/timeline.md, docs/timeline-archive.md
+//     (seed contents from embedded templates)
 //   - .logmind/config.yml (verbatim copy of config.yml.template)
 //   - AGENTS.md slim-or-full block (slim is the SPEC §1.1 default)
 //   - per-agent stubs for every enabled agent (claude + cursor by default)
@@ -14,7 +14,7 @@
 //   - first decision log entry
 //
 // Refresh mode: when called against a repo where logmind is already
-// initialised (.logmind/config.yml + docs/decisions.md exist), init
+// initialised (.logmind/config.yml + docs/ exist), init
 // reruns only the idempotent refresh steps — workflow template
 // updates, AGENTS.md marker refresh, .gitattributes block, git config
 // drivers, and hooks. docs/ and .logmind/ are left untouched.
@@ -110,7 +110,14 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	enabled := enabledAgentList(f.agentsList, f.allAgents)
 	claudeAgentEnabled := slices.Contains(enabled, "claude")
 
-	alreadyInit := pathExists(filepath.Join(docsPath, "decisions.md")) && pathExists(configPath)
+	// The install sentinel is .logmind/config.yml + docs/ — the two things
+	// every initialised repo has and nothing removes. It used to be
+	// docs/decisions.md, which stopped being scaffolded when `main` became a
+	// branch like any other (SPEC §3.2): a repo that appends its old main log
+	// to docs/decisions-branches/main.md and deletes the file would otherwise
+	// read as UNINITIALISED here and get the whole fresh-install path —
+	// rewriting .logmind/config.yml over the top of its settings.
+	alreadyInit := pathExists(docsPath) && pathExists(configPath)
 	if alreadyInit {
 		return runInitRefresh(cmd, f, cwd, docsPath, claudeAgentEnabled)
 	}
@@ -131,16 +138,6 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	}
 	fmt.Fprintln(out, "✓ Created docs/")
 
-	if err := writeFile(filepath.Join(docsPath, "decisions.md"), templates.DecisionsTemplate()); err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "✓ Created docs/decisions.md")
-
-	if err := writeFile(filepath.Join(docsPath, "decisions-archive.md"), templates.DecisionsArchiveTemplate()); err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "✓ Created docs/decisions-archive.md")
-
 	// file-structure.md + timeline.md are seeded here but get rewritten
 	// AFTER the first decision is logged. Python emits the placeholder
 	// "✓ Created" line in this position so output parity needs the
@@ -151,12 +148,15 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	}
 	fmt.Fprintln(out, "✓ Created docs/file-structure.md")
 
-	if body, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
+	if body, archive, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), body)
+		_ = writeFile(filepath.Join(docsPath, "timeline-archive.md"), archive)
 	} else {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), "# Timeline\n")
+		_ = writeFile(filepath.Join(docsPath, "timeline-archive.md"), "# Timeline — Archive\n")
 	}
 	fmt.Fprintln(out, "✓ Created docs/timeline.md")
+	fmt.Fprintln(out, "✓ Created docs/timeline-archive.md")
 
 	// .logmind/config.yml (verbatim template).
 	if err := os.MkdirAll(logmindDir, 0o755); err != nil {
@@ -274,8 +274,10 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 	}
 
-	// First decision log entry — append to docs/decisions.md.
-	if err := logFirstDecision(docsPath); err != nil {
+	// First decision log entry — into the file `logmind log` would write on
+	// this branch (docs/decisions-branches/main.md in a fresh repo).
+	firstDecisionPath, err := logFirstDecision(cwd, docsPath)
+	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: first decision log failed:", err)
 	} else {
 		fmt.Fprintln(out, "✓ Logged first decision: \"Initialize logmind decision tracking\"")
@@ -288,20 +290,25 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	// timeline regen path. Without this re-render, the tree-walk only
 	// sees docs/ and the timeline lacks the first decision row.
 	_, _ = tree.WriteFileStructure(filepath.Join(docsPath, "file-structure.md"), cwd, 2)
-	if body, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
+	if body, archive, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), body)
+		_ = writeFile(filepath.Join(docsPath, "timeline-archive.md"), archive)
 	}
 
 	// Commit everything (best-effort; never fatal).
 	if !f.noGit {
 		var filesToCommit []string
 		filesToCommit = append(filesToCommit,
-			"docs/decisions.md",
-			"docs/decisions-archive.md",
 			"docs/file-structure.md",
 			"docs/timeline.md",
+			"docs/timeline-archive.md",
 			".logmind/config.yml",
 		)
+		if firstDecisionPath != "" {
+			if rel, err := filepath.Rel(cwd, firstDecisionPath); err == nil {
+				filesToCommit = append(filesToCommit, filepath.ToSlash(rel))
+			}
+		}
 		filesToCommit = append(filesToCommit, installedWorkflows...)
 		if gitignoreChanged {
 			filesToCommit = append(filesToCommit, ".gitignore")
@@ -614,25 +621,53 @@ func ensureGitignoreBlock(path string) (bool, error) {
 	return true, nil
 }
 
-// logFirstDecision appends an initial decision entry to
-// docs/decisions.md. Mirrors src/logmind/core/logger.log_first_decision —
-// a single dated header + reasoning block introducing logmind tracking.
+// logFirstDecision appends the initial decision entry to whichever file
+// `logmind log` would write on this branch (resolveDecisionsPath — SPEC §3.2:
+// docs/decisions-branches/main.md in a fresh repo, since the default branch is
+// a branch like any other). Returns the path it wrote, so the caller can stage
+// it for the initial commit.
 //
-// Byte-format note: the entry is appended immediately after the `---`
-// header separator in the template, no intervening blank line, so the
-// output matches Python's logger.log line-for-line.
-func logFirstDecision(docsPath string) error {
-	path := filepath.Join(docsPath, "decisions.md")
+// A branch file created here gets the same opening as one created by
+// `logmind log`: the backlink header, then the §1.6.3 timeline marker, then
+// the entry — so the repo's very first decision shows up in the timeline
+// exactly like every later one.
+//
+// Byte-format note: the entry is appended immediately after whatever preamble
+// is already present, no intervening blank line, so the output matches
+// Python's logger.log line-for-line.
+func logFirstDecision(cwd, docsPath string) (string, error) {
+	cfg, _ := config.Load(cwd)
+	path, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
 	existing, err := os.ReadFile(path)
-	if err != nil {
-		return err
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
 	}
 	entry := buildFirstDecisionEntry()
-	// The template ends with `---\n`. Append entry directly so the
-	// `## YYYY-MM-DD ...` line sits on the next line, matching Python.
-	newContent := strings.TrimRight(string(existing), "\n") + "\n" + entry + "\n"
-	return os.WriteFile(path, []byte(newContent), 0o644)
+	var newContent string
+	if len(existing) == 0 && isBranchFile {
+		// A fresh branch file, opened exactly as `logmind log` opens one:
+		// backlink header, then the §1.6.3 marker, then the entry. Both of
+		// those already end in a blank line, so the entry is appended as-is
+		// rather than through the trim below.
+		newContent = templates.DecisionsBranchHeader() +
+			buildTimelineMarker(time.Now(), firstDecisionTitle, prSuffixFromEnv()) +
+			entry + "\n"
+	} else {
+		newContent = strings.TrimRight(string(existing), "\n") + "\n" + entry + "\n"
+	}
+	if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
+
+// firstDecisionTitle is the title buildFirstDecisionEntry renders, single-
+// sourced so the timeline marker's <date>-<slug> key and the entry header
+// can never drift apart.
+const firstDecisionTitle = "Initialize logmind decision tracking"
 
 // buildFirstDecisionEntry renders the same markdown shape Python's
 // log_first_decision produces. Byte-identical wording to
@@ -647,12 +682,12 @@ func logFirstDecision(docsPath string) error {
 func buildFirstDecisionEntry() string {
 	now := time.Now().Format("2006-01-02 15:04")
 	return fmt.Sprintf(
-		"## %s - Initialize logmind decision tracking\n\n"+
+		"## %s - "+firstDecisionTitle+"\n\n"+
 			"**Reasoning:** Starting structured decision logging for this project to maintain clear documentation of architectural choices and provide context for AI agents.\n\n"+
 			"**Alternatives considered:** Manual decision documentation, ADR (Architecture Decision Records)\n\n"+
 			"**Implications:**\n"+
 			"- All significant decisions should now be logged using `logmind.log()`\n"+
-			"- AI agents will have access to decision history via docs/decisions.md\n"+
+			"- AI agents will have access to decision history via docs/timeline.md\n"+
 			"- Git history will serve as an audit trail for all decisions\n\n"+
 			"---",
 		now,

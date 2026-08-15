@@ -60,11 +60,12 @@ my-ai-project/
 ├── .logmind/
 │   └── config.yml             # project configuration
 ├── docs/
-│   ├── decisions.md           # 20 most recent decisions (default branch)
-│   ├── decisions-branches/    # per-feature-branch decision logs
-│   ├── decisions-archive.md   # older decisions, chronological
-│   ├── timeline.md            # auto-generated cross-branch overview
-│   └── file-structure.md      # auto-generated project tree
+│   ├── decisions-branches/    # per-branch decision logs — THE record,
+│   │                          #   one file per branch (main included),
+│   │                          #   append-only and uncapped
+│   ├── timeline.md            # derived: the 50 most recent decisions
+│   ├── timeline-archive.md    # derived: everything older, same format
+│   └── file-structure.md      # derived: project tree
 └── [existing project files]
 ```
 
@@ -210,19 +211,19 @@ auto-fix in the `check-doc-links` workflow).
   section — never against Python archaeology
 
 ### Storage: markdown, no database
-- **Today:** `docs/decisions-branches/<branch>.md` (one file per branch) is
-  where every decision is written. `docs/decisions.md` (116 lines) and
-  `docs/decisions-archive.md` (9 lines) still exist in the tree but are
-  effectively dead — the newest entry in `decisions.md` is 2026-07-16 and
-  the archive holds zero entries, because a PR-required default branch
-  means nothing can commit to them directly.
-- **Changing:** [#265](https://github.com/thrillmade/logmind/issues/265)
-  removes that layout. Per SPEC §3.2 decision files are append-only and
-  **uncapped** — "a decision written is a decision kept" — so there is no
-  main log, no cap and no archive to port. `rotateDecisions` is deleted
-  outright rather than moved.
-- `docs/timeline.md` and `docs/file-structure.md` are derived, regenerated
-  automatically — never hand-edited
+- `docs/decisions-branches/<branch>.md` — one file per branch, and the
+  default branch is not an exception (SPEC §3.2) — is where every decision
+  is written. Files are append-only and **uncapped**: "a decision written
+  is a decision kept." Nothing rotates, nothing overflows, nothing is
+  archived. There is no separate main log, because `docs/timeline.md`
+  already is one.
+- What is bounded is the VIEW, not the record (SPEC §3.3): `docs/timeline.md`
+  renders the 50 most recent entries and `docs/timeline-archive.md` the
+  remainder, both from the branch files on every regeneration. Moving that
+  number is a regeneration, not a migration — nothing is transferred between
+  the two files and neither is ever read to produce the other.
+- `docs/timeline.md`, `docs/timeline-archive.md` and `docs/file-structure.md`
+  are derived, regenerated automatically — never hand-edited
 - Human-readable, AI-friendly, greppable, works offline, git provides full
   versioning
 

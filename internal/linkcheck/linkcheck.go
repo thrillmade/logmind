@@ -54,8 +54,8 @@ var LinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
 // `docs/decisions-branches/` precedent) rather than glob just `PR-*.md`.
 var DefaultAllowOrphans = []string{
 	"docs/decisions.md",
-	"docs/decisions-archive.md",
 	"docs/file-structure.md",
+	"docs/timeline-archive.md",
 	"docs/decisions-branches/",
 	"docs/reviews/",
 }

@@ -502,14 +502,15 @@ func TestLog_Pulse_SpecLine_TimezoneStable(t *testing.T) {
 			mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: SPEC.md\n")
 			commitFileWithDate(t, d, "SPEC.md", "# Spec\n", "2020-06-15T12:00:00Z")
 
-			// Overwrite docs/decisions.md with exactly specPulseThreshold headers
-			// dated decisionDay at noon — direct-write so the header dates are
-			// fully controlled (not time.Now()).
+			// Overwrite the branch file `logmind init` logged its own first
+			// decision into with exactly specPulseThreshold headers dated
+			// decisionDay at noon — direct-write so the header dates are fully
+			// controlled (not time.Now()), and so this is the whole entry set.
 			var b strings.Builder
 			for i := 0; i < specPulseThreshold; i++ {
 				fmt.Fprintf(&b, "## %s 12:00 - decision %d\n\n**Reasoning:** why\n\n---\n\n", decisionDay, i)
 			}
-			mustWriteUnder(t, d, "docs/decisions.md", b.String())
+			mustWriteUnder(t, d, "docs/decisions-branches/main.md", b.String())
 
 			for _, loc := range zones {
 				time.Local = loc

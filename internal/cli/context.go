@@ -159,7 +159,7 @@ const contextPreface = "Pre-baked repo cold-start context: the file map (what) +
 	"open a linked source file for detail. Byte-stable — cache it as a prefix ABOVE your task.\n"
 
 // contextPayload builds the deterministic, cache-optimal payload: the machine
-// preface + the two derived docs in an XML document envelope, stable-first.
+// preface + the payload's derived docs in an XML document envelope, stable-first.
 // Deterministic by construction (fixed strings + on-disk doc bytes, stable
 // order) — the property prompt caching depends on.
 func contextPayload(cwd string) string {
@@ -195,8 +195,8 @@ func contextPayload(cwd string) string {
 }
 
 // readDerivedForContext reads the content backing a file-backed contextDoc's
-// `rel` path. For the two governed derivedDocPaths (docs/timeline.md,
-// docs/file-structure.md) on a NON-default branch, it prefers the
+// `rel` path. For the governed derivedDocPaths (docs/timeline.md,
+// docs/timeline-archive.md, docs/file-structure.md) on a NON-default branch, it prefers the
 // last-fetched origin/<default> copy (gitcli.ShowFile) over the branch's own
 // working copy: the branch's committed copy is deliberately pinned to its
 // merge-base with main (the zero-conflict invariant, L1), so it can lag main
@@ -224,7 +224,7 @@ func readDerivedForContext(cwd, rel string) (string, bool) {
 	return string(data), true
 }
 
-// isDerivedDocPath reports whether rel is one of the two governed derived
+// isDerivedDocPath reports whether rel is one of the governed derived
 // docs (derivedDocPaths, derived.go) — the ONLY paths readDerivedForContext
 // treats specially. The spec doc and repomap are generated in-memory (d.gen)
 // and never reach this function; this guard keeps it that way even if a
@@ -325,13 +325,10 @@ func ctxReadOrEmpty(path string) string {
 }
 
 // rawDecisionTokens estimates the tokens of the raw decision sources the
-// timeline distills (decisions.md + archive + every branch log) — the "why" an
-// agent would otherwise reconstruct from git log.
+// timeline distills (every branch log, plus any pre-§3.2 main log) — the "why"
+// an agent would otherwise reconstruct from git log.
 func rawDecisionTokens(cwd string) int {
-	total := 0
-	for _, p := range []string{"decisions.md", "decisions-archive.md"} {
-		total += tokens.Estimate(ctxReadOrEmpty(filepath.Join(cwd, "docs", p)))
-	}
+	total := tokens.Estimate(ctxReadOrEmpty(filepath.Join(cwd, "docs", "decisions.md")))
 	branches, _ := filepath.Glob(filepath.Join(cwd, "docs", "decisions-branches", "*.md"))
 	for _, p := range branches {
 		total += tokens.Estimate(ctxReadOrEmpty(p))

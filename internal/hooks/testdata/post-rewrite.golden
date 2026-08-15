@@ -8,7 +8,8 @@
 # Why: the merge driver in .gitattributes only fires when a merge
 # produces conflicts on the derived files. A clean rebase rewrites
 # multiple commits without ever invoking the driver — leaving
-# docs/timeline.md and docs/file-structure.md stale relative to the
+# docs/timeline.md, docs/timeline-archive.md and docs/file-structure.md
+# stale relative to the
 # replayed `docs/decisions-branches/<branch>.md` entries. This hook
 # sweeps the final state once and stages the regen for inclusion in
 # the user's next commit / amend cycle.
@@ -31,6 +32,8 @@ if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
   if [ -n "$current" ] && [ -d docs ]; then
     logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
     logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
-    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true
+    for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do
+      git add "$d" 2>/dev/null || true
+    done
   fi
 fi

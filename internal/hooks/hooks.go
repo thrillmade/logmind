@@ -132,7 +132,7 @@ func BuildPostMergeBody() string {
 		"# regenerations.\n" +
 		"#\n" +
 		"# v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook\n" +
-		"# auto-staged docs/timeline.md + docs/file-structure.md, but the\n" +
+		"# auto-staged the derived docs, but the\n" +
 		"# staged-but-uncommitted files then blocked `git checkout main` on\n" +
 		"# every PR cycle (post-merge fires from `git pull --rebase` after a\n" +
 		"# squash merge — there's no commit being constructed, so staging was\n" +
@@ -221,7 +221,8 @@ func BuildPostRewriteBody() string {
 		"# Why: the merge driver in .gitattributes only fires when a merge\n" +
 		"# produces conflicts on the derived files. A clean rebase rewrites\n" +
 		"# multiple commits without ever invoking the driver — leaving\n" +
-		"# docs/timeline.md and docs/file-structure.md stale relative to the\n" +
+		"# docs/timeline.md, docs/timeline-archive.md and docs/file-structure.md\n" +
+		"# stale relative to the\n" +
 		"# replayed `docs/decisions-branches/<branch>.md` entries. This hook\n" +
 		"# sweeps the final state once and stages the regen for inclusion in\n" +
 		"# the user's next commit / amend cycle.\n" +
@@ -244,7 +245,9 @@ func BuildPostRewriteBody() string {
 		"  if [ -n \"$current\" ] && [ -d docs ]; then\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
 		"    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n" +
-		"    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true\n" +
+		"    for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do\n" +
+		"      git add \"$d\" 2>/dev/null || true\n" +
+		"    done\n" +
 		"  fi\n" +
 		"fi\n"
 }
@@ -424,7 +427,8 @@ func BuildCommitMsgBody() string {
 //
 // The gap L2a closes: L1 only fires inside `logmind log`. A raw `git commit
 // -am ...` (or any commit that skips `logmind log` entirely) stages
-// whatever docs/timeline.md / docs/file-structure.md currently look like in
+// whatever the derived docs (docs/timeline.md, docs/timeline-archive.md,
+// docs/file-structure.md) currently look like in
 // the working tree — including a stale/dirty copy left behind by something
 // like `logmind warp` deliberately writing the default branch's newer copy
 // into the working tree for review. `guard-commit`'s CarveOutUnderThreshold
@@ -510,7 +514,7 @@ func BuildCommitMsgBody() string {
 //
 // MUST NEVER block a commit. Unlike the commit-msg hook (Layer 2 of commit
 // enforcement, which can legitimately reject a commit), this hook exists
-// solely to keep two files pinned — a purely mechanical, lossless operation
+// solely to keep the derived files pinned — a purely mechanical, lossless operation
 // (the docs regenerate deterministically from the committed decision files,
 // which travel with the branch and never conflict). It always exits 0,
 // whether or not `.logmind/config.yml` is present, whether or not the
@@ -533,14 +537,15 @@ func BuildPreCommitBody() string {
 		"# logmind pre-commit hook\n" +
 		HookVersionPrefix + hookVersion() + "\n" +
 		"# Installed by `logmind init` (v2.0.0+). L2a of the derived-docs-on-main\n" +
-		"# pin-preservation design: docs/timeline.md and docs/file-structure.md are\n" +
-		"# purely-derived, main-only artifacts (see internal/cli/derived.go). A raw\n" +
+		"# pin-preservation design: docs/timeline.md, docs/timeline-archive.md and\n" +
+		"# docs/file-structure.md are purely-derived, main-only artifacts (see\n" +
+		"# internal/cli/derived.go). A raw\n" +
 		"# `git commit` — bypassing `logmind log`, whose own commitDecision restore\n" +
-		"# is Layer 1 — could otherwise sweep a dirtied copy of either file into the\n" +
+		"# is Layer 1 — could otherwise sweep a dirtied copy of any of them into the\n" +
 		"# commit on a non-default branch, e.g. after `logmind warp` pulls in the\n" +
-		"# default branch's newer copy for review. This hook restores both to their\n" +
-		"# committed (HEAD) content, in both the index and the working tree, right\n" +
-		"# before the commit is built.\n" +
+		"# default branch's newer copy for review. This hook restores them all to\n" +
+		"# their committed (HEAD) content, in both the index and the working tree,\n" +
+		"# right before the commit is built.\n" +
 		"#\n" +
 		"# This hook MUST NEVER block a commit — it always exits 0. The restore is\n" +
 		"# lossless (the docs regenerate deterministically from the committed\n" +
@@ -551,6 +556,13 @@ func BuildPreCommitBody() string {
 		"# guard-commit`), this restore is simple enough to inline directly, which\n" +
 		"# keeps it working in a fresh clone or CI runner before logmind is\n" +
 		"# installed, or when the on-PATH binary is stale or broken.\n" +
+		"#\n" +
+		"# ONE path per `git checkout`, not all three in one command. `git checkout\n" +
+		"# HEAD -- a b c` is ALL-OR-NOTHING: if any pathspec is untracked it errors\n" +
+		"# and restores NOTHING. A repo that has not regenerated on main since\n" +
+		"# docs/timeline-archive.md was introduced has no committed copy of it, so a\n" +
+		"# single combined command would silently turn this whole restore off in\n" +
+		"# exactly the repos still catching up.\n" +
 		"\n" +
 		"if [ -f .logmind/config.yml ]; then\n" +
 		"  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)\n" +
@@ -560,7 +572,9 @@ func BuildPreCommitBody() string {
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
-		"    git checkout HEAD -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true\n" +
+		"    for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do\n" +
+		"      git checkout HEAD -- \"$d\" >/dev/null 2>&1 || true\n" +
+		"    done\n" +
 		"  fi\n" +
 		"fi\n" +
 		"exit 0\n"

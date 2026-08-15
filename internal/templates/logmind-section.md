@@ -45,7 +45,7 @@ logmind search "database" --no-archive
 
 **READ THESE FILES FIRST** before starting any work:
 - **[docs/timeline.md](docs/timeline.md)** - Main-canonical decision timeline across every branch (REQUIRED, start here)
-- **[docs/decisions.md](docs/decisions.md)** - 20 most recent decisions on the default branch (REQUIRED)
+- **`docs/decisions-branches/<your-branch>.md`** - decisions made earlier on the branch you're on (REQUIRED)
 - **[docs/file-structure.md](docs/file-structure.md)** - Current project structure (REQUIRED)
 
 These files contain critical context about why the project is structured the way it is.
@@ -54,8 +54,8 @@ These files contain critical context about why the project is structured the way
 
 ### Additional Reference
 
-- **[docs/decisions-archive.md](docs/decisions-archive.md)** - Historical decisions (searchable reference, not required reading)
-- **docs/decisions-branches/** - Per-branch decision logs from in-flight feature work
+- **`docs/timeline-archive.md`** - The history older than the 50 entries in docs/timeline.md, same format (not required reading)
+- **docs/decisions-branches/** - Per-branch decision logs; the record itself, append-only and uncapped
 
 **Use `logmind search "keyword"` to find relevant past decisions quickly.**
 <!-- logmind-end -->

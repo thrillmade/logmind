@@ -2,14 +2,15 @@
 # logmind pre-commit hook
 # logmind-hook-version: 2.0.0-dev
 # Installed by `logmind init` (v2.0.0+). L2a of the derived-docs-on-main
-# pin-preservation design: docs/timeline.md and docs/file-structure.md are
-# purely-derived, main-only artifacts (see internal/cli/derived.go). A raw
+# pin-preservation design: docs/timeline.md, docs/timeline-archive.md and
+# docs/file-structure.md are purely-derived, main-only artifacts (see
+# internal/cli/derived.go). A raw
 # `git commit` — bypassing `logmind log`, whose own commitDecision restore
-# is Layer 1 — could otherwise sweep a dirtied copy of either file into the
+# is Layer 1 — could otherwise sweep a dirtied copy of any of them into the
 # commit on a non-default branch, e.g. after `logmind warp` pulls in the
-# default branch's newer copy for review. This hook restores both to their
-# committed (HEAD) content, in both the index and the working tree, right
-# before the commit is built.
+# default branch's newer copy for review. This hook restores them all to
+# their committed (HEAD) content, in both the index and the working tree,
+# right before the commit is built.
 #
 # This hook MUST NEVER block a commit — it always exits 0. The restore is
 # lossless (the docs regenerate deterministically from the committed
@@ -20,6 +21,13 @@
 # guard-commit`), this restore is simple enough to inline directly, which
 # keeps it working in a fresh clone or CI runner before logmind is
 # installed, or when the on-PATH binary is stale or broken.
+#
+# ONE path per `git checkout`, not all three in one command. `git checkout
+# HEAD -- a b c` is ALL-OR-NOTHING: if any pathspec is untracked it errors
+# and restores NOTHING. A repo that has not regenerated on main since
+# docs/timeline-archive.md was introduced has no committed copy of it, so a
+# single combined command would silently turn this whole restore off in
+# exactly the repos still catching up.
 
 if [ -f .logmind/config.yml ]; then
   current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -29,7 +37,9 @@ if [ -f .logmind/config.yml ]; then
   default=${default#origin/}
   [ -z "$default" ] && default=main
   if [ -n "$current" ] && [ "$current" != "$default" ]; then
-    git checkout HEAD -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true
+    for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do
+      git checkout HEAD -- "$d" >/dev/null 2>&1 || true
+    done
   fi
 fi
 exit 0

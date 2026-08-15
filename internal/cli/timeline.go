@@ -33,13 +33,17 @@ func newTimelineCmd() *cobra.Command {
 		Short: "Print or regenerate the high-level decision timeline",
 		Long: `Print or regenerate the high-level decision timeline.
 
-Reads docs/decisions.md, docs/decisions-archive.md, and every
-docs/decisions-branches/*.md as sources; renders a chronological
+Reads every docs/decisions-branches/*.md as sources; renders a chronological
 timeline grouped by year-month. Sources are never modified.
+
+--write renders BOTH halves of the SPEC §3.3 split from one read of those
+sources: the 50 most recent entries to the given PATH, and everything older
+to docs/timeline-archive.md. Neither file is ever read to decide what the
+other holds, so the two are a split in a rendering, not a move.
 
 Examples:
     logmind timeline                              # to stdout
-    logmind timeline --write docs/timeline.md     # on disk
+    logmind timeline --write docs/timeline.md     # on disk (+ the archive)
     logmind timeline --write docs/timeline.md --check  # CI gate`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -51,11 +55,12 @@ Examples:
 		},
 	}
 	cmd.Flags().StringVar(&writePath, "write", "",
-		"Write the rendered timeline to PATH (typically docs/timeline.md). "+
+		"Write the rendered timeline to PATH (typically docs/timeline.md), and "+
+			"the entries older than the 50 most recent to docs/timeline-archive.md. "+
 			"Without this flag, prints to stdout.")
 	cmd.Flags().BoolVar(&check, "check", false,
-		"Exit nonzero if the file at --write is stale (would differ from a "+
-			"fresh render), without writing it.")
+		"Exit nonzero if the file at --write or docs/timeline-archive.md is "+
+			"stale (would differ from a fresh render), without writing either.")
 	// --full is accepted but ignored as of v2.0.0: the timeline is now a
 	// single format (the main-canonical entry-block union), so there is no
 	// brief/full distinction to select. Kept registered so existing scripts,
@@ -80,6 +85,13 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 	// receipt token so the `ok timeline …` trailer keeps its shape.
 	const mode = "canonical"
 
+	// The archive half of the §3.3 split is a fixed, spec-named path under
+	// docs/ — not a second output the caller chooses. That is what makes
+	// "both regenerate together" structural rather than a convention every
+	// call site has to remember: there is no way to ask for one without the
+	// other, so neither can go stale while the other is refreshed.
+	archivePath := filepath.Join(docsPath, "timeline-archive.md")
+
 	if check {
 		if writePath == "" {
 			// Python sys.exit(2); we exit 1 via ErrSilent. Stdout
@@ -88,13 +100,18 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 			q.fail("Error: --check requires --write PATH to compare against.\n")
 			return ErrSilent
 		}
-		rendered, err := timeline.Generate(docsPath, stderr)
+		rendered, renderedArchive, err := timeline.Generate(docsPath, stderr)
 		if err != nil {
 			return err
 		}
 		existing, _ := os.ReadFile(writePath)
 		if string(existing) != rendered {
 			q.fail("✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", writePath, writePath)
+			return ErrSilent
+		}
+		existingArchive, _ := os.ReadFile(archivePath)
+		if string(existingArchive) != renderedArchive {
+			q.fail("✗ %s is stale — re-run `logmind timeline --write %s` and commit.\n", archivePath, writePath)
 			return ErrSilent
 		}
 		q.chat("✓ %s is up to date\n", writePath)
@@ -107,7 +124,9 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 	}
 
 	if writePath == "" {
-		rendered, err := timeline.Generate(docsPath, stderr)
+		// stdout mirrors docs/timeline.md — the bounded view, so an agent
+		// that runs the command sees exactly what it would have read.
+		rendered, _, err := timeline.Generate(docsPath, stderr)
 		if err != nil {
 			return err
 		}
@@ -130,7 +149,7 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 		return nil
 	}
 
-	rendered, err := timeline.Generate(docsPath, stderr)
+	rendered, renderedArchive, err := timeline.Generate(docsPath, stderr)
 	if err != nil {
 		return err
 	}
@@ -143,6 +162,20 @@ func runTimeline(cwd, writePath string, check, quiet bool, stdout, stderr io.Wri
 		q.chat("✓ Regenerated %s\n", writePath)
 	} else {
 		q.chat("  %s already up to date\n", writePath)
+	}
+	// Written unconditionally alongside the recent half, including when the
+	// archive body is empty: the recent half links to it, so the file has to
+	// exist for that link to resolve (and for the restore paths and the
+	// check-derived-docs gate to have something to pin).
+	existingArchive, _ := os.ReadFile(archivePath)
+	if string(existingArchive) != renderedArchive {
+		if err := writeAtomic(archivePath, renderedArchive); err != nil {
+			return err
+		}
+		changed = true
+		q.chat("✓ Regenerated %s\n", archivePath)
+	} else {
+		q.chat("  %s already up to date\n", archivePath)
 	}
 	st, err := os.Stat(writePath)
 	if err != nil {

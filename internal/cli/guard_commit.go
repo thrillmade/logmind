@@ -340,7 +340,7 @@ func guardCommitHarness(stdin io.Reader, stderr io.Writer, repoRootFlag string, 
 	//
 	// v2.0.0 4b-quater — same "skip an already-staged path" filter as
 	// commitDecision's L1 (log.go), and for the same reason: `logmind
-	// warp`'s merge-base repair deliberately STAGES the two derived docs so
+	// warp`'s merge-base repair deliberately STAGES the derived docs so
 	// the fix survives into the caller's next commit. This layer guards a
 	// DIFFERENT trigger than L1 — a literal `git commit` (bare, `-am`,
 	// `--no-verify`, or inside a compound `&&`/`;` command) run directly via
