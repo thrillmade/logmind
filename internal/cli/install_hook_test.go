@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // TestInstallHook_NotARepo asserts the "not a git repository" output
@@ -185,8 +187,8 @@ func initRepo(t *testing.T) string {
 		t.Skip("git not on PATH; skipping integration test")
 	}
 	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q")
 	for _, args := range [][]string{
-		{"init", "-q"},
 		{"config", "user.email", "t@t.com"},
 		{"config", "user.name", "t"},
 	} {

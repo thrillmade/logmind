@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 var update = flag.Bool("update", false, "regenerate testdata/*.golden files from current Go output")
@@ -163,13 +165,7 @@ func TestConfigureMergeDrivers_SetsKeys(t *testing.T) {
 		t.Skip("git not on PATH; skipping ConfigureMergeDrivers test")
 	}
 	dir := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	testgit.InitRepo(t, dir, "-q")
 	if !ConfigureMergeDrivers(dir) {
 		t.Fatalf("ConfigureMergeDrivers returned false on fresh repo")
 	}
