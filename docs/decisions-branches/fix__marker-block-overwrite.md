@@ -48,3 +48,14 @@
 
 ---
 
+## 2026-08-15 16:23 - init: one refused artifact must not cost the others, and a refusal must not be reported as success
+
+**Reasoning:** A symlinked workflow made init abandon the remaining three templates, exit zero, and print that the repository initialised successfully; re-running then claimed everything was already current, so the gap never healed. Self-update had the same shape from a different cause: the refusal was returned into a condition testing only for the absence of an error, with no branch for its presence, so the command reported templates up to date while the block stayed stale. Both are the failure this branch exists to prevent, reached through the error path rather than the write path.
+
+**Alternatives considered:** Keep the guard I built and patch its blind spots. Rejected: it matched the identifier spelled o-s, so an aliased import defeated it while the literal defect this branch fixes sat restored in the tree and the suite stayed green. It had traded a path spelling for a package spelling. The sibling lane already resolves primitives from the import declarations and keys its ledger by enclosing function, so this one is deleted rather than patched a third time, and what is temporarily uncovered is recorded rather than assumed closed.
+
+**Implications:**
+- The refusal is recorded on the existing declined list rather than a second one, and it lives in the shared loop body so every mode inherits it. Displacement became its own reported state on the probe, so a marker on the second line is no longer described as no marker at all, which the specification reserves for artifacts carrying none. Nothing unguarded remains in the affected trees today; the absent coverage is prospective only, and was measured rather than asserted.
+
+---
+

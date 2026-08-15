@@ -181,6 +181,19 @@ func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 					"not overwrite it. Move the marker to line 1 to let logmind refresh it, or delete "+
 					"the marker to keep the file yours.\n",
 				d.Path, d.Installed, d.Line)
+		case declineUnwritable:
+			// Not a judgement about the file — logmind wanted it and could not
+			// have it. Distinguished from the three refusals above because the
+			// remedy is different in kind: those ask the user to decide who
+			// owns the file, this one says the write itself could not happen.
+			// Every other template in the same pass was still installed (#306),
+			// which is why this reads "was NOT written" rather than "left
+			// unchanged": the run continued, and the user has to know that this
+			// one path did not come with it.
+			fmt.Fprintf(stderr,
+				"note: %s was NOT written — %v. The other workflow templates in this run were "+
+					"installed; re-run once this path is writable.\n",
+				d.Path, d.Err)
 		default:
 			fmt.Fprintf(stderr,
 				"note: %s left unchanged — installed template %s is NEWER than the %s this binary bundles; "+
@@ -188,6 +201,22 @@ func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 				d.Path, d.Installed, d.Bundled)
 		}
 	}
+}
+
+// unwritableCount counts the declines that are FAILURES rather than ownership
+// judgements. declineUnmarked / declineDisplaced / declineDowngrade are stable,
+// legitimate repository states a surface may finish successfully on; a path
+// logmind could not write at all is not, and every surface has to be able to
+// tell the two apart — that is what lets a refusal continue the run without
+// letting the run claim it succeeded (#306).
+func unwritableCount(declined []templateDowngrade) int {
+	n := 0
+	for _, d := range declined {
+		if d.Reason == declineUnwritable {
+			n++
+		}
+	}
+	return n
 }
 
 // reportAgentsBlockRefusal writes the one stderr line for a refused

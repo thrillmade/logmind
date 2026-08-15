@@ -71,8 +71,21 @@ func runSelfUpdate(cmd *cobra.Command) error {
 
 	updated := false
 	blockRefused := false
+	blockFailed := false
 
-	if msg, declined, err := inserter.EnsureAgentsMD(cwd); err == nil {
+	// THE ERROR IS NOT OPTIONAL (#306). This used to read
+	// `if …, err := inserter.EnsureAgentsMD(cwd); err == nil {` with no else,
+	// which was survivable only while the error was unreachable. Teaching the
+	// AGENTS.md write to refuse a symlink at its destination made it reachable,
+	// and the discarded branch then printed "✓ logmind templates are up to
+	// date." over a block that was still stale, exited 0, and never showed the
+	// refusal at all — the worst of the three outcomes, because it is the one
+	// that stops the user from looking.
+	msg, declined, err := inserter.EnsureAgentsMD(cwd)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "error: self-update: AGENTS.md logmind block was NOT refreshed —", err)
+		blockFailed = true
+	} else {
 		if msg != "" {
 			fmt.Fprintln(out, msg)
 			updated = true
@@ -140,14 +153,28 @@ func runSelfUpdate(cmd *cobra.Command) error {
 	}
 
 	if !updated {
-		if blockRefused {
+		switch {
+		case blockFailed:
+			// Neither "up to date" nor "left unchanged": the refresh was
+			// attempted and FAILED, and the block on disk is still whatever it
+			// was — stale, most likely, since that is why the write was tried.
+			fmt.Fprintln(out, "! AGENTS.md logmind block could NOT be refreshed — see the error on stderr.")
+		case blockRefused:
 			// "up to date" would contradict the note on stderr — this repo's
 			// block is one this binary can't move forward, not one it just
 			// verified (#267).
 			fmt.Fprintln(out, "! AGENTS.md logmind block left unchanged — see the note on stderr.")
-		} else {
+		default:
 			fmt.Fprintln(out, "✓ logmind templates are up to date.")
 		}
+	}
+	if blockFailed {
+		// `ok self-update applied` is a receipt for work that happened. Exit
+		// non-zero as well: the self-update workflow runs this unattended, and
+		// a zero exit is the difference between a repo whose stale block gets
+		// noticed and one where it never does.
+		fmt.Fprintln(out, "ok self-update incomplete")
+		return ErrSilent
 	}
 	fmt.Fprintln(out, "ok self-update applied")
 	return nil

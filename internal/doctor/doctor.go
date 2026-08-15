@@ -122,6 +122,22 @@ type WorkflowStatus struct {
 	Marker        *string `json:"marker"`
 	BundledMarker *string `json:"bundled_marker"`
 	Drift         string  `json:"drift"`
+
+	// Displaced is true when a marker IS present but not on line 1 (#299).
+	// The VERDICT for that file is "markerless" — the writer refuses to touch
+	// it — but the REASON is not the one a bare markerless file has, and SPEC
+	// §5.2 grants user ownership only to "an artifact carrying no marker at
+	// all". Without this, `doctor --fix` printed both "its marker is on line 2,
+	// not line 1, so logmind cannot tell whether the file is yours or its own"
+	// and "it carries no logmind marker … so SPEC §5.2 treats it as yours" for
+	// the same file in the same run.
+	//
+	// Deliberately NOT serialized: the JSON field names here are a cross-repo
+	// contract (clud-bug, agent-skills parse this shape), and this is an
+	// explanation for a stderr note, not a verdict a consumer branches on.
+	// One owner for the fact — probeWorkflow computes it, callers read it,
+	// nobody re-derives it by sniffing the prose in Marker.
+	Displaced bool `json:"-"`
 }
 
 // ToolStatus aggregates per-tool fields (currently just `logmind`;
@@ -630,7 +646,8 @@ func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 	// matches the existing "markerless (pre-v0.6.10)" / "foreign … left
 	// alone" rows rather than inventing a drift value consumers don't parse.
 	display := owned
-	if found.Ownership == inserter.MarkerDisplaced {
+	displaced := found.Ownership == inserter.MarkerDisplaced
+	if displaced {
 		v := fmt.Sprintf("%s on line %d, not line 1", found.Version, found.Line)
 		display = &v
 	}
@@ -638,6 +655,7 @@ func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 	return WorkflowStatus{
 		Name: name, Installed: true, Marker: display,
 		BundledMarker: bundled, Drift: classifyMarker(owned, bundled),
+		Displaced: displaced,
 	}
 }
 

@@ -182,11 +182,22 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	// A first-time init normally CREATES AGENTS.md, but a repo can already
 	// carry a block written by a newer binary (a partially-migrated fleet,
 	// #257) — so this surface reports the refusal too.
-	if msg, declined, err := inserter.EnsureAgentsMD(cwd); err == nil {
+	//
+	// unwritten counts the artifacts init WANTED and could not have. It is
+	// what stops the two summary lines at the bottom from claiming a success
+	// that did not happen (#306) — before it existed, an AGENTS.md or a
+	// workflow that refused to be written was a discarded error and a
+	// "logmind initialized successfully!".
+	unwritten := 0
+	msg, agentsDeclined, err := inserter.EnsureAgentsMD(cwd)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "note: AGENTS.md was NOT written —", err)
+		unwritten++
+	} else {
 		if msg != "" {
 			fmt.Fprintln(out, msg)
 		}
-		reportAgentsBlockRefusal(cmd.ErrOrStderr(), declined)
+		reportAgentsBlockRefusal(cmd.ErrOrStderr(), agentsDeclined)
 	}
 	for _, agentName := range enabled {
 		filePath, err := inserter.CreateAgentFile(agentName, cwd)
@@ -202,20 +213,28 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 	}
 
-	// GitHub workflows.
+	// GitHub workflows. workflowsUnwritten is counted separately from the
+	// `unwritten` total above because the receipt reports a workflows RATIO,
+	// and an AGENTS.md that could not be written is not a workflow.
 	var installedWorkflows []string
+	workflowsUnwritten := 0
 	var dependabotChanged bool
 	if f.githubActions {
-		// Fresh install: refresh=false never overwrites, so the declined
-		// list is always empty here — only the refresh surfaces can hit a
-		// downgrade.
-		created, _, _, err := installWorkflowTemplates(cwd, false)
+		// Fresh install: refresh=false never overwrites, so no VERSION or
+		// OWNERSHIP decline can happen here — but a declineUnwritable can
+		// (#306), and it must be reported and counted rather than aborting
+		// the other templates.
+		created, _, declined, err := installWorkflowTemplates(cwd, false)
 		if err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Warning: workflow install failed:", err)
+			unwritten++
 		}
 		for _, wf := range created {
 			fmt.Fprintln(out, "✓ Created", wf)
 		}
+		reportTemplateDowngrades(cmd.ErrOrStderr(), declined)
+		workflowsUnwritten = unwritableCount(declined)
+		unwritten += workflowsUnwritten
 		installedWorkflows = created
 
 		// .github/dependabot.yml — fresh install or merge. Keeps the
@@ -336,13 +355,28 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 	}
 
+	// THE SUMMARY MUST MATCH WHAT LANDED (#306). Both of these lines used to
+	// be unconditional, so a run that installed one of four workflows — or
+	// none — still said "successfully" and still listed `workflows` among the
+	// things it had written. The happy path is byte-identical to what it has
+	// always been; only a run with something unwritten reads differently, and
+	// it names the count so the notes on stderr can be found.
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "logmind initialized successfully!")
+	if unwritten > 0 {
+		fmt.Fprintf(out, "logmind initialized, but %d artifact(s) could NOT be written — see the notes on stderr.\n", unwritten)
+	} else {
+		fmt.Fprintln(out, "logmind initialized successfully!")
+	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Start logging decisions with:")
 	fmt.Fprintln(out, "  logmind log \"Your decision here\" -r \"why\" -a \"alternative\" -i \"implication\"")
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "ok initialized: docs/ .logmind/ workflows @v%s\n", version.Version)
+	if unwritten > 0 {
+		fmt.Fprintf(out, "ok initialized: docs/ .logmind/ workflows=%d/%d unwritten=%d @v%s\n",
+			len(installedWorkflows), len(installedWorkflows)+workflowsUnwritten, unwritten, version.Version)
+	} else {
+		fmt.Fprintf(out, "ok initialized: docs/ .logmind/ workflows @v%s\n", version.Version)
+	}
 	return nil
 }
 
@@ -430,6 +464,19 @@ const (
 	// clearly ours nor clearly theirs, so it is refused and named rather
 	// than guessed at.
 	declineDisplaced
+	// declineUnwritable — logmind wanted this file and could not have it
+	// (#306): a symlink at the destination, an unreadable existing file, an
+	// I/O failure. Not a judgement about the file's marker like the three
+	// above, but it lands on the SAME list for the reason the type comment
+	// gives — every one of them means "we did not write this path", and two
+	// lists that mean that are two lists that will disagree.
+	//
+	// It is on the list rather than being an early `return err` because a
+	// refusal on ONE template used to abandon the other three: with a symlink
+	// at check-decisions.yml (first alphabetically), `init` exited 0, said
+	// "logmind initialized successfully!", and never installed
+	// check-doc-links, regen-timeline or logmind-self-update at all.
+	declineUnwritable
 )
 
 // templateDowngrade records one REFUSED workflow refresh: installWorkflowTemplates
@@ -441,6 +488,7 @@ type templateDowngrade struct {
 	Bundled   string        // marker this binary ships, e.g. "v4"
 	Reason    declineReason // why the write was refused
 	Line      int           // 1-based line the marker sat on; only meaningful for declineDisplaced
+	Err       error         // the refusal itself; only set for declineUnwritable
 }
 
 // installWorkflowTemplates copies internal/templates/github/*.yml.template
@@ -453,6 +501,14 @@ type templateDowngrade struct {
 //
 // Returns (created, refreshed, declined, err). Each list is a slice of
 // relative paths from cwd; declined additionally names both markers.
+//
+// PER-TEMPLATE FAILURES DO NOT ABORT THE LOOP (#306). A refusal on one
+// artifact is recorded as a declineUnwritable entry and the remaining
+// templates are still installed; `err` is reserved for a failure that makes
+// EVERY template impossible (the workflows directory itself). The previous
+// shape returned `nil, nil, nil, err` from inside the loop, so a symlink at
+// check-decisions.yml — first alphabetically — silently cost the user the
+// other three workflows while `init` reported success.
 func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string, []templateDowngrade, error) {
 	workflowsDir := filepath.Join(repoRoot, ".github", "workflows")
 	if err := os.MkdirAll(workflowsDir, 0o755); err != nil {
@@ -478,13 +534,23 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 			// refuses instead (atomicio.RefuseSymlink) and makes its own
 			// parent directory.
 			if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
-				return nil, nil, nil, err
+				declined = append(declined, templateDowngrade{
+					Path:   relativePath(repoRoot, target),
+					Reason: declineUnwritable,
+					Err:    err,
+				})
+				continue
 			}
 			created = append(created, relativePath(repoRoot, target))
 			continue
 		}
 		if err != nil {
-			return nil, nil, nil, err
+			declined = append(declined, templateDowngrade{
+				Path:   relativePath(repoRoot, target),
+				Reason: declineUnwritable,
+				Err:    err,
+			})
+			continue
 		}
 		if !refresh {
 			continue
@@ -539,7 +605,14 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 			// points at — a file logmind did not install and does not own.
 			// Refuse rather than guess, same as the create branch above.
 			if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
-				return nil, nil, nil, err
+				declined = append(declined, templateDowngrade{
+					Path:      relativePath(repoRoot, target),
+					Installed: installedVer,
+					Bundled:   bundledVer,
+					Reason:    declineUnwritable,
+					Err:       err,
+				})
+				continue
 			}
 			refreshed = append(refreshed, relativePath(repoRoot, target))
 			continue
