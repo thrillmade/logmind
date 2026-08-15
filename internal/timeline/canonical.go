@@ -334,7 +334,24 @@ func collectMarked(docsPath string, stderr io.Writer) ([]marked, error) {
 		if len(entries) == 0 {
 			continue
 		}
-		e := entries[0]
+		// NEWEST entry, not the first. A markerless file collapses to a
+		// single row, and that row has to stand for a file that may still
+		// be growing.
+		//
+		// Every OTHER branch file eventually closes: the branch merges and
+		// the file stops changing, so a row dated at its first entry stays
+		// a true summary — first and last are days apart, inside one window
+		// of work. `main.md` is the one file that never closes. Dating it
+		// from `entries[0]` froze its row at 2026-05-15 while the file kept
+		// collecting hotfixes through August, and the row sank past the
+		// §3.3 cut into the archive and stayed there — so anything logged
+		// on main became invisible in the recent view.
+		//
+		// Taking the newest entry is deliberately NOT a special case for
+		// main. It is one rule for every file, and it only *matters* for a
+		// file that stays open — which is the honest reason to prefer it
+		// over a `if branch == default` branch in the renderer.
+		e := entries[len(entries)-1]
 		d := dateOnly(e.Date)
 		items = append(items, marked{date: d, slug: Slugify(e.Title), body: HeadlineLine(d, e.Title), source: rel})
 	}

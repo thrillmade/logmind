@@ -19,6 +19,7 @@ package timeline
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,4 +220,57 @@ func readDoc(t *testing.T, docs, rel string) string {
 		t.Fatalf("read %s: %v", rel, err)
 	}
 	return string(data)
+}
+
+// TestCollectMarked_MarkerlessFileDatesByNewestEntry pins the rule that a
+// markerless file's single synthesized row takes its NEWEST entry, not its
+// first.
+//
+// Every branch file except one eventually closes: the branch merges and the
+// file stops changing, so first and last are days apart inside one window of
+// work and the choice is immaterial. `main.md` never closes — it keeps
+// collecting decisions made directly on the default branch. Dating from the
+// first entry froze main's row at its oldest decision while the file grew
+// underneath it, and the row sank past §3.3's 50-entry cut into the archive
+// and stayed there, making anything logged on main invisible in the recent
+// view.
+//
+// Deliberately ONE rule for every file rather than a default-branch special
+// case: it only *matters* for a file that stays open, which is the honest
+// reason to prefer it over branching on the branch name.
+func TestCollectMarked_MarkerlessFileDatesByNewestEntry(t *testing.T) {
+	docs := t.TempDir()
+	branches := filepath.Join(docs, "decisions-branches")
+	if err := os.MkdirAll(branches, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A markerless file (no entry-block markers) spanning two months.
+	body := "# Decisions — main\n\n" +
+		"## 2026-05-15 10:00 - Oldest decision\n\n**Reasoning:** first\n\n---\n\n" +
+		"## 2026-06-20 10:00 - Middle decision\n\n**Reasoning:** second\n\n---\n\n" +
+		"## 2026-07-16 10:00 - Newest decision\n\n**Reasoning:** third\n\n---\n"
+	if err := os.WriteFile(filepath.Join(branches, "main.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := collectMarked(docs, io.Discard)
+	if err != nil {
+		t.Fatalf("collectMarked: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("a markerless file must synthesize exactly one row, got %d", len(items))
+	}
+	got := items[0].date.Format("2006-01-02")
+	if got != "2026-07-16" {
+		t.Errorf("row dated %s; want 2026-07-16 (the NEWEST entry) — dating by the "+
+			"oldest freezes an open file's row while it keeps growing", got)
+	}
+	// The rendered body must agree with the date, or the row reads as the
+	// newest date attached to the oldest decision's title.
+	if !strings.Contains(items[0].body, "Newest decision") {
+		t.Errorf("row body does not carry the newest entry's title; got %q", items[0].body)
+	}
+	if strings.Contains(items[0].body, "Oldest decision") {
+		t.Errorf("row body still carries the oldest entry's title; got %q", items[0].body)
+	}
 }
