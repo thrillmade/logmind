@@ -28,3 +28,14 @@
 
 ---
 
+## 2026-08-15 19:22 - templates: pin the action ref the comparison was erasing, and every region it was not reading
+
+**Reasoning:** The lockstep comparison normalised a pinned action's ref away before comparing, so changing setup-go from its release tag to a pull-request merge ref passed with a one-sided edit and no collusion at all. That step runs inside the job whose environment carries the App private key and whose token pushes to the default branch. Three regions were also never read, and a defaults block applied to both sides rewrites every run block in the file while every pinned literal stays byte-identical, which makes pinning individual steps worthless on its own.
+
+**Alternatives considered:** Tolerate a floating ref for actions that dependabot bumps, since that was the reason the normalisation existed. Rejected: the erasure applied to every action rather than to a named few, and the one action it actually protected was already pinned by two other tests, so the tolerance bought nothing and cost the only unguarded ref in the tree. Regions are now digest-pinned and the defaults key is banned outright by walking the parsed document rather than matching text, because a quoted key and a flow-style mapping both spell the same thing.
+
+**Implications:**
+- The mutation reverting the forced write to a bare call survives every symlink test, and that is correct rather than a gap: the refusal runs unconditionally before all three write sites, so a symlinked target never reaches the write in any mode. What kills that mutation is the permission test, which was already failing before this work because it compared against all four template names rather than the subset a rename actually needs to rewrite. The two templates with no lockstep pair carry neither a secret nor a push to the default branch, so the surface the comparison defends is absent rather than unguarded.
+
+---
+

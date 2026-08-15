@@ -1,12 +1,17 @@
 package templates
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestAgentsTemplate_HasV8Marker pins the protocol-version marker. The
@@ -689,17 +694,63 @@ func repoRootFromCaller(t *testing.T) string {
 // content: (1) is a required prefix, (2) is substituted before comparing so
 // it costs no divergence at all, (3) is parsed key-by-key by
 // requireAppCredentialEnvBlock, and (4) is pinned as two whole literals
-// (wantTemplateBuildStanza / wantWorkflowBuildStanza). There is no region
-// of either file whose content nothing reads — an added step, an added
-// `env:`, a redirected output path, all fail here. A gap in this test is
-// not a gap in coverage; it is the only place in the repo where a workflow
-// step is under no scrutiny at all.
+// (wantTemplateBuildStanza / wantWorkflowBuildStanza).
 //
-// Everything else — the header, the check-derived-docs job (the actual
-// enforcement logic), the checkout stanza, the regen step, and the whole
-// credential mechanism through EOF — must be byte-identical, or logmind's
-// own CI would be exercising different behaviour than what every other
-// repo installs.
+// # What each region is read BY, region by region
+//
+// Two questions have to be answered separately, because they are different
+// questions and answering only the first is how this test shipped a hole:
+// "do the two copies agree" (a pair-diff) and "is what they agree on still
+// what was reviewed" (a pin). A pair-diff cannot see an edit applied to
+// BOTH files — that is agreement, as far as it can tell.
+//
+//	A  header + check-derived-docs  requireIdentical + digestRegionA
+//	B  regen-on-main preamble       requireIdentical + digestRegionB
+//	C  App-credential env block     requireAppCredentialEnvBlock (parsed key-by-key)
+//	D  checkout stanza              requireIdentical + digestRegionD
+//	E1 build mechanism (differs)    requireExactly, whole literal, refs validated
+//	E2 regen step (differs)         requireExactly, whole literal
+//	F  credential mechanism → EOF   requireIdentical + digestRegionF
+//
+// The ONE thing no digest covers is a whole-line `#` comment, and that
+// exclusion is an argument rather than a convenience: YAML's comment syntax
+// and — inside a `run:` block — the shell's are the same syntax, and
+// neither executes. The claim is control-tested rather than asserted:
+// inserting a payload as a comment leaves the PARSED YAML document
+// byte-for-byte identical, so GitHub reads the same workflow either way.
+// (A payload smuggled as comment TEXT still has to be un-commented by some
+// line to run, and that line is not a comment, so it is inside a digest.)
+// Excluding comments is also what keeps the header prose — which is most of
+// what a version bump edits here — from churning four digests every time,
+// because a digest people update reflexively is a digest that reads as
+// true while nobody looks.
+//
+// Refs are handled on their own axis, by three owners with no overlap:
+// pinActionRefs validates the SHAPE of every ref it collapses,
+// TestWorkflowActionSurface_IsPinned validates every ref in every workflow
+// in the repository (including the two templates that have no pair here),
+// and requireIdentical catches a ref that moved on one side only. Before
+// this, a normalisation erased every ref before every comparison, and
+// `actions/setup-go@refs/pull/1/merge` — a one-sided edit — was green.
+//
+// # What this gate does and does not promise
+//
+// Stated plainly so the next reader does not over-read it: `regen-on-main`
+// triggers on PUSH to the default branch, never on `pull_request`, so an
+// edit to it does not run from a fork's PR. None of what this test catches
+// is a one-click PR exploit. What it is: the thing that stops a malicious
+// or accidental edit to a `contents: write` job — one whose `env` carries
+// APP_ID/APP_PRIVATE_KEY and whose token pushes to the default branch —
+// from reaching a human reviewer as an unremarkable green diff. That is a
+// smaller claim than "prevents compromise" and a much larger one than
+// nothing, and the fix is not downgraded on the strength of it: the same
+// edit merged is code running with those credentials.
+//
+// Everything not listed as a permitted difference — the header, the
+// check-derived-docs job (the actual enforcement logic), the checkout
+// stanza, the regen step, and the whole credential mechanism through EOF —
+// must be byte-identical, or logmind's own CI would be exercising different
+// behaviour than what every other repo installs.
 func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	repoRoot := repoRootFromCaller(t)
 	wfBytes, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "regen-timeline.yml"))
@@ -750,17 +801,23 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	)
 
 	// --- Region A: header + check-derived-docs (the PR gate). Carries none
-	// of the permitted differences → byte-identical.
+	// of the permitted differences → byte-identical, AND digest-pinned so
+	// the same edit made to both copies is not mistaken for agreement.
 	tmplA, tmplRest := splitOnceOrFail(t, "template", tmplBody, jobAnchor)
 	wfA, wfRest := splitOnceOrFail(t, "installed workflow", workflow, jobAnchor)
 	requireIdentical(t, "header + check-derived-docs job (the PR gate)", tmplA, wfA)
+	requireContentDigest(t, "region A — header + check-derived-docs job (the PR gate)", digestRegionA, tmplA)
 
 	// --- Region B: regen-on-main's preamble through `env:`. This is the
 	// prose that tells a repo owner the App rung is optional, so it must
-	// read identically in both.
+	// read identically in both. It is also where a `defaults:` block would
+	// sit — a job-level key, valid YAML, invisible to every step-level pin
+	// below — which is why the digest covers it and why
+	// TestWorkflowActionSurface_IsPinned bans the key outright.
 	tmplB, tmplRest := splitOnceOrFail(t, "template", tmplRest, envAnchor)
 	wfB, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, envAnchor)
 	requireIdentical(t, "regen-on-main preamble (through `env:`)", jobAnchor+tmplB, jobAnchor+wfB)
+	requireContentDigest(t, "region B — regen-on-main preamble (through `env:`)", digestRegionB, jobAnchor+tmplB)
 
 	// --- Region C (difference 2): the App-credential env block. The two
 	// sides name different secrets; they must NOT differ in any other way.
@@ -769,10 +826,12 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	requireAppCredentialEnvBlock(t, "template", tmplC)
 	requireAppCredentialEnvBlock(t, "installed workflow", wfC)
 
-	// --- Region D: the checkout stanza. Identical.
+	// --- Region D: the checkout stanza. Identical, and digest-pinned.
 	tmplD, tmplRest := splitOnceOrFail(t, "template", tmplRest, checkoutTail)
 	wfD, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, checkoutTail)
 	requireIdentical(t, "regen-on-main checkout stanza", stepsAnchor+tmplD, stepsAnchor+wfD)
+	requireContentDigest(t, "region D — regen-on-main checkout stanza", digestRegionD,
+		pinActionRefs(t, "regen-on-main checkout stanza", stepsAnchor+tmplD))
 
 	// --- Region E1 (difference 4): how each side OBTAINS the logmind binary.
 	//
@@ -787,15 +846,18 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	// ship, which is what this test was written to stop.
 	//
 	// So each side is now pinned to its WHOLE content: "free to diverge"
-	// means "free to be the other mechanism", never "unchecked". Only the
-	// action's version ref is normalised — `actions/setup-go@v7` vs `@v8` is
-	// still "install Go", while swapping the action itself is not.
+	// means "free to be the other mechanism", never "unchecked". A ref is
+	// collapsed to `@<ref>` only AFTER pinActionRefs has confirmed the
+	// action is allowlisted and the ref is a release tag — `actions/setup-go@v7`
+	// vs `@v8` is still "install Go", while `@refs/pull/1/merge` is
+	// attacker-authored code inside the job holding APP_PRIVATE_KEY, and the
+	// erasure that could not tell those apart is what this replaces.
 	tmplE1, tmplRest := splitOnceOrFail(t, "template", tmplRest, regenAnchor)
 	wfE1, wfRest := splitOnceOrFail(t, "installed workflow", wfRest, regenAnchor)
 	requireExactly(t, "the template's build mechanism (a released binary via setup-logmind)",
-		wantTemplateBuildStanza, normalizeActionRefs(tmplE1))
+		wantTemplateBuildStanza, pinActionRefs(t, "template build mechanism", tmplE1))
 	requireExactly(t, "the installed workflow's build mechanism (this repo's own source)",
-		wantWorkflowBuildStanza, normalizeActionRefs(wfE1))
+		wantWorkflowBuildStanza, pinActionRefs(t, "installed workflow build mechanism", wfE1))
 
 	// --- Region E2: the regen step. NOT part of the permitted divergence —
 	// both sides run the same two subcommands against the same two paths,
@@ -809,9 +871,79 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 	requireExactly(t, "the installed workflow's regen step", fmt.Sprintf(wantRegenStep, "./bin/logmind"), wfE2)
 
 	// --- Region F: the credential mechanism, through EOF. THE region this
-	// test exists for. Byte-identical.
+	// test exists for. Byte-identical, and digest-pinned: "the two copies
+	// agree" is not the same claim as "the bytes are the ones reviewed".
 	requireIdentical(t, "regen-on-main credential mechanism (App token → PAT → GITHUB_TOKEN, and the push)",
 		buildEnd+tmplRest, buildEnd+wfRest)
+	requireContentDigest(t, "region F — regen-on-main credential mechanism, through EOF", digestRegionF,
+		pinActionRefs(t, "regen-on-main credential mechanism", buildEnd+tmplRest))
+}
+
+// The content digests for the four regions the two copies must agree on.
+//
+// requireIdentical answers "do the two copies say the same thing"; these
+// answer "is what they say still what was reviewed". They are separate
+// questions and the second one had no owner: the same edit applied to BOTH
+// files is, to a pair-diff, indistinguishable from agreement.
+//
+// Each digest covers the region with whole-line `#` comments removed and
+// allowlisted action refs collapsed (see requireContentDigest for why, and
+// for the argument that comments cannot carry a payload). A digest rather
+// than a copy of the text: the workflow file is the one owner of its own
+// content, and a literal here would be a hand-kept second copy that reads
+// as true until one quietly isn't. The failure prints the current content
+// so the change is reviewed, not just re-hashed.
+const (
+	digestRegionA = "cd53b292bbb4eea340684995fc2f09d41dcc1bf64ab49a320f1561f0c4f2e655"
+	digestRegionB = "60c9f3ef2d00a0a58c4057f1c36637b1054658019a21f47ef3667059e4445346"
+	digestRegionD = "7e2d788d136cdff688f698527cd505c1d70633f4134d4df2951fbff59b7fc612"
+	digestRegionF = "431714e9dd9f21db5c8127aeb3353af1052e11dbcddb60bbc39334bc9d73a322"
+)
+
+// requireContentDigest pins a region's EXECUTABLE content to a digest.
+//
+// What is hashed, and why each exclusion is safe:
+//
+//   - Whole-line YAML comments are stripped first — and ONLY genuine YAML
+//     comments, which is a narrower set than "lines starting with #". A `#`
+//     line inside a `run: |` block scalar is NOT a comment to YAML: it is
+//     part of the string GitHub hands to the shell, and stripping it would
+//     leave every `run:` block with a hole an attacker could fill.
+//     stripYAMLComments makes that distinction; stripCommentLines (used by
+//     the banned-word tests elsewhere in this file) deliberately does not,
+//     and using it here was a real gap caught by control-testing this very
+//     claim rather than asserting it.
+//     The exclusion that remains is provable: a comment outside a block
+//     scalar contributes NO node to the parsed document, so GitHub reads
+//     exactly the same workflow with or without it. Excluding those is what
+//     keeps a header-prose edit — the bulk of every version bump here —
+//     from churning four digests, which is what would train a reader to
+//     update them without looking.
+//   - Allowlisted action refs are collapsed to `@<ref>` by pinActionRefs,
+//     which has already rejected any ref that is not a release tag. So a
+//     Dependabot tag bump does not churn the digest, while the ref remains
+//     read — by pinActionRefs here and by
+//     TestWorkflowActionSurface_IsPinned across every workflow in the repo.
+//
+// Everything else — every key, every value, every line of every `run:`
+// block — is inside the hash.
+func requireContentDigest(t *testing.T, region, want, got string) {
+	t.Helper()
+	body := stripYAMLComments(got)
+	sum := sha256.Sum256([]byte(body))
+	have := hex.EncodeToString(sum[:])
+	if have == want {
+		return
+	}
+	t.Errorf("regen-timeline.yml: %s no longer hashes to its pinned content digest.\n"+
+		"  pinned: %s\n"+
+		"  actual: %s\n"+
+		"This region must be byte-identical in the template and in this repo's own copy, so a "+
+		"pair-diff cannot see an edit made to BOTH — which is what this digest is for. READ the "+
+		"content below before touching the constant; if the change is intended, update the "+
+		"digest to the actual value above in the same commit.\n"+
+		"--- content hashed (whole-line comments stripped, allowlisted action refs collapsed) ---\n%s",
+		region, want, have, body)
 }
 
 // The two build stanzas, in full. These are the ONLY bytes either file is
@@ -845,13 +977,429 @@ const (
           %[1]s file-structure --write docs/file-structure.md`
 )
 
-// actionRefPattern matches the version ref of a `uses:` line so a
-// dependabot bump is not read as mechanism drift. The ACTION is pinned; its
-// tag is not.
-var actionRefPattern = regexp.MustCompile(`(uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@\S+`)
+// ─────────────────────────────────────────────────────────────────────────
+// The action surface: which third-party code any workflow in this repo, or
+// any workflow logmind installs into someone else's repo, is allowed to run.
+//
+// This replaces a normalisation that erased every ref for every action
+// (`uses: owner/repo@<anything>` → `@<ref>`) BEFORE comparing a pinned
+// region against its literal. That made the ref unread by anything, so
+// rewriting one step's ref — a one-sided edit, no mirror needed —
+//
+//	-      - uses: actions/setup-go@v7
+//	+      - uses: actions/setup-go@refs/pull/1/merge
+//
+// left `go test ./internal/templates/...` green while pointing a step
+// inside `regen-on-main` at attacker-authored code. That job carries
+// APP_ID/APP_PRIVATE_KEY in its `env` and pushes to the default branch.
+//
+// The tolerance the erasure existed for is real and is KEPT, but stated
+// instead of assumed: Dependabot bumps a release tag in place, and a tag
+// bump is not mechanism drift. So a ref may float only within a shape —
+// and only for an action named here, with a reason.
+// ─────────────────────────────────────────────────────────────────────────
 
-func normalizeActionRefs(s string) string {
-	return actionRefPattern.ReplaceAllString(s, "${1}@<ref>")
+// refPolicy is what an action's ref is allowed to look like.
+type refPolicy int
+
+const (
+	// refSemverTag: `v7`, `v1.0.1`, `v3` — a maintainer-published release
+	// tag. This is the shape Dependabot writes, and the only shape that
+	// floats. Notably NOT matched: a branch name, `refs/pull/N/merge`,
+	// `refs/heads/anything`, or a bare 40-hex SHA of unknown provenance —
+	// each of which is a way to point a pinned action at code the action's
+	// maintainer never released.
+	refSemverTag refPolicy = iota
+	// refCommitSHA: a full 40-hex commit SHA. Required where the callee is
+	// a whole reusable WORKFLOW rather than an action — it runs with this
+	// repo's secrets, and a tag there is mutable by its owner.
+	refCommitSHA
+)
+
+var (
+	semverTagRe = regexp.MustCompile(`^v\d+(\.\d+){0,2}$`)
+	commitSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
+
+// allowedActions is the whole set of third-party code any workflow in this
+// repository — installed or shipped as a template — may run, with the ref
+// shape each is allowed to carry and why. An action absent from this map is
+// a failure, not a default-allow: adding one is a decision someone makes on
+// purpose.
+var allowedActions = map[string]struct {
+	policy refPolicy
+	reason string
+}{
+	"actions/checkout": {refSemverTag,
+		"first-party GitHub action; Dependabot bumps the major tag in place"},
+	"actions/setup-go": {refSemverTag,
+		"first-party GitHub action; Dependabot bumps the major tag in place"},
+	"actions/setup-python": {refSemverTag,
+		"first-party GitHub action; Dependabot bumps the major tag in place"},
+	"actions/create-github-app-token": {refSemverTag,
+		"first-party GitHub action; mints the rung-1 credential, so its ref shape is load-bearing"},
+	"actions/upload-artifact": {refSemverTag,
+		"first-party GitHub action; Dependabot bumps the major tag in place"},
+	"goreleaser/goreleaser-action": {refSemverTag,
+		"release tooling, vendor-published tags; Dependabot bumps them"},
+	"thrillmade/setup-logmind": {refSemverTag,
+		"our own action; the exact pin is additionally held uniform across every " +
+			"call site by TestWorkflowTemplates_SetupLogmindPinIsUniformAndCurrent"},
+	"thrillmade/.github/.github/workflows/dependabot-auto-merge.yml": {refCommitSHA,
+		"a reusable WORKFLOW, not an action: it runs with this repository's secrets, " +
+			"and a tag pointing at it is mutable by whoever owns thrillmade/.github"},
+}
+
+// checkActionRef reports whether one `uses:` value is allowed, and why not
+// when it is not. Split on the LAST `@` so an owner/repo/path callee (a
+// reusable workflow) parses the same way an action does.
+func checkActionRef(uses string) (action, ref string, err error) {
+	at := strings.LastIndex(uses, "@")
+	if at < 0 {
+		return uses, "", fmt.Errorf("carries no `@ref` at all — an unpinned `uses:` resolves to " +
+			"the callee's default branch, which its owner can move at any time")
+	}
+	action, ref = uses[:at], uses[at+1:]
+	rule, ok := allowedActions[action]
+	if !ok {
+		return action, ref, fmt.Errorf("is not on the action allowlist in templates_test.go — " +
+			"every piece of third-party code a logmind workflow runs is named there on purpose, " +
+			"with the ref shape it may carry and the reason")
+	}
+	switch rule.policy {
+	case refSemverTag:
+		if !semverTagRe.MatchString(ref) {
+			return action, ref, fmt.Errorf("ref %q is not a release tag (want `vN`, `vN.N`, or "+
+				"`vN.N.N`). %s may float ONLY across release tags (%s); a branch, a "+
+				"`refs/...` ref, or a raw SHA points the step at code the action's maintainer "+
+				"never released", ref, action, rule.reason)
+		}
+	case refCommitSHA:
+		if !commitSHARe.MatchString(ref) {
+			return action, ref, fmt.Errorf("ref %q is not a full 40-hex commit SHA. %s must be "+
+				"SHA-pinned: %s", ref, action, rule.reason)
+		}
+	}
+	return action, ref, nil
+}
+
+// pinActionRefs validates every `uses:` line in a region and returns the
+// region with policy-VALID refs collapsed to `@<ref>`, which is what lets a
+// pinned literal survive a Dependabot tag bump without going blind to the
+// ref.
+//
+// An invalid ref is reported here AND left verbatim in the returned string,
+// so the literal comparison downstream fails too. Two independent reds for
+// one edit is deliberate: this is the mechanism whose single point of
+// failure shipped the hole.
+func pinActionRefs(t *testing.T, label, s string) string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		const marker = "uses: "
+		idx := strings.Index(trimmed, marker)
+		if idx != 0 && !strings.HasPrefix(trimmed, "- "+marker) {
+			out = append(out, line)
+			continue
+		}
+		uses := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "- "), marker))
+		action, _, err := checkActionRef(uses)
+		if err != nil {
+			t.Errorf("%s: `uses: %s` %v", label, uses, err)
+			out = append(out, line) // leave it verbatim → the literal compare fails too
+			continue
+		}
+		out = append(out, strings.Replace(line, uses, action+"@<ref>", 1))
+	}
+	return strings.Join(out, "\n")
+}
+
+// TestWorkflowActionSurface_IsPinned is the CLASS guard for the ref hole,
+// and it is what answers "what covers the two templates that have no
+// lockstep pair".
+//
+// The lockstep test can only ever protect regen-timeline, because it is the
+// only workflow this repo runs a near-copy of. `check-decisions.yml` and
+// `check-doc-links.yml` have no pair at all — logmind runs deliberately
+// different variants of both — so nothing diffs them against anything, and
+// before this test `grep -rn "setup-go" --include='*_test.go' .` found no
+// assertion pinning any of their action refs either.
+//
+// So the property is stated where it actually belongs: over EVERY workflow
+// template logmind ships and EVERY workflow this repo runs, no matter which
+// of them has a mirror copy. Both axes:
+//
+//   - every `uses:` names an action on the allowlist above, carrying a ref
+//     of the shape that action is allowed to carry;
+//   - no `defaults:` block exists anywhere in any of them (see below).
+//
+// It reads the PARSED YAML rather than the text, so the evasions that beat
+// a `strings.Contains` scan — flow style (`{defaults: {run: {shell: …}}}`),
+// a quoted key (`"defaults":`), an aliased anchor, odd spacing — are read
+// as what GitHub would read, not as what a substring search would.
+func TestWorkflowActionSurface_IsPinned(t *testing.T) {
+	repoRoot := repoRootFromCaller(t)
+
+	type file struct{ label, body string }
+	var files []file
+	for _, name := range ListWorkflowTemplates() {
+		files = append(files, file{"template " + name, Workflow(name)})
+	}
+	entries, err := os.ReadDir(filepath.Join(repoRoot, ".github", "workflows"))
+	if err != nil {
+		t.Fatalf("read .github/workflows: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		files = append(files, file{".github/workflows/" + e.Name(), string(data)})
+	}
+
+	sawUses := 0
+	for _, f := range files {
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(f.body), &doc); err != nil {
+			t.Errorf("%s: does not parse as YAML (%v) — GitHub would not run it, and this test "+
+				"cannot read it", f.label, err)
+			continue
+		}
+		walkYAMLMappings(&doc, "", func(key string, val *yaml.Node, path string) {
+			switch key {
+			case "uses":
+				sawUses++
+				if _, _, err := checkActionRef(val.Value); err != nil {
+					t.Errorf("%s at %s: `uses: %s` %v", f.label, path, val.Value, err)
+				}
+			case "defaults":
+				// A `defaults:` block is BANNED outright rather than pinned.
+				// It rewrites the meaning of every `run:` in the file without
+				// touching any of them — `defaults: {run: {shell: <anything>}}`
+				// makes each `run:` block an argument to a command of the
+				// author's choosing — so whole-literal pinning of individual
+				// steps buys nothing while one exists. No workflow here needs
+				// one (measured: zero occurrences across every template and
+				// every installed workflow), so the cheap, total rule is
+				// available and this test takes it. If a real need ever
+				// appears, delete this case and pin the block's content
+				// explicitly — but do that on purpose.
+				t.Errorf("%s at %s: a `defaults:` block is not allowed in a logmind workflow. It "+
+					"rewrites what every `run:` in the file executes (`defaults.run.shell`) without "+
+					"editing a single one of them, which defeats every step-level pin in this suite. "+
+					"Pin it explicitly, or do not add it.", f.label, path)
+			}
+		})
+	}
+
+	// Controls: both halves of the search must be demonstrably live, or
+	// every assertion above was vacuous.
+	if len(files) < 2 {
+		t.Fatalf("found %d workflow files — this test's file discovery is broken, not the tree", len(files))
+	}
+	if sawUses == 0 {
+		t.Fatalf("found no `uses:` keys in %d workflow files — this test's YAML walk is broken, "+
+			"not the tree", len(files))
+	}
+}
+
+// bundledTemplateFingerprints binds each workflow template's MARKER VERSION
+// to a digest of the exact bytes that marker names, one line per template.
+//
+// `installWorkflowTemplatesMode` rewrites an installed workflow only when
+// the markers DIFFER (init.go: `if installedVer != bundledVer`). So a
+// marker is not a label on a file — it is the identity of a specific
+// content, fleet-wide, and two different contents wearing the same marker
+// is a distribution bug with no symptom: every repo already holding vN
+// keeps its vN forever, and `logmind doctor` reports it current while
+// doing so.
+//
+// This happened. Two branches independently bumped
+// regen-timeline.yml.template to v12 with different content, and the whole
+// suite was green on both.
+//
+// What this test can and cannot do, stated exactly:
+//
+//   - It CANNOT see a sibling branch. Nothing in a single-repo `go test`
+//     can — the other branch's blob is not in the working tree, and a test
+//     that shelled out to `git` for it would be reading refs that a shallow
+//     CI checkout may not have fetched. If a guard that genuinely observes
+//     the collision is wanted, it belongs in CI as a cross-branch marker
+//     check (compare the PR's bundled marker against every other open PR's,
+//     via the API), not here. That is not built; this comment is not
+//     claiming it is.
+//   - It DOES convert the silent case into a loud one. Two branches that
+//     both bump to v12 both edit the SAME line of this map to different
+//     values, so the second merge conflicts in git rather than resolving
+//     cleanly into one v12 with the other's content.
+//   - It DOES catch the more common shape of the same bug directly: content
+//     edited without the marker moving. That change ships to nobody, and
+//     before this nothing said so.
+//
+// Update procedure: change a template → bump its marker → the test prints
+// the new digest → paste it here, same commit.
+var bundledTemplateFingerprints = map[string]string{
+	"check-decisions.yml.template":     "v6:5fbd605bfc774cae66e321405a634baa0f0d3e93a47ffa661623100219430559",
+	"check-doc-links.yml.template":     "v9:49fd3ffc32bed1c1ac5054c7e478d8d6794390a2f6423f93e9b418a9da838008",
+	"logmind-self-update.yml.template": "v11:d4214fb3d201997b3089e8bdaf824ea513da27b0d40093d71d663016b6e903d9",
+	"regen-timeline.yml.template":      "v12:31a61bcf330a1bc81f825517725c27ed95a7ddd3d4fee634ac787e2f3f500cf1",
+}
+
+// TestWorkflowTemplateMarkers_MoveWithContent enforces the binding above.
+func TestWorkflowTemplateMarkers_MoveWithContent(t *testing.T) {
+	names := ListWorkflowTemplates()
+	if len(names) == 0 {
+		t.Fatalf("ListWorkflowTemplates returned nothing — this test's search is broken, not the tree")
+	}
+	seen := map[string]bool{}
+	for _, name := range names {
+		seen[name] = true
+		body := Workflow(name)
+		marker := ""
+		if nl := strings.IndexByte(body, '\n'); nl > 0 {
+			marker = strings.TrimSpace(strings.TrimPrefix(body[:nl], "# logmind-template-version:"))
+		}
+		if marker == "" || strings.HasPrefix(marker, "#") {
+			t.Errorf("%s does not start with a `# logmind-template-version:` marker line — "+
+				"`logmind init` keys every rewrite decision on that marker", name)
+			continue
+		}
+		sum := sha256.Sum256([]byte(body))
+		got := marker + ":" + hex.EncodeToString(sum[:])
+		want, ok := bundledTemplateFingerprints[name]
+		if !ok {
+			t.Errorf("%s is a bundled workflow template with no entry in "+
+				"bundledTemplateFingerprints. Add:\n\t%q: %q,", name, name, got)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s: marker+content fingerprint moved.\n  pinned: %s\n  actual: %s\n"+
+				"If the CONTENT changed, the MARKER must move with it — `logmind init` only "+
+				"rewrites an installed workflow when the markers differ, so content shipped under "+
+				"an unchanged marker reaches no repository that already holds that version, and "+
+				"`logmind doctor` reports those repos current while they run the old bytes. "+
+				"Bump the marker, then paste the actual value above into "+
+				"bundledTemplateFingerprints in this same commit.", name, want, got)
+		}
+	}
+	var stale []string
+	for name := range bundledTemplateFingerprints {
+		if !seen[name] {
+			stale = append(stale, name)
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Errorf("bundledTemplateFingerprints names templates that are no longer bundled: %v", stale)
+	}
+}
+
+// blockScalarKeyRe matches a mapping key whose value is a block scalar —
+// `run: |`, `script: >-`, `run: |2+`. Everything indented past that key is
+// the scalar's CONTENT, not YAML.
+var blockScalarKeyRe = regexp.MustCompile(`:\s*[|>][-+]?\d*[-+]?$`)
+
+// stripYAMLComments removes whole-line comments that YAML actually treats
+// as comments, and nothing else.
+//
+// The distinction is load-bearing and was very nearly got wrong here. Inside
+// a `run: |` block, a line beginning with `#` is a SHELL comment, which
+// means it is a YAML STRING — it is in the document, it is handed to the
+// runner, and only the shell's own lexer makes it inert. Removing such a
+// line from a content digest opens a hole in the middle of every `run:`
+// block: the digest stops covering whatever sits there. So block-scalar
+// content is hashed in full, `#` lines included.
+//
+// Outside a block scalar a `#` line produces no node at all, which is the
+// property the digest exclusion rests on.
+func stripYAMLComments(body string) string {
+	var kept []string
+	blockIndent := -1 // -1: not inside a block scalar
+	for _, line := range strings.Split(body, "\n") {
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		trimmed := strings.TrimSpace(line)
+		if blockIndent >= 0 {
+			// A blank line does not end a block scalar, and anything
+			// indented past the key is still its content.
+			if trimmed == "" || indent > blockIndent {
+				kept = append(kept, line)
+				continue
+			}
+			blockIndent = -1
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if blockScalarKeyRe.MatchString(trimmed) {
+			blockIndent = indent
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// TestStripYAMLComments_KeepsBlockScalarContent is the unit control for the
+// distinction above. Without it, a stripper that dropped every `#` line
+// would pass every other test in this file while silently un-covering the
+// inside of every `run:` block.
+func TestStripYAMLComments_KeepsBlockScalarContent(t *testing.T) {
+	const in = "# a real YAML comment\n" +
+		"jobs:\n" +
+		"  a:\n" +
+		"    steps:\n" +
+		"      # another real one\n" +
+		"      - run: |\n" +
+		"          set -e\n" +
+		"          # NOT a comment to YAML — this is string content\n" +
+		"          echo hi\n" +
+		"      - name: next\n" +
+		"        # real again: this is a mapping, not a scalar\n" +
+		"        run: echo bye\n"
+	got := stripYAMLComments(in)
+	for _, gone := range []string{"a real YAML comment", "another real one", "real again"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("stripYAMLComments kept the YAML comment %q", gone)
+		}
+	}
+	if !strings.Contains(got, "# NOT a comment to YAML") {
+		t.Errorf("stripYAMLComments dropped a `#` line from inside a `run: |` block. That line is "+
+			"string content GitHub hands to the shell, so dropping it takes the inside of every "+
+			"`run:` block out of the digest:\n%s", got)
+	}
+	// Control: the stripper must actually strip, or the assertions above
+	// are satisfied by a function that returns its input.
+	if got == in {
+		t.Fatalf("stripYAMLComments returned its input unchanged — it strips nothing")
+	}
+}
+
+// walkYAMLMappings calls fn for every (key, value) pair of every mapping in
+// the document, at any depth, with a dotted path for the error message.
+func walkYAMLMappings(n *yaml.Node, path string, fn func(key string, val *yaml.Node, path string)) {
+	switch n.Kind {
+	case yaml.DocumentNode:
+		for _, c := range n.Content {
+			walkYAMLMappings(c, path, fn)
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			child := k.Value
+			if path != "" {
+				child = path + "." + k.Value
+			}
+			fn(k.Value, v, child)
+			walkYAMLMappings(v, child, fn)
+		}
+	case yaml.SequenceNode:
+		for i, c := range n.Content {
+			walkYAMLMappings(c, fmt.Sprintf("%s[%d]", path, i), fn)
+		}
+	}
 }
 
 // requireExactly fails when a region is not byte-for-byte the content it is
@@ -905,6 +1453,10 @@ func requireIdentical(t *testing.T, region, tmpl, workflow string) {
 // the "two lines" claim in the doc comment above would be unenforced, and
 // a whole mechanism could reappear inside this gap, which is exactly how
 // v11 shipped a PAT the repo had stopped using.
+// secretsExprRe matches a value that is EXACTLY one `${{ secrets.NAME }}`
+// expression, edge to edge.
+var secretsExprRe = regexp.MustCompile(`^\$\{\{ secrets\.[A-Za-z_][A-Za-z0-9_]* \}\}$`)
+
 func requireAppCredentialEnvBlock(t *testing.T, label, block string) {
 	t.Helper()
 	var keys []string
@@ -918,9 +1470,12 @@ func requireAppCredentialEnvBlock(t *testing.T, label, block string) {
 			t.Errorf("%s: unparseable line in the App-credential env block: %q", label, line)
 			continue
 		}
-		if !strings.HasPrefix(value, "${{ secrets.") || !strings.HasSuffix(value, " }}") {
-			t.Errorf("%s: App-credential env value for %q must be a `${{ secrets.* }}` expression, got %q",
-				label, key, value)
+		// WHOLE-value match, not prefix+suffix. `${{ secrets.X }}${{ evil }}`
+		// satisfies "starts with `${{ secrets.` and ends with ` }}`" while
+		// smuggling a second expression into the job env.
+		if !secretsExprRe.MatchString(value) {
+			t.Errorf("%s: App-credential env value for %q must be exactly one `${{ secrets.NAME }}` "+
+				"expression and nothing else, got %q", label, key, value)
 		}
 		keys = append(keys, key)
 	}
@@ -1211,6 +1766,58 @@ func TestWorkflowTemplates_NoTemplateGuessesTheDefaultBranch(t *testing.T) {
 	if !sawAFilter {
 		t.Fatalf("no workflow template contains a `branches:` filter — this test's search is " +
 			"broken, not the tree")
+	}
+
+	// …and the same rule against logmind's OWN installed workflows, which
+	// the loop above cannot see. This repo runs dogfood variants of two of
+	// these templates (they build in-tree source instead of installing a
+	// release), so nothing diffs them against anything — and one of them
+	// carried a bare `branches: [main]` with no sentinel while the template
+	// it mirrors had just gained one. Shipping a warning logmind does not
+	// run itself is the same class as shipping a credential path it had
+	// abandoned.
+	//
+	// The literal `main` is correct HERE and is not what is being checked:
+	// this repo is not scaffolded, so its copy carries the rendered value.
+	// What must exist is the sentinel that says so out loud when the value
+	// goes stale.
+	repoRoot := repoRootFromCaller(t)
+	entries, err := os.ReadDir(filepath.Join(repoRoot, ".github", "workflows"))
+	if err != nil {
+		t.Fatalf("read .github/workflows: %v", err)
+	}
+	sawInstalledFilter := false
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		body := string(data)
+		if !strings.Contains(stripCommentLines(body), "branches: [") {
+			continue
+		}
+		sawInstalledFilter = true
+		if !strings.Contains(body, "SCAFFOLDED_BRANCH: ") {
+			t.Errorf(".github/workflows/%s filters on a hardcoded branch but carries no "+
+				"SCAFFOLDED_BRANCH sentinel — renaming this repository's default branch would stop "+
+				"it forever, silently. The templates logmind ships all carry one; the copies logmind "+
+				"runs on itself must too.", e.Name())
+		}
+		if !strings.Contains(body, "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}") {
+			t.Errorf(".github/workflows/%s carries a branch filter but never reads the live default "+
+				"branch, so its sentinel has nothing to compare against", e.Name())
+		}
+		if !strings.Contains(body, `if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then`) {
+			t.Errorf(".github/workflows/%s does not compare its trigger against the live default branch",
+				e.Name())
+		}
+	}
+	if !sawInstalledFilter {
+		t.Fatalf("no workflow in .github/workflows/ contains a `branches: [` filter — this test's " +
+			"installed-side search is broken, not the tree")
 	}
 }
 

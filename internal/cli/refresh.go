@@ -149,6 +149,17 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 // for and what it found"): name the file, both markers, and the direction.
 func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 	for _, d := range declined {
+		if d.Err != nil {
+			// A write that FAILED, not one that was declined on purpose.
+			// Same list, different remedy, and it must never be printed in
+			// the vocabulary of the deliberate case — "left unchanged …
+			// refusing to downgrade" would read as a considered decision.
+			fmt.Fprintf(stderr,
+				"error: %s was NOT written — %v. The other workflow files were still processed; "+
+					"re-run once this one is writable.\n",
+				d.Path, d.Err)
+			continue
+		}
 		fmt.Fprintf(stderr,
 			"note: %s left unchanged — installed template %s is NEWER than the %s this binary bundles; "+
 				"refusing to downgrade. Upgrade logmind to move it forward.\n",
