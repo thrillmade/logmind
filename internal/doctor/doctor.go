@@ -89,8 +89,14 @@ var LogmindWorkflows = []string{
 }
 
 // Marker regexes match Python's compiled patterns at the source.
+// The `# logmind-template-version:` extractor deliberately does NOT live
+// here. doctor READS that marker and internal/cli WRITES against it, and two
+// copies of the rule meant a file could be markerless to the reader and
+// versioned to the writer at the same time (#299) — so `doctor --fix`
+// overwrote a file `doctor` had just called the user's. Both sides now call
+// inserter.ExtractTemplateMarker, the same way both already order generations
+// through inserter.ParseMarkerGeneration (#294).
 var (
-	logmindMarkerRe       = regexp.MustCompile(`^# logmind-template-version:\s*(\S+)`)
 	logmindBlockVersionRe = regexp.MustCompile(`<!--\s*logmind-block-version:\s*(\S+)\s*-->`)
 	// logmindVersionLineRe parses the version out of a PATH binary's
 	// `--version` output. It anchors on the REAL versionLine format emitted
@@ -549,20 +555,15 @@ func classifyLogmindDrift(workflows []WorkflowStatus) string {
 
 func bundledLogmindMarker(workflowName string) *string {
 	body := templates.Workflow(workflowName + ".template")
-	first := firstLine(body)
-	m := logmindMarkerRe.FindStringSubmatch(first)
-	if len(m) < 2 {
+	marker := inserter.ExtractTemplateMarker(body)
+	if !marker.Writable() {
+		// A template WE ship whose marker isn't on line 1 is a build defect,
+		// not a repo state — report "no bundled marker" rather than compare
+		// against a token the writer would refuse to act on.
 		return nil
 	}
-	v := m[1]
+	v := marker.Version
 	return &v
-}
-
-func firstLine(s string) string {
-	if idx := strings.Index(s, "\n"); idx >= 0 {
-		return s[:idx]
-	}
-	return s
 }
 
 func readWorkflow(projectRoot, name string) (string, bool) {
@@ -609,16 +610,34 @@ func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 	if !ok {
 		return WorkflowStatus{Name: name, Installed: false, Marker: nil, BundledMarker: bundled, Drift: "missing"}
 	}
-	first := firstLine(content)
-	m := logmindMarkerRe.FindStringSubmatch(first)
-	var marker *string
-	if len(m) >= 2 {
-		v := m[1]
-		marker = &v
+	found := inserter.ExtractTemplateMarker(content)
+
+	// `owned` is what the DRIFT VERDICT is computed from, and it is non-nil
+	// only when the file is ours to refresh. classifyMarker's nil case is the
+	// SPEC §1.1 "belongs to the user" verdict, so routing anything the writer
+	// would refuse through nil is what keeps the reader's answer identical to
+	// the writer's — the disagreement between them WAS #299.
+	var owned *string
+	if found.Writable() {
+		v := found.Version
+		owned = &v
 	}
+
+	// `display` may say more than the verdict does. A displaced marker is
+	// "markerless" as a verdict, but reporting only that would hide the fact
+	// that a marker IS present — the one thing the user needs in order to
+	// move the file deliberately into either camp. Prose in the marker column
+	// matches the existing "markerless (pre-v0.6.10)" / "foreign … left
+	// alone" rows rather than inventing a drift value consumers don't parse.
+	display := owned
+	if found.Ownership == inserter.MarkerDisplaced {
+		v := fmt.Sprintf("%s on line %d, not line 1", found.Version, found.Line)
+		display = &v
+	}
+
 	return WorkflowStatus{
-		Name: name, Installed: true, Marker: marker,
-		BundledMarker: bundled, Drift: classifyMarker(marker, bundled),
+		Name: name, Installed: true, Marker: display,
+		BundledMarker: bundled, Drift: classifyMarker(owned, bundled),
 	}
 }
 

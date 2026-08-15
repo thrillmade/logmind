@@ -84,22 +84,22 @@ func runSelfUpdate(cmd *cobra.Command) error {
 		blockRefused = declined != nil
 	}
 
-	// Refresh per-agent stubs by detecting drift and rewriting affected
-	// files. The inserter package's FindOutdatedMarkerBlocks +
-	// MigrateToAgentsMD pipeline already covers this; we call them here
-	// in best-effort mode. Its refusal is dropped deliberately: it can only
-	// concern the same AGENTS.md EnsureAgentsMD just reported on above.
-	if entries, _, err := inserter.FindOutdatedMarkerBlocks(cwd); err == nil {
-		for _, entry := range entries {
-			refreshed := inserter.ReplaceMarkerBlock(entry.OldBody, entry.NewBody)
-			if err := os.WriteFile(entry.Path, []byte(refreshed), 0o644); err == nil {
-				if rel, err := filepath.Rel(cwd, entry.Path); err == nil {
-					fmt.Fprintln(out, "✓ Refreshed marker block in", rel)
-					updated = true
-				}
-			}
-		}
-	}
+	// NOTE — there is deliberately no second AGENTS.md refresher here (#297).
+	//
+	// A FindOutdatedMarkerBlocks loop used to sit at this point, writing
+	// AGENTS.md a second time in the same command. FindOutdatedMarkerBlocks
+	// only ever reports AGENTS.md, and EnsureAgentsMD above has already
+	// refreshed it against the same classifier (planBlockRefresh) — so the
+	// loop was pure duplication, which SPEC §1.1 forbids outright ("Exactly
+	// one automation owns any generated or copied path. Two refreshers MUST
+	// NOT write the same path"). Being unreachable is also why nothing caught
+	// that it passed the BLOCK BODY where the WHOLE FILE belonged and wrote
+	// the resulting fragment over the user's entire AGENTS.md.
+	//
+	// Deleting the duplicate is the fix, not repairing its arguments: the
+	// second writer had no work of its own to do, and a dead write path is
+	// exactly where an untested defect survives. EnsureAgentsMD is the single
+	// owner of this path, and it reports through `msg` above.
 
 	// Refresh local hooks to match the running binary's body.
 	if _, err := os.Stat(filepath.Join(cwd, ".git")); err == nil {

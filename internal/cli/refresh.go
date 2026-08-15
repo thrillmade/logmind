@@ -147,12 +147,34 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 // Shape follows SPEC §3.4's rule for the analogous fail-open case ("Failing
 // open MUST NOT be silent... MUST say so on stderr, naming what it looked
 // for and what it found"): name the file, both markers, and the direction.
+// Three refusals, three remedies — so three messages. A single "left
+// unchanged" line would tell a user whose file is AHEAD of the binary to go
+// take ownership of it, and a user whose file is THEIRS to go upgrade.
 func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 	for _, d := range declined {
-		fmt.Fprintf(stderr,
-			"note: %s left unchanged — installed template %s is NEWER than the %s this binary bundles; "+
-				"refusing to downgrade. Upgrade logmind to move it forward.\n",
-			d.Path, d.Installed, d.Bundled)
+		switch d.Reason {
+		case declineUnmarked:
+			// SPEC §1.1: "An artifact carrying no marker at all belongs to
+			// the user and MUST NOT be overwritten." Saying so is what makes
+			// the refusal auditable rather than a silent no-op.
+			fmt.Fprintf(stderr,
+				"note: %s left unchanged — it carries no `# logmind-template-version:` marker, "+
+					"so logmind treats it as yours and will not overwrite it. To hand it back to "+
+					"logmind, make `# logmind-template-version: %s` its first line.\n",
+				d.Path, d.Bundled)
+		case declineDisplaced:
+			fmt.Fprintf(stderr,
+				"note: %s left unchanged — its `# logmind-template-version: %s` marker is on line %d, "+
+					"not line 1, so logmind cannot tell whether the file is yours or its own and will "+
+					"not overwrite it. Move the marker to line 1 to let logmind refresh it, or delete "+
+					"the marker to keep the file yours.\n",
+				d.Path, d.Installed, d.Line)
+		default:
+			fmt.Fprintf(stderr,
+				"note: %s left unchanged — installed template %s is NEWER than the %s this binary bundles; "+
+					"refusing to downgrade. Upgrade logmind to move it forward.\n",
+				d.Path, d.Installed, d.Bundled)
+		}
 	}
 }
 

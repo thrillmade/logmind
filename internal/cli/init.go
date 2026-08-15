@@ -413,14 +413,34 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 	return nil
 }
 
-// templateDowngrade records one REFUSED workflow refresh: the file on disk
-// carries a newer `# logmind-template-version:` marker than this binary
-// bundles, so installWorkflowTemplates left it alone. Reported by both
-// callers (init refresh mode, doctor --fix) — never silent.
+// declineReason says WHY installWorkflowTemplates left an existing file
+// alone. One list with a reason, rather than one list per reason: two lists
+// that both mean "we declined to write this path" are two lists that will
+// disagree about whether a path is on them.
+type declineReason int
+
+const (
+	// declineDowngrade — the file carries a NEWER marker than this binary
+	// bundles (#286). Ours, but ahead of us.
+	declineDowngrade declineReason = iota
+	// declineUnmarked — no logmind marker at all. SPEC §1.1: the artifact
+	// belongs to the user and MUST NOT be overwritten.
+	declineUnmarked
+	// declineDisplaced — a marker exists but not on line 1 (#299). Neither
+	// clearly ours nor clearly theirs, so it is refused and named rather
+	// than guessed at.
+	declineDisplaced
+)
+
+// templateDowngrade records one REFUSED workflow refresh: installWorkflowTemplates
+// left the file on disk byte-for-byte alone. Reported by both callers (init
+// refresh mode, doctor --fix) — never silent.
 type templateDowngrade struct {
-	Path      string // rel path from repo root
-	Installed string // marker found on disk, e.g. "v11"
-	Bundled   string // marker this binary ships, e.g. "v4"
+	Path      string        // rel path from repo root
+	Installed string        // marker found on disk, e.g. "v11"; "" when there is none
+	Bundled   string        // marker this binary ships, e.g. "v4"
+	Reason    declineReason // why the write was refused
+	Line      int           // 1-based line the marker sat on; only meaningful for declineDisplaced
 }
 
 // installWorkflowTemplates copies internal/templates/github/*.yml.template
@@ -459,8 +479,27 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 		if !refresh {
 			continue
 		}
-		installedVer := extractTemplateVersion(string(existing))
-		bundledVer := extractTemplateVersion(body)
+		// OWNERSHIP FIRST (#299). Whether we may write this path at all is a
+		// separate question from whether its version is behind ours, and it
+		// is answered by the same extractor `doctor` reports from — so a file
+		// doctor calls the user's can no longer be one --fix overwrites.
+		installed := inserter.ExtractTemplateMarker(string(existing))
+		if !installed.Writable() {
+			reason := declineUnmarked
+			if installed.Ownership == inserter.MarkerDisplaced {
+				reason = declineDisplaced
+			}
+			declined = append(declined, templateDowngrade{
+				Path:      relativePath(repoRoot, target),
+				Installed: installed.Version,
+				Bundled:   inserter.ExtractTemplateMarker(body).Version,
+				Reason:    reason,
+				Line:      installed.Line,
+			})
+			continue
+		}
+		installedVer := installed.Version
+		bundledVer := inserter.ExtractTemplateMarker(body).Version
 		if installedVer != "" && bundledVer != "" && installedVer != bundledVer {
 			// ORDER, not inequality (#286). A released binary bundles OLDER
 			// markers than dev (`brew install logmind` → v1.2.0 → v4 while
@@ -479,6 +518,7 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 					Path:      relativePath(repoRoot, target),
 					Installed: installedVer,
 					Bundled:   bundledVer,
+					Reason:    declineDowngrade,
 				})
 				continue
 			}
@@ -501,18 +541,16 @@ func renderWorkflowTemplate(text string) string {
 	return strings.ReplaceAll(text, "__LOGMIND_VERSION__", version.Version)
 }
 
-// extractTemplateVersion reads the `# logmind-template-version: vN` line.
-// Returns "" when no marker is present (the user stripped it; treat as
-// customised).
-func extractTemplateVersion(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		const prefix = "# logmind-template-version:"
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
-		}
-	}
-	return ""
-}
+// extractTemplateVersion is GONE — see inserter.ExtractTemplateMarker (#299).
+//
+// It prefix-matched every line of the file, while internal/doctor matched an
+// anchored regex against line 1 only. A workflow whose marker sat on line 2
+// was markerless to the reporter and versioned to the writer, so `doctor`
+// printed "markerless" and `doctor --fix` then overwrote the file — the
+// component that DECIDED the rule was not the component that APPLIED it.
+// Both now call one extractor, which also settles a second disagreement the
+// two had: on `# logmind-template-version: v1 junk`, the prefix form yielded
+// "v1 junk" as the version token and the regex form yielded "v1".
 
 // parseTemplateVersion extracts the ORDERING key from a template marker:
 // "v11" → 11, "v9-pointer" → 9. Only the numeric generation orders — a

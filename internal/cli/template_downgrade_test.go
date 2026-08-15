@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/templates"
 )
 
@@ -91,7 +92,7 @@ func TestParseTemplateVersion_Ordering(t *testing.T) {
 // this binary ships for one workflow template.
 func bundledTemplateVersion(t *testing.T, name string) string {
 	t.Helper()
-	v := extractTemplateVersion(templates.Workflow(name + ".template"))
+	v := inserter.ExtractTemplateMarker(templates.Workflow(name + ".template")).Version
 	if v == "" {
 		t.Fatalf("bundled %s carries no template-version marker", name)
 	}
@@ -166,7 +167,7 @@ func TestInstallWorkflowTemplates_StillUpgrades(t *testing.T) {
 			t.Errorf("declined = %+v; want none on an upgrade", declined)
 		}
 		want := bundledTemplateVersion(t, "check-decisions.yml")
-		if got := extractTemplateVersion(readRel(t, rel)); got != want {
+		if got := inserter.ExtractTemplateMarker(readRel(t, rel)).Version; got != want {
 			t.Errorf("marker after refresh = %q; want %q", got, want)
 		}
 		found := false
@@ -197,7 +198,7 @@ func TestInstallWorkflowTemplates_UnparseableMarkerStillRefreshes(t *testing.T) 
 			t.Errorf("declined = %+v; want none for an unparseable marker", declined)
 		}
 		want := bundledTemplateVersion(t, "check-decisions.yml")
-		if got := extractTemplateVersion(readRel(t, rel)); got != want {
+		if got := inserter.ExtractTemplateMarker(readRel(t, rel)).Version; got != want {
 			t.Errorf("marker after refresh = %q; want %q (unparseable must not pin)", got, want)
 		}
 	})
