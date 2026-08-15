@@ -113,7 +113,11 @@ func TestGenerateMainCanonical_BackfillIsTimelineNeutral(t *testing.T) {
 func TestGenerateMainCanonical_LegacyMarkerlessFallback(t *testing.T) {
 	docs := filepath.Join(t.TempDir(), "docs")
 	// A markerless (pre-Slice-2) branch file: only decision headers. It must
-	// still contribute exactly one synthesized row from the FIRST header.
+	// still contribute exactly ONE synthesized row — that invariant is
+	// unchanged. Which entry supplies it changed: the NEWEST header, not the
+	// first, so a file that is still growing does not sit frozen at its
+	// oldest decision. See collectMarked for why that is one rule for every
+	// file rather than a default-branch special case.
 	writeDoc(t, docs, "decisions-branches/feat__legacy.md",
 		"# legacy\n\n## 2026-06-10 12:00 - Legacy work\nbody\n## 2026-06-11 13:00 - More work\nbody\n")
 	var stderr bytes.Buffer
@@ -125,8 +129,8 @@ func TestGenerateMainCanonical_LegacyMarkerlessFallback(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("got %d blocks; want 1 synthesized row\n%s", len(blocks), out)
 	}
-	if blocks[0].Key != "2026-06-10-legacy-work" {
-		t.Errorf("key = %q; want 2026-06-10-legacy-work (slug of the first header)", blocks[0].Key)
+	if blocks[0].Key != "2026-06-11-more-work" {
+		t.Errorf("key = %q; want 2026-06-11-more-work (slug of the NEWEST header)", blocks[0].Key)
 	}
 }
 

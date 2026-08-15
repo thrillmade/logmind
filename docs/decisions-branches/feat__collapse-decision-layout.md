@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-15 08:31 - Date a markerless row by its newest entry, not its first
+
+**Reasoning:** A branch file with entry-block markers renders one row per block; a markerless file collapses to one synthesized row. That row was dated from entries[0]. Every branch file except one eventually closes — the branch merges, the file stops changing, and first and last sit days apart inside one window of work, so the choice is immaterial. main.md is the one file that never closes. Measured here: 12 migrated entries spanning 2026-05-15 to 2026-07-16 rendered as a single row dated 2026-05-15, sitting at line 544 of the archive, already far past the 50-entry cut. Anything logged on main was therefore invisible in the recent view, and would sink further as other branches accumulated.
+
+**Alternatives considered:** Special-case the default branch and emit one row per entry for it. Rejected because it contradicts the rule the whole issue rests on — main is a branch like any other — and buys a permanent if-branch-is-default in the renderer. The CEO named the same instinct: main.md functions like any other branch file. The asymmetry is not that main is special, it is that main.md never closes.
+
+**Implications:**
+- One rule for every file: the synthesized row takes the newest entry, and its title comes from the same entry so the date and the text agree. It only MATTERS for a file that stays open, which is the honest reason to prefer it over branching on the branch name. Verified: main.md moved from 2026-05-15 to 2026-07-16 and floated out of the archive into the recent half. A closed feature branch is unaffected — its first and last entries are the same day. TestGenerateMainCanonical_LegacyMarkerlessFallback asserted the old rule in its own comment and is updated, not weakened: it still pins exactly one row, and a mutation emitting one row per entry now fails two tests.
+
+---
+
