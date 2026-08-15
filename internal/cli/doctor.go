@@ -145,13 +145,39 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return nil
 	}
 
-	cmd.Println(formatDoctorFixOK(res, residual, summariesBackfilled))
-	for _, name := range residual {
-		fmt.Fprintf(cmd.ErrOrStderr(),
-			"note: %q still drifted — not auto-fixable by `doctor --fix` "+
-				"(PATH/version, or a hand-written hook). See `logmind doctor`.\n", name)
+	cmd.Println(formatDoctorFixOK(res, len(residual), summariesBackfilled))
+	for _, wf := range residual {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: %q %s. See `logmind doctor`.\n", wf.Name, residualCause(wf.Drift))
 	}
 	return nil
+}
+
+// residualCause names WHY a residual probe is still drifted after --fix, so
+// the note printed for it is accurate rather than a one-size-fits-all guess.
+// The three residualProbes drift values mean three different things:
+//
+//   - "stale" — an actual version mismatch --fix cannot resolve on its own
+//     (the PATH binary, or a hook whose installed version trails the one
+//     running).
+//   - "foreign" — a hand-written git hook occupies the path; --fix leaves a
+//     foreign hook alone by design (see probePreCommitHook).
+//   - "markerless" — SPEC §1.1: the artifact carries no marker (or a
+//     displaced one) --fix is willing to act on, so it is the user's and was
+//     left untouched. Before #306 this row was invisible because --fix
+//     silently overwrote exactly this case; now that it is refused and
+//     correctly reported, it needs its own explanation — "a hand-written
+//     hook" is only true of the "foreign" case above, and a bare workflow or
+//     AGENTS.md block with no marker is neither PATH/version drift nor a
+//     hook at all.
+func residualCause(drift string) string {
+	switch drift {
+	case "foreign":
+		return "still drifted — a hand-written hook is installed in its place, which `doctor --fix` leaves alone"
+	case "markerless":
+		return "still drifted — it carries no logmind marker `doctor --fix` can act on, so SPEC §1.1 treats it as yours and leaves it alone"
+	default: // "stale"
+		return "still drifted — not auto-fixable by `doctor --fix` (PATH/version)"
+	}
 }
 
 // driftCount counts probe rows that are "stale" — the drift signal that flips
@@ -171,15 +197,18 @@ func driftCount(r doctor.StatusReport) int {
 	return n
 }
 
-// residualProbes returns the names of probes still drifted after a fix pass:
-// PATH/version drift and foreign (markerless, or — for the pre-commit hook
-// specifically — "foreign") hooks, which --fix deliberately does not touch.
-func residualProbes(r doctor.StatusReport) []string {
-	var out []string
+// residualProbes returns the probes still drifted after a fix pass: PATH/
+// version drift ("stale"), an unmarked or displaced-marker artifact --fix
+// refuses to touch per SPEC §1.1 ("markerless"), and a hand-written hook
+// occupying a managed path ("foreign") — three different reasons --fix
+// deliberately leaves the row alone. Callers that need to explain WHY use
+// residualCause(wf.Drift) rather than assuming any single cause.
+func residualProbes(r doctor.StatusReport) []doctor.WorkflowStatus {
+	var out []doctor.WorkflowStatus
 	for _, t := range r.Tools {
 		for _, wf := range t.Workflows {
 			if wf.Drift == "stale" || wf.Drift == "markerless" || wf.Drift == "foreign" {
-				out = append(out, wf.Name)
+				out = append(out, wf)
 			}
 		}
 	}
@@ -210,7 +239,7 @@ func claudeAgentEnabledFromConfig(cwd string) bool {
 }
 
 // formatDoctorFixOK renders the single quiet `ok` summary line.
-func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled int) string {
+func formatDoctorFixOK(res refreshResult, residualCount, summariesBackfilled int) string {
 	state := func(changed bool, changedWord string) string {
 		if changed {
 			return changedWord
@@ -226,7 +255,7 @@ func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled
 		len(res.HooksRefreshed),
 		state(res.ClaudeHookChanged, "changed"),
 		summariesBackfilled,
-		len(residual),
+		residualCount,
 	)
 }
 

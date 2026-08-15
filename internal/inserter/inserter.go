@@ -189,11 +189,16 @@ var ErrNoMarkerBlock = errors.New("no logmind marker block")
 // nobody writes it. This function turns that case into ErrNoMarkerBlock and
 // writes nothing at all.
 //
-// Uses os.WriteFile (not atomicio) deliberately: it replaces an os.WriteFile
-// call on the same path, and os.WriteFile FOLLOWS a symlink where a
-// write-rename would replace it with a regular file — SPEC §1.1 requires a
-// refresh to preserve the link. Hardening the durability of this write is a
-// separate change from fixing what it writes.
+// Routed through atomicio.WriteFile rather than a bare os.WriteFile: this
+// was the one write in the package that still used the truncate+write
+// two-syscall form, on the file SPEC §1.1 names as the artifact a repo
+// reads project instructions from. (An earlier version of this comment
+// claimed SPEC §1.1 required preserving a symlink here; it does not — the
+// symlink-preservation rule is §5.2's, scoped to catalog-subscribed items,
+// not to AGENTS.md.) atomicio.WriteFile also refuses to write through a
+// symlink at path (atomicio.RefuseSymlink, #300) — a bare os.WriteFile
+// FOLLOWS a symlink, which for a dangling one at agentsPath means creating
+// a file wherever it points, possibly outside the repo.
 func RefreshMarkerBlockFile(path, newBlockBody string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -203,7 +208,7 @@ func RefreshMarkerBlockFile(path, newBlockBody string) error {
 	if _, ok := ExtractMarkerBlock(content); !ok {
 		return fmt.Errorf("%s: %w", path, ErrNoMarkerBlock)
 	}
-	return os.WriteFile(path, []byte(replaceMarkerBlock(content, newBlockBody)), 0o644)
+	return atomicio.WriteFile(path, []byte(replaceMarkerBlock(content, newBlockBody)), 0o644)
 }
 
 // replaceMarkerBlock swaps the body between the existing markers,
@@ -324,11 +329,14 @@ func CreateAgentFile(agentName, repoRoot string) (string, error) {
 		return "", nil
 	}
 	filePath := filepath.Join(repoRoot, filepath.FromSlash(a.FilePattern))
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-		return "", err
-	}
 	body := agentTemplate(agentName)
-	if err := os.WriteFile(filePath, []byte(body), 0o644); err != nil {
+	// atomicio.WriteFile makes its own parent directory, and — unlike the
+	// bare os.WriteFile this replaced — refuses (atomicio.RefuseSymlink,
+	// #300) rather than silently writing through a symlink at filePath (a
+	// per-agent path like CLAUDE.md or .cursorrules); no ReadFile precedes
+	// this call, so a dangling symlink here was never even caught by an
+	// ErrNotExist check.
+	if err := atomicio.WriteFile(filePath, []byte(body), 0o644); err != nil {
 		return "", err
 	}
 	return filePath, nil
@@ -412,7 +420,14 @@ func EnsureAgentsMD(repoRoot string) (string, *AgentsBlockRefusal, error) {
 
 	data, err := os.ReadFile(agentsPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		if err := os.WriteFile(agentsPath, []byte(agentsMDTemplate()), 0o644); err != nil {
+		// os.ReadFile follows a symlink, so a DANGLING symlink at agentsPath
+		// (pointing at a target that doesn't exist) also returns
+		// fs.ErrNotExist here — the file looks "absent" when it is really a
+		// link somewhere outside the repo. A bare os.WriteFile would then
+		// follow that same link and create the write target wherever it
+		// points. atomicio.WriteFile refuses instead (atomicio.RefuseSymlink,
+		// #300), the same as every other AGENTS.md write in this file.
+		if err := atomicio.WriteFile(agentsPath, []byte(agentsMDTemplate()), 0o644); err != nil {
 			return "", nil, err
 		}
 		return "Created AGENTS.md (canonical agent instructions)", nil, nil
@@ -952,7 +967,13 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 					a.Display, filepath.Base(filePath)))
 		}
 
-		if err := os.WriteFile(filePath, []byte(templates.Stub()), 0o644); err != nil {
+		// filePath resolved and read successfully above (fileExists +
+		// os.ReadFile both followed it), so this is a per-agent artifact the
+		// user owns, potentially reached through a symlink — atomicio.WriteFile
+		// over the bare os.WriteFile this replaced so a symlinked CLAUDE.md /
+		// .cursorrules / etc. is refused (atomicio.RefuseSymlink, #300) instead
+		// of silently written through.
+		if err := atomicio.WriteFile(filePath, []byte(templates.Stub()), 0o644); err != nil {
 			return messages, declined, err
 		}
 		messages = append(messages,
@@ -967,7 +988,7 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 		// Match Python: existing.rstrip() + "\n\n" + "\n".join(appended).
 		body := strings.TrimRight(string(existing), " \t\n\r") +
 			"\n\n" + strings.Join(appendedBlocks, "\n")
-		if err := os.WriteFile(agentsPath, []byte(body), 0o644); err != nil {
+		if err := atomicio.WriteFile(agentsPath, []byte(body), 0o644); err != nil {
 			return messages, declined, err
 		}
 	}

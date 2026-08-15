@@ -157,11 +157,23 @@ func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 			// SPEC §1.1: "An artifact carrying no marker at all belongs to
 			// the user and MUST NOT be overwritten." Saying so is what makes
 			// the refusal auditable rather than a silent no-op.
+			//
+			// The remedy is delete-and-regenerate, NOT "paste the bundled
+			// marker in yourself": installWorkflowTemplates only rewrites a
+			// file whose installed marker DIFFERS from the bundled one (the
+			// `installedVer != bundledVer` guard below) — pasting the
+			// CURRENT marker makes the file match on the very next read, so
+			// it is filed "current" forever and never refreshed again, no
+			// matter what the rest of the file says. Deleting the file
+			// routes the next `--fix`/`init` through the CREATE branch
+			// instead, which always writes — verified end to end for #306.
 			fmt.Fprintf(stderr,
 				"note: %s left unchanged — it carries no `# logmind-template-version:` marker, "+
 					"so logmind treats it as yours and will not overwrite it. To hand it back to "+
-					"logmind, make `# logmind-template-version: %s` its first line.\n",
-				d.Path, d.Bundled)
+					"logmind, delete %s and re-run `logmind doctor --fix` (or `logmind init`) to "+
+					"regenerate it from the bundled template — pasting the marker in by hand would "+
+					"make the file look current forever without actually matching it.\n",
+				d.Path, d.Path)
 		case declineDisplaced:
 			fmt.Fprintf(stderr,
 				"note: %s left unchanged — its `# logmind-template-version: %s` marker is on line %d, "+
