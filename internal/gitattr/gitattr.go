@@ -182,9 +182,19 @@ func ensureBlockWithLines(path string, lines []string) (bool, error) {
 // bare file path, not a repoRoot, so there is no signature-compatible way
 // to hang this state anywhere else without touching call sites this
 // package doesn't own. Losing the key (no git, no repo, a read/write
-// failure) degrades to the pre-tracking behaviour — offer everything
-// still missing — never a hard failure; see offeredPatterns/
-// recordOfferedPatterns.
+// failure, OR — the common case in practice — a DIFFERENT CLONE: `git
+// config --local` lives in `.git/config`, which `git clone` never copies,
+// so a fresh clone starts with an empty record even though the original
+// clone's `.gitattributes` deletion was committed and is right there in
+// the file it checked out) degrades to the pre-tracking behaviour — offer
+// everything still missing — never a hard failure; see offeredPatterns/
+// recordOfferedPatterns. This is a known, accepted limitation: a pattern
+// someone deliberately deleted and committed IS reinstated the first time
+// any command touching EnsureBlock runs in a fresh clone (logmind#301
+// round 6 LOW). Fixing it for real would mean deriving "was this pattern
+// ever offered" from something every clone actually shares — e.g. the
+// committed file's own history — rather than from local git config; that
+// is a bigger change than this record was built for and is not done here.
 const gitAttrOfferedLinesKey = "logmind.gitattr-offered-lines"
 
 // offeredPatterns reads gitAttrOfferedLinesKey for repoRoot and returns the
@@ -260,9 +270,13 @@ func recordOfferedPatterns(repoRoot string, already map[string]bool, lines []str
 // A pattern already recorded in gitAttrOfferedLinesKey (offeredPatterns)
 // that is STILL absent from the block is exactly a line the user removed on
 // purpose, not one this binary has never mentioned — it is skipped, not
-// re-added. Every pattern in `lines` is recorded as offered before
-// returning, whether or not it was actually written, so the very next run
-// (even if this one wrote nothing) already knows about it.
+// re-added. Every pattern in `lines` is recorded as offered on every path
+// that actually reflects the block's true state — the len(missing)==0
+// no-op and a successful write — so the next run already knows about it.
+// It is NOT recorded when the write fails: a write that never happened must
+// never be recorded as offered, or the pattern is skipped forever on every
+// later run too, even once whatever blocked the write (e.g. a symlinked
+// .gitattributes) is gone — logmind#301 round 6 HIGH.
 func addMissingLines(path, existing string, lines []string) (bool, error) {
 	startIdx := strings.Index(existing, BlockStart)
 	endIdx := strings.Index(existing[startIdx:], BlockEnd)
@@ -283,7 +297,6 @@ func addMissingLines(path, existing string, lines []string) (bool, error) {
 
 	repoRoot := filepath.Dir(path)
 	offered := offeredPatterns(repoRoot)
-	defer recordOfferedPatterns(repoRoot, offered, lines)
 
 	var missing []string
 	for _, l := range lines {
@@ -294,6 +307,13 @@ func addMissingLines(path, existing string, lines []string) (bool, error) {
 		missing = append(missing, l)
 	}
 	if len(missing) == 0 {
+		// Nothing needed writing: every pattern in lines is already either
+		// registered in the block or previously offered. Record anyway so a
+		// pattern that's registered-but-never-offered (e.g. a block an older
+		// binary wrote before offered-tracking existed) is covered going
+		// forward — see the fresh-block call in ensureBlockWithLines for the
+		// same reasoning.
+		recordOfferedPatterns(repoRoot, offered, lines)
 		return false, nil
 	}
 
@@ -302,8 +322,13 @@ func addMissingLines(path, existing string, lines []string) (bool, error) {
 	// (dangling or not) instead of following it, and a plain text file has no
 	// mode to assert here either.
 	if err := atomicio.WriteFile(path, []byte(updated), 0o644); err != nil {
+		// Do NOT record here: a write that never happened must not be
+		// treated as "offered", or the pattern is skipped forever on every
+		// subsequent run even after the failure that blocked it (e.g. a
+		// symlinked .gitattributes) is gone — logmind#301 round 6 HIGH.
 		return false, err
 	}
+	recordOfferedPatterns(repoRoot, offered, lines)
 	return true, nil
 }
 

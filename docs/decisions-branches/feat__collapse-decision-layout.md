@@ -100,3 +100,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-15 19:51 - gitattr: record a pattern as offered only after the write that offered it succeeded
+
+**Reasoning:** The record that stops a deliberately deleted line from being reinstated was written from a deferred call, so it also fired on the error return. A write that never happened was recorded as offered, and the pattern was then skipped forever. The trigger is the symlink refusal this same branch added, and nothing surfaces it: the doctor probe checks only that the block sentinel is present, never that the patterns it should contain are, so it reports the file current while the merge driver for the archive is unregistered. The end symptom is conflict markers in the file this branch exists to keep conflict-free.
+
+**Alternatives considered:** Drop the record entirely and accept that a deleted line comes back. Rejected: reinstating a line the user removed on purpose is the same class as overwriting an artifact they own. The record stays and now runs only where a write actually succeeded, or where there was nothing to write.
+
+**Implications:**
+- The record lives in the local git configuration, so it does not survive a clone and the line returns once in each new working copy; that limit is now named in the doc comment rather than left to be discovered, alongside the causes it already listed. Whether the doctor probe should verify pattern coverage rather than sentinel presence is a question for the lane that owns it, recorded rather than reached across for.
+
+---
+

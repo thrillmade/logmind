@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -247,6 +248,102 @@ func TestAddMissingLines_DoesNotReinstateDeliberatelyRemovedLine(t *testing.T) {
 	}
 	if strings.Contains(string(after), "docs/timeline-archive.md") {
 		t.Fatalf("timeline-archive.md was reinstated after the user deleted it:\n%s", after)
+	}
+}
+
+// TestAddMissingLines_FailedWriteDoesNotRecordAsOffered pins the HIGH from
+// logmind#301 round 6: a write that never happened must not be recorded as
+// "offered", or addMissingLines treats the missing pattern as a line the
+// user deliberately removed and skips it forever afterwards — even once
+// whatever blocked the write is gone.
+//
+// Two runs against a block that's missing docs/timeline-archive.md:
+//
+//  1. `.gitattributes` is a symlink, so atomicio.WriteFile refuses the
+//     write. EnsureBlock must return an error and the pattern must NOT be
+//     recorded as offered.
+//  2. The SAME path, now a regular file with the identical missing-line
+//     block, must still pick up docs/timeline-archive.md — proving run 1's
+//     failure didn't poison the record.
+//
+// Before this fix, run 1's `defer recordOfferedPatterns(...)` fired
+// unconditionally on the error return, so run 2 also reported
+// changed=false and never wrote the line — exactly the panel's
+// reproduction (docs/timeline-archive.md merge driver never registered
+// again).
+func TestAddMissingLines_FailedWriteDoesNotRecordAsOffered(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unprivileged symlink creation is unreliable on Windows CI runners")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping addMissingLines offered-tracking test")
+	}
+	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q")
+	path := filepath.Join(dir, ".gitattributes")
+
+	oldLines := []string{
+		"docs/timeline.md          merge=logmind-timeline",
+		"docs/file-structure.md    merge=logmind-file-structure",
+	}
+	if _, err := ensureBlockWithLines(path, oldLines); err != nil {
+		t.Fatalf("seed pre-archive block: %v", err)
+	}
+	seeded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded block: %v", err)
+	}
+
+	// Run 1: retarget .gitattributes to a symlink pointing at a copy of the
+	// identical seeded block, so addMissingLines computes the same
+	// "missing docs/timeline-archive.md" set but the write is refused.
+	outside := filepath.Join(dir, "..", "escaped-gitattributes-offered-tracking")
+	if err := os.WriteFile(outside, seeded, 0o644); err != nil {
+		t.Fatalf("seed outside: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove seeded .gitattributes: %v", err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	changed, err := EnsureBlock(path)
+	if err == nil {
+		t.Fatalf("run 1 (symlinked): want a symlink refusal error, got changed=%v err=nil", changed)
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("run 1 error = %q; want it to name the symlink", err)
+	}
+	if changed {
+		t.Fatalf("run 1 (symlinked): want changed=false on a refused write, got true")
+	}
+	t.Logf("run 1 (symlinked): changed=%v err=%v", changed, err)
+
+	// Run 2: same path, now a regular file with the identical missing-line
+	// block. Must still register docs/timeline-archive.md.
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove symlink before run 2: %v", err)
+	}
+	if err := os.WriteFile(path, seeded, 0o644); err != nil {
+		t.Fatalf("restore regular file before run 2: %v", err)
+	}
+
+	changed, err = EnsureBlock(path)
+	t.Logf("run 2 (regular file): changed=%v err=%v", changed, err)
+	if err != nil {
+		t.Fatalf("run 2 (regular file): unexpected error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("BUG: run 1's refused write permanently suppressed docs/timeline-archive.md — run 2 reported changed=false (\"nothing to do\")")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after run 2: %v", err)
+	}
+	if !strings.Contains(string(after), "docs/timeline-archive.md") {
+		t.Fatalf("BUG: docs/timeline-archive.md merge driver never registered again:\n%s", after)
 	}
 }
 

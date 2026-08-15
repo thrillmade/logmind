@@ -413,20 +413,23 @@ func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
 		wantMarkerLine := "# logmind-template-version: " + pin.marker
 		if !strings.HasPrefix(body, wantMarkerLine) {
 			t.Errorf("%s: expected to start with %q — if this is a deliberate "+
-				"version bump, add a NEW entry to templateMarkerPins for the new "+
-				"marker rather than editing this one", name, wantMarkerLine)
+				"version bump, update THIS entry's marker and sha256 in "+
+				"templateMarkerPins to the new version (the map is keyed by "+
+				"filename, so a second entry for %s is a compile error: "+
+				"duplicate key)", name, wantMarkerLine, name)
 			continue
 		}
 		sum := sha256.Sum256([]byte(body))
 		got := hex.EncodeToString(sum[:])
 		if got != pin.sha256 {
 			t.Errorf("%s: content under marker %s changed (sha256 %s, want %s). "+
-				"A shipped marker's content must never change silently: if this is "+
-				"a genuine content edit, bump the marker AND add a new pin for it "+
-				"rather than updating this one in place; if it's a collision with "+
-				"another branch that already claimed marker %s for different "+
-				"content, THIS branch must pick a different, unclaimed number.",
-				name, pin.marker, got, pin.sha256, pin.marker)
+				"A shipped marker's content must never change silently: whether "+
+				"this is a genuine content edit or a collision with another "+
+				"branch that already claimed marker %s for different content, "+
+				"bump the template's marker to a new, unclaimed version and "+
+				"update THIS entry's marker and sha256 to match — the map is "+
+				"keyed by filename, so a second entry for %s is a compile error.",
+				name, pin.marker, got, pin.sha256, pin.marker, name)
 		}
 	}
 }
