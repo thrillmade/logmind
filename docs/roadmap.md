@@ -247,13 +247,14 @@ tag-time flip would not have added the `areas:` line. **Built and on `dev`**
 The panel verified it by building the site in both states rather than reading
 the JSX, and by byte-comparing the page's `AREAS` against `version.go`.
 
-**#297, #298, #299, #271, #310** — filed after this section was written, all
+**#297, #298, #299, #271** — filed after this section was written, all
 **built and on `dev`** (#306, #307, #308, #313). Two were live data-loss paths:
 `self-update` wrote a marker-block fragment over the whole of `AGENTS.md`, and
 `doctor --fix` overwrote a file it had misjudged as markerless. #310 is the
-class behind both, and is **still open** — its last two raw writes live in
-`internal/gitattr/gitattr.go` and close only when #301 lands. #313 covered the
-rest of the tree and added the guard that fails on the next one — `os.WriteFile` follows symlinks, so a planted link
+class behind all of them, and is the one exception on this list: it is **still
+open**. #313 covered the tree and added the guard that fails on the next raw
+write; its last two live in `internal/gitattr/gitattr.go` and close only when
+#301 lands — `os.WriteFile` follows symlinks, so a planted link
 redirected writes outside the repository from 26 call sites.
 
 **What is genuinely left is shorter than this list.** Rather than maintaining a
@@ -288,7 +289,7 @@ here, and it closes when the fleet takes the current template.
 
 ### 5 — After the tag
 
-#263 (§6.7 pre-push gate, wholly new scope) · #251 · #271 · #280 · #210 · #217 ·
+#263 (§6.7 pre-push gate, wholly new scope) · #251 · #280 · #210 · #217 ·
 #258 · #268 · #273 · #274 · #283.
 
 ---
@@ -334,7 +335,7 @@ carry markers on `dev`). The loop reads **default branches only**, so `skdd`'s
 row was measured separately, and `logmind` is the producer rather than a
 consumer and is deliberately not a row.
 
-**logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9`, `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
+**logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9` (`v10` once #301 lands), `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
 
 Two corrections to #257's original inventory:

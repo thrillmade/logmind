@@ -59,3 +59,14 @@
 
 ---
 
+## 2026-08-16 03:25 - roadmap: one issue was on both the built list and the after-the-tag list
+
+**Reasoning:** The section this change exists to correct listed an issue as built and on the development branch, while a later section still listed the same issue as work remaining after the tag. Its fix is on that branch, measured directly rather than inferred from the issue state, which stays open because the closing keyword only fires on the default branch. A file whose purpose is recording what landed cannot carry the stale copy it was written to remove.
+
+**Alternatives considered:** Annotate the later list rather than removing the entry. Rejected: two lists that mean different things about the same item is how this file has failed five times, and an annotation is a third statement to keep in agreement rather than one fewer.
+
+**Implications:**
+- The symlink class is now stated once as the single exception on that list rather than as a claim and a contradiction two sentences apart, since it genuinely is open and its remaining writes close with the branch still in review. The link-checking template carries the same forward reference the regeneration template already had, because the same branch moves both and only one said so.
+
+---
+
