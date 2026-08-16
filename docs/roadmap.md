@@ -122,15 +122,17 @@ $ gh api /apps/skdd-steward --jq .id
 3951953
 ```
 
-Two active rulesets on `logmind`, both carrying `Integration:3951953`, which is
-`skdd-steward`.
+`Integration:3951953` is `skdd-steward`. The transcript reads one ruleset; run
+the command below for the rest.
 
 **`reporulez-default` is the trap in that reading.** It 404s on `logmind`, so
 it is invisible from here — but it is active on other repositories with **no
 bypass actors at all**, and rulesets aggregate: one ruleset that refuses the
-steward overrides two that allow it. Wherever it applies, `regen-on-main` fails
-with GH013 exactly as it used to here. The grant is per repository, so measure
-it per repository:
+steward overrides two that allow it. Where it applies **without the steward on
+its bypass list**, `regen-on-main` fails with GH013 exactly as it used to here.
+Applying is not refusing — the same ruleset can carry the steward in one
+repository and not in another, which is why the command below reads bypass
+actors and never ruleset names:
 
 ```sh
 for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
@@ -141,9 +143,14 @@ for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
 done
 ```
 
-It prints every ruleset in every repository, refusals and grants together —
-so the `ok` rows are the control that a `REFUSES STEWARD` row is a real
-refusal and not a probe returning nothing.
+It prints every ruleset in every repository, refusals and grants together — so
+the `ok` rows are the control that a `REFUSES STEWARD` row is a real refusal and
+not a probe returning nothing.
+
+**The unblocking action, for each `REFUSES STEWARD` row:** add App `3951953`
+(`skdd-steward`) to that ruleset's bypass list, in that repository. It is
+per ruleset and per repository — there is no org-wide switch, which is why one
+grant on `logmind` cleared nothing else.
 
 ### Why it has never fired on `logmind`
 
@@ -356,32 +363,21 @@ ships.
 | agent-skills | `v2` | `v4` | **yes** |
 | rezgen | `v2` | `v4` | **yes** |
 | tokenomics | `v2` | `v4` | **yes** |
-| reporulez | *unversioned* | *unmarked* | no |
+| reporulez | *unmarked* | *unmarked* | no |
 | skdd | *absent* on `main`, **`v4`** on `dev` | *absent* on `main`, **`v11`** on `dev` | no |
 
-§4 sizes "one fleet move" off this table, so an undercount here understates the
-migration. Regenerate it rather than trusting it:
+**This table tracks two of the four templates logmind ships**, so it is not the
+size of the migration. `check-doc-links` and `logmind-self-update` are installed
+in these repositories too and are also behind. §4 sizes "one fleet move" off
+this section, and a two-column view understates it — so read the four-column
+inventory the command below emits, not this table, before scoping #257. The
+table is kept as the at-a-glance shape of the problem; the command is the
+number.
 
-```sh
-for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
-  for w in check-decisions regen-timeline; do
-    printf '%s %s %s\n' "$r" "$w" \
-      "$(raw=$(gh api "repos/thrillmade/$r/contents/.github/workflows/$w.yml" \
-             --jq .content 2>/dev/null | base64 -d 2>/dev/null)
-         if [ -z "$raw" ]; then echo 'file absent'
-         else echo "$raw" | head -1 | grep -oE 'v[0-9]+' || echo 'present, unmarked'
-         fi)"
-  done
-done
-```
-
-Three states, not two — `|| echo absent` collapses "no file" and "a file with no
-marker" into one word, and the table distinguishes them (`reporulez` has both
-files present and unmarked; `skdd`'s are absent from its default branch and
-carry markers on `dev`). The loop reads **default branches only**, so `skdd`'s
-row was measured separately. `logmind` is the producer rather than a consumer
-and is deliberately not a row — but the loop still prints one, reading
-`present, unmarked`. That is not the reporulez defect. logmind hand-maintains
+`skdd` is measured on `dev` as well because the inventory reads **default
+branches only**, and its `main` carries no workflows at all. `logmind` is the
+producer rather than a consumer and is deliberately not a row — though the
+inventory does print one. That is not the reporulez defect. logmind hand-maintains
 its own copies of `check-decisions.yml`, `regen-timeline.yml` and
 `check-doc-links.yml` — markerless on purpose, so refresh leaves them alone.
 The exception is `logmind-self-update.yml`: it carries the marker, is refreshed
@@ -403,23 +399,40 @@ three files that need hands and a fourth that refreshes itself. So do not work
 from a list written here. Produce it:
 
 ```sh
-for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
-  for w in check-decisions regen-timeline check-doc-links logmind-self-update; do
-    m=$(gh api "repos/thrillmade/$r/contents/.github/workflows/$w.yml" \
-          --jq .content 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null | head -1)
-    case "$m" in
-      '# logmind-template-version:'*) ;;   # ours; refresh reaches it
-      '') ;;                               # no such file
-      *) printf '%s %s NEEDS HAND-REPLACEMENT\n' "$r" "$w" ;;
-    esac
+# Run from a logmind checkout: the names come from the embed directory
+# ListWorkflowTemplates reads, so a fifth template cannot drop out silently.
+for tmpl in internal/templates/github/*.yml.template; do
+  w=$(basename "$tmpl" .template)
+  for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
+    if out=$(gh api "repos/thrillmade/$r/contents/.github/workflows/$w" --jq .content 2>&1); then
+      line=$(printf '%s' "$out" | tr -d '\n' | base64 -d 2>/dev/null | head -1)
+      case "$line" in
+        '# logmind-template-version:'*) printf '%-22s %-24s marked %s\n' "$r" "$w" "${line##*: }" ;;
+        *)                              printf '%-22s %-24s NEEDS HAND-REPLACEMENT\n' "$r" "$w" ;;
+      esac
+    else
+      case "$out" in
+        *'Not Found'*) printf '%-22s %-24s absent\n' "$r" "$w" ;;
+        *)             printf '%-22s %-24s LOOKUP FAILED: %s\n' "$r" "$w" "$out" ;;
+      esac
+    fi
   done
 done
 ```
 
-Print all three states instead of filtering and the marked rows become the
-control: a repository that comes back entirely marked proves the probe
-recognises a marker, so a `NEEDS HAND-REPLACEMENT` row is a real one. logmind's
-own rows appear and are expected — see the dogfood note above.
+**It prints all four states, so it carries its own control.** The `marked` rows
+prove the probe recognises a marker, which is what makes a
+`NEEDS HAND-REPLACEMENT` row real rather than a probe returning nothing. And
+`absent` is separated from `LOOKUP FAILED` deliberately: a permissions error
+silently counted as "no such file" is how a repository disappears from a
+migration list. Two more things it does not hide — it reads **default branches
+only**, and it checks `<name>.yml` alone, because that is the only name logmind
+installs (`init.go` strips `.template` off the embedded filename, and every
+embedded template is `*.yml.template`). A hand-written `.yaml` variant is a
+separate user file that logmind will never touch.
+
+logmind's own rows appear as `NEEDS HAND-REPLACEMENT` and are expected — see the
+dogfood note above.
 
 **skdd needs migrating, and reads as though it does not.** Its `main` has no
 `.github/workflows` at all (404), so its clean `check-derived-docs` history is

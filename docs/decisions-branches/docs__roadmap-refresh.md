@@ -136,3 +136,14 @@
 
 ---
 
+## 2026-08-16 07:46 - roadmap: make the emitted inventory carry its own control, distinguish absent from refused, and name the unblocking action
+
+**Reasoning:** Round 11 replaced a hand-written inventory with a command, and the command inherited three of the defects the file exists to prevent. It printed only refusals while the prose claimed the marked rows were its control — a control the reader had to write. Its empty case could not tell a missing file from a refused lookup, which is the exact defect this file calls out for the block above it. And its four workflow names were hand-written against ListWorkflowTemplates, which reads the embed directory precisely because adding a template is meant to be purely additive, so a fifth would have dropped out silently.
+
+**Alternatives considered:** Fix only the two the reviewer called blocking — rejected; the other two are this file's own stated defect appearing in its own commands, and shipping that is worse than shipping a wrong number. Keep the two-file version table alongside the four-column inventory — rejected; that is two owners for one fact, so the loop is deleted and the table now says outright that it tracks two of four templates and points at the inventory for scoping #257.
+
+**Implications:**
+- The command now derives its names from internal/templates/github/*.yml.template and prints all four states: 80 rows, 26 marked, 6 needing hands, 48 absent, 0 lookup failures. The 26 marked rows are the control the prose promised, and they are now actually emitted. The lane control-tested its own zero on the LOOKUP FAILED arm by querying ?ref=nosuchref, proving the branch is live rather than dead — that zero is real. Also corrected: 'wherever it applies, regen-on-main fails with GH013' was false, because homebrew-tap has the same ruleset applied WITH the steward on its bypass list; applying is not refusing. And 'Blocked on a person' now names the move — add App 3951953 to that ruleset's bypass list, per repository, because there is no org-wide switch, which is why one grant on logmind cleared nothing else.
+
+---
+
