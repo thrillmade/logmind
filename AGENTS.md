@@ -7,7 +7,7 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v9-pointer -->
+<!-- logmind-block-version: v10-pointer -->
 ## Decision logging — `logmind log` is REQUIRED for substantive commits
 
 **`logmind log` replaces `git add` + `git commit` + `git push` for any change that carries a decision** — do not run those git commands directly.

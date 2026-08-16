@@ -145,7 +145,11 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	}
 	fmt.Fprintln(out, "✓ Created docs/")
 
-	if err := ensureLegacyPointer(docsPath); err != nil {
+	// pointerRel comes back from the writer rather than being spelled again
+	// at the commit site below — see legacyPointerRel for what the second
+	// spelling cost.
+	pointerRel, err := ensureLegacyPointer(docsPath)
+	if err != nil {
 		return err
 	}
 	fmt.Fprintln(out, "✓ Created docs/decisions.md")
@@ -335,6 +339,10 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	if !f.noGit {
 		var filesToCommit []string
 		filesToCommit = append(filesToCommit,
+			// The v1.2.0 compatibility sentinel, from the writer's own
+			// return value. TestInit_LegacyPointerIsCommitted_NotJustWritten
+			// is what keeps it here.
+			pointerRel,
 			"docs/file-structure.md",
 			"docs/timeline.md",
 			"docs/timeline-archive.md",
@@ -448,11 +456,27 @@ func docsScaffolded(docsPath string) bool {
 	return false
 }
 
+// legacyPointerRel is the ONE spelling of the compatibility sentinel's
+// repo-relative path: the path ensureLegacyPointer writes and the path the
+// fresh-install commit stages. It is a constant, and it is RETURNED by the
+// writer rather than re-typed at the commit site, because a second hand-kept
+// spelling is exactly how this file came to be written and never committed —
+// the writer was added and `filesToCommit`, a restatement of what init wrote,
+// was not updated to match. A sentinel that exists only in the working tree
+// is not a sentinel: it never reaches a clone, which is the only place a
+// v1.2.0 binary is going to ask the question.
+const legacyPointerRel = "docs/decisions.md"
+
 // ensureLegacyPointer writes docs/decisions.md if — and only if — nothing is
-// there. It is the ONE writer of that path, shared by the fresh-install path
-// and by refresh, so both routes through `logmind init` leave the file
-// present. A repo scaffolded by an earlier v2 build, which never got one,
-// picks it up on its next `logmind init`.
+// there, and returns legacyPointerRel so the caller commits the same path
+// this wrote. It is the ONE writer of that path, shared by the fresh-install
+// path and by refresh, so both routes through `logmind init` leave the file
+// present.
+//
+// The path comes back even when the file was already there. "Present" is not
+// the obligation — TRACKED is — and a fresh-install repo that happened to
+// carry an untracked docs/decisions.md already needs it staged just as much
+// as one this call created.
 //
 // NOT `logmind doctor --fix`: that goes through applyRefresh directly
 // (doctor.go), never through runInitRefresh, so it does not restore a missing
@@ -463,6 +487,13 @@ func docsScaffolded(docsPath string) bool {
 // init`. It does leave a gap: a pre-fix v2 repo whose owner only ever runs
 // `doctor --fix` stays exposed and is told nothing.
 //
+// Only ONE of the two callers commits what this writes. The fresh-install
+// path stages the returned path (filesToCommit); refresh commits nothing at
+// all and says so on stdout instead. So "the next `logmind init` picks it up"
+// is true of the working tree and NOT of the repository — the file becomes
+// tracked when the owner commits it, or at the next `logmind log`, whose
+// `git add -A` sweeps it in. `logmind log --stage scoped` does not.
+//
 // Never overwrites. In a repo that predates §3.2 the file is a real decision
 // log with real entries in it, and rewriting a user-owned artifact is not this
 // code's business (SPEC line 1101).
@@ -470,12 +501,15 @@ func docsScaffolded(docsPath string) bool {
 // See templates.DecisionsPointerTemplate for what the file is for: v1.2.0
 // tests for it to decide whether a repo is already initialised, and re-runs
 // the whole scaffold — config.yml included — when it is absent.
-func ensureLegacyPointer(docsPath string) error {
+func ensureLegacyPointer(docsPath string) (string, error) {
 	path := filepath.Join(docsPath, "decisions.md")
 	if pathExists(path) {
-		return nil
+		return legacyPointerRel, nil
 	}
-	return writeFile(path, templates.DecisionsPointerTemplate())
+	if err := writeFile(path, templates.DecisionsPointerTemplate()); err != nil {
+		return "", err
+	}
+	return legacyPointerRel, nil
 }
 
 // runInitRefresh handles the idempotent re-init path. Mirrors Python's
@@ -491,8 +525,20 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 	// The one docs/ write refresh makes. Restores the v1.2.0 install sentinel
 	// in a repo scaffolded before ensureLegacyPointer existed, which without
 	// it stays exposed to a v1.2.0 binary re-scaffolding over its config.
-	if err := ensureLegacyPointer(docsPath); err != nil {
+	//
+	// Refresh commits NOTHING — not workflows, not .gitattributes, not this —
+	// and that contract is not being changed here for one file. So the
+	// restored sentinel lands UNTRACKED, and an untracked sentinel is absent
+	// from every clone, which is the only place v1.2.0 asks the question.
+	// The user is the one who can close that, so the user is told: silence
+	// here would leave a file on disk that looks like the fix and is not.
+	pointerRestored := !pathExists(filepath.Join(docsPath, "decisions.md"))
+	if _, err := ensureLegacyPointer(docsPath); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: could not write docs/decisions.md:", err)
+	} else if pointerRestored {
+		fmt.Fprintln(out, "✓ Restored docs/decisions.md (logmind v1.x install sentinel)")
+		fmt.Fprintln(out, "  Commit it — refresh does not commit, and a clone without this file")
+		fmt.Fprintln(out, "  reads as uninitialised to logmind v1.x, which rewrites .logmind/config.yml.")
 	}
 
 	// docs/spec.md + context.spec_file — --spec works in refresh mode too

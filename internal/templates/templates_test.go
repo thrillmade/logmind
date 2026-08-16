@@ -72,9 +72,21 @@ func TestAgentsTemplate_HasV9Marker(t *testing.T) {
 	}
 }
 
-// TestAgentsSlimTemplate_HasV9PointerMarker pins the slim variant
+// TestAgentsSlimTemplate_HasV10PointerMarker pins the slim variant
 // marker so the byte-identical-rewrite path can never confuse the two
 // templates' marker versions.
+//
+// The §3.2 layout-collapse wave bumped v9-pointer→v10-pointer: the
+// required-reading list drops docs/decisions.md, which §3.2 turned from a
+// decision log into a compatibility pointer holding nothing.
+//
+// That delta is asserted BELOW, not just described here, and the reason is
+// this generation's own near-miss: the slim body was edited and the marker
+// left at v9-pointer for a full review round, which had `logmind doctor`
+// reporting `AGENTS.md v9-pointer current` about a body it no longer
+// described. A marker assertion alone cannot catch that — the marker was
+// self-consistent — so the marker and the body change this generation made
+// are pinned in the SAME test, and neither can move without the other.
 //
 // The stale-binary-hardening / enforcement wave bumped v8-pointer→v9-pointer:
 // same enforcement-prose delta as the full template's v7→v8 bump (BLOCKS,
@@ -82,29 +94,49 @@ func TestAgentsTemplate_HasV9Marker(t *testing.T) {
 // tone/length. v0.6.16 bumped v7-pointer→v8-pointer: heading reframed as
 // "REQUIRED for substantive commits" + DO-NOT-git-commit blockquote
 // paired with the commit-msg hook.
-func TestAgentsSlimTemplate_HasV9PointerMarker(t *testing.T) {
+func TestAgentsSlimTemplate_HasV10PointerMarker(t *testing.T) {
 	body := AgentsSlimTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v9-pointer -->") {
-		t.Fatalf("slim template missing v9-pointer marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v10-pointer -->") {
+		t.Fatalf("slim template missing v10-pointer marker")
+	}
+
+	// The v10-pointer delta itself. docs/decisions.md holds no decisions
+	// since §3.2 (it is the v1.x install sentinel), so a required-reading
+	// list that names it sends every agent to an empty file.
+	if strings.Contains(body, "[`docs/decisions.md`](docs/decisions.md)") {
+		t.Errorf("slim template still sends agents to docs/decisions.md as required reading — " +
+			"§3.2 made that path a compatibility pointer with no decisions in it.\n" +
+			"If this list is being changed back, the marker has to move with it: a body edit " +
+			"under an unchanged marker is what `logmind doctor` reports as `current`.")
+	}
+	// CONTROL — the probe is looking at a list that exists. The two paths
+	// that DID survive §3.2 must still be named, or the assertion above
+	// would pass on a template that had lost the required-reading list
+	// altogether.
+	for _, want := range []string{"docs/timeline.md", "docs/decisions-branches/<branch>.md"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("slim template no longer names %q in required reading — "+
+				"the docs/decisions.md check above is not measuring a live list", want)
+		}
 	}
 	if !strings.Contains(body, "REQUIRED for substantive commits") {
-		t.Fatalf("v9-pointer template missing REQUIRED framing in heading")
+		t.Fatalf("v10-pointer template missing REQUIRED framing in heading")
 	}
 	if !strings.Contains(body, "DO NOT run raw `git add` / `git commit` / `git push`") {
-		t.Fatalf("v9-pointer template missing DO-NOT-git-commit blockquote")
+		t.Fatalf("v10-pointer template missing DO-NOT-git-commit blockquote")
 	}
-	// v9-pointer delta: enforcement prose. BLOCK, not warn; the carve-outs.
+	// v9-pointer delta, still pinned: enforcement prose. BLOCK, not warn; the carve-outs.
 	if !strings.Contains(body, "BLOCK") {
-		t.Fatalf("v9-pointer template missing BLOCK framing (must not just say the hook warns)")
+		t.Fatalf("v10-pointer template missing BLOCK framing (must not just say the hook warns)")
 	}
 	if !strings.Contains(body, "[skip-logmind]") {
-		t.Fatalf("v9-pointer template missing the [skip-logmind] carve-out")
+		t.Fatalf("v10-pointer template missing the [skip-logmind] carve-out")
 	}
 	if !strings.Contains(body, "LOGMIND_ALLOW_GIT_COMMIT=1") {
-		t.Fatalf("v9-pointer template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
+		t.Fatalf("v10-pointer template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
 	}
 	if !strings.Contains(body, "git.enforce_commits: false") {
-		t.Fatalf("v9-pointer template missing the git.enforce_commits: false per-repo off-ramp")
+		t.Fatalf("v10-pointer template missing the git.enforce_commits: false per-repo off-ramp")
 	}
 }
 

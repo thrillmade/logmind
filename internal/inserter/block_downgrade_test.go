@@ -28,7 +28,7 @@ import (
 
 // aheadMarker returns a block-version token `ahead` generations NEWER than
 // the one this binary ships for the given flavour: slim + 1 →
-// "v10-pointer" while the bundled slim marker is v9-pointer.
+// "v11-pointer" while the bundled slim marker is v10-pointer.
 //
 // ahead=1 is the load-bearing distance: it is the generation an enum
 // extended by one would have swallowed, so a test at that distance is what

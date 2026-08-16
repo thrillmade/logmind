@@ -82,13 +82,31 @@ func AgentsTemplate() string {
 	return readEmbed("AGENTS.md.template")
 }
 
-// AgentsSlimTemplate returns the slim v9-pointer AGENTS.md template
+// AgentsSlimTemplate returns the slim v10-pointer AGENTS.md template
 // (defaults to slim for new repos since logmind v0.6.8+). Body marker
-// is `<!-- logmind-block-version: v9-pointer -->`.
+// is `<!-- logmind-block-version: v10-pointer -->`.
 //
 // Slim defers the WHAT/WHEN/HOW procedure to the `logmind` skill on
 // skills.sh — short body, less to maintain, less for the agent to wade
 // through if the skill is already installed.
+//
+// THIS is the variant EnsureAgentsMD installs by default, so it is the marker
+// that actually ships. The §3.2 layout-collapse wave bumped
+// v9-pointer→v10-pointer: the required-reading list drops docs/decisions.md,
+// which stopped being a decision log when §3.2 collapsed every entry into
+// docs/decisions-branches/<branch>.md and left that path a compatibility
+// pointer. Sending an agent to read it is sending it to a file with no
+// decisions in it.
+//
+// The bump is the same obligation the full template's v8→v9 note below
+// spells out, and it was missed once here for one round: the body changed and
+// the marker did not, so `logmind doctor` reported `AGENTS.md v9-pointer
+// current` about a body it no longer described — measured on a repo scaffolded
+// by the previous binary, whose block still named docs/decisions.md. Because
+// slim is the default, that silence was the one consumers would actually have
+// seen. inserter.go refreshes on body diff rather than on the marker, so the
+// file is rewritten either way; what the bump buys is that the marker keeps
+// IDENTIFYING the body, and that doctor says STALE instead of nothing.
 //
 // The stale-binary-hardening / enforcement wave bumped v8-pointer→v9-pointer:
 // same enforcement-prose update as the full template's v7→v8 bump (BLOCKS,

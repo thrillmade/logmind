@@ -39,7 +39,11 @@ run — there's no separate stub to write.
 
 `logmind init` inserts the logmind block between
 `<!-- logmind-start -->` / `<!-- logmind-end -->` markers, versioned via
-`<!-- logmind-block-version: v9-pointer -->`. If the marker is already
+`<!-- logmind-block-version: v10-pointer -->` for the slim body `init`
+installs by default (the full body is a generation behind at `v9`, and the
+two flavours bump independently — read the current pair off the templates
+with `grep -h logmind-block-version internal/templates/AGENTS.md*.template`
+rather than trusting this line). If the marker is already
 present, the block is left alone on a plain re-run (`logmind doctor --fix`
 or a version bump refreshes a *stale* block in place); any other existing
 content in `AGENTS.md` — `## Project Overview`, `## Development Commands`,

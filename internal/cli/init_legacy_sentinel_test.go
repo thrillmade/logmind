@@ -18,13 +18,16 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thrillmade/logmind/internal/decisions"
+	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/templates"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // TestRepoDecisionsPointer_IsInstalledHere is the dogfooding gate, same shape
@@ -43,8 +46,22 @@ import (
 //
 // Byte-equality, not just existence: this file is the pointer and nothing
 // writes it, so any drift from the template is drift.
+//
+// And TRACKED, not just on disk. Every consumer of this repository gets it by
+// cloning, so an untracked docs/decisions.md here would satisfy os.ReadFile in
+// this working tree and be absent from every one of them — the exact failure
+// mode this file exists to fence, dogfooded.
 func TestRepoDecisionsPointer_IsInstalledHere(t *testing.T) {
-	path := filepath.Join(repoRootFromCaller(t), "docs", "decisions.md")
+	repoRoot := repoRootFromCaller(t)
+	path := filepath.Join(repoRoot, "docs", "decisions.md")
+
+	if !gitcli.IsTrackedFile(repoRoot, legacyPointerRel) {
+		t.Errorf("logmind's own %s is not tracked by git.\n"+
+			"Consumers get this repository by cloning, and a clone carries the index — not the "+
+			"working tree — so an untracked sentinel is one that no consumer, and no v1.2.0 "+
+			"binary run against a clone, ever sees.", legacyPointerRel)
+	}
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("logmind's own %s is missing: %v\n"+
@@ -58,6 +75,65 @@ func TestRepoDecisionsPointer_IsInstalledHere(t *testing.T) {
 	}
 	// And it must still be inert: the sentinel must not have become a source.
 	mustRouteNoDecisionsTo(t, path, "the repo's own pointer file holds no decisions")
+}
+
+// TestInit_LegacyPointerIsCommitted_NotJustWritten is the assertion the rest
+// of this file could not make.
+//
+// Every other test here drives `logmind init --no-git` (scaffoldDocs) and then
+// asks pathExists. Both halves are wrong for this artifact. --no-git means the
+// commit path never runs, and pathExists asks about the WORKING TREE — but the
+// sentinel's entire job is to be there when a v1.2.0 binary runs in somebody
+// else's checkout, and a file that was written and never committed is in
+// nobody else's checkout. The suite was green for a whole review round while
+// `logmind init` wrote docs/decisions.md and left it untracked: the commit list
+// in runInit is a hand-kept restatement of what init writes, and it had lost
+// the entry (base dev carried "docs/decisions.md"; this branch re-added the
+// write and dropped the commit).
+//
+// So this runs init WITH git and asks the question at the two layers that
+// matter: is the path in the index, and does it survive `git clone`. The clone
+// is not belt-and-braces — it is the literal scenario, since v1.2.0 asks its
+// question in a checkout it did not create.
+func TestInit_LegacyPointerIsCommitted_NotJustWritten(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		// NOT --no-git. The commit is the thing under test.
+		runQuiet(t, []string{"init"})
+
+		if !gitcli.IsTrackedFile(d, legacyPointerRel) {
+			t.Errorf("`logmind init` wrote %s but never committed it — it is not in the index.\n"+
+				"An untracked sentinel reaches no clone, so a v1.2.0 binary reads the repository as "+
+				"UNINITIALISED and rewrites .logmind/config.yml over its settings.\n"+
+				"git status: %s", legacyPointerRel, gitcli.StatusPorcelain(d, legacyPointerRel))
+		}
+
+		// CONTROL — the probe discriminates. Without this, "tracked" above
+		// could be an IsTrackedFile that answers true for anything.
+		const untrackedControl = "docs/untracked-control.md"
+		mustWrite(t, filepath.Join(d, untrackedControl), "written, never committed\n")
+		if gitcli.IsTrackedFile(d, untrackedControl) {
+			t.Fatal("control failed: IsTrackedFile answers true for a file that was never committed, " +
+				"so the assertion above is not measuring tracking")
+		}
+
+		// The scenario itself: v1.2.0's question, asked of a fresh clone.
+		clone := filepath.Join(t.TempDir(), "clone")
+		testgit.CloneRepo(t, clone, "-q", d)
+
+		if !v120AlreadyInitialised(clone) {
+			t.Errorf("a CLONE of a repository this binary scaffolded reads as UNINITIALISED to logmind v1.2.0.\n"+
+				"clone docs/ contains: %v", lsDir(t, filepath.Join(clone, "docs")))
+		}
+
+		// CONTROL — the clone carries committed content only, so the check
+		// above is a statement about the index and not about the source
+		// working tree being copied wholesale.
+		if pathExists(filepath.Join(clone, untrackedControl)) {
+			t.Fatal("control failed: the clone carries a file that was never committed, " +
+				"so its contents prove nothing about what init tracked")
+		}
+	})
 }
 
 // v120AlreadyInitialised is logmind v1.2.0's install sentinel, transcribed
@@ -178,6 +254,14 @@ func TestInit_LegacyPointerHoldsNoDecisions(t *testing.T) {
 // from before the pointer existed is exposed to exactly the same
 // config-clobbering. Refresh is the upgrade path, so refresh closes it —
 // ensureLegacyPointer is called from both routes into an initialised repo.
+//
+// pathExists is the RIGHT question here, unlike in the fresh-install case
+// above, and the reason is worth stating: refresh commits nothing at all — not
+// workflows, not .gitattributes, not this — so the file it restores is
+// untracked by design and stays untracked until the user commits it. Which
+// makes the restore only half a fix, and the other half is telling the user.
+// That disclosure is asserted here, because a silent write leaves a file on
+// disk that LOOKS like the fix and does not reach a single clone.
 func TestInitRefresh_RestoresAMissingPointer(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
@@ -191,12 +275,46 @@ func TestInitRefresh_RestoresAMissingPointer(t *testing.T) {
 			t.Fatal("fixture precondition: with the pointer removed the repo must look uninitialised to v1.2.0")
 		}
 
-		scaffoldDocs(t) // second run — takes the refresh path
+		out := refreshCapturingOutput(t) // second run — takes the refresh path
 
 		if !v120AlreadyInitialised(d) {
 			t.Fatal("`logmind init` in refresh mode left the repo unrecognisable to v1.2.0")
 		}
+		if !strings.Contains(out, "Restored docs/decisions.md") {
+			t.Errorf("refresh restored the sentinel and said nothing about it.\n"+
+				"It commits nothing, so the file is untracked and reaches no clone — the user is "+
+				"the only one who can close that, and cannot act on a write they were not told about.\n"+
+				"--- stdout ---\n%s", out)
+		}
+		if !strings.Contains(out, "Commit it") {
+			t.Errorf("refresh named the restored file but not the action it needs.\n--- stdout ---\n%s", out)
+		}
+
+		// CONTROL — the line is conditional on an actual restore, not printed
+		// unconditionally. A third run has nothing to restore and must be
+		// silent about it, or the assertions above would pass on a constant.
+		if again := refreshCapturingOutput(t); strings.Contains(again, "Restored docs/decisions.md") {
+			t.Errorf("control failed: refresh reports a restore when the pointer was already present, "+
+				"so the disclosure above is unconditional output and proves nothing.\n--- stdout ---\n%s", again)
+		}
 	})
+}
+
+// refreshCapturingOutput runs `logmind init --no-git` against an
+// already-initialised cwd and returns everything it wrote to stdout. Same
+// invocation as scaffoldDocs, which discards output; the refresh-mode
+// disclosures are assertions, so they need to be readable.
+func refreshCapturingOutput(t *testing.T) string {
+	t.Helper()
+	root := NewRootCmd()
+	root.SetArgs([]string{"init", "--no-git"})
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init (refresh): %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+	}
+	return out.String()
 }
 
 // TestInitRefresh_NeverOverwritesARealLegacyLog: the flip side, and the one

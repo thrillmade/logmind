@@ -188,3 +188,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 05:15 - init: commit the v1.2.0 compatibility sentinel, not just write it; bump the slim AGENTS marker to v10-pointer
+
+**Reasoning:** Round 12 re-added the docs/decisions.md WRITE and round 13 found the COMMIT missing: filesToCommit is a hand-kept restatement of what init wrote, and the two spellings drifted the moment one side changed. The file stayed untracked, so logmind log's git add -A swept it onto whatever feature branch ran next and main never got it — a released v1.2.0 binary then reads the repo as uninitialised and rewrites .logmind/config.yml over the owner's settings. Fixed at the class: ensureLegacyPointer now RETURNS legacyPointerRel and the commit site consumes that return value, so there is one spelling and no second list to keep. Separately the slim template's body changed while its marker held at v9-pointer, which had doctor reporting 'current' about a body it no longer matched.
+
+**Alternatives considered:** Patch the commit list with the literal string a second time — rejected, that is the exact arrangement that just failed. Make refresh commit the file too — rejected, refresh commits nothing at all today and changing that for one file is a wider contract change; it now discloses the restore and names the action instead.
+
+**Implications:**
+- The test layer was blind for two reasons, both now closed: every sentinel test drove init --no-git so the commit path never ran, and all eight asserted pathExists. A repo-wide grep for ls-files/ls-tree across *_test.go returned zero (control: the same pattern hits internal/cli/pulse.go and internal/gitcli/gitcli.go). Under a compiling mutant that drops the pointer from the commit list, the new test FAILS and the old pathExists test still passes. doctor --fix still does not restore a missing pointer — it routes through applyRefresh, never runInitRefresh — which is a gap this PR documents and does not close.
+
+---
+

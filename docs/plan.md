@@ -396,22 +396,32 @@ Verified against current source and against each consumer repository's
   `logmind-self-update.yml.template` titles its own pull requests with the
   skip marker — the exact case §3.4 calls out. These must close together,
   or the gate stays decorative.
-- **The fleet is running much older copies than this repo ships.** logmind
-  ships `check-decisions.yml.template` at `v4`. protocol, clud-bug,
-  clud-bug-app and agent-skills all run `v2`; reporulez runs an unversioned
-  copy predating the marker; skdd has no `check-decisions.yml` at all. All
-  five installed copies carry both the `*.md` exclusion and the skip-marker
-  read. Template versions are **per file** — `regen-timeline.yml.template`
-  is at `v11`, `logmind-self-update.yml.template` at `v10`,
-  `check-doc-links.yml.template` at `v8` — so "the fleet is on v4" is not a
-  single number. Tracked by
-  [#257](https://github.com/thrillmade/logmind/issues/257).
-- **`check-derived-docs` in the fleet is the pre-v11 shape**, which
-  regenerates from the branch's own sources and fails on the diff —
-  enforcing the opposite of §3.3.
+- **The fleet is running much older copies than this repo ships.** protocol,
+  clud-bug, clud-bug-app and agent-skills all run an older
+  `check-decisions.yml`; reporulez runs an unversioned copy predating the
+  marker; skdd has none on `main` at all. Every installed copy carries both
+  the `*.md` exclusion and the skip-marker read. Template versions are **per
+  file**, so "the fleet is on vN" is not a single number.
+
+  The version numbers themselves — what this repo ships and what each fleet
+  repo runs — live in [roadmap.md § The fleet,
+  measured](roadmap.md#the-fleet-measured), which owns that table and is where
+  the migration is sequenced. They are deliberately not repeated here: they
+  move most releases (this branch alone advances two of them), and a second
+  hand-kept copy in an architecture document reads as true until one quietly
+  is not. Re-derive what this repo ships with:
+
+  ```bash
+  head -1 internal/templates/github/*.template
+  ```
+
+  Tracked by [#257](https://github.com/thrillmade/logmind/issues/257).
+- **`check-derived-docs` in the fleet is an older shape**, which regenerates
+  from the branch's own sources and fails on the diff — enforcing the
+  opposite of §3.3.
   [#277](https://github.com/thrillmade/logmind/issues/277) reports this;
-  logmind's own copy and its shipped `v11` template are already correct, so
-  it is a propagation problem carried by #257, not new code here.
+  logmind's own copy and its shipped template are already correct, so it is a
+  propagation problem carried by #257, not new code here.
 - **Hooks resolve their engine by bare name**
   ([#270](https://github.com/thrillmade/logmind/issues/270)), so any PATH
   skew silently disables the local gate. §3.4 requires fail-open, and that
