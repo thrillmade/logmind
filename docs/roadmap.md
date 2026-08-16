@@ -43,8 +43,8 @@ Run these instead:
 ```sh
 git fetch origin --prune
 git log --oneline origin/main..origin/dev          # what is on dev, not yet on main
-gh issue list --state open --limit 60              # open issues
-gh pr list --state open                            # open pull requests
+gh issue list --state open --limit 200             # open issues
+gh pr list --state open --limit 200                # open pull requests
 gh release list --limit 1                          # what `brew install` gives
 ```
 
@@ -156,7 +156,7 @@ time `main` receives a merge that leaves a derived doc stale — which is the
 | issue | question | blocks |
 |---|---|---|
 | protocol#77 | who owns the §1.2 per-tool redirect files | skdd#6 scope |
-| protocol#89 | is `!pattern` valid in `file_structure.ignore_patterns` | the fix shape for #269 |
+| protocol#89 | is `!pattern` valid in `file_structure.ignore_patterns` | **nothing — answered by shipping.** #269 conformed to §1.4 as written, so no ruling was needed. Left open for the SPEC-wording question it raises. |
 | protocol#90 | §7.3's example declares 3 areas for logmind; we implement 5 | what the tag bakes in |
 | protocol#93 | §3.4 requires non-empty reasoning; §3.1 says an entry without it is well-formed | nothing — gate follows §3.4 today |
 
@@ -198,7 +198,7 @@ across the tag boundary.
 |---|---|
 | **#288** | the current template turns a refused push into `::error` + `exit 1`. Migrating first makes every repo go red on every merge to `main` touching a derived doc — permanently, and the job says it will not self-heal. Strictly worse than the storm it replaces. |
 | **a release carrying the verb** | the new gate template calls `logmind check-decisions --base/--head`, and `setup-logmind` installs the latest **release**. v1.2.0 does not have the verb. |
-| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. |
+| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-15: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade` → 7 distinct repos; control: the same query for `@v1.0.0` returns hits, confined to logmind's own template sources.) |
 
 ### 3 — Remaining pre-tag work
 
@@ -249,7 +249,10 @@ second copy of it here, ask git:
 
 ```sh
 git log --oneline origin/main..origin/dev     # built, awaiting the merge to main
-gh issue list --state open --label ''         # everything still open
+gh issue list --state open --limit 200         # everything still open
+# --limit is load-bearing: gh defaults to 30 and truncates SILENTLY.
+# Cross-check the total, which cannot truncate:
+gh api 'search/issues?q=repo:thrillmade/logmind+type:issue+state:open' --jq .total_count
 ```
 
 An issue listed above may already be built — `closes #N` only fires on the

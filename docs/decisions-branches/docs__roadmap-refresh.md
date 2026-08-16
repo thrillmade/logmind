@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-15 23:08 - roadmap: a shown command that silently truncates is the defect this file exists to prevent
+
+**Reasoning:** The review found two things, both of them the exact failure shapes this file was rewritten to eliminate, reproduced by the edit meant to eliminate them. A table row still listed a protocol question as gating the ignore-source work, three sections above the paragraph I had just added saying it turned out not to gate it. And the command offered as the replacement for a hand-kept list of open issues drops eighteen of forty-eight, because the tool defaults to thirty and truncates without saying so.
+
+**Alternatives considered:** Fix the one command the review named. Rejected: sweeping the file for the same shape found two more, one unbounded and one bounded at a number that merely happens to exceed today's count. A limit chosen to be larger than the current total is the same defect with a longer fuse.
+
+**Implications:**
+- Every listing command now carries an explicit bound, and the open-issue probe is paired with a total from the search endpoint, which cannot truncate, so a reader can tell when the bound has been outgrown. The protocol row records that the question was answered by shipping rather than by a ruling, and stays open for the specification wording it raises rather than being struck.
+
+---
+
