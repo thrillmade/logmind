@@ -11,3 +11,14 @@
 
 ---
 
+## 2026-08-16 05:57 - site: key each feature's availability to the release that introduced it, not to whatever NEXT_VERSION happens to be
+
+**Reasoning:** A panel found the areas-line fix was one instance of a class I had treated as a single defect. Two more sites gated the commit-guard prose on !IS_NEXT_RELEASED — but the guard ships in 2.0.0 specifically, not in 'the next release'. The reviewer built the site at CURRENT=2.0.0/NEXT=2.1.0 and read the rendered HTML: 'v2.1.0 adds a guard in front of every substantive commit — in design, not yet released. Not yet released — ships with v2.1.0.' The site would have announced its own shipped enforcement gate as unreleased, and the NEXT_VERSION pin added in this same branch is what forces that state to arrive on the first commit of the next cycle.
+
+**Alternatives considered:** Patch the two sites the panel named — rejected; that is what produced this round in the first place. Delete IS_NEXT_RELEASED entirely — rejected; two sites legitimately ask whether the next release is out, which is exactly what it answers.
+
+**Implications:**
+- The rule is now that a feature's availability keys to the release that introduced that feature. ENFORCEMENT_SINCE joins AREAS_SINCE; both read 2.0.0 today because both features ship in 2.0.0, and they are kept as separate constants so they can diverge when one moves. All four IS_NEXT_RELEASED sites were decided individually: the hero badge and the install footnote genuinely ask whether NEXT_VERSION is out and keep it. Verified by npm install + next build at three release states, reading the rendered HTML rather than the source; a SHOWS_ENFORCEMENT_AVAILABLE forced to true compiles clean and renders the wrong claim, so the guard is load-bearing. Also corrected repoRootFromCaller's comment, which claimed independence from the working directory while calling os.Getwd().
+
+---
+

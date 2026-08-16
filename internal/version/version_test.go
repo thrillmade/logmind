@@ -127,12 +127,17 @@ func TestSatisfiesMin_UnparseableFailsOpen(t *testing.T) {
 // version.go is the source of truth in every pair; the site is the
 // mirror, and a mismatch is fixed by editing the site, never this file.
 
-// repoRootFromCaller walks up from this test file's location to the
+// repoRootFromCaller walks up from the process's working directory (via
+// os.Getwd, not the caller's file location — despite the name) to the
 // directory holding go.mod. Mirrors internal/cli/version_test.go's
-// helper of the same name and purpose: lets the tests below locate
-// site/app/page.tsx regardless of how `go test` was invoked (CI, IDE,
-// `cd internal/version && go test`), rather than guessing off the test
-// binary's working directory.
+// helper of the same name and purpose: `go test` itself always sets that
+// working directory to the package under test, so this locates
+// site/app/page.tsx correctly whether run via `go test ./internal/version`
+// from the repo root, from inside the package (`cd internal/version &&
+// go test`), or from an IDE's own runner. A precompiled test binary
+// executed from an unrelated directory (`go test -c` then run elsewhere)
+// is not covered by that guarantee — it fails loudly here (Fatalf below),
+// which is the correct outcome, not a silent wrong guess.
 func repoRootFromCaller(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
