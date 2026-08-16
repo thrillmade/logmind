@@ -122,3 +122,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-15 23:57 - timeline: --write writes the file it was given and nothing beside it
+
+**Reasoning:** My previous ruling called the stray archive beside git's scratch file untracked litter, and that was wrong twice over. The next log commits it, because staging everything is the default, and it then reaches every clone; and where a tracked file of that name already exists at the repository root, the merge replaces its contents and says only that it regenerated something. Freezing the driver command was right, so the fix belongs in the behaviour rather than the string: writing to a path now produces that path and nothing else, and which half of the split lands there is chosen by a flag.
+
+**Alternatives considered:** Put the flag back on the timeline driver so the pair write is suppressed. Rejected: the released binary cannot run a command carrying that flag, and git turns the failure into ordinary conflict markers inside a file people are told never to edit by hand, with nothing naming the cause.
+
+**Implications:**
+- The pair write, the flag and the archive are all new in this change, so the frozen command means the same thing on the released binary as on this one, and no shipped hook or workflow ever wrote an archive that could regress. The merge test asserts the fixture actually diverges before checking, so the driver is known to have fired rather than assumed. Correcting the template turned up a sixth copy of the abolished routing rule and a neighbouring claim that log regenerates the derived documents when it restores them.
+
+---
+

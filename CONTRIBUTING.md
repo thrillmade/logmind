@@ -52,7 +52,11 @@ logmind log "Short summary" -r "why" -a "alt 1" -i "implication"
 Branch-aware, with one path rule and no exception to it: every entry writes
 to `docs/decisions-branches/<branch>.md` for the branch it was made on, the
 default branch included (`main.md`). `docs/decisions.md` is a legacy source —
-read where it exists, never written.
+read where it exists, and never written **on the branch-aware path**.
+`resolveDecisionsPath` still falls back to it in exactly three cases, all of
+them "there is no branch to route by": `decisions.branch_aware: false`, a
+non-git directory, and a detached or unborn HEAD. In those three it is
+created and appended to.
 
 ### Tests
 

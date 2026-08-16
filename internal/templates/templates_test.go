@@ -427,11 +427,18 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 // against each other); nothing in this repo does that today, and nothing
 // caught the actual v12/v12 collision this pins against — a human review
 // pass did.
+// The v13 digest was repinned once more inside #301 — the regen step now
+// names docs/timeline-archive.md explicitly, because `logmind timeline
+// --write` writes the one file it is given. "A SHIPPED marker's content must
+// never change" is the rule, and v13 has not shipped: it is introduced by the
+// same PR, so no repository holds it and a bump would reach nothing. Minting
+// a v14 for an edit to v13's own unreleased body would leave a v13 that
+// existed nowhere — which is the confusion the v12/v12 collision above WAS.
 var templateMarkerPins = map[string]struct {
 	marker string
 	sha256 string
 }{
-	"regen-timeline.yml.template": {"v13", "53d93f95d0624b6702736d8c73bedf377d1db791e4d690c8dcaed73a0d7a36ee"},
+	"regen-timeline.yml.template": {"v13", "c8d756f346fb5dca99a34f852ebe80f1b402013569f3a14aeee336c660baa8da"},
 }
 
 func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
@@ -1070,9 +1077,18 @@ const (
 	// the subcommands, the flags, the OUTPUT PATHS — is common, and a regen
 	// pointed anywhere but docs/ is a job that reports "already current"
 	// forever while the derived docs rot.
+	//
+	// The archive gets its OWN invocation, and that is load-bearing rather
+	// than stylistic: `logmind timeline --write` writes the one file it is
+	// given, so dropping this line does not "simplify" the step, it stops
+	// docs/timeline-archive.md being regenerated at all — on the only branch
+	// that ever regenerates it, with every run still green.
 	wantRegenStep = `        run: |
           set -euo pipefail
+          # Both halves of the SPEC §3.3 split, each named explicitly:
+          # ` + "`--write`" + ` writes the file it is given and no other.
           %[1]s timeline --write docs/timeline.md
+          %[1]s timeline --write docs/timeline-archive.md --half archive
           %[1]s file-structure --write docs/file-structure.md`
 )
 
@@ -1351,7 +1367,16 @@ var bundledTemplateFingerprints = map[string]string{
 	// reverted this file to the v11 base under a higher marker, and the
 	// rewrite-on-marker-inequality rule above is exactly what would have made
 	// that permanent for every repo that took it.
-	"regen-timeline.yml.template": "v13:53d93f95d0624b6702736d8c73bedf377d1db791e4d690c8dcaed73a0d7a36ee",
+	//
+	// The digest moved once more inside #301, WITHOUT the marker: the regen
+	// step now names docs/timeline-archive.md explicitly, because `logmind
+	// timeline --write` writes the one file it is given. That is a repin, not
+	// a skipped bump — v13 is introduced by this same PR and no repository
+	// holds it, so there is no installed v13 for a bump to reach. A marker
+	// only has to move when the content it names has already SHIPPED; moving
+	// it for an edit to its own unreleased body would mint a v13 that never
+	// existed anywhere, which is the confusion the v12 collision above was.
+	"regen-timeline.yml.template": "v13:c8d756f346fb5dca99a34f852ebe80f1b402013569f3a14aeee336c660baa8da",
 }
 
 // TestWorkflowTemplateMarkers_MoveWithContent enforces the binding above.

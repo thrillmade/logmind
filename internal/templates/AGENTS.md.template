@@ -43,8 +43,8 @@ logmind log "decision summary" -r "why" -a "alternative" -i "implication"
 
 That single command:
 
-1. Writes the decision file (default branch → `docs/decisions.md`, feature branch → `docs/decisions-branches/<branch>.md`).
-2. Regenerates the derived docs (`docs/timeline.md` always; `docs/file-structure.md` on default branch).
+1. Writes the decision file — `docs/decisions-branches/<branch>.md` for whatever branch you are on, the default branch included (`main.md`).
+2. Keeps the derived docs (`docs/timeline.md`, `docs/timeline-archive.md`, `docs/file-structure.md`) pinned to their merge-base with the default branch — a branch never modifies them, which is what makes concurrent PRs conflict-free. They regenerate on the default branch, from the git hooks and the `check-derived-docs` workflow.
 3. **`git add`** every change in the working tree (default `--stage all` since v0.2.7).
 4. **`git commit`** with message `logmind: <decision>`.
 5. **`git push`** to remote (configurable in `.logmind/config.yml`).
@@ -87,10 +87,15 @@ logmind log "Use PostgreSQL for primary database" \
 
 ### Branch-aware routing (automatic)
 
-On a feature branch, the entry lands in
-`docs/decisions-branches/<sanitized-branch>.md`. On the default branch
-it lands in `docs/decisions.md`. You don't manage this — `logmind log`
-does.
+Every entry lands in `docs/decisions-branches/<sanitized-branch>.md` for
+the branch it was made on — the default branch included, where the file
+is `main.md`. One rule, no exception: the default branch is a branch like
+any other. You don't manage this — `logmind log` does.
+
+`docs/decisions.md` is a legacy source. Where it still exists it is read,
+never written, except on the three paths that have no branch to route by:
+`decisions.branch_aware: false`, a non-git directory, and a detached or
+unborn HEAD.
 
 ### Branch summary (headline)
 

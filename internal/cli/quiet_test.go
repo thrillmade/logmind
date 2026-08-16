@@ -124,7 +124,7 @@ func TestQuiet_Timeline_StdoutSingleOK(t *testing.T) {
 	cwd := makeDocs(t,
 		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", nil)
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", halfBoth, false, true, &out, &errBuf); err != nil {
+	if err := runTimeline(cwd, "", halfDefault, false, true, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline quiet: %v", err)
 	}
 	assertSingleOK(t, out.String(), "timeline", "bytes=", "mode=canonical")
@@ -137,7 +137,7 @@ func TestQuiet_Timeline_DefaultUnchanged(t *testing.T) {
 	cwd := makeDocs(t,
 		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", nil)
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", halfBoth, false, false, &out, &errBuf); err != nil {
+	if err := runTimeline(cwd, "", halfDefault, false, false, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline default: %v", err)
 	}
 	// Default mode keeps the legacy trailer AND the rendered body.
@@ -152,7 +152,7 @@ func TestQuiet_Timeline_DefaultUnchanged(t *testing.T) {
 func TestQuiet_Timeline_ErrorToStderr(t *testing.T) {
 	cwd := t.TempDir() // no docs/
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", halfBoth, false, true, &out, &errBuf); err == nil {
+	if err := runTimeline(cwd, "", halfDefault, false, true, &out, &errBuf); err == nil {
 		t.Fatal("expected ErrSilent when docs/ missing")
 	}
 	if out.Len() != 0 {

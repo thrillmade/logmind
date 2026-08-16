@@ -109,16 +109,24 @@ var DefaultLines = []string{
 // degradation, not a corruption, and confined to the file the new driver was
 // added for.
 //
-// The cost of holding `merge.logmind-timeline` at its shipped string: run by a
-// CURRENT binary, `logmind timeline --write %A` renders the pair, so the
-// archive half lands beside git's scratch file — an untracked
-// `timeline-archive.md` at the worktree root on every timeline merge. That is
-// litter in an untracked path, and it is the deliberate trade against conflict
-// markers in docs/timeline.md under version skew. Closing it needs a change
-// that is inert on old binaries (a shell-level `LOGMIND_…=` prefix — git runs
-// the driver through `sh -c` — or a `--half` default flipped in a release that
-// then waits for the fleet before the string moves); tracked as its own item,
-// not smuggled in here.
+// Holding `merge.logmind-timeline` at its shipped string costs nothing, and
+// that is a property of the COMMAND rather than of this freeze. `logmind
+// timeline --write PATH` writes the one file PATH names and no other, so a
+// current binary handed git's scratch file writes exactly that scratch file
+// (internal/cli/timeline.go). The frozen string therefore means the same thing
+// on v1.2.0 and on HEAD.
+//
+// It briefly did not. `--write` was made to render BOTH halves of the §3.3
+// split — PATH plus a `timeline-archive.md` inferred beside it — and under
+// this frozen string that inferred sibling landed at the WORKTREE ROOT on
+// every timeline merge: untracked, ignored by nothing, invisible to `doctor`
+// and `check-links`, committed by the next `logmind log` (`--stage all` is the
+// default) and propagated to every clone. Where a repo already tracked a
+// root-level `timeline-archive.md`, the merge replaced its contents and
+// reported "✓ Regenerated timeline-archive.md". The fix was to the command,
+// not to this string: a write to a path no caller named is the bug, and
+// freezing a driver whose behaviour depends on where it is run is not a
+// freeze. Regenerating the pair is two invocations, each naming its file.
 var MergeDriverConfig = []struct {
 	Key   string
 	Value string

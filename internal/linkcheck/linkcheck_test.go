@@ -400,3 +400,28 @@ func TestCheckWithReport_FindingFields(t *testing.T) {
 		}
 	}
 }
+
+// TestSuggestBrokenLinkFix_EachTimelineHalfGetsItsOwnRegen: the advice printed
+// for a stale row has to be the command that rewrites the file the row is IN.
+//
+// `logmind timeline --write` writes the one file it is given, so the command
+// that fixes docs/timeline.md does not touch docs/timeline-archive.md.
+// Advising it against the archive is advice that cannot work: run and re-run,
+// the same broken links stay exactly where they were.
+func TestSuggestBrokenLinkFix_EachTimelineHalfGetsItsOwnRegen(t *testing.T) {
+	const target = "docs/decisions-branches/feat__gone.md"
+	for _, tc := range []struct {
+		source string
+		want   string
+	}{
+		{"docs/timeline.md", "→ run: logmind timeline --write docs/timeline.md"},
+		{"docs/timeline-archive.md", "→ run: logmind timeline --write docs/timeline-archive.md --half archive"},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			got := suggestBrokenLinkFix(t.TempDir(), tc.source, target)
+			if got != tc.want {
+				t.Errorf("advice for a dead branch link in %s = %q; want %q", tc.source, got, tc.want)
+			}
+		})
+	}
+}

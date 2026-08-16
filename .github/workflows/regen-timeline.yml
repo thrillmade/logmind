@@ -56,7 +56,12 @@ name: logmind / check-derived-docs
 # recent entries and the archive the remainder — and §3.3 governs all three
 # alike: "A non-default branch MUST NOT modify any derived file — the history,
 # its archive, or the map." A branch that edits the archive is blocked exactly
-# as one that edits the timeline.
+# as one that edits the timeline. The regen step on the default branch names
+# the archive explicitly too: `logmind timeline --write` writes the ONE file it
+# is given, so the pair is two invocations. It used to be one, with the archive
+# inferred as a sibling of whatever path `--write` named — which dropped a
+# stray `timeline-archive.md` beside git's merge scratch file at the worktree
+# root, and, where a file of that name was tracked, replaced its contents.
 #
 # NOTE on the version number: this was v12 until logmind#301 round 5 caught
 # it colliding with a DIFFERENT, already in-flight v12 (logmind#314) — two
@@ -173,7 +178,10 @@ jobs:
       - name: Regenerate derived docs
         run: |
           set -euo pipefail
+          # Both halves of the SPEC §3.3 split, each named explicitly:
+          # `--write` writes the file it is given and no other.
           ./bin/logmind timeline --write docs/timeline.md
+          ./bin/logmind timeline --write docs/timeline-archive.md --half archive
           ./bin/logmind file-structure --write docs/file-structure.md
       # Rung 1: mint a short-lived (1 hour) App installation token, but only
       # when App credentials are actually configured. The `if:` reads the job

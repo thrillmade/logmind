@@ -70,13 +70,19 @@ func fmtDate(y, m, d int) string {
 	return itoa(y) + "-" + pad(m) + "-" + pad(d)
 }
 
-// TestTimeline_WriteElsewhere_LeavesTheRepoArchiveAlone is regression (2).
+// TestTimeline_WriteElsewhere_LeavesTheRepoArchiveAlone is regression (2), in
+// both of the directions it was wrong in.
+//
+// The archive's path was first PINNED to <cwd>/docs, so `--write /elsewhere.md`
+// rewrote the repo's tracked docs/timeline-archive.md on the way past. It was
+// then made to FOLLOW --write, which moved the same unrequested write to
+// whatever directory --write named — the worktree root, on every merge-driver
+// run. Neither is a path the caller named, so the probe asserts both: the
+// repo's archive is untouched AND no sibling appears beside the target.
 //
 // The probe is deliberately loud: docs/timeline-archive.md is filled with
 // content a render could never produce, so if the command touches it at all
-// the sentinel is gone. The paired positive assertion — the sibling file that
-// SHOULD appear next to --write's target — keeps a fix that simply stopped
-// writing the archive from passing.
+// the sentinel is gone.
 func TestTimeline_WriteElsewhere_LeavesTheRepoArchiveAlone(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		scaffoldDocs(t)
@@ -110,10 +116,18 @@ func TestTimeline_WriteElsewhere_LeavesTheRepoArchiveAlone(t *testing.T) {
 			t.Errorf("--write %s reported writing %s:\n%s", target, repoArchive, out.String())
 		}
 
-		// The archive half still lands — next to what --write named.
-		sibling := filepath.Join(elsewhere, "timeline-archive.md")
-		if !pathExists(sibling) {
-			t.Errorf("the archive half did not follow --write: %s missing.\noutput:\n%s", sibling, out.String())
+		// And nothing landed beside the target either: --write wrote the one
+		// file it was given.
+		entries, err := os.ReadDir(elsewhere)
+		if err != nil {
+			t.Fatalf("readdir %s: %v", elsewhere, err)
+		}
+		if len(entries) != 1 || entries[0].Name() != "elsewhere.md" {
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Errorf("--write %s wrote more than the file it was given: %v\noutput:\n%s", target, names, out.String())
 		}
 	})
 }
@@ -261,13 +275,22 @@ func TestGitattributes_UpgradesAnExistingBlockInPlace(t *testing.T) {
 	})
 }
 
-// TestTimeline_Half_WritesExactlyOneFile pins the primitive the merge drivers
-// depend on: with --half, PATH is the ONLY file touched — no sibling, ever.
-// git hands a driver a scratch file at the worktree root, so a sibling write
-// would drop a stray timeline-archive.md there on every merge.
+// TestTimeline_Half_WritesExactlyOneFile pins the primitive BOTH merge drivers
+// depend on: PATH is the ONLY file touched — no sibling, ever, with or without
+// --half. git hands a driver a scratch file at the worktree root, so a sibling
+// write drops a stray timeline-archive.md there on every merge.
+//
+// The empty case is the load-bearing one. `merge.logmind-timeline.driver` is
+// FROZEN at `logmind timeline --write %A` — an older binary on PATH executes
+// it — so the no-flag invocation is exactly what runs on a real timeline
+// merge, and it is the one that used to leave the stray.
 func TestTimeline_Half_WritesExactlyOneFile(t *testing.T) {
-	for _, half := range []string{"recent", "archive"} {
-		t.Run(half, func(t *testing.T) {
+	for _, half := range []string{"", "recent", "archive"} {
+		name := half
+		if name == "" {
+			name = "default(no --half, the frozen driver's invocation)"
+		}
+		t.Run(name, func(t *testing.T) {
 			withTempCwd(t, func(d string) {
 				scaffoldDocs(t)
 				seedMarkedBranchFile(t, d, "base", 60, 2020, "base")
@@ -275,13 +298,17 @@ func TestTimeline_Half_WritesExactlyOneFile(t *testing.T) {
 				scratch := t.TempDir()
 				target := filepath.Join(scratch, ".merge_file_XXXX")
 
+				args := []string{"timeline", "--write", target}
+				if half != "" {
+					args = append(args, "--half", half)
+				}
 				root := NewRootCmd()
-				root.SetArgs([]string{"timeline", "--write", target, "--half", half})
+				root.SetArgs(args)
 				var out strings.Builder
 				root.SetOut(&out)
 				root.SetErr(&out)
 				if err := root.Execute(); err != nil {
-					t.Fatalf("timeline --write --half %s: %v\n%s", half, err, out.String())
+					t.Fatalf("timeline %v: %v\n%s", args, err, out.String())
 				}
 
 				entries, err := os.ReadDir(scratch)
@@ -293,7 +320,7 @@ func TestTimeline_Half_WritesExactlyOneFile(t *testing.T) {
 					for _, e := range entries {
 						names = append(names, e.Name())
 					}
-					t.Errorf("--half %s wrote more than the file it was given: %v", half, names)
+					t.Errorf("timeline %v wrote more than the file it was given: %v", args, names)
 				}
 
 				body := mustReadString(t, target)
@@ -332,55 +359,13 @@ func mustReadString(t *testing.T, path string) string {
 // branch). Leaving it in would mean neither side ever committed a divergent
 // archive and the merge under test would never happen.
 func TestMerge_DivergedTimelineArchive_ResolvesWithoutConflictMarkers(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds a binary and runs real git merges")
-	}
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skip("go toolchain not on PATH")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	binPath := buildGuardCommitBinary(t, goBin)
-
-	repo := t.TempDir()
-	gitIn(t, repo, "init", "-q", "-b", "main", ".")
-	gitIn(t, repo, "config", "user.email", "t@example.com")
-	gitIn(t, repo, "config", "user.name", "t")
-
-	// `logmind init` through the real binary, so .gitattributes and the
-	// per-clone driver definitions are exactly what a user gets.
-	runBin := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command(binPath, args...)
-		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
-			"PATH="+filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"LOGMIND_ALLOW_GIT_COMMIT=1")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("logmind %v: %v\n%s", args, err, out)
-		}
-		return string(out)
-	}
-	runBin("init")
-	_ = os.Remove(filepath.Join(repo, ".git", "hooks", "pre-commit"))
-
-	commitAll := func(msg string) {
-		gitIn(t, repo, "add", "-A")
-		cmd := exec.Command("git", "commit", "-qm", msg)
-		cmd.Dir = repo
-		cmd.Env = append(os.Environ(), "LOGMIND_ALLOW_GIT_COMMIT=1")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git commit %q: %v\n%s", msg, err, out)
-		}
-	}
+	r := newDriverMergeRepo(t)
+	repo := r.dir
 
 	// Enough rows that the §3.3 cut is real (RecentLimit is 50).
 	seedMarkedBranchFile(t, repo, "base", 60, 2020, "base")
-	runBin("timeline", "--write", "docs/timeline.md")
-	commitAll("seed")
+	regenPair(t, r.run)
+	r.commitAll("seed")
 	if n := strings.Count(mustReadString(t, filepath.Join(repo, "docs", "timeline-archive.md")), "logmind-entry-start"); n == 0 {
 		t.Fatalf("fixture precondition: the archive is empty, so it cannot diverge")
 	}
@@ -389,14 +374,14 @@ func TestMerge_DivergedTimelineArchive_ResolvesWithoutConflictMarkers(t *testing
 	// changes and the two disagree.
 	gitIn(t, repo, "checkout", "-q", "-b", "left")
 	seedMarkedBranchFile(t, repo, "left", 30, 2010, "left")
-	runBin("timeline", "--write", "docs/timeline.md")
-	commitAll("left")
+	regenPair(t, r.run)
+	r.commitAll("left")
 
 	gitIn(t, repo, "checkout", "-q", "main")
 	gitIn(t, repo, "checkout", "-q", "-b", "right")
 	seedMarkedBranchFile(t, repo, "right", 30, 2011, "right")
-	runBin("timeline", "--write", "docs/timeline.md")
-	commitAll("right")
+	regenPair(t, r.run)
+	r.commitAll("right")
 
 	// Fixture precondition: the archive really does diverge between the two.
 	diff := exec.Command("git", "diff", "--quiet", "left", "right", "--", "docs/timeline-archive.md")
@@ -406,12 +391,7 @@ func TestMerge_DivergedTimelineArchive_ResolvesWithoutConflictMarkers(t *testing
 	}
 
 	gitIn(t, repo, "checkout", "-q", "left")
-	merge := exec.Command("git", "merge", "--no-edit", "right")
-	merge.Dir = repo
-	merge.Env = append(os.Environ(),
-		"PATH="+filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"LOGMIND_ALLOW_GIT_COMMIT=1")
-	mergeOut, mergeErr := merge.CombinedOutput()
+	mergeOut, mergeErr := r.merge("right")
 
 	status := gitOut(repo, "status", "--porcelain")
 	archive := mustReadString(t, filepath.Join(repo, "docs", "timeline-archive.md"))
@@ -432,9 +412,198 @@ func TestMerge_DivergedTimelineArchive_ResolvesWithoutConflictMarkers(t *testing
 	}
 }
 
+// TestMerge_RecentTimelineConflict_LeavesNoStrayAndClobbersNothing is BLOCK-1
+// measured where it bit: a merge in which docs/timeline.md ITSELF conflicts,
+// so git runs `merge.logmind-timeline` — the driver whose command string is
+// frozen at `logmind timeline --write %A` and therefore carries no --half.
+//
+// %A is a scratch file git creates at the WORKTREE ROOT. While `--write` also
+// wrote an inferred sibling, that run left `timeline-archive.md` beside it:
+//
+//   - untracked, `git check-ignore` exit 1, doctor and check-links both
+//     silent — and the next `logmind log` commits it, because --stage all is
+//     the default. From there it propagates to every clone.
+//   - and where a file of that name was already TRACKED at the root, the
+//     merge printed "✓ Regenerated timeline-archive.md" over the user's
+//     content. Silent data loss.
+//
+// Both subtests run the same real merge; they differ only in whether a
+// root-level timeline-archive.md exists to be clobbered.
+func TestMerge_RecentTimelineConflict_LeavesNoStrayAndClobbersNothing(t *testing.T) {
+	const userFile = "timeline-archive.md"
+	const sentinel = "# my own notes\n\nNothing logmind writes may replace this.\n"
+
+	for _, tc := range []struct {
+		name        string
+		trackAtRoot bool
+	}{
+		{name: "no_root_file_no_stray_appears", trackAtRoot: false},
+		{name: "tracked_root_file_is_not_clobbered", trackAtRoot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newDriverMergeRepo(t)
+			repo := r.dir
+
+			// A base whose 50 most recent rows are shared by both sides.
+			seedMarkedBranchFile(t, repo, "base", 60, 2020, "base")
+			if tc.trackAtRoot {
+				mustWrite(t, filepath.Join(repo, userFile), sentinel)
+			}
+			regenPair(t, r.run)
+			r.commitAll("seed")
+
+			// Both sides add rows NEWER than the base, so each side's RECENT
+			// half changes and the two disagree — which is what makes git run
+			// merge.logmind-timeline on docs/timeline.md.
+			gitIn(t, repo, "checkout", "-q", "-b", "left")
+			seedMarkedBranchFile(t, repo, "left", 30, 2030, "left")
+			regenPair(t, r.run)
+			r.commitAll("left")
+
+			gitIn(t, repo, "checkout", "-q", "main")
+			gitIn(t, repo, "checkout", "-q", "-b", "right")
+			seedMarkedBranchFile(t, repo, "right", 30, 2031, "right")
+			regenPair(t, r.run)
+			r.commitAll("right")
+
+			// Fixture precondition: without a RECENT-half divergence the
+			// frozen driver never runs and this test proves nothing.
+			diff := exec.Command("git", "diff", "--quiet", "left", "right", "--", "docs/timeline.md")
+			diff.Dir = repo
+			if err := diff.Run(); err == nil {
+				t.Fatal("fixture precondition: docs/timeline.md does not diverge between left and right, so merge.logmind-timeline never fires")
+			}
+
+			gitIn(t, repo, "checkout", "-q", "left")
+			mergeOut, mergeErr := r.merge("right")
+			if mergeErr != nil {
+				t.Errorf("git merge failed: %v\n%s", mergeErr, mergeOut)
+			}
+
+			status := gitOut(repo, "status", "--porcelain")
+			rootPath := filepath.Join(repo, userFile)
+
+			if tc.trackAtRoot {
+				got := mustReadString(t, rootPath)
+				if got != sentinel {
+					t.Errorf("the merge replaced the tracked %s at the worktree root — silent data loss.\nwant:\n%s\ngot:\n%s\nmerge output:\n%s",
+						userFile, sentinel, truncateForTest(got), mergeOut)
+				}
+				if strings.Contains(status, userFile) {
+					t.Errorf("the merge left %s modified at the worktree root:\n%s\nmerge output:\n%s", userFile, status, mergeOut)
+				}
+			} else if pathExists(rootPath) {
+				t.Errorf("the merge driver dropped a stray %s at the worktree root — untracked, invisible to doctor, and committed by the next `logmind log` (--stage all is the default).\nstatus:\n%s\nmerge output:\n%s",
+					userFile, status, mergeOut)
+			}
+
+			// Nothing else got left behind either: an untracked file after a
+			// merge is a write to a path no caller named, whatever its name.
+			for _, line := range strings.Split(strings.TrimSpace(status), "\n") {
+				if strings.HasPrefix(line, "??") {
+					t.Errorf("the merge left an untracked file behind: %q\nfull status:\n%s\nmerge output:\n%s", line, status, mergeOut)
+				}
+			}
+		})
+	}
+}
+
+// regenPair regenerates both halves of the §3.3 split the way every real
+// caller does — each file named explicitly, because `--write` writes the one
+// file it is given.
+func regenPair(t *testing.T, run func(args ...string) string) {
+	t.Helper()
+	run("timeline", "--write", "docs/timeline.md")
+	run("timeline", "--write", "docs/timeline-archive.md", "--half", "archive")
+}
+
+// driverMergeRepo is a real repository with a real `logmind init` in it, plus
+// the handles a merge-driver test needs to drive it.
+type driverMergeRepo struct {
+	dir string
+	// run invokes the built logmind binary in dir.
+	run func(args ...string) string
+	// commitAll stages everything and commits, bypassing the commit guard.
+	commitAll func(msg string)
+	// merge runs a real `git merge` with the built binary on PATH, so GIT
+	// itself can invoke the drivers. Returns the combined output and error.
+	merge func(branch string) (string, error)
+}
+
+// newDriverMergeRepo builds the real binary, runs a real `logmind init` in a
+// fresh repo, and returns it wired for merge-driver tests.
+//
+// The pre-commit hook is removed: its job is the separate zero-conflict
+// invariant (restore derived docs to HEAD on a non-default branch). Leaving it
+// in would mean neither side ever committed a divergent derived doc and the
+// merge under test would never happen.
+func newDriverMergeRepo(t *testing.T) *driverMergeRepo {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("builds a binary and runs real git merges")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	binPath := buildGuardCommitBinary(t, goBin)
+
+	repo := t.TempDir()
+	gitIn(t, repo, "init", "-q", "-b", "main", ".")
+	gitIn(t, repo, "config", "user.email", "t@example.com")
+	gitIn(t, repo, "config", "user.name", "t")
+
+	// The drivers must be findable when GIT invokes them, not only when this
+	// test does: git runs a merge driver through `sh -c` with the environment
+	// it was handed.
+	withBin := func() []string {
+		return append(os.Environ(),
+			"PATH="+filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"LOGMIND_ALLOW_GIT_COMMIT=1")
+	}
+
+	r := &driverMergeRepo{dir: repo}
+	r.run = func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(binPath, args...)
+		cmd.Dir = repo
+		cmd.Env = withBin()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("logmind %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	r.commitAll = func(msg string) {
+		t.Helper()
+		gitIn(t, repo, "add", "-A")
+		cmd := exec.Command("git", "commit", "-qm", msg)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "LOGMIND_ALLOW_GIT_COMMIT=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git commit %q: %v\n%s", msg, err, out)
+		}
+	}
+	r.merge = func(branch string) (string, error) {
+		t.Helper()
+		cmd := exec.Command("git", "merge", "--no-edit", branch)
+		cmd.Dir = repo
+		cmd.Env = withBin()
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	r.run("init")
+	_ = os.Remove(filepath.Join(repo, ".git", "hooks", "pre-commit"))
+	return r
+}
+
 // TestTimeline_BadHalf_IsRejected: an unknown --half value must fail loudly
-// rather than silently falling through to "both", which would put a sibling
-// write back next to a merge driver's scratch file.
+// rather than silently falling through to a different half, which would write
+// the wrong rendering into the file the caller named.
 func TestTimeline_BadHalf_IsRejected(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		scaffoldDocs(t)

@@ -1,11 +1,10 @@
-// timeline_split_test.go — `logmind timeline --write` writes BOTH halves of
-// the SPEC §3.3 split, and the older half is a rendering rather than a place
-// entries are moved to.
+// timeline_split_test.go — the SPEC §3.3 split as a RENDERING, and the rule
+// that keeps it from writing files nobody asked for: one `--write`, one file.
 //
-// These drive the real command and assert on the two files it leaves on disk,
-// not on internal/timeline's return values: a test at that level would pass
-// its own mutation and still go green if the writer stopped writing the
-// archive, or started accumulating into it.
+// These drive the real command and assert on the files it leaves on disk, not
+// on internal/timeline's return values: a test at that level would pass its own
+// mutation and still go green if the writer started accumulating into the
+// archive, or wrote a second file beside the one it was given.
 package cli
 
 import (
@@ -35,16 +34,27 @@ func seedTimelineSources(t *testing.T, dir string, n int) {
 	mustWrite(t, filepath.Join(dir, "docs", "decisions-branches", "feat__many.md"), b.String())
 }
 
-func runTimelineWrite(t *testing.T, dir string) {
+// runTimelineArgs drives the real cobra command and fails the test on error.
+func runTimelineArgs(t *testing.T, args ...string) string {
 	t.Helper()
 	var out bytes.Buffer
 	root := NewRootCmd()
-	root.SetArgs([]string{"timeline", "--write", filepath.Join(dir, "docs", "timeline.md")})
+	root.SetArgs(append([]string{"timeline"}, args...))
 	root.SetOut(&out)
 	root.SetErr(&out)
 	if err := root.Execute(); err != nil {
-		t.Fatalf("timeline --write: %v\n%s", err, out.String())
+		t.Fatalf("timeline %v: %v\n%s", args, err, out.String())
 	}
+	return out.String()
+}
+
+// runTimelineWrite regenerates BOTH halves the way every real caller does it —
+// the hooks, the regen-timeline workflow and `logmind init` all name each file
+// they want written, because `--write` writes that file and no other.
+func runTimelineWrite(t *testing.T, dir string) {
+	t.Helper()
+	runTimelineArgs(t, "--write", filepath.Join(dir, "docs", "timeline.md"))
+	runTimelineArgs(t, "--write", filepath.Join(dir, "docs", "timeline-archive.md"), "--half", "archive")
 }
 
 func countEntries(t *testing.T, path string) int {
@@ -56,11 +66,9 @@ func countEntries(t *testing.T, path string) int {
 	return strings.Count(string(data), "<!-- logmind-entry-start: ")
 }
 
-// TestTimelineWrite_WritesBothHalves: one `--write` produces both files, cut
-// at timeline.RecentLimit. There is no flag to ask for one without the other,
-// which is what makes "both regenerate together" (§3.3) structural instead of
-// something every call site has to remember.
-func TestTimelineWrite_WritesBothHalves(t *testing.T) {
+// TestTimelineWrite_HalvesAreCutAtRecentLimit: naming both files renders the
+// §3.3 split, cut at timeline.RecentLimit, from one set of sources.
+func TestTimelineWrite_HalvesAreCutAtRecentLimit(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		total := timeline.RecentLimit + 7
 		seedTimelineSources(t, d, total)
@@ -74,6 +82,33 @@ func TestTimelineWrite_WritesBothHalves(t *testing.T) {
 		}
 		if got, want := countEntries(t, archivePath), total-timeline.RecentLimit; got != want {
 			t.Errorf("docs/timeline-archive.md holds %d entries; want %d", got, want)
+		}
+	})
+}
+
+// TestTimelineWrite_WritesOnlyTheFileItIsGiven is the rule BLOCK-1 turns on,
+// pinned at the level a human uses the command: `--write docs/timeline.md`
+// leaves docs/timeline-archive.md exactly as it found it — absent here, so its
+// mere existence is the failure.
+//
+// The old behaviour inferred the archive as a sibling of whatever path
+// `--write` named. That is the same code path git's merge driver runs with
+// `%A` (a scratch file at the WORKTREE ROOT), so every timeline merge dropped
+// a stray `timeline-archive.md` there — and where such a file was tracked, it
+// was silently replaced. Both symptoms are one bug: a write to a path no
+// caller named.
+func TestTimelineWrite_WritesOnlyTheFileItIsGiven(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		seedTimelineSources(t, d, timeline.RecentLimit+7)
+
+		out := runTimelineArgs(t, "--write", filepath.Join(d, "docs", "timeline.md"))
+
+		sibling := filepath.Join(d, "docs", "timeline-archive.md")
+		if pathExists(sibling) {
+			t.Errorf("--write docs/timeline.md also wrote %s, a file it was never given.\noutput:\n%s", sibling, out)
+		}
+		if strings.Contains(out, "timeline-archive.md") {
+			t.Errorf("--write docs/timeline.md reported touching the archive:\n%s", out)
 		}
 	})
 }
@@ -117,7 +152,7 @@ func TestTimelineWrite_ArchiveIsRenderedNotAccumulated(t *testing.T) {
 	})
 }
 
-// TestTimelineWrite_IsIdempotentOnDisk: a second `--write` over unchanged
+// TestTimelineWrite_IsIdempotentOnDisk: a second regeneration over unchanged
 // sources leaves both files byte-identical. §3.3 requires regeneration to do
 // nothing when the bytes already match — "without that, its own push starts
 // the next run and the loop never stops."
@@ -153,20 +188,23 @@ func TestTimelineWrite_IsIdempotentOnDisk(t *testing.T) {
 	})
 }
 
-// TestTimelineCheck_CatchesAStaleArchive: --check judges BOTH halves. An
-// archive that has drifted from what the sources render is stale, and a gate
-// that only compares the recent half would wave it through.
+// TestTimelineCheck_CatchesAStaleArchive: the archive has its own gate, run
+// the same way it is written — `--write <the archive> --half archive
+// --check`. A CI recipe that only checked docs/timeline.md would wave a
+// drifted archive through, so the archive's own invocation has to be able to
+// see it.
 func TestTimelineCheck_CatchesAStaleArchive(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		seedTimelineSources(t, d, timeline.RecentLimit+4)
 		runTimelineWrite(t, d)
 
+		archivePath := filepath.Join(d, "docs", "timeline-archive.md")
 		// Only the archive drifts; docs/timeline.md stays current.
-		mustWrite(t, filepath.Join(d, "docs", "timeline-archive.md"), "# stale\n")
+		mustWrite(t, archivePath, "# stale\n")
 
 		var out bytes.Buffer
 		root := NewRootCmd()
-		root.SetArgs([]string{"timeline", "--write", filepath.Join(d, "docs", "timeline.md"), "--check"})
+		root.SetArgs([]string{"timeline", "--write", archivePath, "--half", "archive", "--check"})
 		root.SetOut(&out)
 		root.SetErr(&out)
 		if err := root.Execute(); err == nil {
@@ -174,6 +212,36 @@ func TestTimelineCheck_CatchesAStaleArchive(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "timeline-archive.md is stale") {
 			t.Errorf("--check did not name the stale file; got:\n%s", out.String())
+		}
+		// The remediation has to be the command that FIXES this file. Advice
+		// that drops `--half archive` writes the RECENT timeline into the
+		// archive's path when run as printed.
+		if !strings.Contains(out.String(), "--half archive") {
+			t.Errorf("the stale-archive advice omits --half archive, so running it as printed writes the wrong half:\n%s", out.String())
+		}
+	})
+}
+
+// TestTimelineCheck_JudgesOnlyTheHalfItWasGiven is the symmetric half of the
+// rule: `--check` compares the file `--write` named against the rendering
+// `--half` selected, and nothing else. A check that also judged a sibling
+// would fail a repo for a file the caller never asked it to govern.
+func TestTimelineCheck_JudgesOnlyTheHalfItWasGiven(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		seedTimelineSources(t, d, timeline.RecentLimit+4)
+		runTimelineWrite(t, d)
+
+		// The archive drifts. docs/timeline.md's own gate must still pass:
+		// it is current, and the archive is not its business.
+		mustWrite(t, filepath.Join(d, "docs", "timeline-archive.md"), "# stale\n")
+
+		var out bytes.Buffer
+		root := NewRootCmd()
+		root.SetArgs([]string{"timeline", "--write", filepath.Join(d, "docs", "timeline.md"), "--check"})
+		root.SetOut(&out)
+		root.SetErr(&out)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("--check on a current docs/timeline.md failed over a sibling it does not govern: %v\n%s", err, out.String())
 		}
 	})
 }

@@ -197,7 +197,11 @@ func BuildPostMergeBody() string {
 		"    fi\n" +
 		"  fi\n" +
 		"  if [ -d docs ]; then\n" +
+		"    # Both halves of the SPEC 3.3 split, each named explicitly:\n" +
+		"    # --write writes the file it is given and NO other, so the pair is\n" +
+		"    # two invocations, not one that guesses a sibling path.\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
+		"    logmind timeline --write docs/timeline-archive.md --half archive >/dev/null 2>&1 || true\n" +
 		"    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n" +
 		"  fi\n" +
 		"fi\n"
@@ -243,7 +247,10 @@ func BuildPostRewriteBody() string {
 		"    exit 0\n" +
 		"  fi\n" +
 		"  if [ -n \"$current\" ] && [ -d docs ]; then\n" +
+		"    # Both halves of the SPEC 3.3 split, each named explicitly:\n" +
+		"    # --write writes the file it is given and NO other.\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
+		"    logmind timeline --write docs/timeline-archive.md --half archive >/dev/null 2>&1 || true\n" +
 		"    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n" +
 		"    for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do\n" +
 		"      git add \"$d\" 2>/dev/null || true\n" +

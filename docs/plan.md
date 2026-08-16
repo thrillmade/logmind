@@ -87,12 +87,13 @@ writes the decision, stages it plus its companion derived docs, and
 commits — one command, no separate `git add` / `git commit`. Branch-aware,
 with ONE path rule and no exception to it: an entry goes to
 `docs/decisions-branches/<sanitized-branch>.md` for the branch it was made
-on, and the default branch is a branch like any other (`main.md`). Nothing
-is ever appended to `docs/decisions.md` — where that file still exists it is
-a legacy source, read but never written. `resolveDecisionsPath` falls back to
-it in exactly three cases, all of them "there is no branch to route by":
-`decisions.branch_aware: false`, a non-git directory, and a detached or
-unborn HEAD.
+on, and the default branch is a branch like any other (`main.md`).
+`docs/decisions.md` is a legacy source: on the branch-aware path it is read
+and never written. It is not unwritable, and the exceptions are not a
+default-branch carve-out — `resolveDecisionsPath` falls back to it, creating
+and appending, in exactly three cases, all of them "there is no branch to
+route by": `decisions.branch_aware: false`, a non-git directory, and a
+detached or unborn HEAD.
 
 ### 2. The timeline — main-canonical, unconditionally
 
@@ -265,12 +266,19 @@ auto-fix in the `check-doc-links` workflow).
   main-canonical) design — less config surface, no risk of the two
   renderers drifting apart
 - **§3.3 also caps the rendered timeline at 50 entries**, with everything
-  older rendered to `docs/timeline-archive.md`. That file does not exist
-  in this repo yet. It is a split in a *rendering*, not a move: nothing
-  transfers between files, and both regenerate from the same sources every
-  time. It adds a **third** derived file that every restore path and
-  `check-derived-docs` must know about — both name only two today. Tracked
-  as part of [#265](https://github.com/thrillmade/logmind/issues/265).
+  older rendered to `docs/timeline-archive.md`. It is a split in a
+  *rendering*, not a move: nothing transfers between files, and both
+  regenerate from the same sources every time. It is a **third** derived
+  file, and `derivedDocPaths`, the pre-commit restore, `warp`,
+  `.gitattributes` (its own driver, `logmind-timeline-archive`) and
+  `regen-timeline.yml` all name it.
+- **`logmind timeline --write PATH` writes PATH and no other file.**
+  `--half recent|archive` picks which half of the split goes into it;
+  regenerating both means naming both, which is what the hooks and the
+  workflow do. A `--write` that also wrote an inferred sibling put an
+  untracked `timeline-archive.md` at the worktree root on every merge
+  (git hands a merge driver a scratch file there) and replaced the
+  contents of a tracked file of that name where one existed.
 
 ### Derived docs: regenerated at the integration point (v2.0.0) — unconditional
 

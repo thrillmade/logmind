@@ -284,6 +284,40 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 	}
 }
 
+// regenCommands is every command a regenerating hook body must run, one per
+// derived doc. The owner of "which docs are derived" is
+// internal/cli/derived.go's derivedDocPaths; this package cannot import it
+// (internal/cli imports internal/hooks), so the coupling is restated here and
+// nowhere else in this package.
+//
+// The archive's own line is the load-bearing one, and it is pinned HERE rather
+// than only in testdata/*.golden because a golden is regenerated from whatever
+// the body currently says: deleting the line and re-running `make snapshot`
+// leaves the whole suite green while docs/timeline-archive.md silently stops
+// being regenerated on the only branch that ever regenerates it.
+//
+// `logmind timeline --write` writes the ONE file it is given (see
+// internal/cli/timeline.go), so a body that names only docs/timeline.md
+// regenerates only docs/timeline.md. There is no invocation that writes both.
+var regenCommands = []string{
+	"logmind timeline --write docs/timeline.md",
+	"logmind timeline --write docs/timeline-archive.md --half archive",
+	"logmind file-structure --write docs/file-structure.md",
+}
+
+// TestPostRewriteBody_RegeneratesEveryDerivedDoc is the post-merge invariant's
+// twin: post-rewrite sweeps a rebase/amend, and it stages what it regenerates,
+// so a doc it never regenerates is one it stages stale.
+func TestPostRewriteBody_RegeneratesEveryDerivedDoc(t *testing.T) {
+	body := BuildPostRewriteBody()
+	for _, must := range regenCommands {
+		if !strings.Contains(body, must) {
+			t.Errorf("post-rewrite body missing regen %q — it `git add`s docs/timeline-archive.md "+
+				"either way, so a missing regen stages the STALE file", must)
+		}
+	}
+}
+
 // TestPostMergeBody_RollupInvariants pins the Slice 2 roll-up contract as
 // INTENT (distinct from the byte-golden): the post-merge hook MUST regenerate
 // the timeline + file-structure (so a main-canonical repo rebuilds its §1.6.4
@@ -295,10 +329,7 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 // substring-match that here.)
 func TestPostMergeBody_RollupInvariants(t *testing.T) {
 	body := BuildPostMergeBody()
-	for _, must := range []string{
-		"logmind timeline --write docs/timeline.md",
-		"logmind file-structure --write docs/file-structure.md",
-	} {
+	for _, must := range regenCommands {
 		if !strings.Contains(body, must) {
 			t.Errorf("post-merge body missing roll-up regen %q", must)
 		}
