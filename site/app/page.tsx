@@ -13,24 +13,46 @@ const PIP_LEGACY = "pip install 'logmind==0.6.16'";
 //
 // TO RELEASE v2.0.0: update these three lines (CURRENT_VERSION,
 // CURRENT_SPEC, CURRENT_RELEASE_DATE) — everything below derives from
-// them, and every "forthcoming" / "in design" caveat on the page clears
-// itself automatically once CURRENT_VERSION === NEXT_VERSION. No other
-// edit is required — UNLESS internal/version/version.go's own `Areas`
-// string has changed since AREAS below was last copied. AREAS is not
-// part of the three-line flip: it mirrors what the binary claims under
-// SPEC §7.3, which is orthogonal to the version number, so it only needs
-// touching when the binary's declared areas change, not at every release.
+// them. The hero badge's "vX design in progress" caveat clears itself
+// automatically once CURRENT_VERSION === NEXT_VERSION: NEXT_VERSION only
+// ever names "whatever comes after CURRENT_VERSION", so that comparison
+// is the right one for it.
+//
+// Every feature-specific caveat is different: it clears when
+// CURRENT_VERSION reaches the release that ACTUALLY introduced that
+// feature, which is a fixed fact about the past, not "whatever
+// NEXT_VERSION currently says". IS_NEXT_RELEASED (CURRENT_VERSION ===
+// NEXT_VERSION) is wrong for these — it goes false again the moment the
+// next dev cycle opens and NEXT_VERSION moves on, even though the
+// feature that shipped at the earlier release is still shipped. AREAS_SINCE
+// (the areas line) and ENFORCEMENT_SINCE (the commit-guard hooks) are
+// both this shape: each is gated on "CURRENT_VERSION >= <ITS_OWN>_SINCE"
+// via compareVersions, and the version NAMED in that section's prose is
+// the same `*_SINCE` constant too — never NEXT_VERSION, which would name
+// the wrong release the moment it moves past the one that actually
+// shipped the feature. `*_SINCE` constants only need touching if the
+// release that introduced their feature is ever revised (it should not
+// be, once true) — not at every version bump, and not in sync with
+// NEXT_VERSION.
+//
+// No other edit is required at release time — UNLESS
+// internal/version/version.go's own `Areas` string has changed since
+// AREAS below was last copied. AREAS is not part of the three-line flip:
+// it mirrors what the binary claims under SPEC §7.3, which is orthogonal
+// to the version number, so it only needs touching when the binary's
+// declared areas change, not at every release.
 //
 // CURRENT_* is what `brew install thrillmade/tap/logmind` / curl / the
 // skill installs *today*. Verified against `gh release list --repo
 // thrillmade/logmind` (latest tag) and the installed binary's own
 // `logmind --version` output — re-verify both at every release.
 //
-// NEXT_VERSION names the release the "enforced" section and the hero
-// badge describe ahead of time (commit-guard hooks, zero-conflict
-// derived docs). The site can't import internal/version/version.go (Go
-// vs TS), so this block is a hand-maintained mirror of it — keep them in
-// sync at tag time.
+// NEXT_VERSION names the release the hero badge and the install
+// footnote describe ahead of time, generically — "there's a next
+// release and it isn't out yet" — never a specific feature's own
+// availability; see the `*_SINCE` constants above for those. The site
+// can't import internal/version/version.go (Go vs TS), so this block is
+// a hand-maintained mirror of it — keep them in sync at tag time.
 // ---------------------------------------------------------------------------
 // Typed `string` (not narrowed to a literal) so the equality check below
 // type-checks at every point in the release cycle, including the moment
@@ -43,13 +65,52 @@ const NEXT_VERSION: string = "2.0.0";
 const IS_NEXT_RELEASED = CURRENT_VERSION === NEXT_VERSION;
 // SPEC §7.3's second `--version` line — mirrored byte-for-byte from
 // internal/version/version.go's `Areas` (comma-and-space-joined, fixed
-// vocabulary order). The released 1.2.0 binary predates this line — it
-// shipped after 1.2.0, ahead of internal/version/version.go's own
-// CURRENT_VERSION bump — so it's gated on IS_NEXT_RELEASED rather than
-// shown unconditionally; hardcoding it in today's one-line output would
-// claim something the installed binary doesn't print.
+// vocabulary order). AREAS_SINCE names the release whose binary first
+// prints this line (it landed alongside the v2.0.0 cut). Gated on
+// "CURRENT_VERSION >= AREAS_SINCE", NOT on IS_NEXT_RELEASED
+// (CURRENT_VERSION === NEXT_VERSION): those two questions only coincide
+// while NEXT_VERSION happens to equal AREAS_SINCE, today. The moment the
+// v2.0.0 tag lands and the next dev cycle opens NEXT_VERSION on to
+// "2.1.0", IS_NEXT_RELEASED goes permanently false even though the
+// *released* 2.0.0 binary keeps printing the areas line — using it here
+// would silently drop the line from the site the day after the release
+// it was added to celebrate. compareVersions compares numerically, not
+// as strings: "2.10.0" < "2.9.0" lexically, and that is a real future
+// version number.
+const AREAS_SINCE = "2.0.0";
 const AREAS = "orient, work, record, propagate, gates";
-const VERIFY_OUTPUT = IS_NEXT_RELEASED
+
+// The "enforced" section's two-layer commit guard (commit-msg hook +
+// Claude Code PreToolUse hook) shipped in v2.0.0 — see
+// internal/version/version.go's SameMajor doc comment: "the enforcement
+// gate itself arrived in 2.0.0". Same shape as AREAS_SINCE above, and
+// for the same reason: the guard is a fact about the release that
+// introduced it, not about whatever NEXT_VERSION currently is. Both the
+// "enforced" section's caveat AND the version it names in its own prose
+// (v{ENFORCEMENT_SINCE}, not v{NEXT_VERSION}) key off this constant —
+// naming NEXT_VERSION there would claim the wrong release added the
+// guard the moment NEXT_VERSION moves past v2.0.0.
+const ENFORCEMENT_SINCE = "2.0.0";
+
+// compareVersions compares two plain "major.minor.patch" version strings
+// numerically. CURRENT_VERSION / NEXT_VERSION / AREAS_SINCE /
+// ENFORCEMENT_SINCE on this page are always plain release numbers — no
+// "-dev"/prerelease suffix; that only exists on the Go binary's own
+// unreleased builds — so a bare split-on-"." + Number compare is
+// sufficient here.
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+const SHOWS_AREAS_LINE = compareVersions(CURRENT_VERSION, AREAS_SINCE) >= 0;
+const SHOWS_ENFORCEMENT_AVAILABLE = compareVersions(CURRENT_VERSION, ENFORCEMENT_SINCE) >= 0;
+const VERIFY_OUTPUT = SHOWS_AREAS_LINE
   ? `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})\nareas: ${AREAS}`
   : `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})`;
 
@@ -321,17 +382,17 @@ export default function Home() {
               enforced<span className="text-accent">.</span>
             </h2>
             <p className="text-[15px] mt-4 text-foreground/70 leading-relaxed max-w-xs">
-              A convention only holds if the tooling holds the door. v{NEXT_VERSION}{" "}
+              A convention only holds if the tooling holds the door. v{ENFORCEMENT_SINCE}{" "}
               adds a guard in front of every substantive commit
-              {!IS_NEXT_RELEASED && " — in design, not yet released"}.
+              {!SHOWS_ENFORCEMENT_AVAILABLE && " — in design, not yet released"}.
             </p>
           </div>
           <div className="sm:col-span-8">
             <p className="text-[15px] leading-[1.65] text-foreground/85 mb-6">
-              {!IS_NEXT_RELEASED && (
+              {!SHOWS_ENFORCEMENT_AVAILABLE && (
                 <>
                   <strong className="text-accent">Not yet released</strong> —
-                  ships with v{NEXT_VERSION}.{" "}
+                  ships with v{ENFORCEMENT_SINCE}.{" "}
                 </>
               )}
               A <code className="font-mono text-foreground text-[0.85em]">commit-msg</code> hook and a Claude
