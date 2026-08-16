@@ -144,3 +144,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 01:21 - timeline: render the cap from the constant, so the file cannot assert a number the code disagrees with
+
+**Reasoning:** The header this change added wrote the cap into the prose of every generated file as a literal, beside a constant whose own comment claimed the renderer was its only consumer. Changing the constant to three left the whole package green while every timeline in the fleet would have gone on asserting fifty. That is the same two-owners-of-one-fact failure the workflow fingerprints exist to catch, in a file the tool generates rather than one a person maintains.
+
+**Alternatives considered:** Add a test asserting the header says fifty. Rejected: that is a third copy of the number, and it would go stale in the same motion as the second. The prose renders from the constant, and the test compares the rendered header against it rather than against a literal, so there is nothing left to disagree.
+
+**Implications:**
+- Verified by the mutation that previously survived: setting the constant to three now compiles and turns the package red, and restoring it returns to green. The restatements in documentation a person maintains were judged individually rather than templated, because prose written for a reader is not output the tool generates and mechanically deriving it would trade one staleness for a worse one.
+
+---
+

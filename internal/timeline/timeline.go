@@ -10,6 +10,8 @@
 // prefaces + their empty-body sentinels) that renderCanonical consumes.
 package timeline
 
+import "strconv"
+
 // RecentLimit is the SPEC §3.3 bound: docs/timeline.md carries this many
 // entries, newest first, and everything older renders to
 // docs/timeline-archive.md.
@@ -17,16 +19,24 @@ package timeline
 // It is a RENDERING parameter, not a capacity. Both files are produced from
 // one read of the branch files on every regeneration (Generate), so moving
 // this number changes only where the two renderings are cut — no entry is
-// transferred, consumed, or handed over, and nothing has to be migrated. See
-// generateAt, which is this constant's only consumer.
+// transferred, consumed, or handed over, and nothing has to be migrated.
+// generateAt is its production consumer; header and archiveHeader below are
+// its OTHER consumers — the prose they write into every generated file
+// quotes recentLimitStr (derived from this constant below), not a restated
+// literal, so the two can never disagree.
 const RecentLimit = 50
+
+// recentLimitStr is RecentLimit rendered once, so header and archiveHeader
+// both quote the SAME derivation rather than each formatting their own.
+var recentLimitStr = strconv.Itoa(RecentLimit)
 
 // header is the canonical preface for docs/timeline.md.
 //
-// Pulled out as a const so every render path shares one exact preamble.
-// The trailing "---" + newline is included; renderCanonical then appends
-// one blank line before the first month header.
-const header = `# Decision Timeline
+// Pulled out as a package var (not a const — it interpolates recentLimitStr)
+// so every render path shares one exact preamble. The trailing "---" +
+// newline is included; renderCanonical then appends one blank line before
+// the first month header.
+var header = `# Decision Timeline
 
 **Auto-generated** — do not edit by hand. This is the high-level
 timeline across all decisions in this repo, drawn from the per-branch
@@ -34,7 +44,7 @@ logs in ` + "`docs/decisions-branches/`" + `. The granular detail
 (reasoning, alternatives, implications) lives in the source file linked
 on each row — agents should dig in there as needed.
 
-This file carries the 50 most recent entries; the history continues in
+This file carries the ` + recentLimitStr + ` most recent entries; the history continues in
 [docs/timeline-archive.md](timeline-archive.md), same format, same
 rules. Both are rendered from the same sources on every regeneration —
 nothing is moved between them.
@@ -48,10 +58,10 @@ PR's CI run, so this file is always coherent with current ` + "`main`" + `.
 // archiveHeader is the canonical preface for docs/timeline-archive.md — the
 // continuation of docs/timeline.md, in the same format under the same rules
 // (§3.3), so a reader who reaches the end of one carries straight on here.
-const archiveHeader = `# Decision Timeline — Archive
+var archiveHeader = `# Decision Timeline — Archive
 
 **Auto-generated** — do not edit by hand. This continues
-[docs/timeline.md](timeline.md), which carries the 50 most recent
+[docs/timeline.md](timeline.md), which carries the ` + recentLimitStr + ` most recent
 entries; everything older is here, in the same format under the same
 rules.
 

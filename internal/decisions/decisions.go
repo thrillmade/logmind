@@ -39,7 +39,7 @@ type Entry struct {
 
 // NonBranchSource names a decision file that the SPEC §3.2 branch-file layout
 // does not name after a branch. File is relative to docsPath; Label is the
-// §3.2 source grammar token ("main" | "archive") a reader tags its entries
+// §3.2 source grammar token ("legacy" | "archive") a reader tags its entries
 // with.
 type NonBranchSource struct {
 	File  string
@@ -57,15 +57,20 @@ type NonBranchSource struct {
 // that had rotated under the old `max_recent: 20` default silently lost every
 // archived decision from `search`, `show --all`, and the timeline.
 //
-//   - decisions.md — the pre-§3.2 main log. Still WRITTEN, but only where no
-//     branch NAME exists to name a file after: a non-git directory, a
-//     detached HEAD, or decisions.branch_aware explicitly off
-//     (resolveDecisionsPath in internal/cli/log.go routes those three here,
-//     and owns the rule). An unborn repo is NOT among them — symbolic-ref
-//     resolves HEAD's ref before the first commit, so a fresh `git init`
-//     routes to main.md. It is no longer where a decision made ON the
-//     default branch goes — that is docs/decisions-branches/main.md like any
-//     other branch.
+//   - decisions.md — the pre-§3.2 main log, labeled "legacy" (round-10 fix:
+//     was "main" until §3.2 collapsed the layout and made main a branch like
+//     any other — a real decision made on the main branch now labels as
+//     "branch:main", so the bare token needed to stop meaning two different
+//     things depending on when you read it. "legacy" is also what
+//     showBannerTitle already called this file's raw-stream banner). Still
+//     WRITTEN, but only where no branch NAME exists to name a file after: a
+//     non-git directory, a detached HEAD, or decisions.branch_aware
+//     explicitly off (resolveDecisionsPath in internal/cli/log.go routes
+//     those three here, and owns the rule). An unborn repo is NOT among
+//     them — symbolic-ref resolves HEAD's ref before the first commit, so a
+//     fresh `git init` routes to main.md. It is no longer where a decision
+//     made ON the default branch goes — that is
+//     docs/decisions-branches/main.md like any other branch.
 //   - decisions-archive.md — the pre-§3.2 rotation overflow, written by the
 //     retired `max_recent` cap. NOTHING writes it now, in any state. It is
 //     read-only legacy: a repo that rotated before upgrading keeps every
@@ -76,7 +81,7 @@ type NonBranchSource struct {
 // Order is the read order callers append in, so output stays deterministic.
 func NonBranchSources() []NonBranchSource {
 	return []NonBranchSource{
-		{File: "decisions.md", Label: "main"},
+		{File: "decisions.md", Label: "legacy"},
 		{File: "decisions-archive.md", Label: "archive"},
 	}
 }
@@ -87,7 +92,7 @@ func NonBranchSources() []NonBranchSource {
 //   - Path is absolute (join of docsPath and Rel), the value a reader opens.
 //   - Rel is the docs-relative, forward-slash path readers quote in output
 //     ("decisions.md", "decisions-branches/feat__x.md").
-//   - Label is the SPEC §3.2 source-grammar token for the file: "main" or
+//   - Label is the SPEC §3.2 source-grammar token for the file: "legacy" or
 //     "archive" for a non-branch source, the un-sanitized branch name for a
 //     branch file. `show` prefixes branch labels with "branch:" for its own
 //     NORMATIVE --json grammar; the raw name is kept here so every caller can
@@ -325,7 +330,7 @@ func BranchLabelFromFilename(name string) string {
 //
 // Sources walked (Collect itself never writes):
 //
-//	docs/decisions.md                    → source_label="main"
+//	docs/decisions.md                    → source_label="legacy"
 //	docs/decisions-archive.md            → source_label="archive"
 //	docs/decisions-branches/<branch>.md  → source_label="<branch>"
 //

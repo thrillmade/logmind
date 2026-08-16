@@ -18,10 +18,20 @@ import (
 var derivedDocPaths = []string{"docs/timeline.md", "docs/timeline-archive.md", "docs/file-structure.md"}
 
 // onNonDefaultBranch reports whether cwd is a git repo currently on a branch
-// other than the default branch. Best-effort: false on a non-repo, detached
-// HEAD, unborn branch, or unknown default — the conservative answer, since every
-// caller uses `true` to ENABLE the extra invariant guard and `false` preserves
-// pre-v2.0.0 behavior.
+// other than the default branch. Best-effort: false on a non-repo, a
+// detached HEAD (CurrentBranch == ""), an unresolved default (DefaultBranch
+// == ""), or simply because the current branch already IS the default — the
+// conservative answer in each case, since every caller uses `true` to ENABLE
+// the extra invariant guard and `false` preserves pre-v2.0.0 behavior.
+//
+// An unborn repo is NOT its own case, despite reading like one at a glance:
+// CurrentBranch resolves HEAD's ref before the first commit (see
+// decisions.NonBranchSources), so `git init -b main` returns false only
+// because cur == def (both "main"), and `git init -b feature` returns true —
+// exactly as either would after a commit. Round 9 removed this same false
+// "no branch name" premise from decisions.go, AGENTS.md.template and
+// docs/plan.md; this comment was the ninth copy round 10's panel found still
+// standing.
 func onNonDefaultBranch(cwd string) bool {
 	if !gitcli.IsRepo(cwd) {
 		return false

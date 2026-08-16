@@ -17,7 +17,7 @@
 //   - docs/ missing → friendly error + ErrSilent
 //   - --brief: title + timestamp only, grouped by "[source]" tag under --all
 //   - --json: SPEC section sec-3-2's NORMATIVE schema — exact key set, exact
-//     source grammar (main / archive / branch:<name>), machine-clean stdout
+//     source grammar (legacy / archive / branch:<name>), machine-clean stdout
 //   - --brief --json: full schema keys always present, body fields zeroed
 package cli
 
@@ -343,8 +343,8 @@ func TestShow_Brief_TitleAndTimestampOnly(t *testing.T) {
 }
 
 // TestShow_Brief_All_GroupsBySource: under --all, --brief groups lines under
-// a "[source]" tag per source, in main → branch → archive order, and the tag
-// text matches the --json "source" value exactly.
+// a "[source]" tag per source, in legacy → branch → archive order, and the
+// tag text matches the --json "source" value exactly.
 //
 // The full three-way ordering is asserted, restoring the `branchIdx <
 // archiveIdx` half the collapse PR dropped: the source ORDER is the contract
@@ -363,19 +363,19 @@ func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 			"## 2025-01-01 09:00 - Archived decision\n")
 
 		body := runShowCmd(t, "--brief", "--all")
-		mustContain(t, body, "[main]")
+		mustContain(t, body, "[legacy]")
 		mustContain(t, body, "[branch:feat/other]")
 		mustContain(t, body, "[archive]")
 		mustContain(t, body, "2026-06-01 10:00 - Main decision")
 		mustContain(t, body, "2026-06-02 11:00 - Branch decision")
 		mustContain(t, body, "2025-01-01 09:00 - Archived decision")
 
-		mainIdx := strings.Index(body, "[main]")
+		legacyIdx := strings.Index(body, "[legacy]")
 		branchIdx := strings.Index(body, "[branch:feat/other]")
 		archiveIdx := strings.Index(body, "[archive]")
-		if !(mainIdx >= 0 && mainIdx < branchIdx && branchIdx < archiveIdx) {
-			t.Errorf("want [main] < [branch:feat/other] < [archive] ordering, got indices %d, %d, %d:\n%s",
-				mainIdx, branchIdx, archiveIdx, body)
+		if !(legacyIdx >= 0 && legacyIdx < branchIdx && branchIdx < archiveIdx) {
+			t.Errorf("want [legacy] < [branch:feat/other] < [archive] ordering, got indices %d, %d, %d:\n%s",
+				legacyIdx, branchIdx, archiveIdx, body)
 		}
 	})
 }
@@ -467,8 +467,8 @@ func TestShow_JSON_SchemaKeysAndValues(t *testing.T) {
 		if first["reasoning"] != "Because reasons" {
 			t.Errorf("reasoning = %v, want %q", first["reasoning"], "Because reasons")
 		}
-		if first["source"] != "main" {
-			t.Errorf("source = %v, want %q", first["source"], "main")
+		if first["source"] != "legacy" {
+			t.Errorf("source = %v, want %q", first["source"], "legacy")
 		}
 		if alts, ok := first["alternatives"].([]any); !ok || len(alts) != 2 || alts[0] != "Option A" || alts[1] != "Option B" {
 			t.Errorf("alternatives = %v, want [Option A, Option B]", first["alternatives"])
@@ -513,9 +513,16 @@ func TestShow_JSON_MachineCleanOutput(t *testing.T) {
 
 // TestShow_JSON_All_SourceValues: under --all --json, every decision's
 // "source" value matches the SPEC section sec-3-2 grammar exactly:
-// "main" | "archive" | "branch:<name>". A legacy docs/decisions-archive.md
+// "legacy" | "archive" | "branch:<name>". A legacy docs/decisions-archive.md
 // still produces "archive" — §3.2 stopped WRITING that file, it did not make
 // the decisions in it stop counting.
+//
+// "legacy", not "main": round-10 fix. §3.2 collapsed the layout so the
+// default branch's decisions land in docs/decisions-branches/main.md like
+// any other branch (source "branch:main") — "main" the bare token would now
+// silently mean two different things depending on when a consumer last read
+// this schema, so the pre-§3.2 docs/decisions.md file was renamed to the
+// unambiguous "legacy" instead.
 func TestShow_JSON_All_SourceValues(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
@@ -538,15 +545,64 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 		for _, e := range doc.Decisions {
 			got[e["source"].(string)] = true
 		}
-		for _, want := range []string{"main", "archive", "branch:feat/widget"} {
+		for _, want := range []string{"legacy", "archive", "branch:feat/widget"} {
 			if !got[want] {
 				t.Errorf("missing source %q; got sources %v", want, got)
 			}
 		}
 		for src := range got {
-			if src != "main" && src != "archive" && !strings.HasPrefix(src, "branch:") {
+			if src != "legacy" && src != "archive" && !strings.HasPrefix(src, "branch:") {
 				t.Errorf("source %q is outside the NORMATIVE grammar; got %v", src, got)
 			}
+		}
+	})
+}
+
+// TestShow_JSON_All_LegacyFileAndMainBranchAreDistinctSources pins the
+// round-10 LOW finding directly: a repo that upgraded across §3.2 commonly
+// has BOTH a leftover pre-upgrade docs/decisions.md AND a real
+// docs/decisions-branches/main.md on disk at once (a decision logged on
+// main after the upgrade). These are two different things and MUST tag
+// distinctly — "legacy" for the old file, "branch:main" for the branch
+// file — never both collapsing onto a bare "main" token, which used to mean
+// "made on the current default branch" pre-#301 and would otherwise now
+// silently mean "the pre-upgrade file" instead, changing the NORMATIVE
+// schema's meaning under an unchanged key.
+//
+// The prior test (TestShow_JSON_All_SourceValues) never exercises this: its
+// fixture has no git repo, so docs/decisions.md IS the base file
+// (isBranchFile=false) and extraSources never visits it as an extra source
+// at all — the ListSources("legacy") path this test targets goes
+// unexercised there. This test runs `show` in a REAL git repo on a REAL
+// `main` branch specifically so the legacy file is read as a genuine EXTRA
+// source alongside the branch file.
+func TestShow_JSON_All_LegacyFileAndMainBranchAreDistinctSources(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		withFakeTTY(t, false, func() { logOnce(t, "Decision made on main post-upgrade") })
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"# Decisions\n\n## 2024-01-01 08:00 - Pre-upgrade legacy decision\n\n**Reasoning:** old\n\n---\n")
+
+		body := runShowCmd(t, "--all", "--json")
+		var doc struct {
+			Decisions []map[string]any `json:"decisions"`
+		}
+		if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("--all --json output did not parse: %v\n%s", err, body)
+		}
+		bySource := map[string]string{}
+		for _, e := range doc.Decisions {
+			bySource[e["source"].(string)] = e["title"].(string)
+		}
+		if got, want := bySource["branch:main"], "Decision made on main post-upgrade"; got != want {
+			t.Errorf(`source "branch:main" title = %q, want %q (sources: %v)`, got, want, bySource)
+		}
+		if got, want := bySource["legacy"], "Pre-upgrade legacy decision"; got != want {
+			t.Errorf(`source "legacy" title = %q, want %q (sources: %v)`, got, want, bySource)
+		}
+		if title, present := bySource["main"]; present {
+			t.Errorf(`bare "main" source must not appear — ambiguous between the legacy file and the main branch; got title %q under it (sources: %v)`, title, bySource)
 		}
 	})
 }

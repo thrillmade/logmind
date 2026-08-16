@@ -25,10 +25,10 @@
 //     non-branch banners.
 //   - --brief: title + timestamp only, one line per decision. Under --all,
 //     lines are grouped under a "[source]" tag matching the --json source
-//     value exactly (main / archive / branch:<name>).
+//     value exactly (legacy / archive / branch:<name>).
 //   - --json: the SPEC §3.2 NORMATIVE schema —
 //     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
-//     "implications":[],"source":"main|archive|branch:<name>"}]}. Stdout
+//     "implications":[],"source":"legacy|archive|branch:<name>"}]}. Stdout
 //     carries ONLY the JSON document — no chatter, no ok trailer, regardless
 //     of --quiet, so it is always pipeable into `jq` unmodified.
 //   - --brief --json: the schema's keys never change (NORMATIVE — same key
@@ -91,7 +91,7 @@ lines are grouped by source).
 Pass --json for structured output matching PROTOCOL SPEC section sec-3-2's
 NORMATIVE schema:
     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
-    "implications":[],"source":"main|archive|branch:<name>"}]}
+    "implications":[],"source":"legacy|archive|branch:<name>"}]}
 --json is machine-clean: stdout carries ONLY the JSON document, safe to pipe
 into jq unmodified, regardless of --quiet.
 
@@ -125,7 +125,7 @@ Examples:
 }
 
 // showSource pairs a decisions file path with its NORMATIVE `source` label
-// (SPEC section sec-3-2's grammar: "main" | "archive" | "branch:<name>").
+// (SPEC section sec-3-2's grammar: "legacy" | "archive" | "branch:<name>").
 type showSource struct {
 	path  string
 	label string
@@ -153,7 +153,7 @@ type showSource struct {
 // Branch files come first so the raw stream, --brief and --json all visit
 // sources in one order: base → other branches → legacy non-branch files.
 // Both non-branch labels are already in the SPEC section sec-3-2 source
-// grammar ("main" | "archive" | "branch:<name>"), so surfacing them needs no
+// grammar ("legacy" | "archive" | "branch:<name>"), so surfacing them needs no
 // schema change.
 func extraSources(docsPath, excludePath string, all bool) ([]showSource, error) {
 	srcs, err := decisions.ListSources(docsPath)
@@ -179,7 +179,7 @@ func extraSources(docsPath, excludePath string, all bool) ([]showSource, error) 
 }
 
 // showBannerTitle maps a showSource label (the SPEC section sec-3-2 source
-// grammar: "main" | "archive" | "branch:<name>") to the banner heading the
+// grammar: "legacy" | "archive" | "branch:<name>") to the banner heading the
 // raw `--all` stream prints above that source's verbatim body.
 //
 // "archive" keeps the historical ARCHIVED DECISIONS wording so a reader who
@@ -190,7 +190,7 @@ func showBannerTitle(label string) string {
 		return "BRANCH DECISIONS: " + strings.TrimPrefix(label, "branch:")
 	case label == "archive":
 		return "ARCHIVED DECISIONS"
-	case label == "main":
+	case label == "legacy":
 		return "LEGACY MAIN LOG"
 	default:
 		return strings.ToUpper(label)
@@ -355,7 +355,7 @@ func parseDecisionBody(raw string) (reasoning string, alternatives, implications
 // writeBriefEntries prints entries in "--brief" text form: one
 // "TIMESTAMP - TITLE" line per decision. When more than the base source is in
 // play (`grouped`), each new source starts a "[source]" tag line matching the
-// --json source value exactly (main / archive / branch:<name>), so brief
+// --json source value exactly (legacy / archive / branch:<name>), so brief
 // text output and --json output agree on source identity.
 func writeBriefEntries(stdout io.Writer, entries []showJSONEntry, grouped bool) {
 	if len(entries) == 0 {
@@ -390,7 +390,7 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
 	rel := relForOk(cwd, target)
 
-	baseLabel := "main"
+	baseLabel := "legacy"
 	if isBranchFile {
 		branch := gitcli.CurrentBranch(cwd)
 		if branch == "" {

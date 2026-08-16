@@ -117,8 +117,8 @@ func TestCollectAllSources(t *testing.T) {
 	if entries[0].SourcePath != "decisions-branches/feat__alpha.md" {
 		t.Errorf("entries[0].SourcePath = %q", entries[0].SourcePath)
 	}
-	if entries[1].SourceLabel != "main" {
-		t.Errorf("entries[1].SourceLabel = %q; want main", entries[1].SourceLabel)
+	if entries[1].SourceLabel != "legacy" {
+		t.Errorf("entries[1].SourceLabel = %q; want legacy", entries[1].SourceLabel)
 	}
 	if entries[2].SourceLabel != "archive" {
 		t.Errorf("entries[2].SourceLabel = %q; want archive", entries[2].SourceLabel)
