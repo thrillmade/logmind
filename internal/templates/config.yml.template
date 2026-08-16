@@ -29,7 +29,7 @@ decisions:
   # Route each branch's decisions to docs/decisions-branches/<branch>.md —
   # the default branch included, it is a branch like any other. Every file is
   # append-only and uncapped; what is bounded is the VIEW (docs/timeline.md
-  # carries the 50 most recent entries, docs/timeline-archive.md the rest).
+  # carries the __LOGMIND_RECENT_LIMIT__ most recent entries, docs/timeline-archive.md the rest).
   # Set to false to log every branch into the same file (legacy behavior).
   branch_aware: true
 

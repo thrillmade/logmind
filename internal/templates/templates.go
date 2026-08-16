@@ -122,8 +122,11 @@ func readEmbed(name string) string {
 }
 
 // ConfigTemplate returns the bundled .logmind/config.yml seed content
-// emitted by `logmind init`. Byte-identical to
-// src/logmind/templates/config.yml.template.
+// emitted by `logmind init`. Carries one placeholder,
+// __LOGMIND_RECENT_LIMIT__ (the SPEC §3.3 bound the prose in the
+// `decisions:` block restates), which init.go substitutes with
+// strconv.Itoa(timeline.RecentLimit) before writing — otherwise
+// byte-identical to src/logmind/templates/config.yml.template.
 func ConfigTemplate() string {
 	return readEmbed("config.yml.template")
 }

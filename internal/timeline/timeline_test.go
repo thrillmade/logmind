@@ -56,16 +56,30 @@ func TestHeaderProse_AgreesWithRecentLimit(t *testing.T) {
 	}
 }
 
-// TestHandDocs_StateRecentLimit cross-checks the OTHER two restatements of
-// the SPEC §3.3 bound that live in this repo's own hand-maintained
-// documentation (not shipped, byte-frozen templates — see the round-10 fix
-// report for why AGENTS.md.template / logmind-section.md / config.yml.template
-// were deliberately left alone): docs/plan.md (architecture narrative) and
-// docs/ai-agent-files.md (context-file reference). Both are plain repo docs
-// this codebase fully owns, so a cheap substring check against RecentLimit
-// is worth its cost — it fails loudly the next time RecentLimit moves and
-// these sentences are not updated alongside it, rather than leaving a
-// slow-drifting false claim for a reader to find.
+// TestHandDocs_StateRecentLimit cross-checks the restatements of the SPEC
+// §3.3 bound that live in this repo's own hand-maintained documentation:
+// docs/plan.md (architecture narrative) and docs/ai-agent-files.md
+// (context-file reference). Both are plain repo docs this codebase fully
+// owns, so a cheap substring check against RecentLimit is worth its cost —
+// it fails loudly the next time RecentLimit moves and these sentences are
+// not updated alongside it, rather than leaving a slow-drifting false claim
+// for a reader to find.
+//
+// Round 10 also left the shipped, byte-frozen templates unguarded on the
+// premise that their restatements were "prose written for a reader, not
+// output the tool generates." Round 11 found that false for three of
+// them: config.yml.template, check-doc-links.yml.template and
+// regen-timeline.yml.template all land verbatim (or near enough) in every
+// `logmind init`-scaffolded repo, so a hand-typed "50" there is exactly as
+// live as one in docs/plan.md. config.yml.template now derives the number
+// (see templates.ConfigTemplate / internal/cli/init.go's
+// __LOGMIND_RECENT_LIMIT__ substitution — a one-time seed, never
+// refreshed, so substituting costs nothing downstream). The two workflow
+// templates carry theirs inside a frozen historical-changelog paragraph
+// under active `# logmind-template-version:` marker discipline; see
+// TestEmbeddedTemplates_StateRecentLimit in internal/templates for why
+// those two (plus AGENTS.md.template and logmind-section.md) got a
+// cross-check test instead of a marker bump.
 func TestHandDocs_StateRecentLimit(t *testing.T) {
 	checks := []struct {
 		file string

@@ -16,7 +16,8 @@
 //   - --quiet collapses stdout to exactly one `ok k=v` line
 //   - docs/ missing → friendly error + ErrSilent
 //   - --brief: title + timestamp only, grouped by "[source]" tag under --all
-//   - --json: SPEC section sec-3-2's NORMATIVE schema — exact key set, exact
+//   - --json: logmind's own schema (not a PROTOCOL SPEC schema — the SPEC
+//     defines no --json output for any command) — exact key set, exact
 //     source grammar (legacy / archive / branch:<name>), machine-clean stdout
 //   - --brief --json: full schema keys always present, body fields zeroed
 package cli
@@ -417,9 +418,11 @@ func TestShow_All_DanglingSymlinkFailsLoud(t *testing.T) {
 	})
 }
 
-// TestShow_JSON_SchemaKeysAndValues pins SPEC section sec-3-2's NORMATIVE
-// --json schema for a 2-decision fixture: exact key set (no more, no fewer —
-// a future rename/add/drop of a key breaks this test) and correct values,
+// TestShow_JSON_SchemaKeysAndValues pins logmind's own --json schema (not a
+// PROTOCOL SPEC schema — the SPEC defines no --json output for any command;
+// this test IS the schema's authority) for a 2-decision fixture: exact key
+// set (no more, no fewer — a future rename/add/drop of a key breaks this
+// test) and correct values,
 // including the alternatives/implications arrays parsed out of the
 // **Alternatives considered:**/**Implications:** markdown sections.
 func TestShow_JSON_SchemaKeysAndValues(t *testing.T) {
@@ -448,11 +451,11 @@ func TestShow_JSON_SchemaKeysAndValues(t *testing.T) {
 		wantKeys := []string{"title", "timestamp", "reasoning", "alternatives", "implications", "source"}
 		for _, entry := range doc.Decisions {
 			if len(entry) != len(wantKeys) {
-				t.Errorf("entry has %d keys, want %d (NORMATIVE schema): %v", len(entry), len(wantKeys), entry)
+				t.Errorf("entry has %d keys, want %d (logmind's own --json schema): %v", len(entry), len(wantKeys), entry)
 			}
 			for _, k := range wantKeys {
 				if _, ok := entry[k]; !ok {
-					t.Errorf("entry missing NORMATIVE key %q: %v", k, entry)
+					t.Errorf("entry missing schema key %q: %v", k, entry)
 				}
 			}
 		}
@@ -512,7 +515,8 @@ func TestShow_JSON_MachineCleanOutput(t *testing.T) {
 }
 
 // TestShow_JSON_All_SourceValues: under --all --json, every decision's
-// "source" value matches the SPEC section sec-3-2 grammar exactly:
+// "source" value matches logmind's own grammar exactly (not a PROTOCOL SPEC
+// grammar — see showSource in show.go):
 // "legacy" | "archive" | "branch:<name>". A legacy docs/decisions-archive.md
 // still produces "archive" — §3.2 stopped WRITING that file, it did not make
 // the decisions in it stop counting.
@@ -552,7 +556,7 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 		}
 		for src := range got {
 			if src != "legacy" && src != "archive" && !strings.HasPrefix(src, "branch:") {
-				t.Errorf("source %q is outside the NORMATIVE grammar; got %v", src, got)
+				t.Errorf("source %q is outside logmind's own --json source grammar; got %v", src, got)
 			}
 		}
 	})
@@ -566,7 +570,7 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 // distinctly — "legacy" for the old file, "branch:main" for the branch
 // file — never both collapsing onto a bare "main" token, which used to mean
 // "made on the current default branch" pre-#301 and would otherwise now
-// silently mean "the pre-upgrade file" instead, changing the NORMATIVE
+// silently mean "the pre-upgrade file" instead, changing logmind's own
 // schema's meaning under an unchanged key.
 //
 // The prior test (TestShow_JSON_All_SourceValues) never exercises this: its
@@ -608,7 +612,7 @@ func TestShow_JSON_All_LegacyFileAndMainBranchAreDistinctSources(t *testing.T) {
 }
 
 // TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema: --brief --json keeps the
-// FULL NORMATIVE key set (never drops a key) but zeroes
+// FULL schema key set (never drops a key) but zeroes
 // reasoning/alternatives/implications ("" / [] / []) rather than parsing
 // them out of the entry body — the documented --brief+--json precedence.
 func TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema(t *testing.T) {
@@ -633,7 +637,7 @@ func TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema(t *testing.T) {
 		e := doc.Decisions[0]
 		for _, k := range []string{"title", "timestamp", "reasoning", "alternatives", "implications", "source"} {
 			if _, ok := e[k]; !ok {
-				t.Errorf("--brief --json dropped NORMATIVE key %q: %v", k, e)
+				t.Errorf("--brief --json dropped schema key %q: %v", k, e)
 			}
 		}
 		if e["title"] != "First decision" {

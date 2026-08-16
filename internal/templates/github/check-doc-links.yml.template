@@ -64,10 +64,11 @@ name: logmind / check-links
 # assuming nothing about how a repository is set up.
 #
 # v10 — the derived-doc self-heal regenerates the ARCHIVE too. The history is
-# rendered in two halves since §3.3 (docs/timeline.md carries the 50 most
-# recent entries, docs/timeline-archive.md the remainder), and `logmind
-# timeline --write` writes the ONE file it is given — so the pair is two
-# invocations, exactly as regen-timeline.yml v13 already does it. This step
+# rendered in two halves since §3.3 (docs/timeline.md carries the
+# __LOGMIND_RECENT_LIMIT__ most recent entries, docs/timeline-archive.md the
+# remainder), and `logmind timeline --write` writes the ONE file it is
+# given — so the pair is two invocations, exactly as regen-timeline.yml v13
+# already does it. This step
 # ran only the timeline and the map, so a broken link living in the archive
 # survived every self-heal pass: the job re-ran, changed nothing, and
 # reported the same finding next time. Worse, linkcheck's own advice for an

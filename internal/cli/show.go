@@ -9,9 +9,12 @@
 // not a hardcoded docs/decisions.md — so `show` always reflects "this branch's
 // recent decisions", matching the documented contract.
 //
-// PROTOCOL SPEC §3.2 additionally specifies --all's "every branch decisions
-// file" half (not just the archive), --brief, and --json with a NORMATIVE
-// schema. This file now implements all three:
+// PROTOCOL SPEC §3.2 additionally grounds --all's "every branch decisions
+// file" half (not just the archive) — every branch gets its own file per
+// §3.2, --all is this CLI's own flag for surfacing that. --brief and --json
+// are entirely logmind's own: the SPEC defines no CLI output format at all,
+// json included — grep it before citing it here again. This file now
+// implements all three:
 //
 //   - default: streams the resolved decision file verbatim, then any decision
 //     file named after NO branch (docs/decisions.md, docs/decisions-archive.md)
@@ -26,16 +29,18 @@
 //   - --brief: title + timestamp only, one line per decision. Under --all,
 //     lines are grouped under a "[source]" tag matching the --json source
 //     value exactly (legacy / archive / branch:<name>).
-//   - --json: the SPEC §3.2 NORMATIVE schema —
+//   - --json: logmind's OWN schema, stated here and pinned by
+//     TestShow_JSON_SchemaKeysAndValues (show_test.go) — the PROTOCOL SPEC
+//     defines no --json output for any command —
 //     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
 //     "implications":[],"source":"legacy|archive|branch:<name>"}]}. Stdout
 //     carries ONLY the JSON document — no chatter, no ok trailer, regardless
 //     of --quiet, so it is always pipeable into `jq` unmodified.
-//   - --brief --json: the schema's keys never change (NORMATIVE — same key
-//     names, same nesting), but --brief's "title + timestamp only" contract
-//     wins for CONTENT: reasoning/alternatives/implications are present but
-//     zeroed ("" / [] / []) rather than parsed out of the entry body, since
-//     --brief's whole point is to skip exactly that.
+//   - --brief --json: the schema's keys never change (pinned by the same
+//     test — same key names, same nesting), but --brief's "title + timestamp
+//     only" contract wins for CONTENT: reasoning/alternatives/implications
+//     are present but zeroed ("" / [] / []) rather than parsed out of the
+//     entry body, since --brief's whole point is to skip exactly that.
 //
 // Entry parsing reuses internal/decisions.SplitRaw/SplitRawBytes (the
 // header-boundary byte-range splitter added for SPEC §1.3.2 rotation) rather
@@ -88,17 +93,18 @@ file, each appended under its own banner.
 Pass --brief for title + timestamp only, one line per decision (under --all,
 lines are grouped by source).
 
-Pass --json for structured output matching PROTOCOL SPEC section sec-3-2's
-NORMATIVE schema:
+Pass --json for structured output in logmind's own schema (the PROTOCOL SPEC
+defines no --json output for any command — this contract is stated here and
+nowhere else):
     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
     "implications":[],"source":"legacy|archive|branch:<name>"}]}
 --json is machine-clean: stdout carries ONLY the JSON document, safe to pipe
 into jq unmodified, regardless of --quiet.
 
---brief --json together keep the full schema (all keys always present, per
-the NORMATIVE contract) but zero out reasoning/alternatives/implications
-("" / [] / []) rather than parsing them, honoring --brief's "title +
-timestamp only" contract for content while never dropping a schema key.
+--brief --json together keep the full schema (all keys always present) but
+zero out reasoning/alternatives/implications ("" / [] / []) rather than
+parsing them, honoring --brief's "title + timestamp only" contract for
+content while never dropping a schema key.
 
 Examples:
     logmind show
@@ -120,12 +126,13 @@ Examples:
 	cmd.Flags().BoolVar(&brief, "brief", false,
 		"Title + timestamp only, one line per decision. Combined with --json, zeroes reasoning/alternatives/implications instead of dropping them.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
-		"Structured output matching PROTOCOL SPEC section sec-3-2's NORMATIVE schema. Machine-clean: stdout is JSON only.")
+		"Structured output in logmind's own schema (not defined by the PROTOCOL SPEC). Machine-clean: stdout is JSON only.")
 	return cmd
 }
 
-// showSource pairs a decisions file path with its NORMATIVE `source` label
-// (SPEC section sec-3-2's grammar: "legacy" | "archive" | "branch:<name>").
+// showSource pairs a decisions file path with its `source` label — logmind's
+// own --json/--brief grammar ("legacy" | "archive" | "branch:<name>"), not a
+// PROTOCOL SPEC grammar; the SPEC defines no --json output at all.
 type showSource struct {
 	path  string
 	label string
@@ -152,9 +159,9 @@ type showSource struct {
 //
 // Branch files come first so the raw stream, --brief and --json all visit
 // sources in one order: base → other branches → legacy non-branch files.
-// Both non-branch labels are already in the SPEC section sec-3-2 source
-// grammar ("legacy" | "archive" | "branch:<name>"), so surfacing them needs no
-// schema change.
+// Both non-branch labels are already in logmind's own source grammar
+// ("legacy" | "archive" | "branch:<name>" — see showSource), so surfacing
+// them needs no schema change.
 func extraSources(docsPath, excludePath string, all bool) ([]showSource, error) {
 	srcs, err := decisions.ListSources(docsPath)
 	if err != nil {
@@ -178,9 +185,9 @@ func extraSources(docsPath, excludePath string, all bool) ([]showSource, error) 
 	return out, nil
 }
 
-// showBannerTitle maps a showSource label (the SPEC section sec-3-2 source
-// grammar: "legacy" | "archive" | "branch:<name>") to the banner heading the
-// raw `--all` stream prints above that source's verbatim body.
+// showBannerTitle maps a showSource label (logmind's own source grammar:
+// "legacy" | "archive" | "branch:<name>" — see showSource) to the banner
+// heading the raw `--all` stream prints above that source's verbatim body.
 //
 // "archive" keeps the historical ARCHIVED DECISIONS wording so a reader who
 // upgraded across §3.2 sees the same section title they saw before.
@@ -197,9 +204,11 @@ func showBannerTitle(label string) string {
 	}
 }
 
-// showJSONEntry mirrors SPEC section sec-3-2's NORMATIVE --json schema
-// EXACTLY: same key names, same nesting, same source grammar. Do not add,
-// rename, or drop keys here — it is a wire contract, not an internal type.
+// showJSONEntry mirrors logmind's own --json schema (stated in this file's
+// package comment above; the PROTOCOL SPEC defines no --json output for any
+// command) EXACTLY: same key names, same nesting, same source grammar. Do
+// not add, rename, or drop keys here — it is a wire contract, not an
+// internal type — and TestShow_JSON_SchemaKeysAndValues pins it.
 type showJSONEntry struct {
 	Title        string   `json:"title"`
 	Timestamp    string   `json:"timestamp"`
@@ -404,8 +413,9 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 		baseLabel = "branch:" + branch
 	}
 
-	// --json: SPEC section sec-3-2's NORMATIVE schema. Always the full key
-	// set; --brief only zeroes reasoning/alternatives/implications (see
+	// --json: logmind's own schema (not a PROTOCOL SPEC schema — see the
+	// package comment). Always the full key set; --brief only zeroes
+	// reasoning/alternatives/implications (see
 	// collectShowEntries's withBody=!brief). No chatter, no ok trailer,
 	// --quiet has no additional effect — stdout is the JSON document, full
 	// stop.

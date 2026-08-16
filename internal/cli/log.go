@@ -15,9 +15,10 @@
 //   - Branch routing (SPEC §3.2). A decision goes in a file named for the
 //     branch it was made on — docs/decisions-branches/<sanitized-branch>.md
 //     — and the default branch is not an exception to that rule. Only a
-//     directory with no branch NAME (non-git, detached HEAD) or an explicit
-//     branch_aware:false falls back to docs/decisions.md. An unborn repo is
-//     NOT one of them: see resolveDecisionsPath.
+//     directory resolveDecisionsPath cannot resolve a branch name to route
+//     by (non-git — including an unreachable git binary — or detached HEAD)
+//     or an explicit branch_aware:false falls back to docs/decisions.md. An
+//     unborn repo is NOT one of them: see resolveDecisionsPath.
 //
 //   - First-write backlink header. When creating a branch decision file
 //     for the first time, prepends `← back to [docs/timeline.md]` so
@@ -538,17 +539,23 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 //
 //	on any branch (main included), branch_aware on
 //	  → docs/decisions-branches/<sanitized>.md, isBranchFile=true
-//	where there is no branch NAME — non-git, or detached HEAD —
-//	or branch_aware is explicitly off
+//	where the router cannot resolve a branch name to route by — non-git
+//	(including an unreachable git binary), or detached HEAD — or
+//	branch_aware is explicitly off
 //	  → docs/decisions.md, isBranchFile=false
 //
 // Exactly three code paths below reach docs/decisions.md, and that is the
 // whole list: branch_aware off, non-git, detached HEAD. They are not a
-// default-branch special case; they are the states where no branch NAME
-// exists to name a file after. `main` used to be routed here too, which is
-// what made the main log look like a second kind of decision file with its
-// own conventions; that case is gone, and main's decisions live in main's
-// own branch file.
+// default-branch special case; they are the states where the router cannot
+// resolve a branch name to name a file after — not always because no name
+// exists. IsRepo's exit code conflates "not a repository" with "the `git`
+// binary itself is unreachable", so the non-git case can fire inside a real
+// repo on a real branch; branch_aware:false is a policy opt-out, not an
+// absence either — a name may well exist, it is simply not consulted. Only
+// detached HEAD is genuinely nameless. `main` used to be routed here too,
+// which is what made the main log look like a second kind of decision file
+// with its own conventions; that case is gone, and main's decisions live in
+// main's own branch file.
 //
 // An UNBORN repo is NOT one of the three, and the intuition that it is has
 // been written into this comment before. `git symbolic-ref --short HEAD`

@@ -13,8 +13,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
 func TestInit_CreatesDocsAndConfig(t *testing.T) {
@@ -34,6 +37,22 @@ func TestInit_CreatesDocsAndConfig(t *testing.T) {
 		mustContain(t, out.String(), "✓ Created .logmind/config.yml")
 		mustContain(t, out.String(), "logmind initialized successfully!")
 	})
+
+	// .logmind/config.yml's decisions: comment restates the SPEC §3.3 bound
+	// via the __LOGMIND_RECENT_LIMIT__ placeholder (config.yml.template is a
+	// one-time seed, never refreshed, so this is the ONLY place it is ever
+	// substituted). Assert the substitution landed the live constant, and
+	// that the raw placeholder never reaches disk — the same "never lands
+	// on disk" shape TestInit_WritesWorkflowTemplates already holds
+	// __LOGMIND_VERSION__ / __LOGMIND_DEFAULT_BRANCH__ to.
+	cfgBody, err := os.ReadFile(filepath.Join(dir, ".logmind", "config.yml"))
+	if err != nil {
+		t.Fatalf("read .logmind/config.yml: %v", err)
+	}
+	mustContain(t, string(cfgBody), "carries the "+strconv.Itoa(timeline.RecentLimit)+" most recent entries")
+	if strings.Contains(string(cfgBody), "__LOGMIND_RECENT_LIMIT__") {
+		t.Errorf(".logmind/config.yml still contains __LOGMIND_RECENT_LIMIT__ placeholder")
+	}
 
 	// Verify file contents on disk.
 	for _, rel := range []string{
@@ -116,6 +135,11 @@ func TestInit_WritesWorkflowTemplates(t *testing.T) {
 		// Pin substitution should have happened — __LOGMIND_VERSION__ never lands on disk.
 		if strings.Contains(body, "__LOGMIND_VERSION__") {
 			t.Errorf("%s still contains __LOGMIND_VERSION__ placeholder", name)
+		}
+		// Same for the SPEC §3.3 bound (RecentLimit): check-doc-links.yml and
+		// regen-timeline.yml both restate it in a changelog comment.
+		if strings.Contains(body, "__LOGMIND_RECENT_LIMIT__") {
+			t.Errorf("%s still contains __LOGMIND_RECENT_LIMIT__ placeholder", name)
 		}
 	}
 }

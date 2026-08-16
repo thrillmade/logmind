@@ -4,7 +4,8 @@
 //
 //   - docs/file-structure.md, docs/timeline.md, docs/timeline-archive.md
 //     (seed contents from embedded templates)
-//   - .logmind/config.yml (verbatim copy of config.yml.template)
+//   - .logmind/config.yml (config.yml.template with __LOGMIND_RECENT_LIMIT__
+//     substituted; every other byte is a verbatim copy)
 //   - AGENTS.md slim-or-full block (slim is the SPEC §1.1 default)
 //   - per-agent stubs for every enabled agent (claude + cursor by default)
 //   - .gitignore + .gitattributes logmind blocks
@@ -44,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -166,11 +168,16 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	fmt.Fprintln(out, "✓ Created docs/timeline.md")
 	fmt.Fprintln(out, "✓ Created docs/timeline-archive.md")
 
-	// .logmind/config.yml (verbatim template).
+	// .logmind/config.yml. Written once, never refreshed (see the package
+	// doc above), so the __LOGMIND_RECENT_LIMIT__ placeholder is substituted
+	// here rather than through renderWorkflowTemplate — that function is
+	// scoped to the workflow templates, which DO get re-rendered on refresh.
 	if err := os.MkdirAll(logmindDir, 0o755); err != nil {
 		return fmt.Errorf("create .logmind/: %w", err)
 	}
-	if err := writeFile(configPath, templates.ConfigTemplate()); err != nil {
+	configBody := strings.ReplaceAll(templates.ConfigTemplate(),
+		"__LOGMIND_RECENT_LIMIT__", strconv.Itoa(timeline.RecentLimit))
+	if err := writeFile(configPath, configBody); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, "✓ Created .logmind/config.yml")
@@ -832,6 +839,17 @@ func installWorkflowTemplatesMode(repoRoot string, mode workflowInstallMode) ([]
 //
 //	__LOGMIND_VERSION__        → the current binary's version constant
 //	__LOGMIND_DEFAULT_BRANCH__ → this repository's default branch
+//	__LOGMIND_RECENT_LIMIT__   → timeline.RecentLimit, the SPEC §3.3 bound
+//
+// __LOGMIND_RECENT_LIMIT__ exists because two workflow templates
+// (check-doc-links.yml.template's v10 note, regen-timeline.yml.template's
+// v13 note) restate the bound in a changelog-style comment explaining why
+// the archive joined the gate. Substituting it here — the SAME function
+// every bundled workflow template already renders through — means the
+// prose can never drift from the constant it describes, the way a
+// hand-typed "50" could the moment RecentLimit moved and nobody noticed
+// the comment. See TestEmbeddedTemplates_StateRecentLimit (internal/templates)
+// for the guard that would have caught the drift if this weren't derived.
 //
 // NOTE: as of the v12/v9 template generation NO bundled template contains
 // __LOGMIND_VERSION__ — the version pin it existed for went away when CI
@@ -861,7 +879,8 @@ func installWorkflowTemplatesMode(repoRoot string, mode workflowInstallMode) ([]
 // two and warns when they drift.
 func renderWorkflowTemplate(text, defaultBranch string) string {
 	text = strings.ReplaceAll(text, "__LOGMIND_VERSION__", version.Version)
-	return strings.ReplaceAll(text, "__LOGMIND_DEFAULT_BRANCH__", defaultBranch)
+	text = strings.ReplaceAll(text, "__LOGMIND_DEFAULT_BRANCH__", defaultBranch)
+	return strings.ReplaceAll(text, "__LOGMIND_RECENT_LIMIT__", strconv.Itoa(timeline.RecentLimit))
 }
 
 // NOTE on the branch value: gitcli.DefaultBranch owns this fact and its

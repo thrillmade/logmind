@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -38,7 +39,7 @@ Reads docs/decisions.md, docs/decisions-archive.md (where they exist), and
 every docs/decisions-branches/*.md as sources; renders a chronological
 timeline grouped by year-month. Sources are never modified.
 
-SPEC §3.3 splits that rendering in two: the 50 most recent entries
+SPEC §3.3 splits that rendering in two: the ` + strconv.Itoa(timeline.RecentLimit) + ` most recent entries
 (docs/timeline.md) and everything older (docs/timeline-archive.md). Neither
 file is ever read to decide what the other holds — the split is a cut in one
 rendering, not a move, so no entry is ever transferred or consumed.
@@ -69,7 +70,7 @@ Examples:
 		"Write the rendered timeline to PATH (typically docs/timeline.md) — that "+
 			"file and no other. Without this flag, prints to stdout.")
 	cmd.Flags().StringVar(&half, "half", "",
-		"Which half of the SPEC §3.3 split to render: \"recent\" (the 50 most "+
+		"Which half of the SPEC §3.3 split to render: \"recent\" (the "+strconv.Itoa(timeline.RecentLimit)+" most "+
 			"recent entries) or \"archive\" (everything older). Default: recent.")
 	cmd.Flags().BoolVar(&check, "check", false,
 		"Exit nonzero if the file at --write is stale (would differ from a fresh "+

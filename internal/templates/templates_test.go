@@ -8,10 +8,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
 // TestAgentsTemplate_HasV8Marker pins the protocol-version marker. The
@@ -438,7 +441,15 @@ var templateMarkerPins = map[string]struct {
 	marker string
 	sha256 string
 }{
-	"regen-timeline.yml.template": {"v13", "c8d756f346fb5dca99a34f852ebe80f1b402013569f3a14aeee336c660baa8da"},
+	// Re-pinned a second time inside #301 round 11: the v13 changelog note
+	// (the paragraph this pin covers) hand-typed the SPEC §3.3 bound as a
+	// literal "50" instead of the __LOGMIND_RECENT_LIMIT__ placeholder
+	// every other scaffold-time fact in this file already uses. Same
+	// ruling as the note above — v13 has still not shipped, so re-pinning
+	// costs nothing downstream; minting v14 for an edit to v13's own
+	// unreleased body would only repeat the confusion this comment
+	// already describes.
+	"regen-timeline.yml.template": {"v13", "151276d1e2790b84e9400c07762ec1fc13aea4a0db9159997b6f0827706dbeb2"},
 }
 
 func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
@@ -903,6 +914,19 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 		t.Fatalf("regen-timeline template no longer contains %s — the default branch has been "+
 			"hardcoded again, which is the defect this placeholder exists to prevent", branchPlaceholder)
 	}
+
+	// Difference 3 (added #301 round 11): the same scaffold-time treatment
+	// for the SPEC §3.3 bound. The v13 note restates RecentLimit in prose;
+	// the installed copy carries the rendered digit where the template
+	// carries __LOGMIND_RECENT_LIMIT__. Same guard shape as the branch
+	// placeholder above — a re-hardcoded literal here fails loudly instead
+	// of the two copies quietly agreeing on a number neither derives.
+	const recentLimitPlaceholder = "__LOGMIND_RECENT_LIMIT__"
+	if !strings.Contains(tmplBody, recentLimitPlaceholder) {
+		t.Fatalf("regen-timeline template no longer contains %s — the SPEC §3.3 bound has been "+
+			"hardcoded again, which is the defect this placeholder exists to prevent", recentLimitPlaceholder)
+	}
+	tmplBody = strings.ReplaceAll(tmplBody, recentLimitPlaceholder, strconv.Itoa(timeline.RecentLimit))
 	tmplBody = strings.ReplaceAll(tmplBody, branchPlaceholder, "main")
 
 	// The four boundaries that carve both files into the same regions. Each
@@ -1386,7 +1410,11 @@ var bundledTemplateFingerprints = map[string]string{
 	// enforce — a content-only fix would have left every repo already
 	// holding v9 running the two-of-three self-heal forever, with `doctor`
 	// calling them current. See the v10 note in the template itself.
-	"check-doc-links.yml.template":     "v10:9e6328e81ac0f56d538f41c2b1a304c6f9eb279f65eb5cd7ef109460a437ef8b",
+	// Re-pinned inside #301 round 11: the v10 note's "50" is now the
+	// __LOGMIND_RECENT_LIMIT__ placeholder (see renderWorkflowTemplate).
+	// v10 has not shipped — introduced by this same PR (merge-base with
+	// dev is still v9) — so re-pinning costs no consumer a stale refresh.
+	"check-doc-links.yml.template":     "v10:6215db8a97aeccb8581cea915f597a79b4713d8b068c93e4297aed1859f28f44",
 	"logmind-self-update.yml.template": "v11:d4214fb3d201997b3089e8bdaf824ea513da27b0d40093d71d663016b6e903d9",
 	// v13 = v12's body plus docs/timeline-archive.md in the PR gate and the
 	// push step (logmind#265/#301). It is a SUPERSET of v12, not a
@@ -1403,7 +1431,10 @@ var bundledTemplateFingerprints = map[string]string{
 	// only has to move when the content it names has already SHIPPED; moving
 	// it for an edit to its own unreleased body would mint a v13 that never
 	// existed anywhere, which is the confusion the v12 collision above was.
-	"regen-timeline.yml.template": "v13:c8d756f346fb5dca99a34f852ebe80f1b402013569f3a14aeee336c660baa8da",
+	// Re-pinned again in #301 round 11 — same rule, third time: v13 still
+	// has not shipped, this edit swaps the v13 note's hand-typed "50" for
+	// __LOGMIND_RECENT_LIMIT__.
+	"regen-timeline.yml.template": "v13:151276d1e2790b84e9400c07762ec1fc13aea4a0db9159997b6f0827706dbeb2",
 }
 
 // TestWorkflowTemplateMarkers_MoveWithContent enforces the binding above.
@@ -2133,6 +2164,71 @@ func TestWorkflowTemplates_SetupLogmindPinIsUniformAndCurrent(t *testing.T) {
 			"these workflows:", len(pins))
 		for pin, sites := range pins {
 			t.Errorf("  %s ← %v", pin, sites)
+		}
+	}
+}
+
+// TestEmbeddedTemplates_StateRecentLimit is internal/templates' own guard
+// against the SPEC §3.3 bound (timeline.RecentLimit) drifting from its
+// restatements inside the shipped, embedded template bytes.
+//
+// Round 10 left this package unguarded on the premise that the restatement
+// was "prose written for a reader, not output the tool generates." Round
+// 11 (#301) found that false: every one of these lands, verbatim or
+// substituted, in a `logmind init`-scaffolded repo's tree — the reader IS
+// a consumer of generated output, same as docs/timeline.md's own header.
+//
+// Two different shapes, because the sites themselves differ:
+//
+//   - AGENTS.md.template and logmind-section.md hand-type the number in
+//     prose with no substitution path — they ship byte-frozen (the
+//     former gated by `<!-- logmind-block-version -->`, the latter with
+//     no marker at all), so a placeholder isn't worth the marker-bump
+//     cost this round chose to spend on config.yml.template and the two
+//     workflow templates instead (both had never shipped — see the
+//     round-11 fix report). This half of the test is TestHandDocs_
+//     StateRecentLimit's exact pattern (internal/timeline), applied to
+//     the embedded templates it deliberately excluded.
+//   - config.yml.template, check-doc-links.yml.template and
+//     regen-timeline.yml.template instead carry __LOGMIND_RECENT_LIMIT__,
+//     substituted at scaffold time (internal/cli/init.go — the same
+//     mechanism __LOGMIND_DEFAULT_BRANCH__ already uses). A drift there
+//     is structurally impossible once substituted, so this half checks
+//     the INVERSE: the raw embedded bytes still carry the PLACEHOLDER,
+//     not a re-hardcoded literal — the failure mode that would silently
+//     reopen the gap this round closed.
+func TestEmbeddedTemplates_StateRecentLimit(t *testing.T) {
+	limit := timeline.RecentLimit
+	literalChecks := []struct {
+		name, body, want string
+	}{
+		{"AGENTS.md.template (required-reading line)", AgentsTemplate(),
+			fmt.Sprintf("the %d most recent decisions", limit)},
+		{"AGENTS.md.template (additional-reference line)", AgentsTemplate(),
+			fmt.Sprintf("older than the %d entries in", limit)},
+		{"logmind-section.md", LogmindSection(),
+			fmt.Sprintf("older than the %d entries in", limit)},
+	}
+	for _, c := range literalChecks {
+		if !strings.Contains(c.body, c.want) {
+			t.Errorf("%s does not state RecentLimit (%d); want a substring %q", c.name, limit, c.want)
+		}
+	}
+
+	const placeholder = "__LOGMIND_RECENT_LIMIT__"
+	derivedChecks := []struct {
+		name, body string
+	}{
+		{"config.yml.template", ConfigTemplate()},
+		{"check-doc-links.yml.template", Workflow("check-doc-links.yml.template")},
+		{"regen-timeline.yml.template", Workflow("regen-timeline.yml.template")},
+	}
+	for _, c := range derivedChecks {
+		if !strings.Contains(c.body, placeholder) {
+			t.Errorf("%s does not carry the %s placeholder — either it was re-hardcoded to a "+
+				"literal number (which can drift silently from RecentLimit, the gap this test "+
+				"exists to close) or the placeholder was renamed without updating the substitution "+
+				"site (internal/cli/init.go)", c.name, placeholder)
 		}
 	}
 }

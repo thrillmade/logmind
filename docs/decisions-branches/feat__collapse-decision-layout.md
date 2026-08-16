@@ -166,3 +166,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 02:27 - templates: render the cap into generated files too, and stop citing a spec clause that does not exist
+
+**Reasoning:** My ruling that the remaining restatements were prose a person maintains was wrong for three of them. The configuration file is a verbatim copy of its template, and two workflows are scaffolded from theirs, so all three are output the tool generates and all three would have gone on asserting fifty after the constant moved. Separately, the JSON output has been described in code and in help text as a normative schema from a specification section that defines nothing of the kind: fetched on both branches, the shape it claims appears zero times, against a control term that appears once.
+
+**Alternatives considered:** Bump the two workflow markers so consumers receive the corrected comment. Rejected after checking the merge base: both markers were introduced by this branch and nothing has shipped under them, so re-pinning the content fingerprints is correct and a bump would spend a generation for nothing. The agent-file template keeps its hand-typed number because its marker predates this branch and is installed, so a bump there would rewrite every consumer's file for a comment.
+
+**Implications:**
+- The wording fix turned out not to be cosmetic. The repository check cannot distinguish a directory that is not a repository from a git binary it cannot run, so that branch can fire inside a real repository on a real branch, and turning branch awareness off is a policy choice rather than a missing name. Only a detached head is genuinely nameless, and all three sites now say that instead of repeating the retired framing. The schema is described as this tool's own contract, pinned by its own test, and is worth a specification clause so consumers stop relying on something asserted from nowhere.
+
+---
+

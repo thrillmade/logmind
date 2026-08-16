@@ -38,9 +38,9 @@ type Entry struct {
 }
 
 // NonBranchSource names a decision file that the SPEC §3.2 branch-file layout
-// does not name after a branch. File is relative to docsPath; Label is the
-// §3.2 source grammar token ("legacy" | "archive") a reader tags its entries
-// with.
+// does not name after a branch. File is relative to docsPath; Label is
+// logmind's own source grammar token ("legacy" | "archive" — not a PROTOCOL
+// SPEC grammar) a reader tags its entries with.
 type NonBranchSource struct {
 	File  string
 	Label string
@@ -63,13 +63,16 @@ type NonBranchSource struct {
 //     "branch:main", so the bare token needed to stop meaning two different
 //     things depending on when you read it. "legacy" is also what
 //     showBannerTitle already called this file's raw-stream banner). Still
-//     WRITTEN, but only where no branch NAME exists to name a file after: a
-//     non-git directory, a detached HEAD, or decisions.branch_aware
-//     explicitly off (resolveDecisionsPath in internal/cli/log.go routes
-//     those three here, and owns the rule). An unborn repo is NOT among
-//     them — symbolic-ref resolves HEAD's ref before the first commit, so a
-//     fresh `git init` routes to main.md. It is no longer where a decision
-//     made ON the default branch goes — that is
+//     WRITTEN, but only where the router cannot resolve a branch name to
+//     name a file after: a non-git directory (which also fires when the
+//     `git` binary itself is unreachable, even inside a real repo on a real
+//     branch), a detached HEAD, or decisions.branch_aware explicitly off
+//     (resolveDecisionsPath in internal/cli/log.go routes those three here,
+//     and owns the rule — see its doc comment for why "no branch NAME" is
+//     not quite the right description of all three). An unborn repo is NOT
+//     among them — symbolic-ref resolves HEAD's ref before the first
+//     commit, so a fresh `git init` routes to main.md. It is no longer
+//     where a decision made ON the default branch goes — that is
 //     docs/decisions-branches/main.md like any other branch.
 //   - decisions-archive.md — the pre-§3.2 rotation overflow, written by the
 //     retired `max_recent` cap. NOTHING writes it now, in any state. It is
@@ -92,11 +95,12 @@ func NonBranchSources() []NonBranchSource {
 //   - Path is absolute (join of docsPath and Rel), the value a reader opens.
 //   - Rel is the docs-relative, forward-slash path readers quote in output
 //     ("decisions.md", "decisions-branches/feat__x.md").
-//   - Label is the SPEC §3.2 source-grammar token for the file: "legacy" or
-//     "archive" for a non-branch source, the un-sanitized branch name for a
-//     branch file. `show` prefixes branch labels with "branch:" for its own
-//     NORMATIVE --json grammar; the raw name is kept here so every caller can
-//     render it its own way.
+//   - Label is logmind's own source-grammar token for the file (not a
+//     PROTOCOL SPEC grammar — §3.2 defines branch routing, not a source
+//     label vocabulary): "legacy" or "archive" for a non-branch source, the
+//     un-sanitized branch name for a branch file. `show` prefixes branch
+//     labels with "branch:" for its own --json/--brief grammar; the raw
+//     name is kept here so every caller can render it its own way.
 //   - IsBranch distinguishes docs/decisions-branches/*.md from the two files
 //     that are named after no branch, which is the only distinction the read
 //     paths actually make.

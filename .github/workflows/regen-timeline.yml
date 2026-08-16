@@ -52,13 +52,14 @@ name: logmind / check-derived-docs
 # repository is set up.
 #
 # v13: docs/timeline-archive.md joins the gate (SPEC §3.3, logmind#265). The
-# history is now rendered in two halves — docs/timeline.md carries the 50 most
-# recent entries and the archive the remainder — and §3.3 governs all three
-# alike: "A non-default branch MUST NOT modify any derived file — the history,
-# its archive, or the map." A branch that edits the archive is blocked exactly
-# as one that edits the timeline. The regen step on the default branch names
-# the archive explicitly too: `logmind timeline --write` writes the ONE file it
-# is given, so the pair is two invocations. It used to be one, with the archive
+# history is now rendered in two halves — docs/timeline.md carries the
+# 50 most recent entries and the archive the
+# remainder — and §3.3 governs all three alike: "A non-default branch MUST
+# NOT modify any derived file — the history, its archive, or the map." A
+# branch that edits the archive is blocked exactly as one that edits the
+# timeline. The regen step on the default branch names the archive
+# explicitly too: `logmind timeline --write` writes the ONE file it is
+# given, so the pair is two invocations. It used to be one, with the archive
 # inferred as a sibling of whatever path `--write` named — which dropped a
 # stray `timeline-archive.md` beside git's merge scratch file at the worktree
 # root, and, where a file of that name was tracked, replaced its contents.
