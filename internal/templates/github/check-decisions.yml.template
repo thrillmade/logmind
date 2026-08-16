@@ -1,4 +1,4 @@
-# logmind-template-version: v5
+# logmind-template-version: v6
 name: logmind / check-decisions
 
 # SPEC §6.2's `check-decisions` gate — the third interception point of
@@ -29,6 +29,11 @@ name: logmind / check-decisions
 #   5. it carried its own copy of the exclusion list.
 #
 # All five die the same way: the bash stops deciding anything.
+#
+# v6: the `thrillmade/setup-logmind` pin moves v1.0.0 → v1.0.1. v1.0.1 is
+# the action's current release and what every repo already running these
+# workflows resolves to via Dependabot; shipping v1.0.0 meant a freshly
+# scaffolded repo installed a pin older than the fleet's on day one.
 
 on:
   pull_request:
@@ -92,7 +97,7 @@ jobs:
       # --base/--head`. An older binary fails the flag parse, which fails
       # the job — red, not quietly green — but the failure is the gate's,
       # not the PR's, so this template belongs downstream of that release.
-      - uses: thrillmade/setup-logmind@v1.0.0
+      - uses: thrillmade/setup-logmind@v1.0.1
         with:
           token: ${{ github.token }}
 

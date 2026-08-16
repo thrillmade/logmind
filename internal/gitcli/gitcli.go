@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -675,30 +676,37 @@ func LastCommitTime(repoRoot, relPath string) (time.Time, bool) {
 //
 //  1. refs/remotes/origin/HEAD                  (set by `git clone` or
 //     `git remote set-head`)
-//  2. local `main` if it exists, else `master`
+//  2. the conventional names, RESOLVED rather than ranked (see below)
 //  3. single-branch repo: that branch IS the default
 //  4. `git config init.defaultBranch`
 //  5. hard fallback: "main"
 //
-// Used by `logmind rebase` (B3) when --base isn't supplied. Same
-// resolution order as Python so a consuming repo configured to point
-// at `master` via `git config init.defaultBranch master` keeps
+// Used by `logmind rebase` (B3) when --base isn't supplied, and — since
+// the workflow `on:` filter became a scaffold-time render — by
+// `logmind init`, where a wrong answer installs a workflow that never
+// fires. Same resolution order as Python so a consuming repo configured
+// to point at `master` via `git config init.defaultBranch master` keeps
 // working after the v1 cutover.
+//
+// Step 2 used to be a fixed PREFERENCE — "local `main` if it exists, else
+// `master`" — which answers "main" for a `master` repo that happens to
+// carry a stray local `main` (a leftover from a rename, or a branch
+// somebody created by reflex). That was tolerable while every caller only
+// needed a rebase base; it is not tolerable now that the answer is written
+// into a workflow trigger, because the wrong name there is a check that
+// silently never runs. It now resolves instead: if only one of the two
+// conventional names exists, it IS the answer; when both do, the tie is
+// broken by evidence about which one this repository actually uses,
+// and only a repo that offers no evidence at all still lands on "main".
 func DefaultBranch(repoRoot string) string {
 	// 1. origin/HEAD
 	if name := RemoteHEAD(repoRoot); name != "" {
 		return name
 	}
 
-	// 2. local main / master
-	for _, candidate := range []string{"main", "master"} {
-		cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+candidate)
-		cmd.Dir = repoRoot
-		cmd.Stdout = &bytes.Buffer{}
-		cmd.Stderr = &bytes.Buffer{}
-		if cmd.Run() == nil {
-			return candidate
-		}
+	// 2. the conventional names — resolved, not ranked.
+	if name := resolveConventionalBranch(repoRoot); name != "" {
+		return name
 	}
 
 	// 3. Single-branch repo
@@ -721,6 +729,90 @@ func DefaultBranch(repoRoot string) string {
 
 	// 5. Hard fallback
 	return "main"
+}
+
+// conventionalDefaultBranches are the two names a repository's default
+// branch is called when nobody has said otherwise. Order here is NOT a
+// preference — resolveConventionalBranch never returns one because it is
+// listed first; the last tiebreak below is the only place the order shows.
+var conventionalDefaultBranches = []string{"main", "master"}
+
+// resolveConventionalBranch answers step 2 of DefaultBranch: which of the
+// conventional names, if either, is this repository's default branch.
+// Returns "" when neither exists locally, so DefaultBranch falls through
+// to its remaining steps.
+//
+// The defect this replaces: a fixed `main`-before-`master` preference
+// returned "main" for a repo whose default is `master` merely because a
+// stray local `main` existed. Covering two names blindly (the old
+// `branches: [main, master]` workflow filter) covered that case by
+// accident; rendering ONE name only helps if the one rendered is right.
+//
+// So when both names exist the tie is broken by evidence, strongest first:
+//
+//	a. the remote — exactly one of origin/main, origin/master exists.
+//	   origin/HEAD is already gone (DefaultBranch step 1), but which
+//	   branches the remote actually publishes still outranks anything
+//	   local: a stray local `main` in a clone of a `master` repo has no
+//	   origin/main behind it.
+//	b. HEAD — the branch currently checked out, when it is one of the two.
+//	   Only ever consulted as a tiebreak: HEAD is the CURRENT branch, and
+//	   returning it unconditionally would make every feature branch its own
+//	   "default" and collapse onNonDefaultBranch to false everywhere.
+//	c. init.defaultBranch, when it names one of the two. Scoped to the tie
+//	   deliberately — DefaultBranch step 4 already reads this key, but as a
+//	   free-form answer; here it only gets to pick between two branches
+//	   that both exist.
+//	d. the conventional order. A repo with both names, no origin, no
+//	   matching HEAD and no config has told us nothing.
+func resolveConventionalBranch(repoRoot string) string {
+	var present []string
+	for _, candidate := range conventionalDefaultBranches {
+		if refExists(repoRoot, "refs/heads/"+candidate) {
+			present = append(present, candidate)
+		}
+	}
+	if len(present) == 0 {
+		return ""
+	}
+	if len(present) == 1 {
+		return present[0]
+	}
+
+	// a. the remote's own branch set.
+	var onRemote []string
+	for _, candidate := range present {
+		if refExists(repoRoot, "refs/remotes/origin/"+candidate) {
+			onRemote = append(onRemote, candidate)
+		}
+	}
+	if len(onRemote) == 1 {
+		return onRemote[0]
+	}
+
+	// b. the checked-out branch, if it is one of the candidates.
+	if head := CurrentBranch(repoRoot); slices.Contains(present, head) {
+		return head
+	}
+
+	// c. init.defaultBranch, but only as a choice between the candidates.
+	if value, ok := ConfigGet(repoRoot, "init.defaultBranch"); ok && slices.Contains(present, value) {
+		return value
+	}
+
+	// d. no evidence at all.
+	return present[0]
+}
+
+// refExists reports whether a fully-qualified ref (refs/heads/main,
+// refs/remotes/origin/master, …) resolves in repoRoot. False on any error,
+// including "not a git repository".
+func refExists(repoRoot, ref string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
+	cmd.Dir = repoRoot
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+	return cmd.Run() == nil
 }
 
 // RunCaptured runs `git <args>` against repoRoot and returns stdout,

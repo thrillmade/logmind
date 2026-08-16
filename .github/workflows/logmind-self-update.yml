@@ -1,4 +1,4 @@
-# logmind-template-version: v10
+# logmind-template-version: v11
 name: logmind / self-update
 
 # Weekly check that the bundled logmind workflow templates are still on
@@ -57,6 +57,15 @@ name: logmind / self-update
 #     ecosystem entry (also shipped by `logmind init` via
 #     `.github/dependabot.yml`). Dependabot's job: keep the action pin
 #     current. This workflow's job: keep the template BODY current.
+#
+# v11 — this file and logmind's own `.github/workflows/logmind-self-update.yml`
+# are now BYTE-IDENTICAL, pinned by a test. They had silently drifted on two
+# action pins (`actions/checkout` v6 vs v7, `thrillmade/setup-logmind` v1.0.0
+# vs v1.0.1) because the installed copy was hand-edited and the template was
+# not. Both now carry `actions/checkout@v7` and `thrillmade/setup-logmind@v1.0.1`
+# — v1.0.1 being the action's current release and what every repo already
+# running these workflows resolves to via Dependabot, so shipping v1.0.0 meant
+# a freshly scaffolded repo installed a pin older than the fleet's on day one.
 #
 # To pin to a specific logmind version and stop self-updates, add a
 # `pinVersion: "X.Y.Z"` field to `.logmind/config.yml`. The cron will
