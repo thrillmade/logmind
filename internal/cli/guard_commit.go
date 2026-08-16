@@ -634,7 +634,7 @@ func firstLineOfFile(path string) (string, error) {
 // This is not a shell parser: a message that comes from $EDITOR, a
 // template, or is buried inside a substitution simply contributes nothing
 // here, which just means the [skip-logmind] carve-out won't apply — every
-// other carve-out (env var, decision-file-staged, under-threshold) still
+// other carve-out (env var, decision-recorded, under-threshold) still
 // works normally.
 func extractSubjectHint(command string) string {
 	words := splitCommandWords(command)

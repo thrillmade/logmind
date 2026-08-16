@@ -18,6 +18,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -465,6 +466,104 @@ func TestLog_AutoCommit_OnGitRepo(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "auto-commit test") {
 		t.Fatalf("commit message missing; got:\n%s", out)
+	}
+}
+
+// TestLog_RefusedCommit_DoesNotReportSuccess pins SPEC §3.3's rule for a
+// write that was attempted and refused, applied to `logmind log`'s own
+// commit: "A refused write is the job not doing its job, and a run that
+// reports success after one is indistinguishable from a run that had
+// nothing to do."
+//
+// The regression it prevents is the one an agent actually hit: with the
+// enforcing commit-msg hook installed and a gate that demanded a non-empty
+// reasoning section, `logmind log "summary"` with no -r wrote an entry the
+// gate then refused — and exited 0 while the repository's commit count did
+// not move. The exit code is what an agent reads.
+//
+// Deliberately pinned on the OUTPUT the caller sees (exit status, the
+// absence of the `ok` receipt, the words on stderr), not on a helper: the
+// bug shipped through a helper that was doing exactly what it was told.
+//
+// The refusal is staged with a commit-msg hook that exits 1 — standing in
+// for every reason a commit is refused in the field (an enforcing gate, a
+// failing lint, an unusable identity). What matters is that git said no.
+func TestLog_RefusedCommit_DoesNotReportSuccess(t *testing.T) {
+	dir := withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		commitAll(t, d, "initial")
+
+		// CONTROL, run first in the same repo: the identical invocation
+		// with nothing refusing it commits and exits 0. Without this, a
+		// non-zero below would be evidence of nothing — a fixture that
+		// cannot commit at all would produce it too. Note the missing -r:
+		// this is also the F3 shape, an entry with no reasoning section.
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "control decision, no reasoning flag", "--no-interactive", "--quiet"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("control run: %v\nstdout: %s\nstderr: %s", err, out.String(), errBuf.String())
+			}
+			assertSingleOK(t, out.String(), "logged", "committed=true")
+		})
+		if got := commitCount(t, d); got != 2 {
+			t.Fatalf("control commit count = %d; want 2 — the fixture cannot commit, so the refusal below proves nothing", got)
+		}
+
+		hook := filepath.Join(d, ".git", "hooks", "commit-msg")
+		if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'refused by the fixture' >&2\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		withFakeTTY(t, false, func() {
+			root := NewRootCmd()
+			root.SetArgs([]string{"log", "refused decision", "--no-interactive", "--quiet"})
+			var out, errBuf bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errBuf)
+			err := root.Execute()
+
+			if !errors.Is(err, ErrSilent) {
+				t.Fatalf("err = %v; want ErrSilent (exit 1) — the commit was refused\nstdout: %s\nstderr: %s",
+					err, out.String(), errBuf.String())
+			}
+			// SPEC §2.7: "On a non-zero exit the `ok` line MUST NOT be
+			// printed, because that line is a receipt asserting success."
+			// `committed=false` on the receipt is not a substitute —
+			// --no-commit prints exactly that and is a success.
+			if strings.Contains(out.String(), "ok ") {
+				t.Errorf("the quiet `ok` receipt was printed on a refused commit:\n%s", out.String())
+			}
+			mustContain(t, errBuf.String(), "REFUSED")
+			// git's own refusal has to reach the author — a wrapper that
+			// swallows the reason leaves nothing to act on.
+			mustContain(t, errBuf.String(), "refused by the fixture")
+			// The remedy must not BE the command that just failed:
+			// re-running it appends a SECOND copy of the entry and meets
+			// the same refusal. Point at the staged index instead.
+			mustContain(t, errBuf.String(), "git commit")
+			mustContain(t, errBuf.String(), "do not re-run `logmind log`")
+		})
+	})
+
+	// The entry is still on disk — a refused commit is reported, not
+	// rolled back — and the commit did not land.
+	body, err := os.ReadFile(filepath.Join(dir, "docs", "decisions-branches", "main.md"))
+	if err != nil {
+		t.Fatalf("read branch file: %v", err)
+	}
+	if !strings.Contains(string(body), "refused decision") {
+		t.Errorf("the refused decision is not on disk; the entry must survive a refused commit:\n%s", body)
+	}
+	if got := commitCount(t, dir); got != 2 {
+		t.Errorf("commit count = %d; want 2 — the refused commit must not have landed", got)
 	}
 }
 

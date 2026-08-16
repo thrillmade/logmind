@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/templates"
 )
 
 // wellFormedEntry is a decision entry that satisfies SPEC §3.4's gate
@@ -172,11 +174,10 @@ func TestCheckDecisions_TouchedButMalformedDecisionDoesNotClear(t *testing.T) {
 // passes a per-surface test and fails this one the moment the copies
 // drift; both surfaces route through guardcommit.DecisionRecorded.
 func TestGateAndHookAgreeOnWhatRecordsADecision(t *testing.T) {
-	// The shipped sentinel's shape: prose, and no `## <date> <time> -
-	// <title>` header anywhere in it.
-	const sentinel = "# Decision Log\n\nDecisions are not kept in this file. Since SPEC §3.2 every\n" +
-		"decision lands in `docs/decisions-branches/<branch>.md`.\n\n" +
-		"It is not written to, and it holds no decisions of its own.\n"
+	// The shipped sentinel's REAL bytes — the template `logmind init`
+	// installs — not a paraphrase of them, so this pins the file rather
+	// than the test author's memory of it.
+	sentinel := templates.DecisionsPointerTemplate()
 
 	cases := []struct {
 		name        string
@@ -192,6 +193,10 @@ func TestGateAndHookAgreeOnWhatRecordsADecision(t *testing.T) {
 		{name: "a header with no reasoning records nothing",
 			path: "docs/decisions-branches/feature.md",
 			body: "## 2026-08-07 14:30 - Untitled thought\n\n---\n", wantBlocked: true},
+		{name: "reasoning below a blank line is reasoning — both surfaces must allow it",
+			path: "docs/decisions-branches/feature.md",
+			body: "## 2026-08-07 14:30 - Blank-separated body\n\n**Reasoning:**\n\n" +
+				"The author pressed return before writing the reason.\n\n---\n", wantBlocked: false},
 		{name: "no decision file at all",
 			wantBlocked: true},
 	}

@@ -273,9 +273,9 @@ func BuildPostRewriteBody() string {
 // the commit). It now BLOCKS a substantive commit that bypasses
 // `logmind log`, unless git.enforce_commits:false or a guardcommit
 // carve-out applies ([skip-logmind], LOGMIND_ALLOW_GIT_COMMIT=1, a
-// staged decision file, under-threshold, or a rebase/merge/cherry-pick
-// in progress — see internal/guardcommit's package doc for the full
-// list). Because the hook-version marker below is embedded via
+// decision entry in the staged diff, under-threshold, or a
+// rebase/merge/cherry-pick in progress — see internal/guardcommit's
+// package doc for the full list). Because the hook-version marker below is embedded via
 // hookVersion(), every repo's existing v0.6.16-era warn-only hook
 // auto-upgrades to this enforcing body the next time `logmind init`
 // (refresh mode) or `logmind doctor --fix` runs — installHook's
@@ -363,8 +363,9 @@ func BuildCommitMsgBody() string {
 		"# PreToolUse guard). Delegates the enforce/allow decision entirely to\n" +
 		"# `logmind guard-commit --layer git-hook` — see internal/guardcommit for\n" +
 		"# the carve-outs (git.enforce_commits:false, [skip-logmind],\n" +
-		"# LOGMIND_ALLOW_GIT_COMMIT=1, a staged decision file, under-threshold,\n" +
-		"# rebase/merge/cherry-pick in progress).\n" +
+		"# LOGMIND_ALLOW_GIT_COMMIT=1, a decision ENTRY in the staged diff (not\n" +
+		"# merely a staged decision FILE), under-threshold, rebase/merge/\n" +
+		"# cherry-pick in progress).\n" +
 		"#\n" +
 		"# Fails open when logmind isn't on PATH: a missing binary should never\n" +
 		"# block a commit. Fail-open is NOT silent though (issue #270): every\n" +

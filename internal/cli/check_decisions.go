@@ -35,15 +35,22 @@ import (
 // Output strings on the staged path (cli.py:2425-2519):
 //
 //	not-a-git-repo:      "Not a git repository, skipping check."  (exit 0)
-//	decision written:    "✓ A decision log file is staged — changes are documented."
+//	decision written:    "✓ A decision entry was added — changes are documented."
 //	under threshold:     "✓ N lines changed (below T-line threshold)."  (exit 0)
 //	over threshold:      multi-line warning, exit 1 unless --no-fail
 //
-// The first three are byte-identical to Python v0.6.14. The fourth is
-// DELIBERATELY not: Python named docs/decisions.md, and since §3.2 that
-// file is an install sentinel nothing writes, so the warning names the
-// branch file `logmind log` actually produces. Its other two lines are
-// unchanged.
+// The first and third are byte-identical to Python v0.6.14. The other two
+// are DELIBERATELY not:
+//
+//   - The over-threshold warning: Python named docs/decisions.md, and
+//     since §3.2 that file is an install sentinel nothing writes, so the
+//     warning names the branch file `logmind log` actually produces. Its
+//     other two lines are unchanged.
+//   - The success line: Python said "A decision log file is staged",
+//     which is the question this gate stopped asking. Staging a decision
+//     file is not what clears it — adding an entry is (§3.4, "written,
+//     not existing"), and a line that says otherwise teaches the reader
+//     the cheaper rule the SPEC spends a paragraph rejecting.
 func newCheckDecisionsCmd() *cobra.Command {
 	var opts checkDecisionsOpts
 	cmd := &cobra.Command{
@@ -203,7 +210,7 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 		return err
 	}
 	if evidence.Recorded {
-		fmt.Fprintln(stdout, "✓ A decision log file is staged — changes are documented.")
+		fmt.Fprintln(stdout, "✓ A decision entry was added — changes are documented.")
 		return nil
 	}
 

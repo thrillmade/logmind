@@ -256,13 +256,25 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// clear the merge gate for any change over the threshold, and the
 	// author finds out in CI rather than here.
 	//
-	// Deliberately still a warning and not an error. SPEC §3.1 says an
-	// entry "MUST carry a title and a timestamp, and SHOULD carry the
-	// reasoning", and states outright that "an entry of title plus `---`
-	// is well-formed" — so refusing to write one would over-implement
-	// the record format. §3.1 and §3.4 disagree about this; raised as
-	// thrillmade/protocol#93. Until that resolves, logmind writes what
-	// §3.1 permits and warns about what §3.4 will do to it.
+	// Deliberately still a warning and not an error — but that is now a
+	// GAP, not a resting place. §3.1 and §3.4 disagreed about whether
+	// reasoning is required (raised as thrillmade/protocol#93), and while
+	// that was open this surface wrote what §3.1 permitted and warned
+	// about what §3.4 would do to it.
+	//
+	// #93 was RULED on 2026-08-15: reasoning is required, §3.4 is right,
+	// and §3.1's "an entry of title plus `---` is well-formed" is the
+	// sentence that moves. SPEC.md does not yet carry the amendment.
+	//
+	// So the producer and the gate now agree on the RULE and disagree on
+	// the CONSEQUENCE: this warns, then writes an entry its own gate will
+	// refuse for any change over the threshold, and the author discovers
+	// it when the commit is blocked. Under the ruling the honest shape is
+	// to refuse HERE, before anything is written — which changes `-r`
+	// from optional to required on a core verb and needs its own decision
+	// about the sub-threshold and --no-commit cases. Not taken in passing.
+	// Filed rather than guessed; the refused commit at least exits
+	// non-zero now and says so (see commitRefused below).
 	if strings.TrimSpace(f.reasoning) == "" {
 		fmt.Fprintln(stderr, "Warning: -r/--reasoning is empty. Decision logs without reasoning lose most of their value,")
 		fmt.Fprintln(stderr, "         and the check-decisions gate rejects a reasoning-less entry (SPEC §3.4) — so this")
@@ -453,13 +465,39 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// itself failed — e.g. no upstream on a fresh local repo).
 	committed := false
 	pushed := false
+	// commitRefused holds the error from a commit that was ATTEMPTED and
+	// refused. Non-nil makes this run exit non-zero and suppresses the
+	// --quiet `ok` receipt; see the return at the bottom of runLog.
+	var commitRefused error
 	if shouldCommit && gitcli.IsRepo(cwd) {
 		if err := commitDecision(cwd, target, relTarget, f.stage, summary, cfg); err != nil {
-			// Commit failure isn't fatal to the decision-logging
-			// surface: the file is on disk; the user can commit
-			// manually. Surface the error to stderr so the user knows
-			// to follow up.
-			fmt.Fprintf(stderr, "Warning: auto-commit failed: %v\n", err)
+			// A refused commit is a FAILURE, and the caller has to be able
+			// to tell. SPEC §3.3 draws the line for the regenerator and it
+			// is the same line here: "Nothing to push is success. No
+			// credential to push with is a warning and a successful exit
+			// ... A push that was attempted and refused is a failure, and
+			// MUST be reported as one. A refused write is the job not
+			// doing its job, and a run that reports success after one is
+			// indistinguishable from a run that had nothing to do."
+			//
+			// This used to print `Warning: auto-commit failed` and exit 0.
+			// Measured on that build, in a repository with the enforcing
+			// commit-msg hook installed: `logmind log "no reasoning flag"`
+			// exited 0 while the repository's commit count did not move,
+			// and the remedy the relayed block named was the command that
+			// had just failed. An agent reading the exit code — which is
+			// what an agent reads — was told the decision had landed.
+			//
+			// Still not an abort: the entry IS on disk and staged, so the
+			// work is recoverable and nothing below is skipped. What
+			// changes is only that the run stops claiming success.
+			fmt.Fprintf(stderr, "Error: the decision was written to %s, but the commit was REFUSED: %v\n", relTarget, err)
+			// The remedy must not be the command that just failed —
+			// `logmind log` again would append a SECOND entry and meet the
+			// same refusal. Point at the staged index instead: whatever
+			// refused the commit is printed directly above.
+			fmt.Fprintf(stderr, "The entry is written and staged. Resolve the refusal above, then `git commit` — do not re-run `logmind log`, which would append a second copy of this decision.\n")
+			commitRefused = err
 		} else {
 			committed = true
 			if shouldPush {
@@ -516,7 +554,12 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// QUIET receipt — the single chainable summary line. Default mode keeps
 	// its historical multi-line ✓ output (no `ok` trailer) for byte parity;
 	// this line is the quiet MODE's sole stdout output.
-	if quiet {
+	//
+	// Suppressed when the commit was refused, per SPEC §2.7: "On a non-zero
+	// exit the `ok` line MUST NOT be printed, because that line is a receipt
+	// asserting success." `committed=false` on the line is NOT a substitute
+	// — --no-commit prints exactly that and is a success.
+	if quiet && commitRefused == nil {
 		q.ok("logged path=%s committed=%t pushed=%t", relTarget, committed, pushed)
 	}
 
@@ -528,6 +571,14 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// so emitting here never touches either.
 	emitPulse(cwd, stderr)
 
+	// A refused commit exits non-zero. Deliberately LAST, so a refusal
+	// costs the caller nothing else this run already offered: the entry is
+	// written, the link self-heal ran, the pulse advisories were emitted.
+	// ErrSilent because the two explanatory lines are already on stderr and
+	// cobra would otherwise print a third, less specific one.
+	if commitRefused != nil {
+		return ErrSilent
+	}
 	return nil
 }
 

@@ -210,3 +210,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 07:12 - guard-commit: a decision ENTRY in the diff, and a blank line is a paragraph break rather than the end of a section
+
+**Reasoning:** I ruled that the gate should drop its reasoning requirement, citing SPEC §3.1's 'an entry of title plus --- is well-formed'. The lane refused the ruling and was right to: protocol#93 was ruled by the CEO on 2026-08-15 — 'the reasoning is required; §3.1 is the section that moves' — one day before I briefed the opposite. The SPEC text I quoted is stale, pending the amendment that ruling ordered. So the gate keeps requiring reasoning, and the real defect was narrower than I thought: hasReasoning ended a section at the first blank line, so an ordinary Markdown entry whose body sits a paragraph below its header read as empty and was blocked. §3.1's 'MUST NOT require a section order' bars that offset assumption under either reading of the disputed sentence.
+
+**Alternatives considered:** Drop the reasoning requirement per my ruling — refused by the lane on the CEO ruling, and correctly. Weakening §3.4 would re-legalise the touch-test gate that was defeated five independent ways this month (#260, #278, #284), one of which was exactly that.
+
+**Implications:**
+- The suite was RED at fed2a32 and I pushed it, because the lane reported a green full suite and my own check ran only the changed packages — internal/hooks drives the installed hook and depends on the behaviour without being one of them. It is green now and I ran it myself: 23 packages ok, zero FAIL. The hooks fixture that failed asserted a title-with-no-timestamp was allowed, which is not an entry under either reading; it is now a four-row table pinning inline reasoning, reasoning below a blank line, no entry, and an empty header. logmind log no longer exits 0 when its own commit was refused — it exits 1, suppresses the quiet ok receipt per §2.7, and stops naming the command that just failed as the remedy. The carve-out token moved from decision-file-staged to decision-recorded; measured, nothing depends on the literal. Still open by design: without -r the commit is correctly refused, so whether -r becomes required is a design call on a core verb that this lane deliberately did not take in passing.
+
+---
+

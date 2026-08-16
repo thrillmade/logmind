@@ -62,10 +62,17 @@ const (
 	// CarveOutCherryPickOrRevert: .git/CHERRY_PICK_HEAD or
 	// .git/REVERT_HEAD exists.
 	CarveOutCherryPickOrRevert CarveOut = "cherry-pick-or-revert-in-progress"
-	// CarveOutDecisionFileStaged: the staged change WROTE a well-formed
+	// CarveOutDecisionRecorded: the staged change WROTE a well-formed
 	// §3.1 entry into a decision-log file — the commit IS the
 	// documentation. Staging the file is not enough; see DecisionRecorded.
-	CarveOutDecisionFileStaged CarveOut = "decision-file-staged"
+	//
+	// The token reads `decision-recorded`, not the `decision-file-staged`
+	// it was through v2.0. It is printed to a human ("✓ guard-commit:
+	// allowed (decision-recorded)") and the old spelling names the
+	// question this gate STOPPED asking — the one a content-free file
+	// passed. Nothing parses it: the commit-msg hook branches on exit
+	// status alone, and the line is suppressed under --quiet.
+	CarveOutDecisionRecorded CarveOut = "decision-recorded"
 	// CarveOutUnderThreshold: the computed substantive-line count is below
 	// the configured threshold — too small to be worth a decision log.
 	CarveOutUnderThreshold CarveOut = "under-threshold"
@@ -126,7 +133,7 @@ func allowedBy(carveOut CarveOut, lines int) Decision {
 //  4. git is mid-rebase/merge/cherry-pick/revert → Allow (the matching
 //     in-progress carve-out) — these are git-internal commits, not
 //     developer-authored ones.
-//  5. the staged change RECORDED a decision → Allow (decision-file-staged)
+//  5. the staged change RECORDED a decision → Allow (decision-recorded)
 //  6. substantive lines < threshold       → Allow (under-threshold)
 //  7. otherwise                           → Block, with a Reason
 func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
@@ -187,7 +194,7 @@ func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
 		return gitcli.DiffCachedAddedLines(repoRoot, path), nil
 	})
 	if evidence.Recorded {
-		return allowedBy(CarveOutDecisionFileStaged, 0)
+		return allowedBy(CarveOutDecisionRecorded, 0)
 	}
 
 	// 6/7. Compute the substantive-line count per the requested diff mode
@@ -401,22 +408,46 @@ func WellFormedDecisionAdded(added []string) bool {
 
 // hasReasoning reports whether raw carries a reasoningMarker section with
 // content under it. Content may sit on the marker's own line (what
-// `logmind log` writes) or on the lines that follow it up to the first
-// blank line (a hand-written entry that wrapped). A marker with neither
-// is an empty section and does not count.
+// `logmind log` writes) or anywhere below it until the section ends. A
+// marker with nothing at all under it is an empty section and does not
+// count.
 //
-// A section also ends at the NEXT section header, not only at a blank
-// line. §3.1's entry format separates sections with a blank line, but an
-// entry that omits it is still an entry a consumer "MUST treat ... as
-// absent rather than as a parse error" — and without this the following
-// header's own text is swallowed as the previous section's body, so
+// A SECTION ENDS AT THE NEXT SECTION HEADER OR AT THE ENTRY TERMINATOR —
+// NOT AT A BLANK LINE. §3.1's own template separates sections with a
+// blank line, but a blank line inside a section is a paragraph break, and
+// treating it as the end reads an ordinary hand-written entry
+//
+//	**Reasoning:**
+//
+//	Three sentences of prose that say exactly why.
+//
+//	---
+//
+// as an EMPTY reasoning section and blocks the commit. Measured across
+// four identically-built repos before this was fixed: reasoning inline on
+// the marker line → exit 0; wrapped onto the next line with no blank →
+// exit 0; a blank line after the marker → exit 65; a bullet list after a
+// blank → exit 65. The last two carry real reasoning. §3.1 also forbids
+// the shape this was implicitly assuming: a consumer "MUST NOT require a
+// section order beyond the title coming first and `---` terminating the
+// entry", and "the body starts on the marker's line or the one after it"
+// is exactly such a requirement.
+//
+// The next-section-header stop is what keeps the loosening honest. §3.1
+// says a producer MUST omit an empty section's header, so
 //
 //	**Reasoning:**
 //	**Alternatives considered:** none
 //
-// reads as non-empty reasoning when §3.1 defines it as an empty section.
-// That is the "single meaningless line" §3.4 rejects, one blank line away
-// from being caught.
+// is an empty reasoning section, and without the header stop the
+// following header's own text would be swallowed as this section's body
+// — the "single meaningless line" §3.4 rejects. Blank-separated or not
+// makes no difference to that, which is the point: the header ends the
+// section either way.
+//
+// Scope note: raw is one entry, cut by decisions.SplitRawBytes at its own
+// title and at the next one, so this scan cannot run into a neighbouring
+// entry's prose.
 func hasReasoning(raw string) bool {
 	lines := strings.Split(raw, "\n")
 	for i, line := range lines {
@@ -426,7 +457,7 @@ func hasReasoning(raw string) bool {
 		body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), reasoningMarker))
 		for _, next := range lines[i+1:] {
 			trimmed := strings.TrimSpace(next)
-			if trimmed == "" || isSectionHeader(trimmed) || trimmed == entryTerminator {
+			if isSectionHeader(trimmed) || trimmed == entryTerminator {
 				break
 			}
 			body += trimmed

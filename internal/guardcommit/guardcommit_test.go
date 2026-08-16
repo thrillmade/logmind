@@ -11,6 +11,7 @@ import (
 
 	"github.com/thrillmade/logmind/internal/agents"
 	"github.com/thrillmade/logmind/internal/gitcli"
+	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/testgit"
 )
 
@@ -235,8 +236,8 @@ func TestEvaluate_DecisionFileStaged(t *testing.T) {
 	run(t, dir, "add", "big.go", "docs/decisions.md")
 	for _, mode := range []DiffMode{StagedOnly, WorkingTreeUnion} {
 		d := Evaluate(dir, "subject", 20, mode)
-		if !d.Allow || d.CarveOut != CarveOutDecisionFileStaged {
-			t.Fatalf("mode=%v: Decision = %+v; want Allow via CarveOutDecisionFileStaged", mode, d)
+		if !d.Allow || d.CarveOut != CarveOutDecisionRecorded {
+			t.Fatalf("mode=%v: Decision = %+v; want Allow via CarveOutDecisionRecorded", mode, d)
 		}
 	}
 }
@@ -247,8 +248,8 @@ func TestEvaluate_BranchDecisionFileStaged(t *testing.T) {
 	writeFile(t, dir, "docs/decisions-branches/feature.md", wellFormedEntry)
 	run(t, dir, "add", "big.go", "docs/decisions-branches/feature.md")
 	d := Evaluate(dir, "subject", 20, StagedOnly)
-	if !d.Allow || d.CarveOut != CarveOutDecisionFileStaged {
-		t.Fatalf("Decision = %+v; want Allow via CarveOutDecisionFileStaged", d)
+	if !d.Allow || d.CarveOut != CarveOutDecisionRecorded {
+		t.Fatalf("Decision = %+v; want Allow via CarveOutDecisionRecorded", d)
 	}
 }
 
@@ -268,11 +269,12 @@ func TestEvaluate_BranchDecisionFileStaged(t *testing.T) {
 // Both diff modes, because both hook layers are served by this one
 // function and only the line count differs between them.
 func TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks(t *testing.T) {
-	// Verbatim body shape of the shipped sentinel: prose, no `## <date>
-	// <time> - <title>` header anywhere in it.
-	const sentinel = "# Decision Log\n\nDecisions are not kept in this file. Since SPEC §3.2 every\n" +
-		"decision lands in `docs/decisions-branches/<branch>.md`.\n\n" +
-		"It is not written to, and it holds no decisions of its own.\n"
+	// The shipped sentinel's REAL bytes — the template `logmind init`
+	// installs — not a paraphrase of them, so this pins the file rather
+	// than the test author's memory of it. If a future edit ever gives
+	// the sentinel a `## <date> <time> - <title>` line and a reasoning
+	// section, this is what says so.
+	sentinel := templates.DecisionsPointerTemplate()
 
 	for _, tc := range []struct{ name, path, body string }{
 		{"the v1.2.0 install sentinel", "docs/decisions.md", sentinel},
@@ -517,7 +519,7 @@ func TestEvaluate_InProgressStateBeatsDecisionFileCheck(t *testing.T) {
 	// Either carve-out would Allow; assert the DOCUMENTED order actually
 	// fires (merge-in-progress, checked before the staged-files loop).
 	if !d.Allow || d.CarveOut != CarveOutMergeInProgress {
-		t.Fatalf("Decision = %+v; want Allow via CarveOutMergeInProgress (checked before decision-file-staged)", d)
+		t.Fatalf("Decision = %+v; want Allow via CarveOutMergeInProgress (checked before decision-recorded)", d)
 	}
 }
 
@@ -735,15 +737,52 @@ func TestWellFormedDecisionAdded(t *testing.T) {
 	}
 }
 
-// TestHasReasoning_SectionEndsAtNextHeader pins the hole an adversarial
-// review found in PR #287: the body accumulator stopped only at a blank
-// line, so an entry whose next section header is NOT blank-separated had
-// that header's own text swallowed as the previous section's body —
-// making an empty **Reasoning:** read as non-empty. SPEC §3.1 defines
-// that shape as an empty section, and §3.4 rejects exactly this "single
-// meaningless line". One blank line was all that separated a caught case
-// from an uncaught one.
-func TestHasReasoning_SectionEndsAtNextHeader(t *testing.T) {
+// TestWellFormedDecisionAdded_ShippedSentinel is the control on the
+// table above: the §3.2 install sentinel's REAL bytes, split the way a
+// diff hands them over, must not clear the gate. Round 14 closed that
+// hole; every later loosening of the section-boundary rule has to prove
+// it is still closed, and against the file rather than a paraphrase.
+func TestWellFormedDecisionAdded_ShippedSentinel(t *testing.T) {
+	split := func(body string) []string {
+		return strings.Split(strings.TrimRight(body, "\n"), "\n")
+	}
+	if WellFormedDecisionAdded(split(templates.DecisionsPointerTemplate())) {
+		t.Errorf("the shipped docs/decisions.md sentinel clears the gate; it carries no entry:\n%s",
+			templates.DecisionsPointerTemplate())
+	}
+	// Control on the control: the same call on a known-passing input, so
+	// the line above is evidence about the sentinel rather than about a
+	// predicate that says no to everything.
+	if !WellFormedDecisionAdded(split(wellFormedEntry)) {
+		t.Fatal("the control entry does not clear the gate either — the check above measures nothing")
+	}
+}
+
+// TestHasReasoning_SectionBoundaries pins where a §3.1 section ends —
+// at the next section header or at the entry terminator, and at NEITHER
+// a blank line nor a fixed offset from the marker. Two holes, opposite
+// directions, and the rows below hold both shut at once.
+//
+// Too loose (PR #287, found by an adversarial review): the body
+// accumulator stopped only at a blank line, so an entry whose next
+// section header is NOT blank-separated had that header's own text
+// swallowed as the previous section's body — making an empty
+// **Reasoning:** read as non-empty. §3.1 defines that shape as an empty
+// section and §3.4 rejects exactly this "single meaningless line".
+//
+// Too tight (PR #301 round 14, found in the field): the accumulator ALSO
+// stopped at a blank line, so an ordinary entry whose body sits below one
+// read as an EMPTY section and the commit was refused. Measured across
+// four identically-built repos: reasoning inline → exit 0; wrapped with
+// no blank → 0; a blank after the marker → 65; a bullet list after a
+// blank → 65. §3.1 forbids the assumption behind it outright — a consumer
+// "MUST NOT require a section order beyond the title coming first and
+// `---` terminating the entry."
+//
+// One blank line was all that separated a caught case from an uncaught
+// one in the first hole, and a working entry from a blocked one in the
+// second.
+func TestHasReasoning_SectionBoundaries(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
@@ -772,6 +811,40 @@ func TestHasReasoning_SectionEndsAtNextHeader(t *testing.T) {
 		{
 			name: "wrapped reasoning still ends at an unseparated next header",
 			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\nreal content\n**Implications:** x\n\n---\n",
+			want: true,
+		},
+		// --- a blank line is a PARAGRAPH BREAK, not the end of a section.
+		// These four are the round-14 regression: the scan stopped at the
+		// first blank line, so an ordinary entry whose body sits below one
+		// read as an empty section and its commit was refused (exit 65,
+		// measured). The two `want: false` rows are the control — the
+		// loosening must not let an actually-empty section through.
+		{
+			name: "reasoning body below a blank line",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\nThree sentences that say exactly why.\n\n---\n",
+			want: true,
+		},
+		{
+			name: "reasoning body is a bullet list below a blank line",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n- one\n- two\n\n---\n",
+			want: true,
+		},
+		{
+			name: "empty reasoning, blank line, then the next header",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n**Alternatives considered:** none\n\n---\n",
+			want: false,
+		},
+		{
+			name: "empty reasoning, blank line, then the terminator",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n---\n",
+			want: false,
+		},
+		{
+			// §3.1: a consumer "MUST NOT require a section order beyond
+			// the title coming first". Reasoning last, below a section
+			// this build has never heard of, still counts.
+			name: "reasoning last, after an unknown section",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Provenance:** a section logmind never emits\n\n**Reasoning:**\n\nwhy, at the bottom\n\n---\n",
 			want: true,
 		},
 	}
