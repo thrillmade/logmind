@@ -45,6 +45,10 @@ git fetch origin --prune
 git log --oneline origin/main..origin/dev          # what is on dev, not yet on main
 gh issue list --state open --limit 200             # open issues
 gh pr list --state open --limit 200                # open pull requests
+# --limit is load-bearing: gh defaults to 30 and truncates SILENTLY, with no
+# notice. 200 is not a fact about this repo, it is headroom — cross-check the
+# total, which cannot truncate:
+gh api 'search/issues?q=repo:thrillmade/logmind+type:issue+state:open' --jq .total_count
 gh release list --limit 1                          # what `brew install` gives
 ```
 
@@ -198,7 +202,7 @@ across the tag boundary.
 |---|---|
 | **#288** | the current template turns a refused push into `::error` + `exit 1`. Migrating first makes every repo go red on every merge to `main` touching a derived doc — permanently, and the job says it will not self-heal. Strictly worse than the storm it replaces. |
 | **a release carrying the verb** | the new gate template calls `logmind check-decisions --base/--head`, and `setup-logmind` installs the latest **release**. v1.2.0 does not have the verb. |
-| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-15: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade` → 7 distinct repos; control: the same query for `@v1.0.0` returns hits, confined to logmind's own template sources.) |
+| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-16: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100` returns **8** repos — seven consumers plus logmind's own `logmind-self-update.yml`. Control: the `@v1.0.0` query returns 9, so the probe is not matching nothing.) |
 
 ### 3 — Remaining pre-tag work
 
@@ -241,7 +245,9 @@ the JSX, and by byte-comparing the page's `AREAS` against `version.go`.
 **built and on `dev`** (#306, #307, #308, #313). Two were live data-loss paths:
 `self-update` wrote a marker-block fragment over the whole of `AGENTS.md`, and
 `doctor --fix` overwrote a file it had misjudged as markerless. #310 is the
-class behind both — `os.WriteFile` follows symlinks, so a planted link
+class behind both, and is **still open** — its last two raw writes live in
+`internal/gitattr/gitattr.go` and close only when #301 lands. #313 covered the
+rest of the tree and added the guard that fails on the next one — `os.WriteFile` follows symlinks, so a planted link
 redirected writes outside the repository from 26 call sites.
 
 **What is genuinely left is shorter than this list.** Rather than maintaining a
@@ -295,7 +301,7 @@ ships.
 | reporulez | *unversioned* | *unmarked* | no |
 | skdd | *absent* on `main`, **`v4`** on `dev` | *absent* on `main`, **`v11`** on `dev` | no |
 
-**logmind ships** `check-decisions` at **`v5`** and `regen-timeline` at `v11`. Template versions are **per file** — "the fleet is on
+**logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9`, `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
 
 Two corrections to #257's original inventory:

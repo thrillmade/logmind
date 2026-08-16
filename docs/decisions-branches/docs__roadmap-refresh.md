@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-16 00:16 - roadmap: four numbers were wrong again, including two the fix pass introduced
+
+**Reasoning:** The recheck found the shipped template versions stated as five and eleven when they are six and twelve, and the twelve had landed in the very commit this branch was cut from. It also found the bound I added to the two listing commands lower in the file was not added to the two higher up, so the same silent truncation remained one screen away from its own warning. The consumer count was true only by excluding this repository from a search that includes it, and the symlink class was described as fully built while its last two writes are still open and close only when the sibling branch lands.
+
+**Alternatives considered:** Trust the counts I had already verified once. Rejected: three of the four had been verified at some point and went stale or were verified against the wrong scope. The versions now carry the command that reads them, the search states what it returns rather than what remains after excluding this repository, and the class is described as open with the condition that closes it.
+
+**Implications:**
+- The limit is now described as headroom rather than a fact, because a number chosen to exceed today's total is the same defect with a longer fuse, and it is paired with a total from an endpoint that cannot truncate so a reader can tell when it has been outgrown. Both places that list carry the warning now, rather than one of them.
+
+---
+
