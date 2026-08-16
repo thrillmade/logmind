@@ -81,3 +81,14 @@
 
 ---
 
+## 2026-08-16 05:42 - roadmap: stop listing #241 as unbuilt, derive the merge closures instead of naming them, and correct the CI and template-guard claims
+
+**Reasoning:** A panel found four claims false. The worst: #241 was filed under blocked-on-a-person as 'unbuildable as written' while logmind auto is shipped and on dev — verified against current source (root.go registers newAutoCmd, auto.go declares 'auto <profile>', internal/auto ships exactly one profile with retired names refused by name), not against the commit message. Control: grep newPlanCmd → 0, newAutoCmd → 1. A reader sequencing pre-tag work would have re-specified a shipped command. Second: the dev→main step hand-listed eight closures where the range actually carries sixteen — the exact hand-copied-answer defect this file's own rule forbids, so it is now the command that derives them. The comma branch is load-bearing: a first-#N-only probe returns fifteen and silently loses #260, because one commit spells it 'closes #278, #260, #284'.
+
+**Alternatives considered:** Strike the #241 item — rejected; the command shipped and the issue is still open, so the honest correction is to state what is built and let the merge close it. Keep the eight-item list and just add the missing eight — rejected; a hand-kept list of a thing git already owns will drift again the next time a PR lands.
+
+**Implications:**
+- Also corrected: 'of the two workflows' claimed two where there are nine, four of which carry a branch-push trigger (all naming main) while two more fire on tags — and test.yml, the Go suite, was invisible to a reader using that section to learn what CI covers. The contradiction with the templates table is resolved by linking to it as the single owner rather than repeating the versions. And the workflow-template guard is TemplateMarker.Writable() inside installWorkflowTemplatesMode, not a symbol named installWorkflowTemplates that does not exist; refusals are reported on stderr, so 'silently left behind' was false while the conclusion it supported was right. Rendering re-verified against GitHub's own renderer: 4 tables, 24 <tr>; control, a fence planted in a middle data row, gives 22.
+
+---
+

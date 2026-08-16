@@ -59,14 +59,33 @@ them until the tag.
 
 ### How work is verified
 
-`dev` deliberately has **no CI** — of the two workflows, only
-`check-derived-docs` (`regen-timeline.yml`) carries a `push: branches: [main]`
-trigger. `check-decisions` has **no push trigger at all**; it runs only on
-`pull_request`. The bar is a **local adversarial panel** per change, plus the
-full suite run against integrated `dev`. Pull requests into `dev` still get
-CI on their own merge-ref (both workflows' `pull_request` trigger carries no
-`branches:` filter); what the panel and the local suite cover is the
-*integrated* result, which PR-level CI never sees.
+**Nothing in CI watches `dev`.** A commit landing on `dev` runs no workflow at
+all: every branch-push trigger in this repository names `main`, and the only
+other push triggers fire on tags.
+
+Pull requests *into* `dev` do get checks. The Go suite (`test.yml` — matrix
+build, `make test`, gofmt and vet), `check-decisions`, `check-derived-docs`
+(`regen-timeline.yml`) and `check-doc-links` all trigger on `pull_request`
+with no `branches:` filter, so they run on the merge-ref whatever the base
+branch is. Of the `pull_request` triggers, only `goreleaser-check`'s is
+filtered to `main`.
+
+The bar for `dev` itself is therefore a **local adversarial panel** per change,
+plus the full suite run against integrated `dev` — the *integrated* result is
+exactly what PR-level CI never sees.
+
+Read the triggers rather than trusting this paragraph; workflows get added:
+
+```sh
+for f in .github/workflows/*.yml; do
+  printf '### %s\n' "${f##*/}"
+  awk '/^on:/{p=1;next} /^[^[:space:]#]/{p=0} p&&!/^[[:space:]]*#/&&NF' "$f"
+done
+```
+
+Some of those files are also the workflow templates logmind ships to consumer
+repositories. [The fleet, measured](#the-fleet-measured) owns which ones, and
+at what version.
 
 ---
 
@@ -164,16 +183,6 @@ time `main` receives a merge that leaves a derived doc stale — which is the
 | protocol#90 | §7.3's example declares 3 areas for logmind; we implement 5 | what the tag bakes in |
 | protocol#93 | §3.4 requires non-empty reasoning; §3.1 says an entry without it is well-formed | nothing — gate follows §3.4 today |
 
-### #241 — pre-tag by Ruling 12, but unbuildable as written
-
-Underspecified — the setup surface itself has open questions (profile
-vocabulary, whether the limit-watch is tooled or purely behavioural). It is
-**no longer blocked on missing skills**: agent-skills#207 (merged
-2026-08-15) shipped both `session-heartbeat` and `unattended-operation`,
-implementing agent-skills#173 and #174. Those two tracking issues remain
-open on GitHub — that is bookkeeping, not a build blocker; the skills exist
-in the catalog today.
-
 ---
 
 ## The order
@@ -231,9 +240,16 @@ does not exist. Recorded here rather than in §5 so the ruling stays visible.
 Its body no longer contradicts the ruling: it was corrected 2026-08-01 and now
 opens "Pre-tag — in v2.0.0 scope by Ruling 12." Nothing to do.
 
-**#241** — `logmind auto`. Also pre-tag by Ruling 12. It previously needed two
-skills that did not exist; those shipped in agent-skills#207 (merged
-2026-08-15). What remains is #241's own underspecification — see above.
+**#241** — `logmind auto <profile>`: one command sets a repository up to be
+handed over and run unattended. Pre-tag by Ruling 12. **Built and on `dev`**
+(#300). It writes the standing directive `.logmind/auto.yml`, reports which
+required skills are present, and prints the handover a human must give — it
+never starts the mode, because the mode may only begin from an explicit human
+handover. Both of the issue's open questions were answered by shipping: the
+profile vocabulary is one name, `unattended` (`night` and `skdd` are each
+refused with a reason), and the limit-watch stays behavioural — the threshold
+rule lives in the written directive and is owned by the `session-heartbeat`
+skill, not tooled here. Nothing is left to build.
 
 **#279** — the site's `--version` example is one line; §7.3 requires two, and the
 tag-time flip would not have added the `areas:` line. **Built and on `dev`**
@@ -241,16 +257,20 @@ tag-time flip would not have added the `areas:` line. **Built and on `dev`**
 The panel verified it by building the site in both states rather than reading
 the JSX, and by byte-comparing the page's `AREAS` against `version.go`.
 
-**#297, #298, #299, #271** — filed after this section was written, all
-**built and on `dev`**. The pairing is not one-to-one: #306 closes both #297 and
-#299, #307 closes #298, #308 closes #271, and #313 closes most of #310. Two were live data-loss paths:
-`self-update` wrote a marker-block fragment over the whole of `AGENTS.md`, and
-`doctor --fix` overwrote a file it had misjudged as markerless. #310 is the
-class behind all of them, and is the one exception on this list: it is **still
-open**. #313 covered the tree and added the guard that fails on the next raw
-write; its last two live in `internal/gitattr/gitattr.go` and close only when
-#301 lands — `os.WriteFile` follows symlinks, so a planted link
-redirected writes outside the repository from 26 call sites.
+**#297, #298, #299, #271** — **built and on `dev`**, and not one pull request
+each. Ask git which carried which rather than reading a pairing from here:
+`git log origin/main..origin/dev --oneline --grep='#297' -i`.
+
+**#310** is the class behind those four, and the only one of the five not done.
+The rule: **no code may create or truncate a repository file with a raw stdlib
+call.** Those calls follow symlinks, so a planted link redirects the write
+outside the repository — and a dangling link makes the preceding "does it
+exist?" check answer *no*, which is what turns the hole into an ordinary-looking
+create. Every site routes through `internal/atomicio` instead, and
+`internal/writeaudit` parses the tree on each test run so the next raw call
+fails the build rather than shipping. Its allowlist holds the exceptions, each
+with the reason it is safe — all but one. The two sites in
+`internal/gitattr/gitattr.go` are still vulnerable and close when #301 lands.
 
 **What is genuinely left is shorter than this list.** Rather than maintaining a
 second copy of it here, ask git:
@@ -335,10 +355,14 @@ v4" is not one number.
 
 Two corrections to #257's original inventory:
 
-- **reporulez is structurally unreachable by refresh.** `installWorkflowTemplates`
-  guards on `installedVer != ""`, so a file with no `# logmind-template-version`
-  marker is skipped **forever**. It needs hand-replacement or it is silently left
-  behind.
+- **reporulez is unreachable by refresh, and always will be.** A workflow file
+  is logmind's to overwrite only when the `# logmind-template-version` marker is
+  on line 1 — that is what `TemplateMarker.Writable()` means, and
+  `installWorkflowTemplatesMode` refuses everything else, a displaced marker
+  included. reporulez's two files carry no marker at all, so no refresh will
+  ever touch them. The refusal is reported on stderr rather than skipped
+  quietly, but a reported refusal still leaves the stale file in place. It needs
+  hand-replacement.
 - **skdd was misread, and the misreading mixed two branches.** Its `main` has no
   `.github/workflows` at all (404); its `dev` carries `check-decisions` at **v4**,
   added 2026-08-01. An earlier revision of this file said "already on v11, so
@@ -382,8 +406,23 @@ bypassing gates.
 
 ## Pre-tag checklist
 
-1. `dev` → `main`, which closes #264, #278, #260, #284, #285, #286, #267, #270.
+1. `dev` → `main`. That one merge fires every `closes #N` on the branch at
+   once — a good deal more than the gate-integrity cluster. Read the list from
+   git immediately before merging, never from here; the command is below.
 2. Run `release.yml` with `dry_run=true`.
 3. **Separately** re-confirm the homebrew-tap ruleset bypass — the dry run skips
    that push, so it never exercises the identity that failed with GH013.
 4. Tag. That is the CEO's action, not the lane's.
+
+What step 1 closes:
+
+```sh
+git log origin/main..origin/dev --format='%B' \
+  | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+([[:space:]]*,[[:space:]]*#[0-9]+)*' \
+  | grep -oE '#[0-9]+' | sort -u -V
+```
+
+The comma branch is load-bearing, not decoration: one commit on this branch
+spells it `closes #278, #260, #284`, and a probe that stops at the first `#N`
+drops two issues on the floor. Confirm after the merge that each issue really
+closed, and hand-close any that did not.
