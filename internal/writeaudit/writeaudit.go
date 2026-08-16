@@ -172,8 +172,6 @@ var Allowlist = map[string]Exception{
 	// ---- LANE HANDOFFS: delete each entry as its PR lands. ----
 	"internal/cli/init.go": {
 		Sites: []string{
-			"installWorkflowTemplates:os.WriteFile",
-			"installWorkflowTemplates:os.WriteFile",
 			"ensureGitignoreBlock:os.WriteFile",
 			"logFirstDecision:os.WriteFile",
 		},
