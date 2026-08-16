@@ -64,6 +64,39 @@ name: logmind / check-derived-docs
 # stray `timeline-archive.md` beside git's merge scratch file at the worktree
 # root, and, where a file of that name was tracked, replaced its contents.
 #
+# v14 (logmind#261): the PR gate's trigger moves `pull_request` →
+# `pull_request_target`, and the comment on the gate job that claimed
+# immunity is deleted rather than softened. That comment said staying
+# checkout-free meant "there is nothing here for a PR to influence about its
+# own gate". It was wrong in the one direction nobody re-reads: being
+# checkout-free protects the WORKSPACE, and what a pull request rewrites on
+# a `pull_request` trigger is the JOB DEFINITION — this file, read by the
+# forge from the pull request's own merge commit. §6.3: "a workspace-free
+# job is not exempt: what the pull request rewrote is the definition, not
+# the workspace." So a branch could edit the derived docs AND, in the same
+# diff, change the `grep` below to match nothing. `pull_request_target`
+# reads this file from the base branch instead, which is the whole fix; the
+# gate's logic, its three paths and its exit codes are byte-for-byte what
+# v13 had.
+#
+# The trigger's known hazard does not apply and must not be introduced: this
+# job takes no checkout at all, so there is no workspace for the pull
+# request's content to land in. §6.3 permits this route only on that
+# condition.
+#
+# Two consequences, both intended. This gate is one merge behind its own
+# source — the pull request that edits it is judged by the base branch's
+# copy, which is the point — and the pull request that MIGRATES an installed
+# copy off `pull_request` fires neither trigger, so `check-derived-docs` is
+# absent from that one pull request rather than green on it. Absent fails a
+# required-checks rule; green would have satisfied it.
+#
+# v14 also narrows `contents: write` to the job that pushes. Under
+# `pull_request` the forge forced a fork's token read-only however this file
+# was written; under `pull_request_target` the permissions block is what the
+# job actually gets, on a fork pull request too. The gate needs no write and
+# now cannot have one.
+#
 # NOTE on the version number: this was v12 until logmind#301 round 5 caught
 # it colliding with a DIFFERENT, already in-flight v12 (logmind#314) — two
 # branches independently bumped v11 to v12 with unrelated content, and nothing
@@ -73,7 +106,10 @@ name: logmind / check-derived-docs
 # the resolved default branch below are #314's and are NOT reverted here.
 
 on:
-  pull_request:
+  # `pull_request_target`, not `pull_request` — see the v14 note above. The
+  # forge reads a `pull_request` workflow from the pull request's own merge
+  # commit, so the gate below would be the branch's copy of itself.
+  pull_request_target:
     types: [opened, synchronize, reopened]
   push:
     # NOT hardcoded to `main`. A workflow's `on:` filter cannot take an
@@ -103,23 +139,39 @@ on:
     branches: [main]
 
 permissions:
-  contents: write        # regen-on-main commits + pushes the regen to the default branch
+  contents: read         # every job reads; only regen-on-main writes, and it asks for that itself
   pull-requests: read    # the PR gate reads the PR file list via `gh pr diff`
   # NOTE: specifying ANY permission zeroes all others (GitHub default), so
   # pull-requests MUST be listed explicitly — without it `gh pr diff` 403s and
   # the gate fails-closed on EVERY PR, not just violators.
+  #
+  # `contents: write` used to live here, at workflow level, where it reached
+  # both jobs. Under `pull_request` that cost nothing — the forge forced a
+  # fork's token read-only whatever this file asked for. Under
+  # `pull_request_target` (v14) the ask is granted for real, on a fork pull
+  # request too, so the write moves down to `regen-on-main`, the one job that
+  # pushes. A job-level block REPLACES this one rather than adding to it,
+  # which is why the block below names `contents: write` outright.
 
 jobs:
   check-derived-docs:
     name: check-derived-docs
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
-      # NO checkout, deliberately. This job only needs the PR's file list —
-      # never the PR's own content — via `gh pr diff`. A checkout on a
-      # pull_request event lands refs/pull/N/merge (the PR's own content);
-      # staying checkout-free means there is nothing here for a PR to
-      # influence about its own gate.
+      # NO checkout, deliberately — and that is a statement about the
+      # WORKSPACE only. This job needs the PR's file list and nothing else,
+      # and `gh pr diff` gets it from the API. Under `pull_request_target`
+      # §6.3 additionally REQUIRES the absence: "a gate taking the second
+      # route MUST NOT check out the pull request's content." Adding a
+      # checkout here is not a convenience, it is the hazard the trigger is
+      # known for.
+      #
+      # What being checkout-free does NOT buy — this used to claim otherwise,
+      # and the claim is why nobody looked again — is immunity for the gate
+      # ITSELF. That is bought one line up, by the trigger: `pull_request`
+      # would have the forge read this whole file from the branch's own merge
+      # commit, workspace or no workspace.
       - name: Assert the branch did not edit the derived docs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -152,6 +204,13 @@ jobs:
     # resolved, not assumed.)
     if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
+    # The write lives HERE, on the one job that pushes, rather than at
+    # workflow level where it also reached the pull-request gate (v14). A
+    # job-level block replaces the workflow-level one outright — it does not
+    # merge with it — so this must restate every permission the job needs,
+    # and `contents: write` implies the read the checkout below does.
+    permissions:
+      contents: write
     # CREDENTIAL CHAIN, rung 1 — OPTIONAL. The two lines below are the only
     # thing a repository customises to enable the GitHub App rung; every
     # other line of the credential mechanism is identical in every repo that

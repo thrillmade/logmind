@@ -66,11 +66,19 @@ all: every branch-push trigger in this repository names `main`, and the only
 other push triggers fire on tags.
 
 Pull requests *into* `dev` do get checks. The Go suite (`test.yml` — matrix
-build, `make test`, gofmt and vet), `check-decisions`, `check-derived-docs`
-(`regen-timeline.yml`) and `check-doc-links` all trigger on `pull_request`
-with no `branches:` filter, so they run on the merge-ref whatever the base
-branch is. Of the `pull_request` triggers, only `goreleaser-check`'s is
-filtered to `main`.
+build, `make test`, gofmt and vet) and `check-doc-links` trigger on
+`pull_request` with no `branches:` filter, so they run on the merge-ref
+whatever the base branch is; of the `pull_request` triggers, only
+`goreleaser-check`'s is filtered to `main`.
+
+The two **gates** — `check-decisions` and `check-derived-docs`
+(`regen-timeline.yml`) — trigger on `pull_request_target` instead (#261,
+SPEC §6.3), so the forge reads their workflow files from the base branch and
+a pull request cannot rewrite the job that judges it. Two consequences worth
+knowing before they surprise someone: a gate is one merge behind its own
+source, so a PR that edits a gate is judged by `dev`'s copy of it; and the PR
+that migrates an installed gate off `pull_request` fires neither trigger, so
+the check is **absent** from that one PR rather than green on it.
 
 The bar for `dev` itself is therefore a **local adversarial panel** per change,
 plus the full suite run against integrated `dev` — the *integrated* result is
@@ -244,10 +252,30 @@ org and out of the table. "A release carrying the verb" waits on the tag.
 
 ### 3 — Remaining pre-tag work
 
-**#261** — gate logic inline on `pull_request` (§6.3). *Reordered:* originally
-ahead of the gate cluster; doing it after means relocating a **correct**
-evaluation rather than a wrong one. Its remedy restructures `regen-timeline.yml`,
-so that file moves twice regardless of what else we do.
+**#261** — gate logic inline on `pull_request` (§6.3). **Built**, on
+`fix/gate-not-self-modifiable`: both gates move to `pull_request_target`, so
+the forge reads their definitions from the base branch and a PR cannot rewrite
+the job that judges it. Templates bump `check-decisions` v6 → v7 and
+`regen-timeline` v13 → v14; `regen-on-main` takes `contents: write` as a job
+grant, because under the new trigger a workflow-level write is real on a fork
+PR. Chosen over a SHA-pinned reusable workflow because the *caller* stays
+inline on `pull_request` in that shape — the `uses:` line is as rewritable as
+the `run:` it replaces — and because it would make every consumer's gate
+depend on a logmind-owned repository existing.
+
+**What remains under #261, and it needs a person:** §6.3's other clause —
+"its directory SHOULD require an owner's review before a change to it can
+merge". logmind has no `CODEOWNERS` (control, same query, same unit:
+`git ls-files | grep -i codeowners` → 0 paths; `grep -i dependabot` → 5), and
+that is deliberately *not* fixed here. A `CODEOWNERS` file enforces nothing on
+its own: the ruleset must set `require_code_owner_review: true`, canonical sets
+it `false`, and canonical lives in `thrillmade/protocol`. Shipping the file
+alone would be a second thing that reads as protection while providing none,
+which is the defect this issue is about. It also has a live hazard in a
+single-maintainer repository — an owner cannot approve their own PR, so
+turning the rule on blocks every solo change until a second reviewer exists.
+And `logmind init` cannot ship a `CODEOWNERS` template at all: it would have
+to name an owner, and an unresolvable owner is silently treated as none.
 
 **#269** — `ignore_patterns` replaced the 16 built-in defaults instead of merging.
 **Built and on `dev`** (#303). protocol#89 turned out not to gate it: the answer
@@ -383,7 +411,7 @@ its own copies of `check-decisions.yml`, `regen-timeline.yml` and
 The exception is `logmind-self-update.yml`: it carries the marker, is refreshed
 like any consumer's, and is byte-identical to the template it ships.
 
-**logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9` (`v10` once #301 lands), `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
+**logmind ships** `check-decisions` at **`v7`** and `regen-timeline` at **`v14`** (both bumped by #261 — the gate trigger), `check-doc-links` at `v10`, `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
 
 **A markerless workflow is unreachable by refresh, permanently.** A file is
@@ -495,3 +523,4 @@ spells it `closes #278, #260, #284`, and a probe that stops at the first `#N`
 loses `#260`. `#284` survives that probe only because a different commit
 happens to spell `Closes #284.` on its own — luck, not coverage. Confirm after
 the merge that each issue really closed, and hand-close any that did not.
+

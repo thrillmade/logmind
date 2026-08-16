@@ -274,8 +274,12 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	// fix/template-v12's unrelated, already in-flight v12. v13 is v12's body
 	// PLUS the archive — the credential chain and the resolved default branch
 	// the v12 tests below assert are still there, and are asserted there.
-	if !strings.Contains(body, "# logmind-template-version: v13") {
-		t.Errorf("regen-timeline template missing v13 marker")
+	// v13 → v14: the PR gate's trigger moves to `pull_request_target` and
+	// `contents: write` narrows to the job that pushes (logmind#261). What
+	// the gate DECIDES is untouched — every assertion in this function is
+	// v13's, unchanged, which is the evidence for that claim.
+	if !strings.Contains(body, "# logmind-template-version: v14") {
+		t.Errorf("regen-timeline template missing v14 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
@@ -302,10 +306,15 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	if !strings.Contains(body, `grep -qxE 'docs/(timeline|timeline-archive|file-structure)\.md'`) {
 		t.Errorf("regen-timeline PR gate must match exactly the three derived docs as whole lines")
 	}
-	// Event-gated jobs: gate runs only on pull_request, regen only on push.
-	if !strings.Contains(body, "github.event_name == 'pull_request'") ||
+	// Event-gated jobs: gate runs only on the pull-request event, regen only
+	// on push. v14 moved the gate's event to `pull_request_target` (§6.3),
+	// so the `if:` moves with it — a job whose `if:` still names the old
+	// event would simply never run, and a job that never runs reports
+	// SUCCESS rather than skipped, which is the shape of a gate that has
+	// been switched off without anyone seeing red.
+	if !strings.Contains(body, "github.event_name == 'pull_request_target'") ||
 		!strings.Contains(body, "github.event_name == 'push'") {
-		t.Errorf("regen-timeline v10 must event-gate the two jobs (pull_request gate / push regen)")
+		t.Errorf("regen-timeline v14 must event-gate the two jobs (pull_request_target gate / push regen)")
 	}
 	// The main regen commit carries the [skip-logmind] convention and pushes
 	// via an explicit credentialed URL built from the chain's chosen rung —
@@ -324,6 +333,28 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	// this MUST be explicit or the gate 403s and fails-closed on every PR.
 	if !strings.Contains(body, "pull-requests: read") {
 		t.Errorf("regen-timeline v10 must grant pull-requests: read (else gh pr diff 403s and blocks every PR)")
+	}
+	// v14: `contents: write` is the PUSHING job's, not the file's. Under
+	// `pull_request` the distinction cost nothing — the forge forced a
+	// fork's token read-only whatever the file asked for — but under
+	// `pull_request_target` the ask is granted for real, on a fork pull
+	// request too, so a workflow-level write would hand a write token to
+	// the gate job on every fork PR that opens. Read the WORKFLOW-level
+	// block specifically (everything above the first job), or a job-level
+	// grant three screens down would satisfy a whole-file search.
+	workflowLevel, _, found := strings.Cut(body, "\njobs:\n")
+	if !found {
+		t.Fatalf("regen-timeline v14: could not locate the `jobs:` boundary")
+	}
+	if strings.Contains(stripCommentLines(workflowLevel), "contents: write") {
+		t.Errorf("regen-timeline v14 must NOT grant contents: write at workflow level — that reaches " +
+			"check-derived-docs too, and under pull_request_target the grant is real on fork PRs. " +
+			"It belongs on regen-on-main, the one job that pushes.")
+	}
+	if !strings.Contains(body, "    permissions:\n      contents: write\n") {
+		t.Errorf("regen-timeline v14 must grant contents: write on the regen-on-main JOB — a " +
+			"job-level permissions block replaces the workflow-level one rather than merging, " +
+			"so without this the push has a read-only token and every regen fails")
 	}
 	// No credential AT ALL is a freshness-only gap, not a failure: warn +
 	// exit 0 (never blocks the push event; the invariant guarantee lives in
@@ -481,7 +512,13 @@ var templateMarkerPins = map[string]struct {
 	// costs nothing downstream; minting v14 for an edit to v13's own
 	// unreleased body would only repeat the confusion this comment
 	// already describes.
-	"regen-timeline.yml.template": {"v13", "151276d1e2790b84e9400c07762ec1fc13aea4a0db9159997b6f0827706dbeb2"},
+	// Moved v13 → v14 by logmind#261: the PR gate's trigger and the
+	// permission scoping. Unlike the three re-pins above, THIS one is a
+	// marker bump rather than a repin — v13 is the marker this branch's
+	// merge-base already carries on `dev`, so an installed v13 is reachable
+	// and a content change under it would be a change no repository could
+	// ever be told about.
+	"regen-timeline.yml.template": {"v14", "8be4b55b27379c92433c1b4b0a3fb82a9287730b50fcde868b378f6d7ea49902"},
 }
 
 func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
@@ -654,8 +691,12 @@ func TestCheckDecisionsTemplate_V5_CallsTheVerb(t *testing.T) {
 	active := stripCommentLines(body)
 
 	// Marker bump v5 → v6 (setup-logmind action pin v1.0.0 → v1.0.1).
-	if !strings.Contains(body, "# logmind-template-version: v6") {
-		t.Errorf("check-decisions template missing v6 marker")
+	// v6 → v7: the trigger moves to `pull_request_target` so the forge reads
+	// this file from the base branch (logmind#261, SPEC §6.3). Everything
+	// v5 pinned below is v5's, unchanged — the gate's evaluation did not
+	// move, only where its definition is read from.
+	if !strings.Contains(body, "# logmind-template-version: v7") {
+		t.Errorf("check-decisions template missing v7 marker")
 	}
 
 	// The one thing this workflow does: call the verb over the PR's range.
@@ -1076,9 +1117,22 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 // archive layered ONTO v12 rather than replacing it — a v13 that had reverted
 // #314 would have moved B (the regen-on-main preamble) and D (the checkout
 // stanza) as well.
+//
+// v14 (logmind#261) moved A and B, and what it did NOT move is the point.
+// A moved by exactly three lines — the `on:` event, the gate job's `if:`,
+// and `contents: write` → `contents: read` at workflow level. The `run:`
+// block inside A, which is the whole of what this gate decides, is
+// byte-for-byte v13's: the same three derived-doc paths, the same
+// `grep -qxE`, the same `exit 1`, the same drifted-default-branch warning.
+// That is the evidence for "where the definition is read from changed, the
+// logic did not" — the failure prints the region it hashed, so it is
+// checkable rather than asserted. B moved by the two lines giving
+// `regen-on-main` its own `permissions: contents: write`. D and F did not
+// move at all: the checkout stanza and the whole credential chain are
+// untouched.
 const (
-	digestRegionA = "75a4a82048f9b28379db76cd5630c3c7aa9918bba1341a149ff2e00b68c68c18"
-	digestRegionB = "60c9f3ef2d00a0a58c4057f1c36637b1054658019a21f47ef3667059e4445346"
+	digestRegionA = "a01ac1d4b02eedcf277961b1678da8ee2eb11876ddc50463a89c161d7609cb17"
+	digestRegionB = "a3c158cdc04d4dc533c0c59bb13bf245e41798fd1c20ef2afa5793aab69d99fc"
 	digestRegionD = "7e2d788d136cdff688f698527cd505c1d70633f4134d4df2951fbff59b7fc612"
 	digestRegionF = "bbe3a145536916b0c0ae850ae84e5e5e0662554d9d7059f79d9c7cd1844e117a"
 )
@@ -1331,27 +1385,7 @@ func pinActionRefs(t *testing.T, label, s string) string {
 // a quoted key (`"defaults":`), an aliased anchor, odd spacing — are read
 // as what GitHub would read, not as what a substring search would.
 func TestWorkflowActionSurface_IsPinned(t *testing.T) {
-	repoRoot := repoRootFromCaller(t)
-
-	type file struct{ label, body string }
-	var files []file
-	for _, name := range ListWorkflowTemplates() {
-		files = append(files, file{"template " + name, Workflow(name)})
-	}
-	entries, err := os.ReadDir(filepath.Join(repoRoot, ".github", "workflows"))
-	if err != nil {
-		t.Fatalf("read .github/workflows: %v", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", e.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
-		}
-		files = append(files, file{".github/workflows/" + e.Name(), string(data)})
-	}
+	files := allWorkflowFiles(t)
 
 	sawUses := 0
 	for _, f := range files {
@@ -1388,15 +1422,277 @@ func TestWorkflowActionSurface_IsPinned(t *testing.T) {
 		})
 	}
 
-	// Controls: both halves of the search must be demonstrably live, or
-	// every assertion above was vacuous.
-	if len(files) < 2 {
-		t.Fatalf("found %d workflow files — this test's file discovery is broken, not the tree", len(files))
-	}
+	// Control: the search must be demonstrably live, or every assertion
+	// above was vacuous. (The file count has its own control, inside
+	// allWorkflowFiles.)
 	if sawUses == 0 {
 		t.Fatalf("found no `uses:` keys in %d workflow files — this test's YAML walk is broken, "+
 			"not the tree", len(files))
 	}
+}
+
+// workflowFile is one YAML document this suite reasons about: a template
+// logmind ships to a consumer repository, or a workflow this repository
+// runs on itself.
+type workflowFile struct{ label, body string }
+
+// allWorkflowFiles returns every one of them, and is the ONE discovery the
+// class-level guards below share. Two lists would be two things to forget
+// to add a file to, and a guard that never sees a file reports nothing
+// about it while reading exactly like one that cleared it.
+func allWorkflowFiles(t *testing.T) []workflowFile {
+	t.Helper()
+	repoRoot := repoRootFromCaller(t)
+
+	var files []workflowFile
+	for _, name := range ListWorkflowTemplates() {
+		files = append(files, workflowFile{"template " + name, Workflow(name)})
+	}
+	entries, err := os.ReadDir(filepath.Join(repoRoot, ".github", "workflows"))
+	if err != nil {
+		t.Fatalf("read .github/workflows: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		files = append(files, workflowFile{".github/workflows/" + e.Name(), string(data)})
+	}
+	if len(files) < 2 {
+		t.Fatalf("found %d workflow files — this discovery is broken, not the tree", len(files))
+	}
+	return files
+}
+
+// gateJobIDs — every job whose result decides whether a change may merge.
+// Keyed by the job ID, which is also the context name a ruleset's
+// required-status-check rule pins ([§6.4](SPEC)); the two are the same
+// string on purpose, and renaming one without the other is caught by the
+// per-gate control at the bottom of the test below.
+var gateJobIDs = map[string]string{
+	"check-decisions":    "SPEC §3.4's decision gate — a substantive change must carry a decision",
+	"check-derived-docs": "SPEC §3.3's zero-conflict gate — a branch must not edit a derived doc",
+}
+
+// The one ref a gate's checkout may name. Not the trigger's default (the
+// base BRANCH TIP, which moves under a long-lived pull request), and
+// emphatically not the pull request's merge ref.
+const gateCheckoutRef = "${{ github.event.pull_request.base.sha }}"
+
+// TestGateWorkflows_AreNotRewritableByTheChangeTheyJudge is the class guard
+// for logmind#261, and the reason it is a class guard rather than two
+// assertions is that the defect it pins was invisible to every assertion
+// either gate already had.
+//
+// On a `pull_request` trigger the forge reads the workflow file ITSELF from
+// the pull request's own merge commit. So a pull request that edited a
+// gate's YAML had already replaced the job before it ran, and nothing the
+// job then did about its inputs mattered: `check-decisions` could be made
+// to `exit 0`, `check-derived-docs`'s `grep` could be made to match
+// nothing. SPEC §6.3: "Being careful inside the body cannot fix it, and a
+// workspace-free job is not exempt: what the pull request rewrote is the
+// definition, not the workspace."
+//
+// Both gates had, and still have, careful bodies — a base-ref workspace, a
+// released binary from a pinned action, no checkout at all. `regen-timeline`
+// even carried a comment asserting that being checkout-free left "nothing
+// here for a PR to influence about its own gate", which is true of the
+// workspace and false of the job. A false reassurance is worse than no
+// comment; it is why nobody looked again, and the assertion that would have
+// caught it is this one.
+//
+// So the property is stated where the forge actually decides it — the
+// trigger — over EVERY workflow logmind ships and EVERY workflow this
+// repository runs:
+//
+//   - a file carrying a gate job MUST subscribe to `pull_request_target`,
+//     whose workflow definition the forge reads from the BASE branch;
+//   - and MUST NOT subscribe to `pull_request`, which would put the same
+//     job back under the pull request's control — carrying both is not
+//     belt-and-braces but a hole, because the two runs post the same check
+//     name and the forge takes the most recent for a context;
+//   - and a checkout inside a gate job MUST name the base SHA, because
+//     `pull_request_target` is licensed by §6.3 only on the condition that
+//     it never checks out the pull request's content.
+//
+// It reads PARSED YAML, so `on: [pull_request]`, `on: pull_request` and a
+// quoted `"pull_request":` key are all read as what GitHub would read
+// rather than as what a substring search would.
+func TestGateWorkflows_AreNotRewritableByTheChangeTheyJudge(t *testing.T) {
+	files := allWorkflowFiles(t)
+
+	gateFilesPerJob := map[string]int{}
+	sawGateCheckout := 0
+	sawNonGateOnPullRequest := ""
+
+	for _, f := range files {
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(f.body), &doc); err != nil {
+			t.Errorf("%s: does not parse as YAML (%v) — GitHub would not run it, and this test "+
+				"cannot read it", f.label, err)
+			continue
+		}
+		root := yamlDocumentRoot(&doc)
+		triggers := yamlTriggerNames(yamlMappingValue(root, "on"))
+
+		// Which of this file's jobs are gates? The job ID is the check
+		// name, so this is the same question as "does this file post a
+		// check a ruleset can require".
+		jobs := yamlMappingValue(root, "jobs")
+		var gates []string
+		if jobs != nil && jobs.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(jobs.Content); i += 2 {
+				id := jobs.Content[i].Value
+				if _, ok := gateJobIDs[id]; !ok {
+					continue
+				}
+				gates = append(gates, id)
+				gateFilesPerJob[id]++
+				sawGateCheckout += requireGateCheckoutsReadTheBase(t, f.label, id, jobs.Content[i+1])
+			}
+		}
+		if len(gates) == 0 {
+			// NOT a gate, and this branch is load-bearing rather than a
+			// skip: `check-doc-links` is advisory by design (§6.2 — it
+			// never blocks), triggers on `pull_request`, and legitimately
+			// checks out the pull request's own head to self-heal a broken
+			// link. The rule above would be wrong for it, so recording
+			// that at least one such file went through here unflagged is
+			// what shows the rule discriminates instead of banning
+			// `pull_request` outright.
+			if triggers["pull_request"] && sawNonGateOnPullRequest == "" {
+				sawNonGateOnPullRequest = f.label
+			}
+			continue
+		}
+
+		if !triggers["pull_request_target"] {
+			t.Errorf("%s carries gate job(s) %v but does not trigger on `pull_request_target`. "+
+				"A gate MUST NOT carry its logic inline on a `pull_request` trigger (SPEC §6.3): "+
+				"the forge reads the workflow file itself from the pull request's own merge "+
+				"commit, so the job that runs is the pull request's copy of it and any check "+
+				"inside the body is checking inputs to a job the change already replaced.",
+				f.label, gates)
+		}
+		if triggers["pull_request"] {
+			t.Errorf("%s carries gate job(s) %v and triggers on `pull_request`. That trigger hands "+
+				"the pull request its own gate's definition (SPEC §6.3). Carrying it ALONGSIDE "+
+				"`pull_request_target` is not safer than carrying it alone: both runs post the "+
+				"same check name, and the forge takes the most recent run for a context — so the "+
+				"pull request's own copy is the one that counts.", f.label, gates)
+		}
+	}
+
+	// Controls. Each gate must have been FOUND, in both of the copies that
+	// exist (the template logmind ships and this repository's own), or the
+	// assertions above ran against nothing and reported success for it.
+	for id, what := range gateJobIDs {
+		if gateFilesPerJob[id] < 2 {
+			t.Errorf("found job id %q (%s) in %d workflow file(s), want at least 2 — the shipped "+
+				"template and this repository's own copy. Either a copy was deleted, or the job "+
+				"was renamed on one side, in which case this test just stopped checking it AND "+
+				"any ruleset requiring that check name stopped being satisfiable.",
+				id, what, gateFilesPerJob[id])
+		}
+	}
+	if sawGateCheckout == 0 {
+		t.Errorf("no gate job carried an `actions/checkout` step — the base-ref half of this test " +
+			"inspected nothing. `check-decisions` has one; if it no longer does, this control is " +
+			"what says so rather than the assertion quietly passing.")
+	}
+	if sawNonGateOnPullRequest == "" {
+		t.Errorf("no NON-gate workflow triggering on `pull_request` was examined, so this test " +
+			"cannot show it discriminates: a rule that flagged every workflow would look " +
+			"identical from here. `check-doc-links` is advisory and belongs on `pull_request`.")
+	}
+}
+
+// requireGateCheckoutsReadTheBase asserts every `actions/checkout` inside a
+// gate job names the base SHA, and returns how many it inspected so the
+// caller can prove the check was not vacuous.
+//
+// §6.3 licenses the `pull_request_target` route only on this condition —
+// "a gate taking the second route MUST NOT check out the pull request's
+// content, which is the hazard that trigger is otherwise known for" — and
+// under that trigger a bare `actions/checkout` does NOT default to the
+// merge ref, so an omitted `ref:` reads as harmless while leaving the
+// workspace on a branch tip that moves under the pull request.
+func requireGateCheckoutsReadTheBase(t *testing.T, label, jobID string, job *yaml.Node) int {
+	t.Helper()
+	steps := yamlMappingValue(job, "steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode {
+		return 0
+	}
+	n := 0
+	for _, step := range steps.Content {
+		uses := yamlMappingValue(step, "uses")
+		if uses == nil || !strings.HasPrefix(uses.Value, "actions/checkout@") {
+			continue
+		}
+		n++
+		ref := yamlMappingValue(yamlMappingValue(step, "with"), "ref")
+		if ref == nil || ref.Value != gateCheckoutRef {
+			got := "no `ref:` at all"
+			if ref != nil {
+				got = "`ref: " + ref.Value + "`"
+			}
+			t.Errorf("%s: gate job %q checks out with %s, want `ref: %s`. A gate's workspace is "+
+				"read from the base ref or it is not read (SPEC §6.3) — the configuration this "+
+				"gate enforces lives in it, so a workspace carrying the pull request's content "+
+				"lets the change raise the bar it is judged against.", label, jobID, got, gateCheckoutRef)
+		}
+	}
+	return n
+}
+
+// yamlDocumentRoot unwraps the document node yaml.Unmarshal produces.
+func yamlDocumentRoot(doc *yaml.Node) *yaml.Node {
+	if doc != nil && doc.Kind == yaml.DocumentNode && len(doc.Content) == 1 {
+		return doc.Content[0]
+	}
+	return doc
+}
+
+// yamlMappingValue returns the value node for a key, or nil.
+func yamlMappingValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// yamlTriggerNames reads an `on:` block in whichever of YAML's three shapes
+// it was written — `on: push`, `on: [push, pull_request]`, or a mapping of
+// event names to filters. Reading the parsed node rather than the text is
+// what makes the shape irrelevant, which is the point: a substring scan for
+// "pull_request:" sees none of the other two.
+func yamlTriggerNames(on *yaml.Node) map[string]bool {
+	out := map[string]bool{}
+	if on == nil {
+		return out
+	}
+	switch on.Kind {
+	case yaml.ScalarNode:
+		out[on.Value] = true
+	case yaml.SequenceNode:
+		for _, c := range on.Content {
+			out[c.Value] = true
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(on.Content); i += 2 {
+			out[on.Content[i].Value] = true
+		}
+	}
+	return out
 }
 
 // bundledTemplateFingerprints binds each workflow template's MARKER VERSION
@@ -1435,7 +1731,11 @@ func TestWorkflowActionSurface_IsPinned(t *testing.T) {
 // Update procedure: change a template → bump its marker → the test prints
 // the new digest → paste it here, same commit.
 var bundledTemplateFingerprints = map[string]string{
-	"check-decisions.yml.template": "v6:5fbd605bfc774cae66e321405a634baa0f0d3e93a47ffa661623100219430559",
+	// v7 = v6's body with `pull_request` → `pull_request_target`
+	// (logmind#261, SPEC §6.3). v6 is on `dev` and reachable, so this is a
+	// bump, not a repin: a repo already holding v6 gets the new trigger
+	// only because the marker moved.
+	"check-decisions.yml.template": "v7:297484d6c4c4c7e9855eb42c568dba186e9eccc5567b52ebb88638f83d91c5d5",
 	// v10 = v9's body plus the archive half of the derived-doc self-heal:
 	// `logmind timeline --write docs/timeline-archive.md --half archive`.
 	// The marker moves WITH the content by the rule this map exists to
@@ -1466,7 +1766,13 @@ var bundledTemplateFingerprints = map[string]string{
 	// Re-pinned again in #301 round 11 — same rule, third time: v13 still
 	// has not shipped, this edit swaps the v13 note's hand-typed "50" for
 	// __LOGMIND_RECENT_LIMIT__.
-	"regen-timeline.yml.template": "v13:151276d1e2790b84e9400c07762ec1fc13aea4a0db9159997b6f0827706dbeb2",
+	//
+	// v14 = v13's body with the PR gate on `pull_request_target` and
+	// `contents: write` narrowed to `regen-on-main` (logmind#261). v13 has
+	// SHIPPED to `dev` by now, so this is the ordinary case this map is for:
+	// the marker moves with the content, and every repo holding v13 is
+	// refreshed onto v14 because — and only because — the strings differ.
+	"regen-timeline.yml.template": "v14:8be4b55b27379c92433c1b4b0a3fb82a9287730b50fcde868b378f6d7ea49902",
 }
 
 // TestWorkflowTemplateMarkers_MoveWithContent enforces the binding above.

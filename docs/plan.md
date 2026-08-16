@@ -360,16 +360,31 @@ auto-fix in the `check-doc-links` workflow).
     `.claude/settings.json`, which invokes guard-commit, is).
   - **L3** — CI's `check-derived-docs` job. It takes **no checkout at
     all**: it reads only the PR's file list via `gh pr diff --name-only`
-    and fails if either derived doc appears. Staying checkout-free is
-    deliberate — per SPEC §6.3 a gate must not be satisfiable by the
-    change it judges, and with no checkout there is nothing in the job for
-    a PR to influence about its own gate.
+    and fails if any of the three derived docs appears. Two separate
+    things make it non-satisfiable by the change it judges (SPEC §6.3),
+    and conflating them is how this document was wrong for a release:
+    the missing checkout keeps the **workspace** free of the PR's
+    content, and the `pull_request_target` **trigger** is what makes the
+    forge read the job's own definition from the base branch. Only the
+    second addresses the gate itself. Under the `pull_request` trigger
+    this job used to carry, a branch could have edited the `grep` in the
+    same diff that edited a derived doc, and no amount of checkout-free
+    discipline inside the body would have noticed — the body was the
+    branch's. §6.3: "a workspace-free job is not exempt: what the pull
+    request rewrote is the definition, not the workspace." The two are
+    now both required, and pinned together by
+    `TestGateWorkflows_AreNotRewritableByTheChangeTheyJudge`
+    ([#261](https://github.com/thrillmade/logmind/issues/261)).
   - **Honest caveat:** L0–L2 are local guardrails, not guarantees — every
     one of them is bypassable (`--no-verify`, deleting or disabling a
     hook, hand-editing `.claude/settings.json`, or simply using a tool
     that never goes through git or Claude Code). **L3 (CI) is the only
-    non-bypassable enforcement** — it runs server-side on every PR
-    regardless of what did or didn't happen on the contributor's machine.
+    enforcement a contributor's machine cannot reach** — it runs
+    server-side on every PR regardless of what did or didn't happen
+    locally. "Cannot reach" is the accurate claim and "non-bypassable"
+    was not: until #261 the PR itself could rewrite L3's workflow file,
+    which is a bypass that needs no local anything. What remains is the
+    ruleset bypass of §6.6, which belongs to people on purpose.
 - **Staying current on a branch:** `logmind warp` refreshes the working copy
   from the default branch (read-only — it never commits, which would break the
   pin), `logmind context` renders the last-fetched default-branch copy, and the
