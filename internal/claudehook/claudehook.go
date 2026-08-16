@@ -208,15 +208,21 @@ func EnsurePreToolUseGuard(repoRoot string) (changed bool, err error) {
 // writeFreshSettings creates repoRoot/.claude/settings.json (and the
 // .claude/ directory) from scratch, containing only the canonical
 // PreToolUse guard.
+//
+// This is reached from the ReadFile-said-ErrNotExist branch, which is
+// exactly the branch a dangling symlink at .claude/settings.json puts us
+// on: os.ReadFile follows the link, the link's target is missing, and
+// "absent" is reported for a path that is emphatically NOT absent. A bare
+// os.WriteFile here would then follow that same link and write the guard
+// config wherever it points — outside the repository. atomicio.WriteFile
+// creates the parent dir and lands the file by rename onto the NAME, so
+// the link target is never touched. Do not revert to os.WriteFile.
 func writeFreshSettings(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	out, err := canonicalSettingsBytes()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0o644)
+	return atomicio.WriteFile(path, out, 0o644)
 }
 
 func canonicalSettingsBytes() ([]byte, error) {

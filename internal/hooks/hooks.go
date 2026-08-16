@@ -657,10 +657,15 @@ func installHook(hookPath, body, marker string) (bool, error) {
 	// Write atomically (temp sibling + rename): a bare os.WriteFile here
 	// would O_TRUNC an EXISTING hook before writing the new body, so a
 	// crash mid-write could leave a truncated/corrupt git hook behind.
-	// atomicio.WriteFile also chmods the temp file before the rename, so
-	// the executable bit lands correctly whether hookPath is new or being
-	// updated — no separate re-chmod needed.
-	if err := atomicio.WriteFile(hookPath, []byte(body), 0o755); err != nil {
+	//
+	// WriteFileMode, not WriteFile: 0o755 is not a default here, it is the
+	// point — a git hook without the executable bit is silently never run.
+	// atomicio.WriteFile deliberately PRESERVES an existing file's mode (it
+	// reproduces os.WriteFile, which only honours perm on create), so a hook
+	// that somehow lost its exec bit would keep having lost it. Asserting
+	// the mode subsumes the separate re-chmod this site would otherwise
+	// need, and it says at the call site that the mode is intentional.
+	if err := atomicio.WriteFileMode(hookPath, []byte(body), 0o755); err != nil {
 		return false, err
 	}
 	return true, nil

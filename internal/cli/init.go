@@ -28,6 +28,10 @@
 //	--spec                Scaffold docs/spec.md (if absent) and point
 //	                       context.spec_file at it (if unset). Idempotent;
 //	                       works in both fresh-install and refresh mode.
+//	--refresh             Force-re-render the workflow files logmind owns,
+//	                       even at a matching template version. This is the
+//	                       command the shipped workflows' branch-drift
+//	                       warning names; see workflowForceRender.
 //
 // Run `logmind install-hook` separately to set up the local pre-commit
 // hook; that is a real top-level subcommand, not an init flag.
@@ -65,6 +69,7 @@ type initFlags struct {
 	allAgents     bool
 	githubActions bool
 	spec          bool
+	refresh       bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -88,6 +93,8 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.githubActions, "github-actions", true, "Install logmind GitHub Actions (decision aggregator, link checker). Default on.")
 	cmd.Flags().BoolVar(&f.spec, "spec", false,
 		"Scaffold docs/spec.md (only if absent) and set context.spec_file: docs/spec.md in .logmind/config.yml (only if unset). Idempotent; works in both fresh-install and refresh mode.")
+	cmd.Flags().BoolVar(&f.refresh, "refresh", false,
+		"Re-render the GitHub workflow files logmind owns even when their template version already matches — the fix for a scaffolded `on: push:` branch filter that went stale (e.g. the default branch was renamed). DISCARDS any edits you made to those files: they are rewritten from the bundled template, and each discard is named in the output. Never touches a workflow that carries no logmind template marker, and still refuses to downgrade one carrying a newer marker.")
 	return cmd
 }
 
@@ -396,20 +403,54 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 		applyInitSpec(cmd, cwd)
 	}
 
+	// Workflow templates. Exactly ONE of the two paths below writes
+	// .github/workflows/:
+	//
+	//   - default: applyRefresh's version-ordered refresh, shared verbatim
+	//     with `doctor --fix`.
+	//   - --refresh: a forced re-render of the files logmind owns. Kept out
+	//     of applyRefresh deliberately — `doctor --fix`'s contract is "move
+	//     a stale marker forward", and a repair the user asked for by name
+	//     must not become something a drift-remediation pass does on its
+	//     own. See workflowForceRender for why a version-ordered refresh
+	//     cannot repair a stale scaffold-time render.
 	res, err := applyRefresh(cwd, refreshOpts{
-		githubActions:      f.githubActions,
+		githubActions:      f.githubActions && !f.refresh,
 		git:                true,
 		claudeAgentEnabled: claudeAgentEnabled,
 	})
+	var overwritten []string
+	if f.githubActions && f.refresh {
+		created, refreshed, declined, over, werr := installWorkflowTemplatesMode(cwd, workflowForceRender)
+		res.WorkflowsCreated, res.WorkflowsRefreshed, res.WorkflowsDeclined = created, refreshed, declined
+		overwritten = over
+		if err == nil {
+			err = werr
+		}
+	}
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: refresh failed:", err)
 	}
 
 	if f.githubActions {
+		discarded := map[string]bool{}
+		for _, wf := range overwritten {
+			discarded[wf] = true
+		}
 		for _, wf := range res.WorkflowsCreated {
 			fmt.Fprintln(out, "✓ Created", wf)
 		}
 		for _, wf := range res.WorkflowsRefreshed {
+			if discarded[wf] {
+				// DISCLOSURE, at the moment content is actually discarded.
+				// logmind owns this file (its marker says so) so overwriting
+				// it is defensible — but a user who had edited it otherwise
+				// learns nothing at all, and "↻ Refreshed … to current
+				// template" reads as a no-op when it was not one.
+				fmt.Fprintln(out, "↻ Re-rendered", wf,
+					"from the bundled template — previous contents replaced; run `git diff` to see what was discarded")
+				continue
+			}
 			fmt.Fprintln(out, "↻ Refreshed", wf, "to current template")
 		}
 		// A refused downgrade (#286) is neither a create nor a refresh, but
@@ -417,6 +458,20 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 		// "already current" line, which would otherwise be the only thing a
 		// repo running ahead of the binary ever sees.
 		reportTemplateDowngrades(cmd.ErrOrStderr(), res.WorkflowsDeclined)
+		// "already current" is a CLAIM about the whole set, so it may only
+		// be printed when the whole set was actually accounted for. A
+		// markerless file (the user's own, never touched), a displaced
+		// marker, a refused downgrade and a file that could not be written
+		// are all workflows this run did not bring to the bundled template,
+		// and saying "all current" over any of them is false.
+		//
+		// ONE OWNER FOR "WHICH FILES DID THIS RUN NOT WRITE": the declined
+		// list, populated inside installWorkflowTemplatesMode. A second
+		// out-of-band scan for the markerless subset (this used to be a
+		// separate `unownedWorkflows(cwd)` walk) is the same fact read
+		// twice — it printed its own note for a file the loop had already
+		// reported, and it re-derived ownership from a second extractor,
+		// which is exactly the split #299 closed.
 		if len(res.WorkflowsCreated) == 0 && len(res.WorkflowsRefreshed) == 0 && len(res.WorkflowsDeclined) == 0 {
 			fmt.Fprintln(out, "  All workflow templates already current.")
 		}
@@ -444,10 +499,25 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Done. docs/ and .logmind/ left untouched.")
+
+	// A workflow that could not be written is the command not doing its
+	// job, and the summary above has already printed every file that WAS
+	// written. Exiting 0 here is what would make that summary read as the
+	// whole story — the same shape as a regenerator reporting success while
+	// pushing nothing. The other refusal (a declined downgrade) is a
+	// deliberate no-op and stays exit 0, as are the two ownership refusals.
+	//
+	// unwritablePaths, not a fourth open-coded `d.Err != nil` loop: the exit
+	// code and the stderr note must never disagree about which files failed.
+	failed := unwritablePaths(res.WorkflowsDeclined)
+	if len(failed) > 0 {
+		return fmt.Errorf("%d workflow file(s) could not be written: %s (see the notes above)",
+			len(failed), strings.Join(failed, ", "))
+	}
 	return nil
 }
 
-// declineReason says WHY installWorkflowTemplates left an existing file
+// declineReason says WHY installWorkflowTemplatesMode left an existing file
 // alone. One list with a reason, rather than one list per reason: two lists
 // that both mean "we declined to write this path" are two lists that will
 // disagree about whether a path is on them.
@@ -479,9 +549,23 @@ const (
 	declineUnwritable
 )
 
-// templateDowngrade records one REFUSED workflow refresh: installWorkflowTemplates
-// left the file on disk byte-for-byte alone. Reported by both callers (init
-// refresh mode, doctor --fix) — never silent.
+// templateDowngrade records one workflow this run did NOT write, and why.
+// Reported by both callers (init refresh mode, doctor --fix) — never
+// silent. FOUR causes, ONE list deliberately — see declineReason:
+//
+//   - declineDowngrade (#286): the file on disk carries a newer
+//     `# logmind-template-version:` marker than this binary bundles, so it
+//     was left alone on purpose. Err is nil.
+//   - declineUnmarked / declineDisplaced (#299, SPEC §5.2): the file is the
+//     user's, or cannot be told apart from the user's. Err is nil.
+//   - declineUnwritable (#306): a read or write that FAILED — a planted
+//     symlink refused by atomicio, a permission error, a full disk. Err
+//     carries it, and Err is what every surface discriminates on.
+//
+// A second list for any of these would be the same defect in a new shape: a
+// caller that reports one and forgets the other, so a workflow that was not
+// installed vanishes from the summary. There is one slice, so every surface
+// that reports refusals reports all four.
 type templateDowngrade struct {
 	Path      string        // rel path from repo root
 	Installed string        // marker found on disk, e.g. "v11"; "" when there is none
@@ -491,92 +575,180 @@ type templateDowngrade struct {
 	Err       error         // the refusal itself; only set for declineUnwritable
 }
 
-// installWorkflowTemplates copies internal/templates/github/*.yml.template
-// into .github/workflows/. Two modes:
-//
-//   - refresh=false: don't overwrite existing files.
-//   - refresh=true: overwrite when the installed marker is OLDER than the
-//     bundled marker. (Go-era workflows use thrillmade/setup-logmind and
-//     carry no pip-install pin, so a matching marker is left as-is.)
-//
-// Returns (created, refreshed, declined, err). Each list is a slice of
-// relative paths from cwd; declined additionally names both markers.
-//
-// PER-TEMPLATE FAILURES DO NOT ABORT THE LOOP (#306). A refusal on one
-// artifact is recorded as a declineUnwritable entry and the remaining
-// templates are still installed; `err` is reserved for a failure that makes
-// EVERY template impossible (the workflows directory itself). The previous
-// shape returned `nil, nil, nil, err` from inside the loop, so a symlink at
-// check-decisions.yml — first alphabetically — silently cost the user the
-// other three workflows while `init` reported success.
+// workflowInstallMode selects how installWorkflowTemplatesMode treats a
+// workflow file that ALREADY exists. Creating a missing file is the same
+// in all three.
+type workflowInstallMode int
+
+const (
+	// workflowCreateOnly: never overwrite an existing file. Fresh `logmind
+	// init`.
+	workflowCreateOnly workflowInstallMode = iota
+	// workflowRefreshStale: overwrite when the installed marker is OLDER
+	// than the bundled one. `logmind init` in refresh mode, `doctor --fix`.
+	workflowRefreshStale
+	// workflowForceRender: additionally re-render files whose marker
+	// MATCHES the bundled one. `logmind init --refresh`.
+	//
+	// This exists because a workflow can be stale at the current version:
+	// the `on: push:` branch filter is rendered at scaffold time (an `on:`
+	// filter takes no expression), so renaming the default branch leaves a
+	// v12 file that is version-current and wired to a branch that no longer
+	// exists. The regen then silently stops firing — which is exactly what
+	// the shipped workflows' drift warning tells the user to run `logmind
+	// init --refresh` to repair. A version-ordered refresh cannot repair
+	// it, because no version moved.
+	//
+	// It does NOT widen ownership: a file with no `# logmind-template-version:`
+	// marker is the user's and is still never touched (SPEC §5.2), and a
+	// marker NEWER than the bundled one is still declined rather than
+	// downgraded (#286).
+	workflowForceRender
+)
+
+// installWorkflowTemplates is the boolean-shaped entry point kept for the
+// two existing callers (fresh init, applyRefresh). See
+// installWorkflowTemplatesMode for the real thing.
 func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string, []templateDowngrade, error) {
+	mode := workflowCreateOnly
+	if refresh {
+		mode = workflowRefreshStale
+	}
+	// The fifth return is dropped deliberately: only workflowForceRender can
+	// overwrite a file whose content the user may have changed, and neither
+	// mode reachable here is that one, so it is always empty.
+	created, refreshed, declined, _, err := installWorkflowTemplatesMode(repoRoot, mode)
+	return created, refreshed, declined, err
+}
+
+// installWorkflowTemplatesMode copies
+// internal/templates/github/*.yml.template into .github/workflows/,
+// treating existing files according to mode (see workflowInstallMode).
+//
+// Returns (created, refreshed, declined, overwritten, err). Each list is a
+// slice of relative paths from cwd; declined additionally names both
+// markers, or the error that stopped the write.
+//
+// `overwritten` is the subset of `refreshed` whose previous content was NOT
+// what this binary would have written and whose marker was already current
+// — i.e. a file somebody edited, or one carrying a stale scaffold-time
+// render. Only workflowForceRender can produce it, and it is separate from
+// `refreshed` so the caller can DISCLOSE the discard rather than print the
+// same "↻ Refreshed" line it prints for a version bump.
+func installWorkflowTemplatesMode(repoRoot string, mode workflowInstallMode) ([]string, []string, []templateDowngrade, []string, error) {
 	workflowsDir := filepath.Join(repoRoot, ".github", "workflows")
 	if err := os.MkdirAll(workflowsDir, 0o755); err != nil {
-		return nil, nil, nil, err
+		// Nothing can be written at all — not a per-file refusal.
+		return nil, nil, nil, nil, err
 	}
-	var created, refreshed []string
+	var created, refreshed, overwritten []string
 	var declined []templateDowngrade
+	defaultBranch := gitcli.DefaultBranch(repoRoot)
 	for _, tmpl := range templates.ListWorkflowTemplates() {
 		// `tmpl` includes the `.template` suffix; strip for the install name.
 		targetName := strings.TrimSuffix(tmpl, ".template")
 		target := filepath.Join(workflowsDir, targetName)
-		body := renderWorkflowTemplate(templates.Workflow(tmpl))
+		body := renderWorkflowTemplate(templates.Workflow(tmpl), defaultBranch)
+		rel := relativePath(repoRoot, target)
+		// RECORD AND CONTINUE, at every failure site in this loop. Returning
+		// on the first one abandons every workflow after it in the list —
+		// and the callers below print their summary from the returned
+		// slices, so a run that installed nothing after the third template
+		// still reported the first two as the whole story. One unwritable
+		// file must cost that file, not the rest of the fleet's workflows.
+		// Refuse a symlink BEFORE reading, not just before writing. The
+		// ownership decision below is made from the file's own marker, and
+		// os.ReadFile resolves the final component — so a link pointing at
+		// something outside the repository has that file's contents answer
+		// "is this workflow logmind's?". Whatever the answer, it was
+		// answered about the wrong file. A symlink in .github/workflows/ is
+		// not a workflow logmind manages, full stop.
+		if err := atomicio.RefuseSymlink(target); err != nil {
+			declined = append(declined, templateDowngrade{Path: rel, Reason: declineUnwritable, Err: err})
+			continue
+		}
 		existing, err := os.ReadFile(target)
 		if errors.Is(err, fs.ErrNotExist) {
-			// ENOENT-AS-ABSENT (#306). os.ReadFile FOLLOWS a symlink, so a
-			// DANGLING symlink at target — one pointing at a path that does
-			// not exist — lands here reporting fs.ErrNotExist, exactly as a
-			// genuinely missing file does. A bare os.WriteFile then follows
-			// that same link and creates the rendered workflow wherever it
-			// points, which need not be inside the repo, while --fix reports
-			// `workflows=1` as though it had installed one. Same shape as
-			// inserter.EnsureDependabot's create branch. atomicio.WriteFile
-			// refuses instead (atomicio.RefuseSymlink) and makes its own
-			// parent directory.
+			// ENOENT-AS-ABSENT (#306), and why this branch is reached at all
+			// only for a genuinely missing file. os.ReadFile FOLLOWS a
+			// symlink, so a DANGLING symlink at target — one pointing at a
+			// path that does not exist — reports fs.ErrNotExist exactly as an
+			// absent file does; a bare os.WriteFile then follows that same
+			// link and creates the rendered workflow wherever it points,
+			// possibly outside the repo, while --fix reports `workflows=1` as
+			// though it had installed one. The RefuseSymlink above now
+			// declines that case before the read, so the two are no longer
+			// confusable here.
+			//
+			// atomicio.WriteFile stays anyway, and not as belt-and-braces: the
+			// Lstat above and the write below are two syscalls, so a link
+			// planted between them would still be followed by os.WriteFile.
+			// It also writes temp-file-plus-rename (never a truncated stub)
+			// and makes its own parent directory.
 			if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
 				declined = append(declined, templateDowngrade{
-					Path:   relativePath(repoRoot, target),
+					Path:   rel,
 					Reason: declineUnwritable,
 					Err:    err,
 				})
 				continue
 			}
-			created = append(created, relativePath(repoRoot, target))
+			created = append(created, rel)
 			continue
 		}
 		if err != nil {
 			declined = append(declined, templateDowngrade{
-				Path:   relativePath(repoRoot, target),
+				Path:   rel,
 				Reason: declineUnwritable,
 				Err:    err,
 			})
 			continue
 		}
-		if !refresh {
+		if mode == workflowCreateOnly {
 			continue
 		}
-		// OWNERSHIP FIRST (#299). Whether we may write this path at all is a
+		// OWNERSHIP FIRST (#299), AND IT BINDS EVERY MODE INCLUDING THE
+		// FORCED ONE (SPEC §5.2). Whether we may write this path at all is a
 		// separate question from whether its version is behind ours, and it
 		// is answered by the same extractor `doctor` reports from — so a file
-		// doctor calls the user's can no longer be one --fix overwrites.
+		// doctor calls the user's can no longer be one --fix overwrites. The
+		// `# logmind-template-version:` marker on line 1 is the only thing
+		// that makes a file in .github/workflows/ logmind's to rewrite; a
+		// file that has none — the user stripped it, or wrote their own
+		// workflow under a name we happen to ship — belongs to them.
+		// `--refresh` is a bigger hammer, not a wider claim.
+		//
+		// The refusal is RECORDED rather than silently skipped: "left it
+		// alone because it is yours" is correct and invisible, and a run that
+		// skipped one still printed "All workflow templates already current",
+		// which is a claim about a set it had just declined to act on.
 		installed := inserter.ExtractTemplateMarker(string(existing))
+		bundledVer := inserter.ExtractTemplateMarker(body).Version
 		if !installed.Writable() {
 			reason := declineUnmarked
 			if installed.Ownership == inserter.MarkerDisplaced {
 				reason = declineDisplaced
 			}
 			declined = append(declined, templateDowngrade{
-				Path:      relativePath(repoRoot, target),
+				Path:      rel,
 				Installed: installed.Version,
-				Bundled:   inserter.ExtractTemplateMarker(body).Version,
+				Bundled:   bundledVer,
 				Reason:    reason,
 				Line:      installed.Line,
 			})
 			continue
 		}
 		installedVer := installed.Version
-		bundledVer := inserter.ExtractTemplateMarker(body).Version
-		if installedVer != "" && bundledVer != "" && installedVer != bundledVer {
+		if bundledVer == "" {
+			// The BUNDLED side lost its marker. MarkerOwned guarantees
+			// installedVer is non-empty, so this is the only remaining
+			// empty case, and it is ours, not the user's: with no bundled
+			// version there is nothing to order against and nothing to force
+			// to, so every mode leaves the file alone rather than rendering
+			// over it on a comparison that cannot be made.
+			continue
+		}
+		if installedVer != bundledVer {
 			// ORDER, not inequality (#286). A released binary bundles OLDER
 			// markers than dev (`brew install logmind` → v1.2.0 → v4 while
 			// dev is on v11), so an inequality test makes every refresh run
@@ -591,7 +763,7 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 			bundledN, bok := parseTemplateVersion(bundledVer)
 			if iok && bok && installedN > bundledN {
 				declined = append(declined, templateDowngrade{
-					Path:      relativePath(repoRoot, target),
+					Path:      rel,
 					Installed: installedVer,
 					Bundled:   bundledVer,
 					Reason:    declineDowngrade,
@@ -600,13 +772,14 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 			}
 			// The refresh branch's symlink case (#306): a NON-dangling
 			// symlink at target reads fine through os.ReadFile above and
-			// carries a real, stale-looking marker, so control arrives here
-			// and a bare os.WriteFile would rewrite whatever file the link
-			// points at — a file logmind did not install and does not own.
-			// Refuse rather than guess, same as the create branch above.
+			// carries a real, stale-looking marker, so a bare os.WriteFile
+			// would rewrite whatever file the link points at — a file logmind
+			// did not install and does not own. The RefuseSymlink at the top
+			// of the loop declines it before the read; atomicio.WriteFile is
+			// what closes the window between that check and this write.
 			if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
 				declined = append(declined, templateDowngrade{
-					Path:      relativePath(repoRoot, target),
+					Path:      rel,
 					Installed: installedVer,
 					Bundled:   bundledVer,
 					Reason:    declineUnwritable,
@@ -614,21 +787,85 @@ func installWorkflowTemplates(repoRoot string, refresh bool) ([]string, []string
 				})
 				continue
 			}
-			refreshed = append(refreshed, relativePath(repoRoot, target))
+			refreshed = append(refreshed, rel)
 			continue
 		}
-		// Body marker matches the bundled template — leave the installed
-		// file untouched (no pip-install pin to reconcile anymore).
+		// Markers match. A version-ordered refresh stops here — there is no
+		// generation to move the file to. `--refresh` does not, because the
+		// scaffold-time render (the `on: push:` branch filter) can be stale
+		// at the current version and nothing else can repair it.
+		if mode != workflowForceRender {
+			continue
+		}
+		if string(existing) == body {
+			// Already exactly what this binary would write. Re-writing it
+			// would report "↻ Refreshed" for a file nothing changed about,
+			// which trains the reader to ignore the line.
+			continue
+		}
+		// This file is version-current but its CONTENT differs, which on
+		// this path means one of two things: a stale scaffold-time render
+		// (the case --refresh exists for), or an edit the user made. logmind
+		// owns the file either way — the marker says so — but overwriting
+		// somebody's edit while printing the same "↻ Refreshed" line a
+		// no-op re-render prints is how they find out by not finding out.
+		// The line below is the disclosure; `--refresh`'s flag help carries
+		// the same warning before the fact.
+		if err := atomicio.WriteFile(target, []byte(body), 0o644); err != nil {
+			declined = append(declined, templateDowngrade{Path: rel, Reason: declineUnwritable, Err: err})
+			continue
+		}
+		refreshed = append(refreshed, rel)
+		overwritten = append(overwritten, rel)
 	}
-	return created, refreshed, declined, nil
+	return created, refreshed, declined, overwritten, nil
 }
 
-// renderWorkflowTemplate substitutes install-time placeholders. Currently:
+// renderWorkflowTemplate substitutes install-time placeholders:
 //
-//	__LOGMIND_VERSION__ → the current binary's version constant
-func renderWorkflowTemplate(text string) string {
-	return strings.ReplaceAll(text, "__LOGMIND_VERSION__", version.Version)
+//	__LOGMIND_VERSION__        → the current binary's version constant
+//	__LOGMIND_DEFAULT_BRANCH__ → this repository's default branch
+//
+// NOTE: as of the v12/v9 template generation NO bundled template contains
+// __LOGMIND_VERSION__ — the version pin it existed for went away when CI
+// moved to `thrillmade/setup-logmind`, which resolves `latest` itself. The
+// substitution is kept as a working extension point, but nothing exercises
+// it against a real template today, and init_test.go's "never lands on
+// disk" assertion for it currently cannot fail. Filed rather than removed
+// here; removing it is a separate call.
+//
+// The default branch is substituted here, at scaffold time, because a
+// workflow's `on:` trigger CANNOT take an expression — GitHub evaluates no
+// context under `on:`, so `branches: [${{ ... }}]` is not a thing. The
+// alternatives were both worse: hardcoding `main` breaks every repo whose
+// default branch is `master`/`trunk`/anything else (the assumption this
+// removes), and broadening the filter to `branches: ['**']` would put a
+// SECOND `check-derived-docs` check run on every pull-request head SHA —
+// one skipped by its own `if:`, and a conditionally-skipped job reports
+// SUCCESS rather than skipped. Whether that is a bypassed gate or merely a
+// misleading green is the repo owner's configuration, not this function's:
+// `check-derived-docs` blocks by failing the run, and only a repo that has
+// added it to a ruleset's required status checks (logmind's own `main`
+// ruleset has not) turns that green into a merge.
+//
+// Everything the workflow does at RUNTIME still reads the live
+// `github.event.repository.default_branch`, so a stale value here can only
+// cost a trigger, never a wrong-ref write — and the PR gate compares the
+// two and warns when they drift.
+func renderWorkflowTemplate(text, defaultBranch string) string {
+	text = strings.ReplaceAll(text, "__LOGMIND_VERSION__", version.Version)
+	return strings.ReplaceAll(text, "__LOGMIND_DEFAULT_BRANCH__", defaultBranch)
 }
+
+// NOTE on the branch value: gitcli.DefaultBranch owns this fact and its
+// documented 5-step resolution ends in a hard "main" fallback, so it never
+// returns "". This file deliberately does NOT wrap it in a second
+// empty-check — a duplicated fallback is a second copy of the same rule
+// that reads as a safety net while being unreachable, and the invariant
+// belongs to the resolver, not to every caller. What depends on it (an
+// empty value renders `branches: []`, a filter matching no branch, which
+// is a silently dead workflow rather than a merely wrong one) is pinned by
+// TestRenderedWorkflow_TriggersOnTheRepositorysOwnBranch.
 
 // extractTemplateVersion is GONE — see inserter.ExtractTemplateMarker (#299).
 //

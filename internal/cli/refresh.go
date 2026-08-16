@@ -147,11 +147,38 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 // Shape follows SPEC §3.4's rule for the analogous fail-open case ("Failing
 // open MUST NOT be silent... MUST say so on stderr, naming what it looked
 // for and what it found"): name the file, both markers, and the direction.
-// Three refusals, three remedies — so three messages. A single "left
-// unchanged" line would tell a user whose file is AHEAD of the binary to go
-// take ownership of it, and a user whose file is THEIRS to go upgrade.
+// Four causes, four remedies — so four messages. A single "left unchanged"
+// line would tell a user whose file is AHEAD of the binary to go take
+// ownership of it, a user whose file is THEIRS to go upgrade, and a user
+// whose disk is full that logmind made a decision.
 func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 	for _, d := range declined {
+		// THE FAILURE CASE IS CHECKED ON `Err`, NOT ON `Reason`, AND IT IS
+		// CHECKED FIRST. A write that FAILED is not a decision, and it must
+		// never be printed in the vocabulary of the deliberate cases — "left
+		// unchanged … refusing to downgrade" reads as considered. Keying it
+		// on the presence of an error rather than on the reason tag means an
+		// entry constructed without a Reason still cannot be described as a
+		// refusal: declineDowngrade is the zero value of declineReason, so a
+		// `templateDowngrade{Path: p, Err: err}` written by the next person
+		// would otherwise print "installed template  is NEWER than the ".
+		// `error:` rather than `note:` because the callers exit non-zero on
+		// this one (#313) and stay at 0 for the three below.
+		if d.Err != nil {
+			// Not a judgement about the file — logmind wanted it and could not
+			// have it. Distinguished from the three refusals below because the
+			// remedy is different in kind: those ask the user to decide who
+			// owns the file, this one says the write itself could not happen.
+			// Every other template in the same pass was still installed (#306),
+			// which is why this reads "was NOT written" rather than "left
+			// unchanged": the run continued, and the user has to know that this
+			// one path did not come with it.
+			fmt.Fprintf(stderr,
+				"error: %s was NOT written — %v. The other workflow templates in this run were "+
+					"still processed; re-run once this path is writable.\n",
+				d.Path, d.Err)
+			continue
+		}
 		switch d.Reason {
 		case declineUnmarked:
 			// SPEC §5.2: "An artifact carrying no marker at all belongs to
@@ -182,18 +209,14 @@ func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 					"the marker to keep the file yours.\n",
 				d.Path, d.Installed, d.Line)
 		case declineUnwritable:
-			// Not a judgement about the file — logmind wanted it and could not
-			// have it. Distinguished from the three refusals above because the
-			// remedy is different in kind: those ask the user to decide who
-			// owns the file, this one says the write itself could not happen.
-			// Every other template in the same pass was still installed (#306),
-			// which is why this reads "was NOT written" rather than "left
-			// unchanged": the run continued, and the user has to know that this
-			// one path did not come with it.
+			// Unreachable: declineUnwritable always carries Err, and the
+			// guard at the top of the loop returns on that. Kept so the
+			// switch is exhaustive over declineReason rather than silently
+			// falling into the downgrade wording if that invariant ever
+			// breaks — and it says so instead of duplicating the message.
 			fmt.Fprintf(stderr,
-				"note: %s was NOT written — %v. The other workflow templates in this run were "+
-					"installed; re-run once this path is writable.\n",
-				d.Path, d.Err)
+				"error: %s was NOT written — the reason was recorded as unwritable but no error "+
+					"came with it; this is a logmind bug, please report it.\n", d.Path)
 		default:
 			fmt.Fprintf(stderr,
 				"note: %s left unchanged — installed template %s is NEWER than the %s this binary bundles; "+
@@ -203,20 +226,32 @@ func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
 	}
 }
 
-// unwritableCount counts the declines that are FAILURES rather than ownership
+// unwritablePaths names the declines that are FAILURES rather than ownership
 // judgements. declineUnmarked / declineDisplaced / declineDowngrade are stable,
 // legitimate repository states a surface may finish successfully on; a path
 // logmind could not write at all is not, and every surface has to be able to
 // tell the two apart — that is what lets a refusal continue the run without
 // letting the run claim it succeeded (#306).
-func unwritableCount(declined []templateDowngrade) int {
-	n := 0
+//
+// ONE PREDICATE, and it is the same `d.Err != nil` that reportTemplateDowngrades
+// prints from. Three surfaces ask this question — init's receipt, init refresh
+// mode's exit code, doctor --fix — and a second spelling of it (`d.Reason ==
+// declineUnwritable`) is a second copy of the rule that reads as true until one
+// quietly disagrees with the message the user was shown.
+func unwritablePaths(declined []templateDowngrade) []string {
+	var out []string
 	for _, d := range declined {
-		if d.Reason == declineUnwritable {
-			n++
+		if d.Err != nil {
+			out = append(out, d.Path)
 		}
 	}
-	return n
+	return out
+}
+
+// unwritableCount is unwritablePaths' arity for the callers that only report a
+// number.
+func unwritableCount(declined []templateDowngrade) int {
+	return len(unwritablePaths(declined))
 }
 
 // reportAgentsBlockRefusal writes the one stderr line for a refused

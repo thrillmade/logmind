@@ -632,13 +632,25 @@ func TestInitRefresh_RefusedWorkflowIsNotReportedAsAllCurrent(t *testing.T) {
 			t.Fatalf("plant dangling symlink: %v", err)
 		}
 
-		stdout, stderr := runInitCapture(t, []string{"init"}) // second pass: refresh mode
+		// tryInitCapture, not runInitCapture: refresh mode returns a non-zero
+		// exit when a workflow could not be written (#313), so the helper that
+		// fatals on any error would fail here before asserting anything about
+		// the output. The exit code is not merely tolerated — it is asserted
+		// below, because it is the other half of the same rule this test is
+		// about: a run that could not write a workflow must not look like a
+		// clean run, on stdout OR to the caller's `$?`.
+		stdout, stderr, execErr := tryInitCapture(t, []string{"init"}) // second pass: refresh mode
 
 		if strings.Contains(stdout, "All workflow templates already current.") {
 			t.Errorf("refresh reported every template current over a workflow it could not write:\n%s", stdout)
 		}
 		mustContain(t, stderr, "check-decisions.yml")
 		mustContain(t, stderr, "was NOT written")
+		if execErr == nil {
+			t.Errorf("`init` in refresh mode exited 0 having failed to write check-decisions.yml — "+
+				"the summary above lists only what DID get written, so exit 0 makes it read as the "+
+				"whole story:\nstdout=%s\nstderr=%s", stdout, stderr)
+		}
 	})
 }
 
