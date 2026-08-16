@@ -198,7 +198,7 @@ across the tag boundary.
 |---|---|
 | **#288** | the current template turns a refused push into `::error` + `exit 1`. Migrating first makes every repo go red on every merge to `main` touching a derived doc — permanently, and the job says it will not self-heal. Strictly worse than the storm it replaces. |
 | **a release carrying the verb** | the new gate template calls `logmind check-decisions --base/--head`, and `setup-logmind` installs the latest **release**. v1.2.0 does not have the verb. |
-| **template v12** | the shipped `regen-timeline` template pushes with a raw `LOGMIND_AUTO_REGEN_PAT`; logmind's own copy mints a `skdd-steward[bot]` token via `create-github-app-token@v3`. Shipping as-is deploys the credential path logmind abandoned. Also fix the action-pin regression — the template pins `setup-logmind@v1.0.0` while five repos run `@v1.0.1`. |
+| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. |
 
 ### 3 — Remaining pre-tag work
 
@@ -207,9 +207,11 @@ ahead of the gate cluster; doing it after means relocating a **correct**
 evaluation rather than a wrong one. Its remedy restructures `regen-timeline.yml`,
 so that file moves twice regardless of what else we do.
 
-**#269** — `ignore_patterns` replaces the 16 built-in defaults instead of merging.
-§1.4 line 202 says the three sources are **merged**, so this is a spec violation,
-not a wart. Fix shape depends on protocol#89.
+**#269** — `ignore_patterns` replaced the 16 built-in defaults instead of merging.
+**Built and on `dev`** (#303). protocol#89 turned out not to gate it: the answer
+was to give the defaults their own source and resolve positionally, which
+*conforms* to §1.4 as written rather than needing a ruling. Verified against
+`git check-ignore` as an oracle across seven fixtures.
 
 **#259** — the derived-doc restore does not refuse while a merge, rebase,
 cherry-pick or revert is in progress. Restoring mid-conflict discards the
@@ -234,6 +236,25 @@ tag-time flip would not have added the `areas:` line. **Built and on `dev`**
 (#302). The issue stays open until `dev` reaches `main`, per the rule above.
 The panel verified it by building the site in both states rather than reading
 the JSX, and by byte-comparing the page's `AREAS` against `version.go`.
+
+**#297, #298, #299, #271, #310** — filed after this section was written, all
+**built and on `dev`** (#306, #307, #308, #313). Two were live data-loss paths:
+`self-update` wrote a marker-block fragment over the whole of `AGENTS.md`, and
+`doctor --fix` overwrote a file it had misjudged as markerless. #310 is the
+class behind both — `os.WriteFile` follows symlinks, so a planted link
+redirected writes outside the repository from 26 call sites.
+
+**What is genuinely left is shorter than this list.** Rather than maintaining a
+second copy of it here, ask git:
+
+```sh
+git log --oneline origin/main..origin/dev     # built, awaiting the merge to main
+gh issue list --state open --label ''         # everything still open
+```
+
+An issue listed above may already be built — `closes #N` only fires on the
+default branch, so anything merged to `dev` stays open until `dev` reaches
+`main`. That is expected, not drift.
 
 ### 4 — #265 + #257, together (post-tag — see §2)
 
