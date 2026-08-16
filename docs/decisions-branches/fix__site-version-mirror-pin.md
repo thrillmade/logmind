@@ -22,3 +22,14 @@
 
 ---
 
+## 2026-08-16 08:10 - site mirror: skip only when the guarded content is not rendered, and fail when it is rendered and unverifiable
+
+**Reasoning:** The guard skipped whenever the tree was not building the release the site describes, and reported that loudly — but CI runs make test with GO_TEST_FLAGS empty, so a t.Skipf message prints nothing but ok. Measured: go test ./internal/version/ emits only 'ok'. The guard was therefore off for an entire dev cycle with nothing saying so, which is the same failing-open shape as #332 and #298. The lane's own mutation report had already said as much — always-off produced 'not a literal red, but a self-contradictory skip message' — and a tell nobody reads is not a tell.
+
+**Alternatives considered:** Add -v to the Makefile or CI — rejected; widening the whole suite's output to rescue one test makes every future skip invisible-but-louder rather than accounted for. Keep the loud skip and accept it — rejected on the measurement above.
+
+**Implications:**
+- Skipping is now defensible only where the content is not rendered: below AREAS_SINCE the areas line does not appear at all, so AREAS is dead content and unconstrained. At or above it with the tree moved on, the line IS rendered and nothing can verify it, so that now FAILS and names both remedies. Driven rather than argued, with plain go test as CI runs it: today skips at exit 0, aligned passes, post-tag misaligned exits 1 where it used to skip green. The mutation that matters — turning that branch back into a skip — flips a plain go test from FAIL to ok, which is a genuine red rather than last round's self-contradictory message.
+
+---
+
