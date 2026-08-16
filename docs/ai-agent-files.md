@@ -61,7 +61,7 @@ the decision-logging requirement (logmind) and required reading.
 ```
 
 **These files are shared, and logmind writes only the entry it owns**
-(SPEC:1101, [protocol#77](https://github.com/thrillmade/protocol/issues/77)).
+(SPEC:1101, [protocol#77's ruling](https://github.com/thrillmade/protocol/issues/77#issuecomment-5308058696)).
 Several components install into the same `CLAUDE.md` — this repository's own
 opens with Claude Code's `@AGENTS.md` import directive above the stub, and
 `protocol`'s carries clud-bug's marked block below it. What logmind rewrites
