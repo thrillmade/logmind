@@ -52,7 +52,7 @@ etc. — is preserved as-is.
 ### Per-tool files (stubs)
 
 For every enabled agent, `logmind init` / `logmind agents add <name>`
-writes (or overwrites) a 2-line stub:
+installs a marked stub entry:
 
 ```
 <!-- logmind-stub: AI agent instructions for this project live in AGENTS.md -->
@@ -60,11 +60,36 @@ See [AGENTS.md](AGENTS.md) for project-specific AI agent instructions, including
 the decision-logging requirement (logmind) and required reading.
 ```
 
+**These files are shared, and logmind writes only the entry it owns**
+(SPEC:1101, [protocol#77](https://github.com/thrillmade/protocol/issues/77)).
+Several components install into the same `CLAUDE.md` — this repository's own
+opens with Claude Code's `@AGENTS.md` import directive above the stub, and
+`protocol`'s carries clud-bug's marked block below it. What logmind rewrites
+is the span from its `<!-- logmind-stub: -->` line to the next blank line,
+next component marker, or end of file. Every byte outside that span is left
+exactly as found.
+
+Which means, per state of the file:
+
+| the file … | logmind |
+|---|---|
+| does not exist | writes it, carrying the `logmind-stub` marker |
+| carries logmind's marker | rewrites that entry only |
+| carries another component's marker and no logmind entry | leaves it, and says so on stderr |
+| carries no marker at all | leaves it, and says so on stderr |
+
+For the two JSON tools (`cody`, `zed`) the marker is the top-level
+`"logmind"` key, since JSON carries no comments — logmind refreshes that key
+and leaves every other setting in the file alone. A settings file it cannot
+parse (Zed's routinely carries comments) is one it cannot claim, so it is
+left alone too.
+
 If a per-tool file already exists with real hand-written content (not yet
 a stub), `logmind agents add <name>` falls back to splicing a
 `<!-- logmind-start -->` / `<!-- logmind-end -->` section into that file
 in place (the legacy, pre-AGENTS.md insertion path) rather than clobbering
-it. `logmind agents migrate` consolidates any such files into stubs.
+it. `logmind agents migrate` consolidates any such files into stubs — but
+never one carrying another component's marker.
 
 ### Context files
 

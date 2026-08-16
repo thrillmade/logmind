@@ -144,14 +144,14 @@ func newAgentsAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAgentsAdd(cwd, args[0], noCommit, cmd.OutOrStdout())
+			return runAgentsAdd(cwd, args[0], noCommit, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&noCommit, "no-commit", false, "Don't commit the new file")
 	return cmd
 }
 
-func runAgentsAdd(cwd, agentName string, noCommit bool, stdout io.Writer) error {
+func runAgentsAdd(cwd, agentName string, noCommit bool, stdout, stderr io.Writer) error {
 	a, ok := agents.Lookup(agentName)
 	if !ok {
 		fmt.Fprintf(stdout, "Error: Unknown agent '%s'. Valid agents: %s\n",
@@ -178,15 +178,24 @@ func runAgentsAdd(cwd, agentName string, noCommit bool, stdout io.Writer) error 
 		return nil
 	}
 
-	created, err := inserter.CreateAgentFile(agentName, cwd)
+	written, refused, err := inserter.CreateAgentFile(agentName, cwd)
 	if err != nil {
 		return err
 	}
-	if created == "" {
+	// Reachable only by losing the race with whoever created the file between
+	// the fileExists check above and the read inside CreateAgentFile — which
+	// is precisely why the check inside the write primitive is the one that
+	// counts, and why this branch is not folded into the "Failed to create"
+	// error below: the file was not created because it was not ours.
+	if refused != nil {
+		reportRedirectRefusal(stderr, refused)
+		return nil
+	}
+	if written.Path == "" {
 		fmt.Fprintf(stdout, "Error: Failed to create file for agent '%s'\n", agentName)
 		return ErrSilent
 	}
-	fmt.Fprintf(stdout, "✓ Created %s with logmind instructions\n", filepath.Base(created))
+	fmt.Fprintf(stdout, "✓ Created %s with logmind instructions\n", filepath.Base(written.Path))
 	noteDeferredCommit(noCommit, stdout)
 	return nil
 }
@@ -474,13 +483,17 @@ func newAgentsMigrateCmd() *cobra.Command {
 }
 
 func runAgentsMigrate(cwd string, noCommit bool, stdout, stderr io.Writer) error {
-	messages, declined, err := inserter.MigrateToAgentsMD(cwd)
+	messages, declined, refused, err := inserter.MigrateToAgentsMD(cwd)
 	if err != nil {
 		return err
 	}
 	// Reported before the messages: migrate consolidates the per-agent
-	// files either way, but AGENTS.md's own block was left alone (#267).
+	// files either way, but AGENTS.md's own block was left alone (#267),
+	// and a file another component owns was left where it is (#336).
 	reportAgentsBlockRefusal(stderr, declined)
+	for i := range refused {
+		reportRedirectRefusal(stderr, &refused[i])
+	}
 	if len(messages) == 0 {
 		fmt.Fprintln(stdout, "No agent files to migrate (already consolidated).")
 		return nil

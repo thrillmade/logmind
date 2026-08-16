@@ -64,7 +64,7 @@ func TestAgentsList_ForeignFile(t *testing.T) {
 func TestAgentsAdd_Unknown(t *testing.T) {
 	dir := t.TempDir()
 	var stdout bytes.Buffer
-	err := runAgentsAdd(dir, "unknown_agent", false, &stdout)
+	err := runAgentsAdd(dir, "unknown_agent", false, &stdout, io.Discard)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("runAgentsAdd err = %v; want ErrSilent", err)
 	}
@@ -76,7 +76,7 @@ func TestAgentsAdd_Unknown(t *testing.T) {
 func TestAgentsAdd_NewCursor(t *testing.T) {
 	dir := t.TempDir()
 	var stdout bytes.Buffer
-	if err := runAgentsAdd(dir, "cursor", true, &stdout); err != nil {
+	if err := runAgentsAdd(dir, "cursor", true, &stdout, io.Discard); err != nil {
 		t.Fatalf("runAgentsAdd: %v", err)
 	}
 	checkGolden(t, "agents_add_cursor_new.golden", stdout.String())
@@ -101,7 +101,7 @@ func TestAgentsAdd_ExistingForeign(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	var stdout bytes.Buffer
-	if err := runAgentsAdd(dir, "claude", true, &stdout); err != nil {
+	if err := runAgentsAdd(dir, "claude", true, &stdout, io.Discard); err != nil {
 		t.Fatalf("runAgentsAdd: %v", err)
 	}
 	checkGolden(t, "agents_add_claude_foreign.golden", stdout.String())
@@ -124,7 +124,7 @@ func TestAgentsAdd_ExistingWithMarker(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	var stdout bytes.Buffer
-	if err := runAgentsAdd(dir, "claude", true, &stdout); err != nil {
+	if err := runAgentsAdd(dir, "claude", true, &stdout, io.Discard); err != nil {
 		t.Fatalf("runAgentsAdd: %v", err)
 	}
 	checkGolden(t, "agents_add_claude_already.golden", stdout.String())

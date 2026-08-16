@@ -123,7 +123,7 @@ func TestCreateAgentFile_RefusesDanglingSymlink(t *testing.T) {
 		t.Fatalf("plant dangling symlink: %v", err)
 	}
 
-	_, err := CreateAgentFile("claude", repoRoot)
+	_, _, err := CreateAgentFile("claude", repoRoot)
 
 	if err == nil {
 		t.Fatal("CreateAgentFile did not error on a dangling CLAUDE.md symlink")
@@ -165,7 +165,7 @@ func TestMigrateToAgentsMD_RefusesSymlinkedPerAgentFile(t *testing.T) {
 		t.Fatalf("plant symlink: %v", err)
 	}
 
-	_, _, err := MigrateToAgentsMD(repoRoot)
+	_, _, _, err := MigrateToAgentsMD(repoRoot)
 
 	if err == nil {
 		t.Fatal("MigrateToAgentsMD did not error on a symlinked .cursorrules")
@@ -256,7 +256,7 @@ func TestMigrateToAgentsMD_RefusesSymlinkedAGENTSMD(t *testing.T) {
 		t.Fatalf("seed .cursorrules: %v", err)
 	}
 
-	_, _, err := MigrateToAgentsMD(repoRoot)
+	_, _, _, err := MigrateToAgentsMD(repoRoot)
 
 	if err == nil {
 		t.Fatal("MigrateToAgentsMD did not error on a symlinked AGENTS.md")

@@ -44,6 +44,7 @@
 package inserter
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -66,6 +67,17 @@ const (
 	endMarker   = "<!-- logmind-end -->"
 	stubMarker  = "<!-- logmind-stub:"
 )
+
+// agentsMDName is the one path EnsureAgentsMD owns (SPEC §5.2: "Exactly one
+// automation owns any generated or copied path"). It is also row 11 of SPEC
+// §1.2's per-tool table — the codex entry — which is why the per-tool writer
+// below has to recognise it by name rather than treating it as one more stub.
+const agentsMDName = "AGENTS.md"
+
+// logmindOwner is the component name logmind writes into its own markers.
+// The redirect files of SPEC §1.2 are shared with other components (skdd
+// today), so "whose marker is this" is a name compare, not a boolean.
+const logmindOwner = "logmind"
 
 // pinLineRE captures the workflow pin line:
 //
@@ -142,9 +154,21 @@ func HasLogmindSection(content string) bool {
 	return strings.Contains(content, startMarker)
 }
 
-// IsStub reports whether content is a per-agent stub pointing at
-// AGENTS.md. Stubs carry the `<!-- logmind-stub:` marker so they're
-// distinguishable from full files that happen to mention AGENTS.md.
+// IsStub reports whether content MENTIONS logmind's stub marker at all.
+// Stubs carry the `<!-- logmind-stub:` marker so they're distinguishable
+// from full files that happen to mention AGENTS.md.
+//
+// This is NOT the ownership test, and the two must not be confused — that
+// confusion is #299. IsStub answers "has this file been stubbed", for
+// `agents list`'s status column and for `agents migrate`'s
+// already-consolidated skip; ReadRedirectOwner answers "may logmind WRITE
+// this file", and is line-1-only.
+//
+// The looser rule is safe HERE and only here, because both consumers fail
+// safe when it over-matches: the status column says "configured" about a file
+// nobody will write, and migrate SKIPS it. An over-inclusive answer on the
+// write side is what destroys a file, which is why that side does not use
+// this function.
 func IsStub(content string) bool {
 	return strings.Contains(content, stubMarker)
 }
@@ -319,30 +343,81 @@ func InsertLogmindSection(filePath string) (bool, error) {
 	return true, nil
 }
 
-// CreateAgentFile writes a new per-agent instruction file using the
-// canonical stub (for markdown agents other than codex) or the JSON
-// template (for cody/zed) or the full AGENTS.md template (for codex).
-// Returns the absolute path of the written file, or "" + nil for an
-// unknown agent name (matches Python's None return).
+// RedirectWrite is what CreateAgentFile did, for a caller that has to print a
+// receipt. Path is "" when nothing was written — which now includes the
+// ordinary idempotent case, an entry already carrying the current body.
 //
-// Mirrors create_agent_file(agent_name, root_path).
-func CreateAgentFile(agentName, repoRoot string) (string, error) {
+// Created distinguishes the two writes that are not the same event: a file
+// this run brought into existence, and one that was already there and had its
+// logmind entry refreshed in place. Reporting both as "✓ Created" is the
+// cheapest kind of lie for a receipt to tell, and it is the line that made
+// #336 invisible — the user saw "✓ Created CLAUDE.md" over the file the run
+// had just destroyed, and had no reason to look.
+type RedirectWrite struct {
+	Path    string
+	Created bool
+}
+
+// CreateAgentFile installs logmind's entry in a per-agent instruction file —
+// the canonical stub for markdown agents, the JSON body for cody/zed, the
+// AGENTS.md template for codex — MERGING it into whatever is already there.
+//
+// It is the single write primitive for SPEC §1.2's redirect files, and it owns
+// the read as well as the write for the reason RefreshMarkerBlockFile does: a
+// caller that cannot hold the bytes cannot decide about them, so there is no
+// way to express "write it without checking". Pre-#336 this function took an
+// agent name and wrote the bundled body over the path, unconditionally, and
+// the whole of SPEC:1101 was unrepresentable in its signature — a repository's
+// hand-written CLAUDE.md was destroyed by `logmind init` on exit 0, and so was
+// the `@AGENTS.md` import line that is how Claude Code loads AGENTS.md at all.
+//
+// Returns (write, nil, nil) when bytes were written, ("", refusal, nil) when
+// the file on disk is not logmind's — the caller MUST report the refusal — and
+// the zero write for an unknown agent name (matching Python's None return), an
+// AGENTS.md whose refresher is EnsureAgentsMD, or an entry already current.
+//
+// Mirrors create_agent_file(agent_name, root_path), plus the ownership rule.
+func CreateAgentFile(agentName, repoRoot string) (RedirectWrite, *RedirectRefusal, error) {
 	a, ok := agents.Lookup(agentName)
 	if !ok {
-		return "", nil
+		return RedirectWrite{}, nil, nil
 	}
 	filePath := filepath.Join(repoRoot, filepath.FromSlash(a.FilePattern))
-	body := agentTemplate(agentName)
-	// atomicio.WriteFile makes its own parent directory, and — unlike the
-	// bare os.WriteFile this replaced — refuses (atomicio.RefuseSymlink,
-	// #300) rather than silently writing through a symlink at filePath (a
-	// per-agent path like CLAUDE.md or .cursorrules); no ReadFile precedes
-	// this call, so a dangling symlink here was never even caught by an
-	// ErrNotExist check.
-	if err := atomicio.WriteFile(filePath, []byte(body), 0o644); err != nil {
-		return "", err
+
+	// Refuse a symlink BEFORE the read, not just before the write. The
+	// ownership verdict below is made from the file's own bytes and
+	// os.ReadFile resolves the final component, so a link pointing outside the
+	// repository would have some other file's content answer "is CLAUDE.md
+	// logmind's?" — and whatever the answer, it was answered about the wrong
+	// file. Same ordering, for the same reason, as the workflow loop in
+	// internal/cli/init.go.
+	if err := atomicio.RefuseSymlink(filePath); err != nil {
+		return RedirectWrite{}, nil, err
 	}
-	return filePath, nil
+	// os.ReadFile follows a symlink, so a DANGLING one at filePath reports
+	// fs.ErrNotExist exactly as an absent file does; the RefuseSymlink above
+	// has already declined it, and atomicio.WriteFile below closes the window
+	// between the two syscalls.
+	existing, err := os.ReadFile(filePath)
+	exists := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return RedirectWrite{}, nil, err
+	}
+
+	plan := planRedirectWrite(a, string(existing), exists)
+	if plan.Refusal != nil {
+		return RedirectWrite{}, plan.Refusal, nil
+	}
+	if plan.Body == "" {
+		return RedirectWrite{}, nil, nil
+	}
+	// atomicio.WriteFile makes its own parent directory and refuses
+	// (atomicio.RefuseSymlink, #300) rather than silently writing through a
+	// symlink at filePath.
+	if err := atomicio.WriteFile(filePath, []byte(plan.Body), 0o644); err != nil {
+		return RedirectWrite{}, nil, err
+	}
+	return RedirectWrite{Path: filePath, Created: !exists}, nil, nil
 }
 
 // RemoveAgentFile deletes a per-agent instruction file. Returns
@@ -440,7 +515,7 @@ func jsonAgentBody() string {
 // non-nil *AgentsBlockRefusal when the block was deliberately left alone.
 // The status strings match Python's three return values verbatim.
 func EnsureAgentsMD(repoRoot string) (string, *AgentsBlockRefusal, error) {
-	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+	agentsPath := filepath.Join(repoRoot, agentsMDName)
 
 	data, err := os.ReadFile(agentsPath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -572,7 +647,7 @@ type OutdatedMarkerEntry struct {
 // here, but doing it silently let `agents update` report a block that is
 // ahead of the binary as "current" (#267).
 func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, *AgentsBlockRefusal, error) {
-	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+	agentsPath := filepath.Join(repoRoot, agentsMDName)
 	data, err := os.ReadFile(agentsPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, nil
@@ -809,6 +884,12 @@ const (
 	// guessed at — the same "unknown means refuse, never guess" rule #267 and
 	// #286 landed on.
 	MarkerDisplaced
+	// MarkerForeign — the marker on line 1 names a DIFFERENT component (#336,
+	// protocol#77: "present, carrying another component's marker → nobody").
+	// Only the shared artifacts of SPEC §1.2 can be in this state; the
+	// workflow templates carry no other component's marker, so
+	// ExtractTemplateMarker never returns it.
+	MarkerForeign
 )
 
 // TemplateMarker is the result of reading an installed artifact's
@@ -867,6 +948,396 @@ func ExtractTemplateMarker(text string) TemplateMarker {
 		return TemplateMarker{Ownership: MarkerDisplaced, Version: m[1], Line: i + 1}
 	}
 	return TemplateMarker{Ownership: MarkerAbsent}
+}
+
+// redirectMarkerRE matches a component's OWNER MARKER at the start of a line
+// in a per-tool redirect file, capturing the component that claimed it and the
+// KIND of claim:
+//
+//	<!-- logmind-stub: ... -->         → "logmind", "stub"
+//	<!-- skdd-stub: ... -->            → "skdd",    "stub"
+//	<!-- clud-bug-start -->            → "clud-bug","start"
+//	<!-- clud-bug-block-version: … --> → "clud-bug","block-version"
+//
+// The kind matters because only "stub" names a SPAN this package may rewrite.
+// A `<!-- logmind-start -->` in a CLAUDE.md is logmind's too, but it is the
+// legacy in-place section — a different artifact with a different writer — and
+// splicing a stub over its opening line orphans its `-end` and drops what is
+// between them.
+//
+// The kinds are enumerated rather than left open (`<!-- (\S+) -->`) so an
+// ordinary HTML comment a person wrote is not mistaken for a component's
+// claim. A marker shape this does not know falls through to MarkerAbsent,
+// which refuses the write anyway — the rule degrades toward leaving the file
+// alone, never toward claiming it.
+var redirectMarkerRE = regexp.MustCompile(
+	`^<!--\s*([A-Za-z0-9][A-Za-z0-9._-]*?)-(stub|start|end|block-version)\b`)
+
+// markerKindStub is the only claim kind that names a rewritable span.
+const markerKindStub = "stub"
+
+// fenceRE matches a markdown code-fence delimiter. A marker INSIDE a fence is
+// a quotation, not a claim: `docs/ai-agent-files.md` shows the stub verbatim,
+// and a repository is entitled to do the same in its own CLAUDE.md without
+// handing logmind a write span in the middle of its example.
+var fenceRE = regexp.MustCompile("^\\s*(?:```|~~~)")
+
+// RedirectOwner is the answer to the only question a write path may ask about
+// an existing per-tool redirect file (SPEC §1.2's table): whose is it?
+//
+// Marker is what ownership was decided FROM, phrased for a human — the three
+// file forms in that table prove ownership three different ways, and a refusal
+// that cannot name what it looked for is not a report (SPEC §3.4).
+type RedirectOwner struct {
+	Ownership MarkerOwnership
+	Owner     string // component named by the marker, e.g. "skdd"; "" when there is none
+	Line      int    // 1-based line the marker sat on; 0 when there is none
+	Marker    string // what logmind looks for here, e.g. "a `<!-- logmind-stub: -->` line"
+}
+
+// Writable reports whether logmind may write ITS OWN ENTRY in this redirect
+// file. Only MarkerOwned qualifies — the SAME predicate, spelled the same way,
+// that TemplateMarker.Writable gives the workflow path. protocol#77 and SPEC
+// §5.2 are one rule over two artifacts, so they get one predicate: another
+// component's marker and no marker at all are both "not ours", and a caller
+// cannot accidentally handle one and forget the other.
+//
+// Writable is NOT permission to write the whole file. SPEC:1101's first
+// sentence — "An installer MUST merge rather than replace: it writes only the
+// entry it owns and leaves every other entry, including one the user wrote by
+// hand, exactly as it found it" — binds whether or not logmind's marker is
+// there. A file carrying logmind's marker is not thereby logmind's file:
+// `protocol`'s CLAUDE.md carries four markers and no component owns it. What
+// this predicate gates is a splice, planned by planRedirectWrite.
+func (r RedirectOwner) Writable() bool { return r.Ownership == MarkerOwned }
+
+// ReadRedirectOwner is the SINGLE OWNER of "whose is this per-tool redirect
+// file", for every one of the eleven rows in SPEC §1.2's table.
+//
+// It exists because `logmind init` used to answer the question by not asking
+// it: CreateAgentFile rendered the bundled body straight over whatever was
+// there, so a hand-written CLAUDE.md was destroyed on exit 0 with nothing on
+// stderr (#336). protocol#77's ruling is the contract now —
+//
+//	absent                     → whichever component is installing, with its own marker
+//	another component's marker → nobody; leave it, and say so on stderr
+//	no marker at all           → nobody; SPEC:1101, it belongs to the user
+//
+// — and this is where rows 2 and 3 are decided, once, so the two commands that
+// write these files cannot answer differently.
+//
+// WHY NOT "MARKER ON LINE 1", the rule ExtractTemplateMarker uses for
+// workflows. It was the first thing tried here and it is wrong for this
+// artifact, measurably: the CLAUDE.md in `agent-skills`, `reporulez`,
+// `clud-bug` and this repository all open with Claude Code's `@AGENTS.md`
+// import directive, so logmind's marker sits on line 3 in four of the five
+// repositories that carry one. Line-1-only reads every one of them as
+// displaced and refuses forever. The workflow rule can be strict because a
+// workflow is a whole file logmind renders; a redirect file is SHARED, and a
+// component's entry does not get to be first just because it installed first.
+//
+// What replaces it is that a match no longer authorises a whole-file write. A
+// marker anywhere identifies the SPAN logmind owns (see logmindEntrySpan), and
+// everything outside that span is left exactly as found — so the read side can
+// afford to be permissive because the write side stopped being destructive.
+// Two narrower guards remain, both of which a naive substring search fails:
+// the marker must START a line (a mention inside a sentence is prose), and it
+// must not be inside a code fence (a mention inside ``` is a quotation).
+//
+// Three forms, three proofs of ownership, one verdict type:
+//
+//   - MARKDOWN STUB (nine rows) — the `<!-- logmind-stub: -->` line.
+//   - JSON (cody, zed) — JSON has no comments, so the marker is a KEY; see
+//     jsonRedirectOwner.
+//   - AGENTS.md (codex) — the logmind marker block, which is what
+//     EnsureAgentsMD reads and writes.
+func ReadRedirectOwner(a agents.Agent, content string) RedirectOwner {
+	if a.IsJSON {
+		return jsonRedirectOwner(content)
+	}
+	if a.FilePattern == agentsMDName {
+		return agentsMDRedirectOwner(content)
+	}
+	const proof = "a `<!-- logmind-stub: -->` line"
+	var found *RedirectOwner
+	forEachMarkerLine(strings.Split(content, "\n"), func(i int, owner, _ string) bool {
+		if owner == logmindOwner {
+			found = &RedirectOwner{Ownership: MarkerOwned, Owner: logmindOwner, Line: i + 1, Marker: proof}
+			return false // logmind's own claim ends the search; a foreign one does not
+		}
+		if found == nil {
+			found = &RedirectOwner{Ownership: MarkerForeign, Owner: owner, Line: i + 1, Marker: proof}
+		}
+		return true // keep looking: logmind's entry may sit below another component's
+	})
+	if found != nil {
+		return *found
+	}
+	return RedirectOwner{Ownership: MarkerAbsent, Marker: proof}
+}
+
+// forEachMarkerLine calls fn with the 0-based index, component name and claim
+// kind of every component marker that STARTS a line and is not inside a code
+// fence, stopping when fn returns false. The fence state is tracked rather
+// than the fences merely skipped, so an opening ``` protects everything up to
+// its close.
+func forEachMarkerLine(lines []string, fn func(i int, owner, kind string) bool) {
+	inFence := false
+	for i, line := range lines {
+		if fenceRE.MatchString(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		m := redirectMarkerRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if !fn(i, m[1], m[2]) {
+			return
+		}
+	}
+}
+
+// logmindEntrySpan returns the half-open LINE range [start, end) that
+// logmind's entry occupies, and whether there is one at all.
+//
+// THE SPAN IS THE WHOLE FIX. Everything outside it survives byte-for-byte —
+// the `@AGENTS.md` import above it, another component's block below it, a
+// paragraph the user wrote.
+//
+// The entry is the marker line plus the lines immediately under it, ending at
+// the first BLANK line, the first line that opens another component's HTML
+// comment, or end of file. That is markdown's own paragraph boundary, and it
+// is exactly the shape logmind writes (a marker plus two body lines, then
+// nothing or a blank). Measured against the five CLAUDE.md files in this org:
+// it selects lines 1-3 of `protocol`'s (whose blank line 4 separates
+// clud-bug's block) and lines 3-5 of `agent-skills`' (whose lines 1-2 are the
+// import and its blank), and re-splicing the current stub into either
+// reproduces the file byte-for-byte.
+//
+// The alternative — bracketing the entry with an end marker, the way
+// AGENTS.md's block is — was rejected: every stub already installed in the
+// fleet lacks one, so the boundary would still have to be inferred for exactly
+// the files this bug is about, and protocol#77 settled these files as "one
+// line, one owner, one marker". The cost of the paragraph rule is that prose
+// glued to the marker with no blank line between is inside the entry and is
+// replaced; that is stated here and pinned by a test, rather than discovered.
+func logmindEntrySpan(lines []string) (int, int, bool) {
+	start := -1
+	forEachMarkerLine(lines, func(i int, owner, kind string) bool {
+		// STUB ONLY. `<!-- logmind-start -->` is logmind's as well, but it
+		// opens the legacy in-place section, and treating its first line as
+		// the head of a stub span replaces it plus the line under it and
+		// leaves the `-end` marker dangling over content that is now gone.
+		if owner != logmindOwner || kind != markerKindStub {
+			return true
+		}
+		start = i
+		return false
+	})
+	if start < 0 {
+		return 0, 0, false
+	}
+	for i := start + 1; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if t == "" || strings.HasPrefix(t, "<!--") {
+			return start, i, true
+		}
+	}
+	return start, len(lines), true
+}
+
+// jsonRedirectOwner decides ownership for the two JSON rows of SPEC §1.2's
+// table (.sourcegraph/cody.json, .zed/settings.json).
+//
+// JSON has no comment syntax, so these files cannot carry the marker the
+// markdown rows do — logmind's entry is the top-level `"logmind"` KEY, which
+// the body it already ships is built around (see jsonAgentBody). A file
+// carrying that key is one logmind installed into and may refresh; a file
+// without it is somebody's real configuration. That is not hypothetical for
+// `.zed/settings.json`: it is where a Zed user's entire configuration lives,
+// and init used to render the logmind object straight over it.
+//
+// Unparseable is MarkerAbsent, deliberately — and it is the common case for
+// Zed, whose settings file is JSONC and routinely carries comments. A file
+// logmind cannot read is a file logmind cannot claim.
+func jsonRedirectOwner(content string) RedirectOwner {
+	const proof = `a top-level "logmind" key`
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &top); err != nil {
+		return RedirectOwner{Ownership: MarkerAbsent, Marker: proof}
+	}
+	if _, ok := top[logmindOwner]; ok {
+		return RedirectOwner{Ownership: MarkerOwned, Owner: logmindOwner, Marker: proof}
+	}
+	return RedirectOwner{Ownership: MarkerAbsent, Marker: proof}
+}
+
+// agentsMDRedirectOwner decides ownership for row 11 — AGENTS.md itself, which
+// the registry reaches under the name "codex".
+//
+// Its marker is the logmind BLOCK, the same one EnsureAgentsMD installs and
+// refreshes. Reusing HasLogmindSection/IsStub here rather than looking for a
+// stub marker is the point: AGENTS.md is a file whose own content the user
+// writes AROUND the block, so the block being present is what makes the file
+// logmind-installed.
+func agentsMDRedirectOwner(content string) RedirectOwner {
+	const proof = "a `<!-- logmind-start -->` block"
+	if HasLogmindSection(content) || IsStub(content) {
+		return RedirectOwner{Ownership: MarkerOwned, Owner: logmindOwner, Marker: proof}
+	}
+	return RedirectOwner{Ownership: MarkerAbsent, Marker: proof}
+}
+
+// RedirectRefusal records one per-tool redirect file (SPEC §1.2) a run left
+// alone because the bytes on disk are not logmind's — protocol#77's rows 2
+// and 3. It is a REFUSAL, not a failure: the run continues, exits 0, and the
+// caller MUST report it (SPEC §3.4's rule for the analogous fail-open case —
+// "Failing open MUST NOT be silent"). Silence is the whole defect in #336.
+type RedirectRefusal struct {
+	Path      string          // repo-root-relative, e.g. "CLAUDE.md"
+	Agent     string          // registry name, e.g. "claude"
+	Display   string          // human tool name, e.g. "Claude Code"
+	Ownership MarkerOwnership // which refusing state this is
+	Owner     string          // component that owns it, when one is named
+	Line      int             // 1-based line its marker sat on
+	Marker    string          // what logmind looked for and did not find
+}
+
+// redirectPlan is what a write path may do with one per-tool redirect file:
+// the exact bytes to write, or the refusal that says why nothing may be. At
+// most one field is set — Body "" with a nil Refusal is the third outcome,
+// "it is ours and there is nothing to change".
+//
+// Shaped after blockPlan, and for the same reason: one classifier that every
+// path routes through cannot disagree with itself about what a file's state
+// means, and the disagreement between two of them WAS #267.
+type redirectPlan struct {
+	Body    string
+	Refusal *RedirectRefusal
+}
+
+// planRedirectWrite decides what happens to one per-tool redirect file, from
+// its agent registry entry and the bytes already on disk. `exists` is passed
+// separately because "" is a legitimate content for a file that IS there, and
+// an empty file is the user's, not an invitation.
+//
+// The five states of protocol#77's ruling as amended by SPEC:1101, in order:
+//
+//  1. ABSENT → write the bundled body, carrying logmind's own marker. Nothing
+//     but logmind produces these files in a repository that has not installed
+//     the harness, so this row is what keeps SPEC §0.1's independence clause
+//     true.
+//  2. LOGMIND'S ENTRY, ALONE → splice the current body over that span. Same
+//     mechanism as row 3; there is simply nothing else in the file.
+//  3. LOGMIND'S ENTRY, ALONGSIDE SOMEBODY ELSE'S → splice the same span. The
+//     `@AGENTS.md` import above it and another component's block below it are
+//     outside the span and are copied through untouched.
+//  4. FOREIGN MARKER, NO LOGMIND ENTRY → refuse and report.
+//  5. NO MARKER AT ALL → refuse and report (SPEC:1101).
+func planRedirectWrite(a agents.Agent, existing string, exists bool) redirectPlan {
+	body := agentTemplate(a.Name)
+	if !exists {
+		return redirectPlan{Body: body}
+	}
+	owner := ReadRedirectOwner(a, existing)
+	if !owner.Writable() {
+		return redirectPlan{Refusal: refusalFor(a, owner)}
+	}
+	if a.FilePattern == agentsMDName {
+		// Ours, and NOT ours to rewrite HERE. SPEC §5.2: "Exactly one
+		// automation owns any generated or copied path" — AGENTS.md's is
+		// EnsureAgentsMD, which rewrites the marked block and preserves every
+		// byte around it. Rendering the bundled template over the file from
+		// here undid that surgical refresh in the same `init` run, taking the
+		// repository's own prose with it.
+		return redirectPlan{}
+	}
+	if a.IsJSON {
+		return redirectPlan{Body: mergeJSONEntry(existing, body)}
+	}
+	return redirectPlan{Body: mergeStubEntry(existing, body)}
+}
+
+// mergeStubEntry splices `body` over the span logmind owns in `existing`,
+// returning "" when that leaves the file unchanged (so an idempotent re-run
+// writes nothing and claims nothing).
+//
+// Returns "" as well when the file carries a logmind marker with no entry span
+// to replace — a CLAUDE.md holding the LEGACY in-place `<!-- logmind-start -->`
+// section rather than a stub. That file is logmind's, but converting it is
+// `agents migrate`'s job, which folds its content into AGENTS.md first;
+// stamping a stub over it from here would drop everything the block contains.
+func mergeStubEntry(existing, body string) string {
+	lines := strings.Split(existing, "\n")
+	start, end, ok := logmindEntrySpan(lines)
+	if !ok {
+		return ""
+	}
+	// TrimRight, not Split-and-drop-last: the body's own trailing newline is
+	// represented by whatever followed the entry in the ORIGINAL file, which
+	// lines[end:] already carries. Re-adding it here would insert a blank line
+	// on every refresh.
+	merged := make([]string, 0, len(lines))
+	merged = append(merged, lines[:start]...)
+	merged = append(merged, strings.Split(strings.TrimRight(body, "\n"), "\n")...)
+	merged = append(merged, lines[end:]...)
+	out := strings.Join(merged, "\n")
+	if out == existing {
+		return ""
+	}
+	return out
+}
+
+// mergeJSONEntry replaces the top-level "logmind" value in `existing` with the
+// one from `body`, leaving every other top-level key as it was, and returns ""
+// when nothing changed.
+//
+// The re-render is deliberately skipped when logmind's key is the only one:
+// the bundled body is hand-formatted, and round-tripping it through
+// encoding/json would sort its keys and rewrite the file on the first run in
+// every repository that has one. When there ARE other keys, re-rendering is
+// unavoidable — and it is still the right trade, because the alternative is
+// dropping the user's Zed configuration.
+func mergeJSONEntry(existing, body string) string {
+	var top, fresh map[string]json.RawMessage
+	if json.Unmarshal([]byte(existing), &top) != nil || json.Unmarshal([]byte(body), &fresh) != nil {
+		return ""
+	}
+	if len(top) == 1 {
+		if existing == body {
+			return ""
+		}
+		return body
+	}
+	top[logmindOwner] = fresh[logmindOwner]
+	out, err := json.MarshalIndent(top, "", "  ")
+	if err != nil {
+		return ""
+	}
+	rendered := string(out) + "\n"
+	if rendered == existing {
+		return ""
+	}
+	return rendered
+}
+
+// refusalFor packages a non-writable verdict for the caller to report. One
+// constructor, so a refusal cannot be raised without the fields the reporter
+// needs to describe it.
+func refusalFor(a agents.Agent, owner RedirectOwner) *RedirectRefusal {
+	return &RedirectRefusal{
+		Path:      a.FilePattern,
+		Agent:     a.Name,
+		Display:   a.Display,
+		Ownership: owner.Ownership,
+		Owner:     owner.Owner,
+		Line:      owner.Line,
+		Marker:    owner.Marker,
+	}
 }
 
 // OutdatedPinEntry records one stale workflow pin:
@@ -963,14 +1434,16 @@ func UpdateWorkflowPin(content, newVersion string) (string, string) {
 // matches Python's accumulator pattern; the migrate command renders
 // the slice line-by-line. The second return is EnsureAgentsMD's refusal
 // (#267): migrate still consolidates the per-agent files, but the caller
-// must say that AGENTS.md's own block was left alone.
-func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
+// must say that AGENTS.md's own block was left alone. The third is the set of
+// files this run declined to claim (#336) — see the loop for which.
+func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, []RedirectRefusal, error) {
 	var messages []string
+	var refusals []RedirectRefusal
 	_, declined, err := EnsureAgentsMD(repoRoot)
 	if err != nil {
-		return nil, declined, err
+		return nil, declined, refusals, err
 	}
-	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+	agentsPath := filepath.Join(repoRoot, agentsMDName)
 	var appendedBlocks []string
 
 	for _, a := range agents.All() {
@@ -989,6 +1462,20 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 		if IsStub(content) {
 			continue // already migrated
 		}
+		// ANOTHER COMPONENT'S FILE IS NOT THE USER'S CONTENT TO CONSOLIDATE
+		// (protocol#77 row 2, #336). Migrate reads an UNMARKED file as the
+		// user's own instructions and moves them into AGENTS.md — which
+		// preserves every byte and is the whole point of the command, so an
+		// absent marker is deliberately NOT refused here the way it is in
+		// CreateAgentFile. A marker naming skdd is a different thing: folding
+		// its pointer line into AGENTS.md under "## From Claude Code" and
+		// stamping logmind's stub on the path re-owns a file logmind was told
+		// not to touch, which is the silent re-ownership the ruling exists to
+		// stop. One classifier, two commands, two policies stated out loud.
+		if owner := ReadRedirectOwner(a, content); owner.Ownership == MarkerForeign {
+			refusals = append(refusals, *refusalFor(a, owner))
+			continue
+		}
 
 		remaining := strings.TrimSpace(stripLogmindBlock(content))
 		if remaining != "" {
@@ -1006,7 +1493,7 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 		// .cursorrules / etc. is refused (atomicio.RefuseSymlink, #300) instead
 		// of silently written through.
 		if err := atomicio.WriteFile(filePath, []byte(templates.Stub()), 0o644); err != nil {
-			return messages, declined, err
+			return messages, declined, refusals, err
 		}
 		messages = append(messages,
 			fmt.Sprintf("✓ %s replaced with stub", filepath.Base(filePath)))
@@ -1015,16 +1502,16 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 	if len(appendedBlocks) > 0 {
 		existing, err := os.ReadFile(agentsPath)
 		if err != nil {
-			return messages, declined, err
+			return messages, declined, refusals, err
 		}
 		// Match Python: existing.rstrip() + "\n\n" + "\n".join(appended).
 		body := strings.TrimRight(string(existing), " \t\n\r") +
 			"\n\n" + strings.Join(appendedBlocks, "\n")
 		if err := atomicio.WriteFile(agentsPath, []byte(body), 0o644); err != nil {
-			return messages, declined, err
+			return messages, declined, refusals, err
 		}
 	}
-	return messages, declined, nil
+	return messages, declined, refusals, nil
 }
 
 // fileExists returns true when path refers to an existing regular

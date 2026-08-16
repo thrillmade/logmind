@@ -51,10 +51,11 @@ func TestCreateAgentFile_JSONAgentsPointAtTheBranchAwareLayout(t *testing.T) {
 	for _, name := range jsonAgents {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
-			path, err := CreateAgentFile(name, root)
+			written, _, err := CreateAgentFile(name, root)
 			if err != nil {
 				t.Fatalf("CreateAgentFile(%s): %v", name, err)
 			}
+			path := written.Path
 			if path == "" {
 				t.Fatalf("CreateAgentFile(%s) returned no path for a registered agent", name)
 			}
