@@ -389,10 +389,18 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io
 		return nil
 	}
 
-	// Apply path: rewrite each file in place.
+	// Apply path: rewrite each file in place through the one write
+	// primitive, inserter.RefreshMarkerBlockFile. It OWNS THE READ (#297):
+	// the two-string form it replaces took a whole file and a block body as
+	// the same type and returned its first argument unchanged when the
+	// markers were absent, so passing the wrong one produced a fragment
+	// silently and wrote it over the user's whole file. Here there is no
+	// whole-file parameter to get wrong, and a markerless file is refused
+	// (inserter.ErrNoMarkerBlock) rather than rewritten.
 	//
-	// atomicio.WriteFile, not os.WriteFile: these paths come from a scan
-	// of a repository logmind did not necessarily write, and os.WriteFile
+	// It writes through atomicio.WriteFile, not os.WriteFile, and that is
+	// load-bearing here for #313's reason: these paths come from a scan of
+	// a repository logmind did not necessarily write, and os.WriteFile
 	// follows symlinks. A symlinked AGENTS.md / workflow file would have
 	// its logmind block rewritten through the link, outside the repo.
 	// The rename lands on the NAME instead. (Also makes the rewrite
@@ -419,12 +427,7 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io
 	// silently, same as any other atomicio.WriteFile call site that hasn't
 	// opted out for a stated reason.
 	for _, e := range outdated {
-		data, err := os.ReadFile(e.Path)
-		if err != nil {
-			return err
-		}
-		refreshed := inserter.ReplaceMarkerBlock(string(data), e.NewBody)
-		if err := atomicio.WriteFile(e.Path, []byte(refreshed), 0o644); err != nil {
+		if err := inserter.RefreshMarkerBlockFile(e.Path, e.NewBody); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, e.Path)

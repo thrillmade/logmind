@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/templates"
 )
 
@@ -91,7 +92,7 @@ func TestParseTemplateVersion_Ordering(t *testing.T) {
 // this binary ships for one workflow template.
 func bundledTemplateVersion(t *testing.T, name string) string {
 	t.Helper()
-	v := extractTemplateVersion(templates.Workflow(name + ".template"))
+	v := inserter.ExtractTemplateMarker(templates.Workflow(name + ".template")).Version
 	if v == "" {
 		t.Fatalf("bundled %s carries no template-version marker", name)
 	}
@@ -166,7 +167,7 @@ func TestInstallWorkflowTemplates_StillUpgrades(t *testing.T) {
 			t.Errorf("declined = %+v; want none on an upgrade", declined)
 		}
 		want := bundledTemplateVersion(t, "check-decisions.yml")
-		if got := extractTemplateVersion(readRel(t, rel)); got != want {
+		if got := inserter.ExtractTemplateMarker(readRel(t, rel)).Version; got != want {
 			t.Errorf("marker after refresh = %q; want %q", got, want)
 		}
 		found := false
@@ -197,7 +198,7 @@ func TestInstallWorkflowTemplates_UnparseableMarkerStillRefreshes(t *testing.T) 
 			t.Errorf("declined = %+v; want none for an unparseable marker", declined)
 		}
 		want := bundledTemplateVersion(t, "check-decisions.yml")
-		if got := extractTemplateVersion(readRel(t, rel)); got != want {
+		if got := inserter.ExtractTemplateMarker(readRel(t, rel)).Version; got != want {
 			t.Errorf("marker after refresh = %q; want %q (unparseable must not pin)", got, want)
 		}
 	})
@@ -256,13 +257,34 @@ func TestDoctorFix_RefusesTemplateDowngrade(t *testing.T) {
 // stderr while still exiting 0.
 func runInitCapture(t *testing.T, args []string) (string, string) {
 	t.Helper()
+	out, errOut, err := tryInitCapture(t, args)
+	if err != nil {
+		t.Fatalf("execute %v: %v\nstdout=%s\nstderr=%s", args, err, out, errOut)
+	}
+	return out, errOut
+}
+
+// tryInitCapture is runInitCapture's sibling for the paths that are SUPPOSED
+// to exit non-zero, and it exists because `init` in refresh mode returns an
+// error when a workflow could not be written (#313) — deliberately, so the
+// summary listing what DID get written cannot read as the whole story.
+// runInitCapture bakes in "init always succeeds", which is a claim, not a
+// harness detail: a test using it on such a path fails on the exit code
+// before it can assert anything about the output. Callers that want the
+// refusal must take the error and say what they expect of it.
+func tryInitCapture(t *testing.T, args []string) (string, string, error) {
+	t.Helper()
 	root := NewRootCmd()
 	root.SetArgs(args)
 	var out, errOut strings.Builder
 	root.SetOut(&out)
 	root.SetErr(&errOut)
-	if err := root.Execute(); err != nil {
-		t.Fatalf("execute %v: %v\nstdout=%s\nstderr=%s", args, err, out.String(), errOut.String())
-	}
-	return out.String(), errOut.String()
+	root.SilenceUsage = true
+	root.SilenceErrors = true
+	// Execute FIRST, then read the buffers. Returning
+	// `out.String(), errOut.String(), root.Execute()` would evaluate the two
+	// String() calls before Execute ran (Go evaluates a return's operands
+	// left to right) and hand every caller two empty strings.
+	err := root.Execute()
+	return out.String(), errOut.String(), err
 }

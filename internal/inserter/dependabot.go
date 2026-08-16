@@ -43,6 +43,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/templates"
 )
 
@@ -106,10 +107,15 @@ func EnsureDependabot(repoRoot string) (DependabotResult, error) {
 		// Fresh install — write the bundled template verbatim. mkdir
 		// the parent so `.github` is created when the repo is brand
 		// new (logmind init can run before .github exists).
-		if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
-			return DependabotUnchanged, fmt.Errorf("mkdir .github: %w", mkErr)
-		}
-		if wErr := os.WriteFile(path, []byte(templates.DependabotTemplate()), 0o644); wErr != nil {
+		// os.ReadFile follows a symlink, so a DANGLING symlink at path
+		// (pointing at a target that doesn't exist) also returns
+		// fs.ErrNotExist here — the file looks "absent" when it is really a
+		// link elsewhere. A bare os.WriteFile would then follow that same
+		// link and create the write target wherever it points, possibly
+		// outside the repo. atomicio.WriteFile refuses instead
+		// (atomicio.RefuseSymlink, #300) and makes its own parent directory,
+		// so the explicit MkdirAll this replaced is no longer needed.
+		if wErr := atomicio.WriteFile(path, []byte(templates.DependabotTemplate()), 0o644); wErr != nil {
 			return DependabotUnchanged, fmt.Errorf("write dependabot.yml: %w", wErr)
 		}
 		return DependabotCreated, nil
@@ -151,7 +157,11 @@ func EnsureDependabot(repoRoot string) (DependabotResult, error) {
 		// we don't want to corrupt the file.
 		return DependabotUnchanged, nil
 	}
-	if err := os.WriteFile(path, []byte(merged), 0o644); err != nil {
+	// path was read successfully above (existing, string(data)), so this is
+	// a whole-file overwrite of a file the user may have reached through a
+	// symlink — atomicio.WriteFile refuses that (atomicio.RefuseSymlink,
+	// #300) rather than silently writing the merged body through the link.
+	if err := atomicio.WriteFile(path, []byte(merged), 0o644); err != nil {
 		return DependabotUnchanged, fmt.Errorf("write dependabot.yml: %w", err)
 	}
 	return DependabotMerged, nil

@@ -170,37 +170,20 @@ var Allowlist = map[string]Exception{
 	},
 
 	// ---- LANE HANDOFFS: delete each entry as its PR lands. ----
-	"internal/cli/init.go": {
-		Sites: []string{
-			"ensureGitignoreBlock:os.WriteFile",
-			"logFirstDecision:os.WriteFile",
-		},
-		Reason: "LANE HANDOFF to PR #306, which owns internal/cli/init.go. Vulnerable; not converted here to avoid an edit collision.",
-	},
-	"internal/cli/self_update.go": {
-		Sites:  []string{"runSelfUpdate:os.WriteFile"},
-		Reason: "LANE HANDOFF to PR #306, which owns internal/cli/self_update.go. Vulnerable; not converted here to avoid an edit collision.",
-	},
+	//
+	// PR #306 HAS LANDED, so its four entries are gone rather than kept as a
+	// dormant permission: internal/cli/init.go (ensureGitignoreBlock,
+	// logFirstDecision), internal/cli/self_update.go (runSelfUpdate),
+	// internal/inserter/inserter.go (the five CreateAgentFile /
+	// EnsureAgentsMD / MigrateToAgentsMD sites) and
+	// internal/inserter/dependabot.go (the two EnsureDependabot sites, the
+	// "UNOWNED GAP" #313 flagged — #306's tree-wide sweep found and converted
+	// them, which is what an unowned gap being filed rather than fixed is
+	// for). Every one of those now routes through atomicio, so the next raw
+	// write in any of those files is a failure again instead of a licence.
 	"internal/gitattr/gitattr.go": {
 		Sites:  []string{"ensureBlockWithLines:os.WriteFile", "RemoveBlock:os.WriteFile"},
 		Reason: "LANE HANDOFF to PR #301, which owns internal/gitattr/gitattr.go. Vulnerable; not converted here to avoid an edit collision.",
-	},
-	"internal/inserter/inserter.go": {
-		Sites: []string{
-			"CreateAgentFile:os.WriteFile",
-			"EnsureAgentsMD:os.WriteFile",
-			"EnsureAgentsMD:os.WriteFile",
-			"MigrateToAgentsMD:os.WriteFile",
-			"MigrateToAgentsMD:os.WriteFile",
-		},
-		Reason: "LANE HANDOFF to PR #306, which is routing exactly these five sites through atomicio right now.",
-	},
-	"internal/inserter/dependabot.go": {
-		Sites: []string{"EnsureDependabot:os.WriteFile", "EnsureDependabot:os.WriteFile"},
-		Reason: "UNOWNED GAP, flagged rather than fixed. Lives in internal/inserter/, " +
-			"a directory PR #306 holds, but is NOT among the five inserter.go sites " +
-			"that PR enumerated — so no lane has claimed it. Both calls write " +
-			".github/dependabot.yml and are vulnerable. Needs an owner.",
 	},
 }
 
