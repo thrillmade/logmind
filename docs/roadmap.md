@@ -202,7 +202,13 @@ across the tag boundary.
 |---|---|
 | **#288** | the current template turns a refused push into `::error` + `exit 1`. Migrating first makes every repo go red on every merge to `main` touching a derived doc — permanently, and the job says it will not self-heal. Strictly worse than the storm it replaces. |
 | **a release carrying the verb** | the new gate template calls `logmind check-decisions --base/--head`, and `setup-logmind` installs the latest **release**. v1.2.0 does not have the verb. |
-| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-16: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100` returns **8** repos — seven consumers plus logmind's own `logmind-self-update.yml`. Control, **same unit**: the `@v1.0.0` query returns **2** repos (25 vs 13 raw rows — an earlier revision quoted the row count against the repo count, which is why this now states the unit).) |
+| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-16: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100` returns **8** repos — seven consumers plus logmind's own `logmind-self-update.yml`. Control, **same unit**: the `@v1.0.0` query returns **2** repos. Count repos, never result rows — two measurements the same day returned 25 and 23 rows for the same query, so any row figure written here is wrong by the time it is read. An earlier revision of this line quoted a row count as the control for a repo count, which is why the unit is now named and the derivation shown:
+
+```sh
+gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100 \
+  --json repository --jq '[.[].repository.nameWithOwner] | unique | length'
+```
+) |
 
 ### 3 — Remaining pre-tag work
 
@@ -312,11 +318,21 @@ rather than trusting it:
 for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
   for w in check-decisions regen-timeline; do
     printf '%s %s %s\n' "$r" "$w" \
-      "$(gh api "repos/thrillmade/$r/contents/.github/workflows/$w.yml" --jq .content \
-         2>/dev/null | base64 -d 2>/dev/null | head -1 | grep -oE 'v[0-9]+' || echo absent)"
+      "$(raw=$(gh api "repos/thrillmade/$r/contents/.github/workflows/$w.yml" \
+             --jq .content 2>/dev/null | base64 -d 2>/dev/null)
+         if [ -z "$raw" ]; then echo 'file absent'
+         else echo "$raw" | head -1 | grep -oE 'v[0-9]+' || echo 'present, unmarked'
+         fi)"
   done
 done
 ```
+
+Three states, not two — `|| echo absent` collapses "no file" and "a file with no
+marker" into one word, and the table distinguishes them (`reporulez` has both
+files present and unmarked; `skdd`'s are absent from its default branch and
+carry markers on `dev`). The loop reads **default branches only**, so `skdd`'s
+row was measured separately, and `logmind` is the producer rather than a
+consumer and is deliberately not a row.
 
 **logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9`, `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.

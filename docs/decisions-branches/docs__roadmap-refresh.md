@@ -48,3 +48,14 @@
 
 ---
 
+## 2026-08-16 01:52 - roadmap: count repositories, never result rows, and let the regeneration command tell absent from unmarked
+
+**Reasoning:** Two findings, both of them a shown command failing to produce the number beside it, which is this file's recurring failure. The row counts I added were not reproducible: the same query returned twenty-five rows for me and twenty-three for the reviewer on the same day, because the search endpoint's row count is not stable, while the repository count was eight for both of us. And the regeneration command I added to fix the previous round could not produce the table it sits under, because it collapsed a missing file and a file carrying no marker into the same word, and the table distinguishes them.
+
+**Alternatives considered:** Re-measure the rows and state the new figures. Rejected: an unstable number does not become stable by being measured again, and writing one invites the next reader to treat a disagreement as a defect rather than as noise. The line now counts repositories and shows the derivation that produces that count rather than a raw listing.
+
+**Implications:**
+- The regeneration loop distinguishes three states rather than two, and the text records what it cannot do: it reads default branches only, so the row for the repository whose workflows live on a development branch was measured separately, and this repository is the producer rather than a consumer and is deliberately absent. Verified the shown derivation returns eight and the control returns two, so the command and the prose now agree.
+
+---
+
