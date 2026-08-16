@@ -202,13 +202,7 @@ across the tag boundary.
 |---|---|
 | **#288** | the current template turns a refused push into `::error` + `exit 1`. Migrating first makes every repo go red on every merge to `main` touching a derived doc — permanently, and the job says it will not self-heal. Strictly worse than the storm it replaces. |
 | **a release carrying the verb** | the new gate template calls `logmind check-decisions --base/--head`, and `setup-logmind` installs the latest **release**. v1.2.0 does not have the verb. |
-| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-16: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100` returns **8** repos — seven consumers plus logmind's own `logmind-self-update.yml`. Control, **same unit**: the `@v1.0.0` query returns **2** repos. Count repos, never result rows — two measurements the same day returned 25 and 23 rows for the same query, so any row figure written here is wrong by the time it is read. An earlier revision of this line quoted a row count as the control for a repo count, which is why the unit is now named and the derivation shown:
-
-```sh
-gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100 \
-  --json repository --jq '[.[].repository.nameWithOwner] | unique | length'
-```
-) |
+| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-16: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100` returns **8** repos — seven consumers plus logmind's own `logmind-self-update.yml`. Control, **same unit**: the `@v1.0.0` query returns **2** repos. Count repos, never rows — two measurements the same day gave 25 and 23 rows for one query, so a row figure is wrong by the time it is read. Derive with `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100 --json repository --jq '[.[].repository.nameWithOwner] \| unique \| length'`.) |
 
 ### 3 — Remaining pre-tag work
 
@@ -248,7 +242,8 @@ The panel verified it by building the site in both states rather than reading
 the JSX, and by byte-comparing the page's `AREAS` against `version.go`.
 
 **#297, #298, #299, #271** — filed after this section was written, all
-**built and on `dev`** (#306, #307, #308, #313). Two were live data-loss paths:
+**built and on `dev`**. The pairing is not one-to-one: #306 closes both #297 and
+#299, #307 closes #298, #308 closes #271, and #313 closes most of #310. Two were live data-loss paths:
 `self-update` wrote a marker-block fragment over the whole of `AGENTS.md`, and
 `doctor --fix` overwrote a file it had misjudged as markerless. #310 is the
 class behind all of them, and is the one exception on this list: it is **still

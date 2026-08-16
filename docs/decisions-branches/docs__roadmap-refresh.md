@@ -70,3 +70,14 @@
 
 ---
 
+## 2026-08-16 04:47 - roadmap: a fenced block inside a table cell breaks the table, and the closing paragraph rendered as prose
+
+**Reasoning:** The derivation I added last round to make a count reproducible was placed inside a table cell as a fenced block, which ends the table early. Confirmed against the forge's own renderer rather than by reading the markdown: the table closes before the fence and the cell's final characters render as a stray paragraph, with the sentence truncated mid-clause. The control is a deliberately broken cell of the same shape, which reproduces the stray, against the corrected table which renders four rows and closes once.
+
+**Alternatives considered:** Move the derivation below the table. Rejected: the number it derives lives in that cell, and a command a screen away from its result is the arrangement that let a stale figure sit unnoticed here twice. Inlined as code within the sentence instead, so the claim and its derivation stay adjacent and the table survives.
+
+**Implications:**
+- The list of issues built since this section was written no longer implies a one-to-one pairing by position, because it is not one: one pull request closed two of them, another closed most of a third that is still open. The version claims in the architecture document contradict the ones corrected here, and are a second owner of a fact this file already states with its measuring command; that is routed to the branch which holds that file rather than edited across a lane boundary.
+
+---
+
