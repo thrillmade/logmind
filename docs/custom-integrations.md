@@ -26,7 +26,7 @@ class MyFrameworkLogger(BaseIntegration):
         )
 ```
 
-Pass it into your framework's callback/hook system, and every decision is automatically logged to `docs/decisions.md`.
+Pass it into your framework's callback/hook system, and every decision is automatically logged to `docs/decisions-branches/<branch>.md` — the file for whatever branch you are on, the default branch included (SPEC §3.2).
 
 ## BaseIntegration API
 

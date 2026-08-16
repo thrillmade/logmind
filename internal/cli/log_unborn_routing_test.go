@@ -159,9 +159,10 @@ func TestResolveDecisionsPathUnbornVsDetached(t *testing.T) {
 			if !strings.Contains(string(body), tc.summary) {
 				t.Fatalf("%s exists but does not contain %q (%s); body:\n%s", tc.wantFile, tc.summary, tc.why, body)
 			}
-			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(tc.wantAbsent))); err == nil {
-				t.Fatalf("%s was written, but %s", tc.wantAbsent, tc.why)
-			}
+			// Contents, not existence: docs/decisions.md is scaffolded by
+			// `logmind init` as a compatibility pointer, so what this pins is
+			// that no DECISION was routed there.
+			mustRouteNoDecisionsTo(t, filepath.Join(dir, filepath.FromSlash(tc.wantAbsent)), tc.why)
 		})
 	}
 }

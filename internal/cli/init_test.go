@@ -101,9 +101,8 @@ func TestInit_InGitRepo_FirstDecisionGoesToMainBranchFile(t *testing.T) {
 	if !strings.Contains(string(body), "<!-- logmind-entry-start: ") {
 		t.Errorf("main.md missing its timeline entry-block marker; body:\n%s", body)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "docs", "decisions.md")); err == nil {
-		t.Errorf("init wrote docs/decisions.md on a repo that has a branch — main is a branch like any other (§3.2)")
-	}
+	mustRouteNoDecisionsTo(t, filepath.Join(dir, "docs", "decisions.md"),
+		"init routed the first decision to docs/decisions.md on a repo that has a branch — main is a branch like any other (§3.2)")
 }
 
 func TestInit_WritesWorkflowTemplates(t *testing.T) {

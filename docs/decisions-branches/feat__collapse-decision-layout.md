@@ -177,3 +177,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 04:24 - init: keep writing the legacy path as a pointer, so the released binary still recognises a repository this one scaffolds
+
+**Reasoning:** This change moved the already-initialised sentinel to the docs directory and the config file, while the released binary still tests for the legacy decision log, which this change stopped creating. Measured with the actual installed binary against a repository scaffolded by this one: it reported creating the config, logged a first decision, and the config lost both enforcement keys. The control, the same binary against a repository scaffolded from the base, reported refresh mode and touched nothing. This branch reasons carefully about mixed versions for the merge driver and did not apply that reasoning here.
+
+**Alternatives considered:** Revert the sentinel. Rejected: it would restore a check for a file the layout no longer has a reason to create, and the released binary would still be the one deciding what counts as initialised. Writing the legacy path as a pointer satisfies the old check honestly, says what the file is, and contributes nothing to any read path because the parser wants headers and a pointer has none, which was measured rather than assumed with a control appending one real header to watch a row appear.
+
+**Implications:**
+- One cost the ruling did not predict was found and closed: an always-present legacy source would have opened every fresh repository's show output with an empty banner, so entry-less non-branch sources are now skipped, which is what makes the no-cost claim true. The repository now carries the pointer itself, with a test asserting byte equality rather than existence, because nothing writes that file and any difference is therefore drift. Reporting a missing pointer from the doctor command is deliberately not added: the status type has no way to describe a condition that is reported without being fixed, so adding one would enrol the sentinel in the automatic repair this ruling declined.
+
+---
+

@@ -7,7 +7,7 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v8 -->
+<!-- logmind-block-version: v9 -->
 ## Decision Logging (logmind) — REQUIRED for substantive commits
 
 > **DO NOT run `git add` / `git commit` / `git push` for substantive code changes.**
@@ -92,9 +92,13 @@ the branch it was made on — the default branch included, where the file
 is `main.md`. One rule, no exception: the default branch is a branch like
 any other. You don't manage this — `logmind log` does.
 
-`docs/decisions.md` is a legacy source. Where it still exists it is read,
-never written, except on the three paths where the router cannot resolve a
-branch name to route by: `decisions.branch_aware: false`; `git` reporting
+`docs/decisions.md` is a legacy source. `logmind init` seeds it with a pointer
+at this layout and never touches it again — it exists so a logmind older than
+v2.0 still recognises the repo as initialised instead of re-scaffolding over
+`.logmind/config.yml`. Where it holds real entries (a repo that predates §3.2)
+they are read, never rewritten. It is written to on only three paths, all of
+them ones where the router cannot resolve a branch name to route by:
+`decisions.branch_aware: false`; `git` reporting
 this is not a repository, which also fires when the `git` binary itself is
 unreachable — even inside a real repo, on a real branch; and a detached
 HEAD. A repo with no commits yet is not one of them — `git symbolic-ref
@@ -103,9 +107,10 @@ to `main.md` like any other branch.
 
 ### Branch summary (headline)
 
-On a feature branch, set a one-sentence, plain-English summary of what
-the WHOLE branch does — `logmind headline "<one sentence>"`, or bundle it
-into a decision with `logmind log "..." -H "<one sentence>"`. It's stored
+Set a one-sentence, plain-English summary of what the WHOLE branch does —
+`logmind headline "<one sentence>"`, or bundle it
+into a decision with `logmind log "..." -H "<one sentence>"`. The two are
+interchangeable and always have been meant to be. It's stored
 at the top of the branch's decision file and copied verbatim into
 `docs/timeline.md`, so it's the FIRST thing the next agent reads. Refine
 it as the branch grows (the entry key stays stable). It applies on every

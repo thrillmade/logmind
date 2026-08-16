@@ -89,7 +89,14 @@ with ONE path rule and no exception to it: an entry goes to
 `docs/decisions-branches/<sanitized-branch>.md` for the branch it was made
 on, and the default branch is a branch like any other (`main.md`).
 `docs/decisions.md` is a legacy source: on the branch-aware path it is read
-and never written. It is not unwritable, and the exceptions are not a
+and never written. `logmind init` still SEEDS it, once, with a pointer at the
+branch layout — logmind v1.2.0 tests for that path to decide whether a repo is
+already initialised, and re-runs its whole scaffold (overwriting
+`.logmind/config.yml`) when it is missing, so a v2 tree stays recognisable to
+it (`ensureLegacyPointer`, `internal/cli/init.go`). Seeding is not writing
+decisions: the pointer body carries no `## ` header, so it contributes no rows
+to the timeline, `show`, `search` or `context`. It is not unwritable, and the
+exceptions are not a
 default-branch carve-out — `resolveDecisionsPath` falls back to it, creating
 and appending, in exactly three cases, all of them cases where the router
 cannot resolve a branch name to route by: `decisions.branch_aware: false`;
@@ -133,8 +140,11 @@ orient in:
 ### 4. Reading and auditing decisions
 
 `logmind show` (this branch's decisions, plus any legacy `docs/decisions.md` /
-`docs/decisions-archive.md` — those are named after no branch, so no branch
-file supersedes them; `--all` adds every other branch's file), `logmind search
+`docs/decisions-archive.md` that HOLDS decisions — those are named after no
+branch, so no branch file supersedes them, and one holding none has nothing to
+surface; `--all` adds every other branch's file, as does having no current
+branch at all, since a detached HEAD — every CI checkout — has nothing for
+"other branches" to be other THAN), `logmind search
 "<keyword>"` (full-text across every decision file that exists, enumerated —
 never resolved from a branch name; `--no-archive` opts the legacy archive
 out), `logmind headline`
@@ -142,6 +152,19 @@ out), `logmind headline`
 [--fix]` (stack-status: version drift, hook drift, missing markers —
 `--fix` backfills what it safely can, including timeline markers and
 `--file` targeting) round out the read/audit surface.
+
+**Known gap — `doctor` does not probe the v1.2.0 install sentinel.** A repo
+missing `docs/decisions.md` is re-scaffolded by any pre-v2.0 binary, losing
+`.logmind/config.yml` (`ensureLegacyPointer`, `internal/cli/init.go`).
+`logmind init` restores the file on both its paths; `doctor --fix` goes
+through `applyRefresh` directly and does neither restore nor report it, so a
+repo whose owner only ever runs `doctor --fix` stays exposed and is told
+nothing. Reporting it is NOT a one-line probe: `WorkflowStatus` has no
+report-without-fixing state, so a `Drift: "missing"` entry would enrol the
+sentinel in `doctor --fix` (the widening we declined) and shift the
+stale-component counts the `logmind log` pulse advisory asserts. It needs the
+status model extended first — same class as the #318 probes that check a
+sentinel rather than the thing.
 
 ## Development History
 

@@ -137,10 +137,11 @@ func TestLog_DefaultBranch_WritesToMainBranchFile(t *testing.T) {
 	if !strings.Contains(string(body), "Test decision") {
 		t.Fatalf("main.md missing summary; body:\n%s", body)
 	}
-	// And nothing was written to the separate main log that used to exist.
-	if _, err := os.Stat(filepath.Join(dir, "docs", "decisions.md")); err == nil {
-		t.Fatalf("docs/decisions.md was written on the default branch — §3.2 has one path rule and main is not an exception to it")
-	}
+	// And no decision was routed to the separate main log that used to exist.
+	// The FILE is there — `logmind init` scaffolds it as a compatibility
+	// pointer — so the claim is about its contents (mustRouteNoDecisionsTo).
+	mustRouteNoDecisionsTo(t, filepath.Join(dir, "docs", "decisions.md"),
+		"§3.2 has one path rule and main is not an exception to it")
 }
 
 // TestLog_FeatureBranch_WritesToBranchFile: on a non-default branch,

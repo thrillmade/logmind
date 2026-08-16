@@ -19,8 +19,9 @@
 //     quotes — matches the Python v0.6.11+ widened pattern.
 //
 //   - Template version markers gate "is the installed block stale".
-//     `<!-- logmind-block-version: v8 -->` for the full template,
-//     `<!-- logmind-block-version: v9-pointer -->` for slim (the
+//     `<!-- logmind-block-version: v9 -->` for the full template,
+//     `<!-- logmind-block-version: v9-pointer -->` for slim (the §3.2
+//     layout-collapse wave bumped full v8→v9; the
 //     stale-binary-hardening / enforcement wave bumped full v7→v8 and
 //     slim v8-pointer→v9-pointer; the Slice-2 branch-summary wave bumped
 //     the full template v6→v7; v0.6.16 bumped it v5→v6 and the slim

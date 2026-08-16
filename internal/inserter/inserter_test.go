@@ -602,7 +602,7 @@ func TestFindOutdatedMarkerBlocks_DriftedDetected(t *testing.T) {
 // test of planBlockRefresh's flavour contract — the exact collision the
 // stale-binary-hardening / enforcement wave's v8/v8-pointer bump
 // introduced: "logmind-block-version: v8-pointer" contains
-// "logmind-block-version: v8" as a literal substring (the bare "v8" marker
+// "logmind-block-version: v9" as a literal substring (the bare "v9" marker
 // is a PREFIX of "v8-pointer"), so the substring-membership classifier
 // this replaced had to check every "-pointer" variant FIRST or a slim body
 // would be mis-classified as full.
@@ -612,19 +612,19 @@ func TestFindOutdatedMarkerBlocks_DriftedDetected(t *testing.T) {
 // unchanged and still pinned here two ways:
 //
 //  1. A body carrying the slim "v8-pointer" marker resolves to the SLIM
-//     template — not full — even though it contains "v8" as a substring.
-//  2. A FULL body carrying a bare "v8" marker (no "-pointer" suffix)
+//     template — not full — even though it contains "v9" as a substring.
+//  2. A FULL body carrying a bare "v9" marker (no "-pointer" suffix)
 //     resolves to the FULL template.
 func TestPlanBlockRefresh_PointerSuffixSeparatesFlavours(t *testing.T) {
 	slimV8PointerBody := "\n<!-- logmind-block-version: v8-pointer -->\n## Decision logging\nslim body\n"
 	if got := planBlockRefresh(slimV8PointerBody); got.Template != templates.AgentsSlimTemplate() {
 		t.Errorf("planBlockRefresh(v8-pointer body) did not resolve to the slim template — " +
-			"the bare \"v8\" substring must not pull a slim block into the full flavour")
+			"the bare \"v9\" substring must not pull a slim block into the full flavour")
 	}
 
-	fullV8Body := "\n<!-- logmind-block-version: v8 -->\n## Decision Logging (logmind) — REQUIRED for substantive commits\nfull body\n"
-	if got := planBlockRefresh(fullV8Body); got.Template != templates.AgentsTemplate() {
-		t.Errorf("planBlockRefresh(bare v8 body) did not resolve to the full template")
+	fullV9Body := "\n<!-- logmind-block-version: v9 -->\n## Decision Logging (logmind) — REQUIRED for substantive commits\nfull body\n"
+	if got := planBlockRefresh(fullV9Body); got.Template != templates.AgentsTemplate() {
+		t.Errorf("planBlockRefresh(bare v9 body) did not resolve to the full template")
 	}
 }
 
@@ -735,7 +735,7 @@ func TestFindOutdatedMarkerBlocks_PriorFullRefreshesToCurrent(t *testing.T) {
 // for the stale-binary-hardening / enforcement wave: a repo carrying a v7
 // full block (the immediately-prior full flavour, shipped to consumer
 // repos before this bump) MUST be reported as outdated and its refresh
-// target MUST be the v8 full body — carrying the BLOCK enforcement prose
+// target MUST be the v9 full body — carrying the BLOCK enforcement prose
 // and its carve-outs — NOT the slim v9-pointer body. This is what lets
 // consumer repos pick up the enforcement-prose update via `agents update`
 // / `doctor --fix` drift detection.
@@ -753,22 +753,22 @@ func TestFindOutdatedMarkerBlocks_V7RefreshesToV8(t *testing.T) {
 		t.Fatalf("FindOutdatedMarkerBlocks: %v", err)
 	}
 	if len(out) != 1 {
-		t.Fatalf("v7 block vs v8 template must be reported as outdated; got %d entries", len(out))
+		t.Fatalf("v7 block vs v9 template must be reported as outdated; got %d entries", len(out))
 	}
-	// Refresh target must be the FULL v8 body — not a full↔slim flip.
-	if !strings.Contains(out[0].NewBody, "logmind-block-version: v8 ") {
-		t.Errorf("refresh target NewBody must carry the v8 marker; got %q", out[0].NewBody)
+	// Refresh target must be the FULL v9 body — not a full↔slim flip.
+	if !strings.Contains(out[0].NewBody, "logmind-block-version: v9 ") {
+		t.Errorf("refresh target NewBody must carry the v9 marker; got %q", out[0].NewBody)
 	}
 	if strings.Contains(out[0].NewBody, "v9-pointer") {
 		t.Errorf("v7 full block must NOT refresh to the slim v9-pointer body")
 	}
 	if !strings.Contains(out[0].NewBody, "BLOCK") {
-		t.Errorf("v8 refresh target must carry the BLOCK enforcement prose")
+		t.Errorf("v9 refresh target must carry the BLOCK enforcement prose")
 	}
 	if !strings.Contains(out[0].NewBody, "[skip-logmind]") ||
 		!strings.Contains(out[0].NewBody, "LOGMIND_ALLOW_GIT_COMMIT=1") ||
 		!strings.Contains(out[0].NewBody, "git.enforce_commits: false") {
-		t.Errorf("v8 refresh target must carry all three enforcement carve-outs; got %q", out[0].NewBody)
+		t.Errorf("v9 refresh target must carry all three enforcement carve-outs; got %q", out[0].NewBody)
 	}
 }
 

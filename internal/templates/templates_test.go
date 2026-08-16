@@ -17,7 +17,7 @@ import (
 	"github.com/thrillmade/logmind/internal/timeline"
 )
 
-// TestAgentsTemplate_HasV8Marker pins the protocol-version marker. The
+// TestAgentsTemplate_HasV9Marker pins the protocol-version marker. The
 // `agents update --apply` workflow keys on this marker to decide
 // whether an installed block is stale.
 //
@@ -28,47 +28,47 @@ import (
 // `git.enforce_commits: false` carve-outs. The Slice-2 branch-summary
 // wave bumped v6→v7: the full inline procedure carries the
 // branch-summary (headline) convention.
-func TestAgentsTemplate_HasV8Marker(t *testing.T) {
+func TestAgentsTemplate_HasV9Marker(t *testing.T) {
 	body := AgentsTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v8 -->") {
-		t.Fatalf("full template missing v8 marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v9 -->") {
+		t.Fatalf("full template missing v9 marker")
 	}
 	if !strings.Contains(body, "<!-- logmind-start -->") || !strings.Contains(body, "<!-- logmind-end -->") {
 		t.Fatalf("full template missing start/end markers")
 	}
 	if !strings.Contains(body, "REQUIRED for substantive commits") {
-		t.Fatalf("v8 template missing REQUIRED framing in heading")
+		t.Fatalf("v9 template missing REQUIRED framing in heading")
 	}
 	if !strings.Contains(body, "DO NOT run `git add` / `git commit` / `git push`") {
-		t.Fatalf("v8 template missing DO-NOT-git-commit blockquote")
+		t.Fatalf("v9 template missing DO-NOT-git-commit blockquote")
 	}
 	// v8 delta: enforcement prose. BLOCK, not warn; the carve-outs.
 	if !strings.Contains(body, "BLOCK") {
-		t.Fatalf("v8 template missing BLOCK framing (must not just say the hook warns)")
+		t.Fatalf("v9 template missing BLOCK framing (must not just say the hook warns)")
 	}
 	if !strings.Contains(body, "[skip-logmind]") {
-		t.Fatalf("v8 template missing the [skip-logmind] carve-out")
+		t.Fatalf("v9 template missing the [skip-logmind] carve-out")
 	}
 	if !strings.Contains(body, "LOGMIND_ALLOW_GIT_COMMIT=1") {
-		t.Fatalf("v8 template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
+		t.Fatalf("v9 template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
 	}
 	if !strings.Contains(body, "git.enforce_commits: false") {
-		t.Fatalf("v8 template missing the git.enforce_commits: false per-repo off-ramp")
+		t.Fatalf("v9 template missing the git.enforce_commits: false per-repo off-ramp")
 	}
 	// v7 delta (retained): the branch-summary (headline) convention. Pin
 	// the heading, both authoring forms, and the verbatim-into-timeline
 	// promise so a future revert that drops the convention trips this test.
 	if !strings.Contains(body, "Branch summary (headline)") {
-		t.Fatalf("v8 template missing the branch-summary (headline) subsection")
+		t.Fatalf("v9 template missing the branch-summary (headline) subsection")
 	}
 	if !strings.Contains(body, `logmind headline "<one sentence>"`) {
-		t.Fatalf("v8 template missing the `logmind headline` authoring form")
+		t.Fatalf("v9 template missing the `logmind headline` authoring form")
 	}
 	if !strings.Contains(body, `logmind log "..." -H "<one sentence>"`) {
-		t.Fatalf("v8 template missing the bundled `logmind log -H` authoring form")
+		t.Fatalf("v9 template missing the bundled `logmind log -H` authoring form")
 	}
 	if !strings.Contains(body, "copied verbatim into") {
-		t.Fatalf("v8 template missing the verbatim-into-timeline promise")
+		t.Fatalf("v9 template missing the verbatim-into-timeline promise")
 	}
 }
 

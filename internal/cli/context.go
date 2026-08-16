@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/repomap"
 	"github.com/thrillmade/logmind/internal/tokens"
@@ -325,13 +326,25 @@ func ctxReadOrEmpty(path string) string {
 }
 
 // rawDecisionTokens estimates the tokens of the raw decision sources the
-// timeline distills (every branch log, plus any pre-§3.2 main log) — the "why"
-// an agent would otherwise reconstruct from git log.
+// timeline distills — the "why" an agent would otherwise reconstruct from git
+// log.
+//
+// Discovery is decisions.ListSources, like every other read path. This used to
+// hardcode docs/decisions.md plus a glob of docs/decisions-branches/*.md,
+// which silently omitted docs/decisions-archive.md: a repo that rotated under
+// the retired `max_recent` cap had its whole archive missing from the
+// denominator, so `logmind context --explain` under-reported the distillation
+// ratio by exactly the history it had accumulated the longest. That is the bug
+// class NonBranchSources() exists to make unrepresentable, and this was the
+// last read path still naming files itself.
 func rawDecisionTokens(cwd string) int {
-	total := tokens.Estimate(ctxReadOrEmpty(filepath.Join(cwd, "docs", "decisions.md")))
-	branches, _ := filepath.Glob(filepath.Join(cwd, "docs", "decisions-branches", "*.md"))
-	for _, p := range branches {
-		total += tokens.Estimate(ctxReadOrEmpty(p))
+	srcs, err := decisions.ListSources(filepath.Join(cwd, "docs"))
+	if err != nil {
+		return 0
+	}
+	total := 0
+	for _, s := range srcs {
+		total += tokens.Estimate(ctxReadOrEmpty(s.Path))
 	}
 	return total
 }

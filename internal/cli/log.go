@@ -354,9 +354,13 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// Open the branch detail page with its timeline marker (the PR headline
 	// the main-canonical union consumes). First creation emits it right after
 	// the header; a later append inserts one only if the file has none yet
-	// (e.g. a legacy file predating markers). Gated only on isBranchFile —
-	// main-canonical is the sole, unconditional timeline model as of v2.0.0.
-	if isBranchFile {
+	// (e.g. a legacy file predating markers). Routed through
+	// branchSummaryApplies — the ONE owner of "does the summary surface apply
+	// here" — so this write, `logmind headline`, and the nudge below cannot
+	// drift apart. They had: this site gated on isBranchFile alone while the
+	// other two also required a non-default branch, so on main `logmind log
+	// -H "x"` set the headline and `logmind headline "x"` refused to.
+	if branchSummaryApplies(isBranchFile) {
 		now := time.Now()
 		prSuffix := prSuffixFromEnv()
 		// The headline is the branch SUMMARY when --headline is given, else the
@@ -433,16 +437,12 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	lines := newStdinLines(stdin)
 	stdinOK := stdinReadable(stdin)
 
-	// The summary captions the ONE timeline row a branch contributes, so it
-	// is asked for on a branch that has such a row to caption. The default
-	// branch is skipped — not because §3.2 treats it differently (it does
-	// not; its decisions live in its own branch file like everyone else's),
-	// but because there is no in-flight unit of work there to summarise: main
-	// is permanent, its file is never "the branch this PR is about", and
-	// prompting for a one-sentence summary of it on every direct-to-main log
-	// asks for a sentence nobody can write.
+	// The unprompted ask, which is narrower than the capability: see
+	// branchSummaryNudgeApplies for why a prompt stays off the default branch
+	// while `logmind headline` and -H do not. Skipped when --headline already
+	// supplied the sentence, and under --quiet, where there is nobody to ask.
 	summaryEdited := false
-	if branchSummaryApplies(cwd, isBranchFile) && f.headline == "" && !quiet {
+	if branchSummaryNudgeApplies(cwd, isBranchFile) && f.headline == "" && !quiet {
 		summaryEdited = nudgeBranchSummary(target, f.noInteractive, stdinOK, lines, stderr)
 	}
 

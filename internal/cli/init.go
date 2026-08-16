@@ -4,6 +4,8 @@
 //
 //   - docs/file-structure.md, docs/timeline.md, docs/timeline-archive.md
 //     (seed contents from embedded templates)
+//   - docs/decisions.md — the compatibility pointer, not a decision log; see
+//     ensureLegacyPointer for why a v2 repo still carries the file
 //   - .logmind/config.yml (config.yml.template with __LOGMIND_RECENT_LIMIT__
 //     substituted; every other byte is a verbatim copy)
 //   - AGENTS.md slim-or-full block (slim is the SPEC §1.1 default)
@@ -15,10 +17,12 @@
 //   - first decision log entry
 //
 // Refresh mode: when called against a repo where logmind is already
-// initialised (.logmind/config.yml + docs/ exist), init
-// reruns only the idempotent refresh steps — workflow template
-// updates, AGENTS.md marker refresh, .gitattributes block, git config
-// drivers, and hooks. docs/ and .logmind/ are left untouched.
+// initialised (.logmind/config.yml plus evidence init has scaffolded docs/
+// before — docsScaffolded), init reruns only the idempotent refresh steps —
+// workflow template updates, AGENTS.md marker refresh, .gitattributes block,
+// git config drivers, and hooks. .logmind/ is left untouched, and the single
+// docs/ write is ensureLegacyPointer restoring docs/decisions.md when it is
+// missing entirely — never over content.
 //
 // Flags mirror the Python CLI's init command:
 //
@@ -120,14 +124,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	enabled := enabledAgentList(f.agentsList, f.allAgents)
 	claudeAgentEnabled := slices.Contains(enabled, "claude")
 
-	// The install sentinel is .logmind/config.yml + docs/ — the two things
-	// every initialised repo has and nothing removes. It used to be
-	// docs/decisions.md, which stopped being scaffolded when `main` became a
-	// branch like any other (SPEC §3.2): a repo that appends its old main log
-	// to docs/decisions-branches/main.md and deletes the file would otherwise
-	// read as UNINITIALISED here and get the whole fresh-install path —
-	// rewriting .logmind/config.yml over the top of its settings.
-	alreadyInit := pathExists(docsPath) && pathExists(configPath)
+	alreadyInit := pathExists(configPath) && docsScaffolded(docsPath)
 	if alreadyInit {
 		return runInitRefresh(cmd, f, cwd, docsPath, claudeAgentEnabled)
 	}
@@ -147,6 +144,11 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		return fmt.Errorf("create docs/: %w", err)
 	}
 	fmt.Fprintln(out, "✓ Created docs/")
+
+	if err := ensureLegacyPointer(docsPath); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "✓ Created docs/decisions.md")
 
 	// file-structure.md + timeline.md are seeded here but get rewritten
 	// AFTER the first decision is logged. Python emits the placeholder
@@ -401,14 +403,97 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	return nil
 }
 
+// scaffoldedDocs names the docs/ artifacts whose presence proves `logmind
+// init` has run against this repository before. Any ONE of them is enough:
+// they are written at different moments and a repo may legitimately have
+// dropped some.
+//
+//   - decisions.md — the compatibility pointer (ensureLegacyPointer). Present
+//     in every repo v1.2.0 or this binary scaffolded; a repo that migrated its
+//     pre-§3.2 main log into main.md and deleted the file has it back after
+//     one refresh.
+//   - timeline.md / file-structure.md — derived, but scaffolded by init and
+//     rewritten (never deleted) by every regeneration since.
+//   - decisions-branches/ — the record itself. A repo cannot have logged a
+//     decision without it.
+var scaffoldedDocs = []string{
+	"decisions.md",
+	"timeline.md",
+	"file-structure.md",
+	"decisions-branches",
+}
+
+// docsScaffolded is half of the install sentinel — the other half is
+// .logmind/config.yml, tested by the caller.
+//
+// It asks "has init scaffolded docs/ before?", NOT "does docs/ exist?". The
+// difference is a repo carrying a config.yml beside an EMPTY docs/ — a
+// half-installed state a bare pathExists(docsPath) reads as initialised, so
+// init short-circuits into refresh mode and the repo is never scaffolded at
+// all. It also must not be the old single test for docs/decisions.md: since
+// §3.2 that file holds no decisions, and a repo that appended its old main log
+// to docs/decisions-branches/main.md and removed it would read as
+// UNINITIALISED and take the whole fresh-install path — rewriting
+// .logmind/config.yml over the top of its settings. Naming several artifacts
+// and accepting any one of them is what makes both states unrepresentable.
+func docsScaffolded(docsPath string) bool {
+	if !pathExists(docsPath) {
+		return false
+	}
+	for _, name := range scaffoldedDocs {
+		if pathExists(filepath.Join(docsPath, name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureLegacyPointer writes docs/decisions.md if — and only if — nothing is
+// there. It is the ONE writer of that path, shared by the fresh-install path
+// and by refresh, so both routes through `logmind init` leave the file
+// present. A repo scaffolded by an earlier v2 build, which never got one,
+// picks it up on its next `logmind init`.
+//
+// NOT `logmind doctor --fix`: that goes through applyRefresh directly
+// (doctor.go), never through runInitRefresh, so it does not restore a missing
+// pointer and does not report one. Deliberate for now — applyRefresh's
+// contract is "move a stale marker forward", and writing a docs/ file from a
+// drift-remediation pass is a wider change than this fix needs, given
+// doctor's own DRIFT output already tells the reader to re-run `logmind
+// init`. It does leave a gap: a pre-fix v2 repo whose owner only ever runs
+// `doctor --fix` stays exposed and is told nothing.
+//
+// Never overwrites. In a repo that predates §3.2 the file is a real decision
+// log with real entries in it, and rewriting a user-owned artifact is not this
+// code's business (SPEC line 1101).
+//
+// See templates.DecisionsPointerTemplate for what the file is for: v1.2.0
+// tests for it to decide whether a repo is already initialised, and re-runs
+// the whole scaffold — config.yml included — when it is absent.
+func ensureLegacyPointer(docsPath string) error {
+	path := filepath.Join(docsPath, "decisions.md")
+	if pathExists(path) {
+		return nil
+	}
+	return writeFile(path, templates.DecisionsPointerTemplate())
+}
+
 // runInitRefresh handles the idempotent re-init path. Mirrors Python's
 // already_initialized branch in cli.init: refresh workflows + AGENTS.md
-// marker + .gitattributes + git config + hooks, leave docs/ and
-// .logmind/ alone.
+// marker + .gitattributes + git config + hooks, and leave .logmind/ alone.
+// docs/ is left alone too but for one write — see ensureLegacyPointer, which
+// only ever fills an absence.
 func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, claudeAgentEnabled bool) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "logmind is already initialized — running in refresh mode.")
 	fmt.Fprintln(out)
+
+	// The one docs/ write refresh makes. Restores the v1.2.0 install sentinel
+	// in a repo scaffolded before ensureLegacyPointer existed, which without
+	// it stays exposed to a v1.2.0 binary re-scaffolding over its config.
+	if err := ensureLegacyPointer(docsPath); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: could not write docs/decisions.md:", err)
+	}
 
 	// docs/spec.md + context.spec_file — --spec works in refresh mode too
 	// (H2 design point): a repo that ran `logmind init` before this feature

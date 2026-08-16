@@ -55,9 +55,13 @@ file is `main.md`. One rule, no exception: the default branch is a branch
 like any other. You do not need to manage this routing — `logmind log`
 does it automatically.
 
-`docs/decisions.md` is a legacy source. Where it still exists it is read,
-never written, except on the three paths where the router cannot resolve a
-branch name to route by: `decisions.branch_aware: false`; `git` reporting
+`docs/decisions.md` is a legacy source. `logmind init` seeds it with a pointer
+at this layout and never touches it again — it exists so a logmind older than
+v2.0 still recognises the repo as initialised instead of re-scaffolding over
+`.logmind/config.yml`. Where it holds real entries (a repo that predates §3.2)
+they are read, never rewritten. It is written to on only three paths, all of
+them ones where the router cannot resolve a branch name to route by:
+`decisions.branch_aware: false`; `git` reporting
 this is not a repository, which also fires when the `git` binary itself is
 unreachable — even inside a real repo, on a real branch; and a detached
 HEAD. A repo with no commits yet is not one of them — `git symbolic-ref

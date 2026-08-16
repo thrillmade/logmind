@@ -18,14 +18,17 @@
 //
 //   - default: streams the resolved decision file verbatim, then any decision
 //     file named after NO branch (docs/decisions.md, docs/decisions-archive.md)
-//     under its own banner. In a repo with neither — every repo `logmind init`
-//     creates today — this is UNCHANGED byte for byte from the pre-§3.2
-//     behavior, and existing goldens still pin that. See extraSources for why
-//     the legacy files are not behind --all.
+//     that holds decisions, under its own banner. In a repo where neither holds
+//     any — every repo `logmind init` creates today, whose docs/decisions.md is
+//     the compatibility pointer — this is UNCHANGED byte for byte from the
+//     pre-§3.2 behavior, and existing goldens still pin that. See extraSources
+//     for why the legacy files are not behind --all and why an entry-less one
+//     is skipped anyway.
 //   - --all: additionally appends every OTHER docs/decisions-branches/*.md
 //     file (the base file, when on a branch, is already the primary body —
 //     never duplicated) under BRANCH DECISIONS banners, ahead of the
-//     non-branch banners.
+//     non-branch banners. Implied when the base is NOT a branch file, which is
+//     the state every CI run is in — see extraSources.
 //   - --brief: title + timestamp only, one line per decision. Under --all,
 //     lines are grouped under a "[source]" tag matching the --json source
 //     value exactly (legacy / archive / branch:<name>).
@@ -83,12 +86,18 @@ func newShowCmd() *cobra.Command {
 Streams the decision file "logmind log" would write to right now:
 docs/decisions-branches/<branch>.md for the branch you are on — the default
 branch included, it is a branch like any other — followed by any legacy
-docs/decisions.md and docs/decisions-archive.md under their own banners.
-Those two are named after no branch, so no branch file supersedes them and
-they are never hidden behind a flag.
+docs/decisions.md and docs/decisions-archive.md that HOLDS decisions, under
+their own banners. Those two are named after no branch, so no branch file
+supersedes them and they are never hidden behind a flag; one holding no
+decisions (the pointer "logmind init" seeds) is skipped, having nothing to
+surface.
 
 Pass --all to also include every OTHER docs/decisions-branches/<branch>.md
-file, each appended under its own banner.
+file, each appended under its own banner. Where there is no current branch
+at all — a detached HEAD, which is what actions/checkout leaves on a
+pull_request run, plus a non-git directory or decisions.branch_aware:false —
+every branch file is included without the flag: "other branches" needs a
+current branch to be other than.
 
 Pass --brief for title + timestamp only, one line per decision (under --all,
 lines are grouped by source).
@@ -122,7 +131,7 @@ Examples:
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false,
-		"Also include every other docs/decisions-branches/*.md file, each under its own banner. Legacy docs/decisions.md and docs/decisions-archive.md are shown with or without this flag.")
+		"Also include every other docs/decisions-branches/*.md file, each under its own banner (implied where there is no current branch, e.g. a detached HEAD). Legacy docs/decisions.md and docs/decisions-archive.md are shown with or without this flag, when they hold decisions.")
 	cmd.Flags().BoolVar(&brief, "brief", false,
 		"Title + timestamp only, one line per decision. Combined with --json, zeroes reasoning/alternatives/implications instead of dropping them.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
@@ -143,32 +152,55 @@ type showSource struct {
 // enumeration `search`, the timeline and Collect also read. Nothing here
 // resolves a branch name.
 //
-// Two bands, and `all` selects between them:
+// Two bands:
 //
 //   - ALWAYS (bare `show` included): every decision file that is named after
 //     NO branch — docs/decisions.md and docs/decisions-archive.md — that
-//     exists and is not already the base. Nothing supersedes these files:
-//     §3.2 moved main's decisions into main's branch file, so in a repo that
-//     upgraded across §3.2 the pre-§3.2 main log is history that lives in no
-//     branch file at all. Bare `show` on the default branch of such a repo
-//     printed "No decisions logged yet on this branch." over a docs/decisions.md
-//     full of them, while `search` and `show --all` found them — the reader
-//     least likely to know a second command exists got the emptiest answer.
-//   - UNDER --all ONLY: every OTHER branch's decisions file. Those genuinely
-//     belong to another branch, so they stay behind the flag that says "all".
+//     exists, is not already the base, AND HOLDS AT LEAST ONE DECISION.
+//     Nothing supersedes these files: §3.2 moved main's decisions into main's
+//     branch file, so in a repo that upgraded across §3.2 the pre-§3.2 main
+//     log is history that lives in no branch file at all. Bare `show` on the
+//     default branch of such a repo printed "No decisions logged yet on this
+//     branch." over a docs/decisions.md full of them, while `search` and
+//     `show --all` found them — the reader least likely to know a second
+//     command exists got the emptiest answer.
+//
+//     The entry-count test is what keeps that band honest now that `logmind
+//     init` scaffolds docs/decisions.md as a POINTER rather than a log
+//     (ensureLegacyPointer). Streaming a file with no decisions in it under a
+//     "LEGACY MAIN LOG" banner would put an empty section in front of every
+//     freshly-initialised repo's bare `show`. This band exists to surface
+//     decisions that live in no branch file; a file holding none has nothing
+//     for it to surface. Measured against the file's own parser, not its
+//     name, so it stays true for any entry-less non-branch file.
+//
+//   - BRANCH FILES: every branch's decisions file other than the base. Under
+//     --all always. ALSO when the base is not itself a branch file, because
+//     then there is no current branch for these to be the complement OF and
+//     "another branch's decisions" is not a thing that can be said.
+//     resolveDecisionsPath returns a non-branch base in exactly three states
+//     — branch_aware off, non-git, and detached HEAD — and the third is the
+//     one CI is always in: actions/checkout detaches on `pull_request`. Bare
+//     `show` there resolved to docs/decisions.md, which since §3.2 holds no
+//     decisions, and answered "No decisions logged yet on this branch." /
+//     `{"decisions": null}` with the whole record sitting in
+//     docs/decisions-branches/. Every other read path — Collect, the
+//     timeline, `search` — enumerates unconditionally and never had the bug;
+//     --all is a NARROWING of that, and a narrowing to "not the current
+//     branch" is meaningless when there is no current branch.
 //
 // Branch files come first so the raw stream, --brief and --json all visit
 // sources in one order: base → other branches → legacy non-branch files.
 // Both non-branch labels are already in logmind's own source grammar
 // ("legacy" | "archive" | "branch:<name>" — see showSource), so surfacing
 // them needs no schema change.
-func extraSources(docsPath, excludePath string, all bool) ([]showSource, error) {
+func extraSources(docsPath, excludePath string, all, baseIsBranchFile bool) ([]showSource, error) {
 	srcs, err := decisions.ListSources(docsPath)
 	if err != nil {
 		return nil, err
 	}
 	var out []showSource
-	if all {
+	if all || !baseIsBranchFile {
 		for _, s := range srcs {
 			if !s.IsBranch || s.Path == excludePath {
 				continue
@@ -180,9 +212,31 @@ func extraSources(docsPath, excludePath string, all bool) ([]showSource, error) 
 		if s.IsBranch || s.Path == excludePath {
 			continue
 		}
+		hasEntries, err := sourceHasDecisions(s.Path)
+		if err != nil {
+			return nil, err
+		}
+		if !hasEntries {
+			continue
+		}
 		out = append(out, showSource{path: s.Path, label: s.Label})
 	}
 	return out, nil
+}
+
+// sourceHasDecisions reports whether path holds at least one decision entry,
+// by the same header split every other read path uses — so a file this calls
+// empty is a file `search`, the timeline and --json all read as empty too. A
+// read error is returned rather than swallowed: extraSources' callers only
+// ever pass paths decisions.ListSources found on disk, so "cannot read" there
+// means a dangling symlink or a permissions fault, never "optional file
+// absent".
+func sourceHasDecisions(path string) (bool, error) {
+	_, raws, err := decisions.SplitRaw(path)
+	if err != nil {
+		return false, err
+	}
+	return len(raws) > 0, nil
 }
 
 // showBannerTitle maps a showSource label (logmind's own source grammar:
@@ -234,7 +288,7 @@ type showJSONOutput struct {
 // Entries within each source preserve on-disk (chronological, oldest-first)
 // order — every decision file is append-only — and sources are concatenated
 // in the order they're visited (base, then branches, then legacy).
-func collectShowEntries(docsPath, basePath, baseLabel string, all, withBody bool) ([]showJSONEntry, error) {
+func collectShowEntries(docsPath, basePath, baseLabel string, all, baseIsBranchFile, withBody bool) ([]showJSONEntry, error) {
 	var out []showJSONEntry
 
 	appendFile := func(path, label string) error {
@@ -268,7 +322,7 @@ func collectShowEntries(docsPath, basePath, baseLabel string, all, withBody bool
 	if err := appendFile(basePath, baseLabel); err != nil {
 		return nil, err
 	}
-	extra, err := extraSources(docsPath, basePath, all)
+	extra, err := extraSources(docsPath, basePath, all, baseIsBranchFile)
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +474,7 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 	// --quiet has no additional effect — stdout is the JSON document, full
 	// stop.
 	if jsonOut {
-		entries, err := collectShowEntries(docsPath, target, baseLabel, all, !brief)
+		entries, err := collectShowEntries(docsPath, target, baseLabel, all, isBranchFile, !brief)
 		if err != nil {
 			return err
 		}
@@ -437,7 +491,7 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 
 	// --brief (text, non-JSON): title + timestamp only.
 	if brief {
-		entries, err := collectShowEntries(docsPath, target, baseLabel, all, false)
+		entries, err := collectShowEntries(docsPath, target, baseLabel, all, isBranchFile, false)
 		if err != nil {
 			return err
 		}
@@ -448,7 +502,7 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 		// Source tags whenever more than the base file contributed — under
 		// --all always, and in a pre-§3.2 repo where the legacy non-branch
 		// files ride along without it.
-		briefExtras, err := extraSources(docsPath, target, all)
+		briefExtras, err := extraSources(docsPath, target, all, isBranchFile)
 		if err != nil {
 			return err
 		}
@@ -468,6 +522,23 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 			return fmt.Errorf("read %s: %w", target, err)
 		}
 		body = string(data)
+		// A NON-BRANCH base that holds no decisions streams nothing — the same
+		// test extraSources applies to the non-branch band, applied to the
+		// file that band excluded only because it happened to be the base.
+		//
+		// A branch file is the reader's own log for the branch they are on and
+		// is printed verbatim whatever it holds. docs/decisions.md is not that
+		// since §3.2: `logmind init` seeds it as a pointer explaining where
+		// decisions actually live (ensureLegacyPointer), and it is the base in
+		// exactly the three states resolveDecisionsPath names — branch_aware
+		// off, non-git, detached HEAD. Without this, every `show` on a CI
+		// checkout (always detached) would open with fourteen lines about
+		// v1.2.0's install sentinel before reaching a single decision.
+		if !isBranchFile {
+			if _, raws := decisions.SplitRawBytes(body); len(raws) == 0 {
+				body = ""
+			}
+		}
 	}
 
 	// The legacy non-branch files always, and under --all every OTHER
@@ -482,7 +553,7 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 	var extraBlocks []extraBlock
 	branchCount := 0
 	nonBranchCount := 0
-	extraSrcs, err := extraSources(docsPath, target, all)
+	extraSrcs, err := extraSources(docsPath, target, all, isBranchFile)
 	if err != nil {
 		return err
 	}
@@ -504,10 +575,18 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 		return nil
 	}
 
-	if body == "" {
-		fmt.Fprintln(stdout, "No decisions logged yet on this branch.")
-	} else {
+	switch {
+	case body != "":
 		fmt.Fprint(stdout, body)
+	case len(extraBlocks) == 0:
+		// Nothing anywhere. Byte-exact historical wording.
+		fmt.Fprintln(stdout, "No decisions logged yet on this branch.")
+	default:
+		// The base contributed nothing but other sources did — say so once,
+		// rather than asserting emptiness immediately above a banner full of
+		// decisions. On a detached HEAD there is no branch for the historical
+		// wording to be about in the first place.
+		fmt.Fprintln(stdout, "No decisions in the file `logmind log` would write here — showing what else is on disk.")
 	}
 
 	for _, b := range extraBlocks {
