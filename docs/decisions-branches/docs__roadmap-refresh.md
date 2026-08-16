@@ -92,3 +92,14 @@
 
 ---
 
+## 2026-08-16 06:11 - roadmap: run every command the file hands the reader, and let one paragraph own the tag boundary
+
+**Reasoning:** A panel found the file's replacement for the stale-SHA line was a command that cannot execute: git rev-parse --short takes exactly one revision, so the two-ref form exits 128 with 'Needed a single revision'. A doc whose thesis is 'state the command, not the answer' had shipped a command nobody ran — worse than the stale number it replaced. Every fenced block and inline command in the file has now been executed and its documented output reproduced. Separately the file asserted the tag boundary in three places that had drifted apart: #310's remaining sites were filed pre-tag as closing when #301 lands, while #265+#257 were paired as post-tag — and #301, which closes #265, is open against dev and lands pre-tag.
+
+**Alternatives considered:** for-each-ref for the two-SHA case — rejected; it exits 0 and prints nothing on a typo'd ref, and a silent wrong answer is the failure this file exists to prevent. Fix the three sequencing statements to agree — rejected; three agreeing copies are still three copies, and they drifted once already.
+
+**Implications:**
+- Ruling recorded: #265 is pre-tag and lands in #301; #257 is the single item in the run to the tag that waits for the tag, because setup-logmind installs from /releases/latest and v1.2.0 lacks --base. One paragraph in §2 now decides that boundary and the other sections link to it. Also corrected: skdd is refused generically, not with a reason — 'logmind auto skdd' is byte-identical to 'logmind auto banana', while only night carries a retirement note; the naive closes-probe drops one issue, not two, and #284 survives it by luck rather than coverage; and two transcripts were not verbatim. The lane also caught two errors it introduced mid-pass, including a boundary sentence that contradicted the ten post-tag items in the same file.
+
+---
+

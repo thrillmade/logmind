@@ -26,7 +26,9 @@ are gone, and their absence is the point: the pin was stale three minutes before
 the commit that introduced it, which is the fourth recurrence of the defect this
 file exists to prevent — in the file's own header, two paragraphs above the rule
 forbidding it. A branch tip is not a fact this file may own. Run
-`git rev-parse --short origin/dev origin/main` instead.
+`git rev-parse --short origin/dev` and `git rev-parse --short origin/main` —
+one revision per call, because `--short` implies `--verify`, and the
+two-argument form exits `fatal: Needed a single revision`.
 
 ---
 
@@ -115,7 +117,7 @@ $ gh api repos/thrillmade/logmind/rulesets --jq '.[]|"\(.id) \(.name)"'
 
 $ gh api repos/thrillmade/logmind/rulesets/18502737 \
     --jq '[.bypass_actors[]|"\(.actor_type):\(.actor_id)"]'
-["OrganizationAdmin:null", "Integration:3951953"]
+["OrganizationAdmin:null","Integration:3951953"]
 
 $ gh api /apps/skdd-steward --jq .id
 3951953
@@ -142,8 +144,8 @@ $ gh api repos/thrillmade/protocol/pulls/75/commits --paginate \
 # returns only the first without it, which answers 15.
 $ gh api "repos/thrillmade/logmind/actions/workflows/277546816/runs?per_page=100&event=push" \
     --paginate --jq '.workflow_runs[] | .conclusion' | sort | uniq -c
-     13 success
-      2 failure
+   2 failure
+  13 success
 ```
 
 | probe | result |
@@ -197,15 +199,20 @@ repo and must then be fixed twice.
 
 ### 2 — Prerequisites for the fleet migration
 
-Each is a hard gate on #257, not a parallel cleanup. **#257 itself is
-post-tag, not pre-tag** — `setup-logmind` installs from `/releases/latest`,
-and the released v1.2.0 answers `logmind check-decisions --base` with
-`Error: unknown flag: --base` (ruling recorded in #243). The fleet cannot
-take the new gate template until v2.0.0 exists, so this whole cluster —
-including #288 below and #265+#257 in §4 — runs after the tag by
-construction, even though it is numbered ahead of "§3 — Remaining pre-tag
-work" in this list: numbering here is dependency order, not calendar order
-across the tag boundary.
+Each is a hard gate on #257, not a parallel cleanup.
+
+**This paragraph is the only place the tag boundary is decided, and it decides
+one thing: the fleet move, #257, is the single item in the run to the tag that
+waits for the tag.** Everything in §3 lands before it; §5 is the backlog that
+follows it. The reason is mechanical: `setup-logmind` installs from
+`/releases/latest`, and the released v1.2.0 answers `logmind check-decisions
+--base` with
+`Error: unknown flag: --base` (ruling recorded in #243). No consumer repo can
+take the new gate template until v2.0.0 exists, so the fleet move cannot start
+until the tag does.
+
+Numbering in this list is dependency order, not calendar order — which is why
+§2 sits ahead of "§3 — Remaining pre-tag work" while running after it.
 
 | | why it blocks |
 |---|---|
@@ -237,19 +244,30 @@ to unblock itself has bought exactly what §3.4's gate exists to prevent.
 **#244** — branch→issue binding plus comment-back on merge. Pre-tag by **Ruling
 12**, not by defect: nothing in current behaviour is wrong, the feature simply
 does not exist. Recorded here rather than in §5 so the ruling stays visible.
-Its body no longer contradicts the ruling: it was corrected 2026-08-01 and now
-opens "Pre-tag — in v2.0.0 scope by Ruling 12." Nothing to do.
+Its body no longer contradicts the ruling: its `## Sequencing` section was
+corrected 2026-08-01 and now reads "Pre-tag — in v2.0.0 scope by Ruling 12."
+Nothing to do.
 
 **#241** — `logmind auto <profile>`: one command sets a repository up to be
 handed over and run unattended. Pre-tag by Ruling 12. **Built and on `dev`**
 (#300). It writes the standing directive `.logmind/auto.yml`, reports which
 required skills are present, and prints the handover a human must give — it
 never starts the mode, because the mode may only begin from an explicit human
-handover. Both of the issue's open questions were answered by shipping: the
-profile vocabulary is one name, `unattended` (`night` and `skdd` are each
-refused with a reason), and the limit-watch stays behavioural — the threshold
-rule lives in the written directive and is owned by the `session-heartbeat`
-skill, not tooled here. Nothing is left to build.
+handover. Both of the issue's open questions were answered by shipping. The
+profile vocabulary is one name, `unattended`. `night` is refused *with* its
+reason — the mode starts from a human handover, never from the clock. `skdd`,
+the word the issue itself used, gets only the generic
+`unknown profile "skdd". Known profiles: unattended`, because nothing yet
+defines what an skdd profile would declare; an operator typing the original
+ask is told the name is unknown and nothing more. The limit-watch stays
+behavioural — the threshold rule lives in the written directive and is owned by
+the `session-heartbeat` skill, not tooled here. The command is done.
+
+**#265** — collapse the decision layout: `main` is a branch like any other, no
+cap, no archive, `rotateDecisions` deleted rather than ported. It adds
+`docs/timeline-archive.md` as a **third** derived file that every restore path
+and `check-derived-docs` must learn; all of them name two today. **In flight** —
+PR #301 carries it, open against `dev`.
 
 **#279** — the site's `--version` example is one line; §7.3 requires two, and the
 tag-time flip would not have added the `areas:` line. **Built and on `dev`**
@@ -287,13 +305,10 @@ An issue listed above may already be built — `closes #N` only fires on the
 default branch, so anything merged to `dev` stays open until `dev` reaches
 `main`. That is expected, not drift.
 
-### 4 — #265 + #257, together (post-tag — see §2)
+### 4 — #257, the fleet migration (post-tag — see §2)
 
-One fleet move, per standing constraint. #265 collapses the decision layout —
-main is a branch like any other, no cap, no archive, `rotateDecisions` deleted
-rather than ported — and adds `docs/timeline-archive.md` as a **third** derived
-file that every restore path and `check-derived-docs` must learn. All of them
-name two today.
+One fleet move: every consumer repository takes the current templates at once,
+after the tag exists to install from.
 
 **#277 rides here too.** It reports `check-derived-docs` enforcing the opposite
 of §3.3 — regenerating from the branch's own sources and failing on the diff, so
@@ -347,8 +362,11 @@ Three states, not two — `|| echo absent` collapses "no file" and "a file with 
 marker" into one word, and the table distinguishes them (`reporulez` has both
 files present and unmarked; `skdd`'s are absent from its default branch and
 carry markers on `dev`). The loop reads **default branches only**, so `skdd`'s
-row was measured separately, and `logmind` is the producer rather than a
-consumer and is deliberately not a row.
+row was measured separately. `logmind` is the producer rather than a consumer
+and is deliberately not a row — but the loop still prints one, reading
+`present, unmarked`. That is not the reporulez defect: logmind's own workflows
+are hand-maintained dogfood copies that carry no template marker because
+nothing is meant to refresh them.
 
 **logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9` (`v10` once #301 lands), `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
@@ -424,5 +442,6 @@ git log origin/main..origin/dev --format='%B' \
 
 The comma branch is load-bearing, not decoration: one commit on this branch
 spells it `closes #278, #260, #284`, and a probe that stops at the first `#N`
-drops two issues on the floor. Confirm after the merge that each issue really
-closed, and hand-close any that did not.
+loses `#260`. `#284` survives that probe only because a different commit
+happens to spell `Closes #284.` on its own — luck, not coverage. Confirm after
+the merge that each issue really closed, and hand-close any that did not.
