@@ -133,3 +133,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 00:42 - decisions: an unborn HEAD has a branch — the fallback is detachment, not the absence of a commit
+
+**Reasoning:** My previous correction said a detached or unborn HEAD routes to the legacy log, and the second half was false. Resolving the symbolic reference does not dereference it to a commit, so it answers with the branch name before any commit exists, and a decision in a fresh repository lands in the branch file. Measured against the real binary in a repository where verifying HEAD fails, with the detached case alongside as the control, since that one genuinely does fall back. The claim had been copied into eight places including two surfaces shipped to consumers, and the root was the branch resolver's own contract, which every other site re-derived it from.
+
+**Alternatives considered:** Correct the seven sites this change introduced and leave the rest. Rejected: two pre-existing sites carried the same falsehood, one of them the resolver's own documentation, and leaving the root would have left the next reader to re-derive it exactly as these did.
+
+**Implications:**
+- The three routes to the legacy log are branch-awareness turned off, a directory that is not a repository, and a detached head; the count was right and only one description was wrong. The link-checking template moves a generation because a body-only fix reaches no repository already on the previous one, which a guard I had not been told about independently demanded. The agent configuration files for two editors now name the branch directory and both timeline files first, with the legacy log kept last rather than dropped, and a test drives the real creation path and enumerates the agents from the registry so a future one is covered without being remembered.
+
+---
+

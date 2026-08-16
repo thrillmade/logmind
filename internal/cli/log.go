@@ -15,8 +15,9 @@
 //   - Branch routing (SPEC §3.2). A decision goes in a file named for the
 //     branch it was made on — docs/decisions-branches/<sanitized-branch>.md
 //     — and the default branch is not an exception to that rule. Only a
-//     directory with no branch at all (non-git, detached HEAD, unborn repo)
-//     or an explicit branch_aware:false falls back to docs/decisions.md.
+//     directory with no branch NAME (non-git, detached HEAD) or an explicit
+//     branch_aware:false falls back to docs/decisions.md. An unborn repo is
+//     NOT one of them: see resolveDecisionsPath.
 //
 //   - First-write backlink header. When creating a branch decision file
 //     for the first time, prepends `← back to [docs/timeline.md]` so
@@ -537,15 +538,28 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 //
 //	on any branch (main included), branch_aware on
 //	  → docs/decisions-branches/<sanitized>.md, isBranchFile=true
-//	where there is no branch at all — non-git, detached HEAD, unborn repo —
+//	where there is no branch NAME — non-git, or detached HEAD —
 //	or branch_aware is explicitly off
 //	  → docs/decisions.md, isBranchFile=false
 //
-// The remaining docs/decisions.md cases are not a default-branch special
-// case: they are the states where no branch NAME exists to name a file
-// after. `main` used to be routed here too, which is what made the main log
-// look like a second kind of decision file with its own conventions; that
-// case is gone, and main's decisions live in main's own branch file.
+// Exactly three code paths below reach docs/decisions.md, and that is the
+// whole list: branch_aware off, non-git, detached HEAD. They are not a
+// default-branch special case; they are the states where no branch NAME
+// exists to name a file after. `main` used to be routed here too, which is
+// what made the main log look like a second kind of decision file with its
+// own conventions; that case is gone, and main's decisions live in main's
+// own branch file.
+//
+// An UNBORN repo is NOT one of the three, and the intuition that it is has
+// been written into this comment before. `git symbolic-ref --short HEAD`
+// resolves HEAD's ref without dereferencing it to a commit, so it SUCCEEDS
+// before the first commit — a fresh `git init` answers with the branch HEAD
+// already points at (e.g. `main`, exit 0) even though `git rev-parse
+// --verify HEAD` fails. CurrentBranch is therefore non-empty and the first
+// decision in an empty repo lands in docs/decisions-branches/main.md, not
+// docs/decisions.md. Detached HEAD is the case that yields "" — symbolic-ref
+// exits non-zero there because HEAD holds a raw SHA, not a ref.
+// Both halves are pinned by TestResolveDecisionsPathUnbornVsDetached.
 func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target string, isBranchFile bool) {
 	branchlessPath := filepath.Join(docsPath, "decisions.md")
 	if !cfg.Decisions.BranchAware {
@@ -556,7 +570,8 @@ func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target strin
 	}
 	branch := gitcli.CurrentBranch(cwd)
 	if branch == "" {
-		// Detached HEAD or unborn repo.
+		// Detached HEAD. NOT an unborn repo — symbolic-ref answers `main`
+		// there; see this function's doc comment.
 		return branchlessPath, false
 	}
 	branchFile := filepath.Join(docsPath, "decisions-branches",

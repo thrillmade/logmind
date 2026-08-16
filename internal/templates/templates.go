@@ -152,10 +152,13 @@ func FileStructureTemplate() string {
 // append the new decision entry after existing content (header
 // preserved verbatim).
 //
-// Not added to the default-branch `docs/decisions.md` (no `..` parent
-// hop needed; the link target would be `timeline.md` not
-// `../timeline.md`, and `decisions.md` is the original entry point
-// rather than a derived per-branch file).
+// Not added to `docs/decisions.md` (no `..` parent hop needed; the link
+// target would be `timeline.md` not `../timeline.md`, and `decisions.md` is
+// the original entry point rather than a derived per-branch file). Since
+// §3.2 that file is no longer "the default branch's log" — the default
+// branch writes `docs/decisions-branches/main.md`, which DOES get the
+// header like any other branch file. `docs/decisions.md` is now only the
+// no-branch-name fallback (see resolveDecisionsPath in internal/cli/log.go).
 func DecisionsBranchHeader() string {
 	return readEmbed("decisions-branch-header.md.template")
 }

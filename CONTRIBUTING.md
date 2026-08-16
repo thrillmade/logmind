@@ -54,9 +54,14 @@ to `docs/decisions-branches/<branch>.md` for the branch it was made on, the
 default branch included (`main.md`). `docs/decisions.md` is a legacy source —
 read where it exists, and never written **on the branch-aware path**.
 `resolveDecisionsPath` still falls back to it in exactly three cases, all of
-them "there is no branch to route by": `decisions.branch_aware: false`, a
-non-git directory, and a detached or unborn HEAD. In those three it is
-created and appended to.
+them "there is no branch NAME to route by": `decisions.branch_aware: false`,
+a non-git directory, and a detached HEAD. In those three it is created and
+appended to.
+
+A repo with no commits yet is **not** one of the three. `git symbolic-ref
+--short HEAD` succeeds before the first commit — a fresh `git init` answers
+`main` — so the first decision in an empty repo lands in
+`docs/decisions-branches/main.md` like any other.
 
 ### Tests
 

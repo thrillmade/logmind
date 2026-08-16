@@ -91,9 +91,11 @@ on, and the default branch is a branch like any other (`main.md`).
 `docs/decisions.md` is a legacy source: on the branch-aware path it is read
 and never written. It is not unwritable, and the exceptions are not a
 default-branch carve-out — `resolveDecisionsPath` falls back to it, creating
-and appending, in exactly three cases, all of them "there is no branch to
-route by": `decisions.branch_aware: false`, a non-git directory, and a
-detached or unborn HEAD.
+and appending, in exactly three cases, all of them "there is no branch NAME
+to route by": `decisions.branch_aware: false`, a non-git directory, and a
+detached HEAD. A repo with no commits yet is not one of them: `git
+symbolic-ref --short HEAD` succeeds before the first commit, so a fresh `git
+init` routes to `main.md`.
 
 ### 2. The timeline — main-canonical, unconditionally
 

@@ -478,9 +478,30 @@ func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
 func TestCheckDocLinksTemplate_V8_AdvisoryNoStrand(t *testing.T) {
 	body := Workflow("check-doc-links.yml.template")
 
-	// Marker bump v8 → v9 (setup-logmind action pin v1.0.0 → v1.0.1).
-	if !strings.Contains(body, "# logmind-template-version: v9") {
-		t.Errorf("check-doc-links template missing v9 marker")
+	// Marker bump v9 → v10 (the self-heal regenerates the archive too).
+	// The marker is the ONLY thing doctor and logmind-self-update compare —
+	// they never diff the body — so a content fix shipped without a bump
+	// leaves every repo already running the old version on the old body,
+	// with no drift row to say so.
+	if !strings.Contains(body, "# logmind-template-version: v10") {
+		t.Errorf("check-doc-links template missing v10 marker")
+	}
+
+	// The derived-doc self-heal must regenerate ALL THREE derived docs.
+	// `logmind timeline --write` writes the one file it is given, so the
+	// archive needs its own invocation: without it an archive-sourced
+	// broken link survives every self-heal pass — the job re-runs, changes
+	// nothing, and reports the same finding next time. linkcheck's own
+	// remediation advice for that case is this exact command, so dropping
+	// it leaves the workflow printing a fix it cannot itself run.
+	for _, want := range []string{
+		"logmind timeline --write docs/timeline.md",
+		"logmind timeline --write docs/timeline-archive.md --half archive",
+		"logmind file-structure --write docs/file-structure.md",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("check-doc-links self-heal does not run %q — a derived doc it omits is one it can never fix", want)
+		}
 	}
 
 	// Advisory: the old `exit $rc` (re-raise the linkcheck exit) red-lit
@@ -1358,8 +1379,14 @@ func TestWorkflowActionSurface_IsPinned(t *testing.T) {
 // Update procedure: change a template → bump its marker → the test prints
 // the new digest → paste it here, same commit.
 var bundledTemplateFingerprints = map[string]string{
-	"check-decisions.yml.template":     "v6:5fbd605bfc774cae66e321405a634baa0f0d3e93a47ffa661623100219430559",
-	"check-doc-links.yml.template":     "v9:49fd3ffc32bed1c1ac5054c7e478d8d6794390a2f6423f93e9b418a9da838008",
+	"check-decisions.yml.template": "v6:5fbd605bfc774cae66e321405a634baa0f0d3e93a47ffa661623100219430559",
+	// v10 = v9's body plus the archive half of the derived-doc self-heal:
+	// `logmind timeline --write docs/timeline-archive.md --half archive`.
+	// The marker moves WITH the content by the rule this map exists to
+	// enforce — a content-only fix would have left every repo already
+	// holding v9 running the two-of-three self-heal forever, with `doctor`
+	// calling them current. See the v10 note in the template itself.
+	"check-doc-links.yml.template":     "v10:9e6328e81ac0f56d538f41c2b1a304c6f9eb279f65eb5cd7ef109460a437ef8b",
 	"logmind-self-update.yml.template": "v11:d4214fb3d201997b3089e8bdaf824ea513da27b0d40093d71d663016b6e903d9",
 	// v13 = v12's body plus docs/timeline-archive.md in the PR gate and the
 	// push step (logmind#265/#301). It is a SUPERSET of v12, not a

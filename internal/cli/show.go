@@ -394,9 +394,11 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 	if isBranchFile {
 		branch := gitcli.CurrentBranch(cwd)
 		if branch == "" {
-			// Detached HEAD / unborn repo shouldn't reach here (resolveDecisionsPath
-			// would have returned isBranchFile=false), but fall back to reversing
+			// Detached HEAD shouldn't reach here (resolveDecisionsPath would
+			// have returned isBranchFile=false), but fall back to reversing
 			// the filename's sanitization rather than emitting an empty label.
+			// An unborn repo is not the case being guarded: symbolic-ref
+			// answers there, so branch is non-empty and isBranchFile is true.
 			branch = decisions.BranchLabelFromFilename(filepath.Base(target))
 		}
 		baseLabel = "branch:" + branch

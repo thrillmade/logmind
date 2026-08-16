@@ -205,7 +205,13 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 		// Python uses a Unicode "⚠" then two spaces — preserved.
 		// The final "git commit --no-verify" hint is part of the same
 		// stdout block; we replicate the linebreaks exactly.
-		fmt.Fprintf(stdout, "⚠  %d lines changed without updating docs/decisions.md.\n", total)
+		// Name the file the branch-aware write path actually produces, not
+		// the legacy one. guardcommit.IsDecisionFile — the gate this message
+		// explains — accepts docs/decisions-branches/*.md, and telling the
+		// user to update docs/decisions.md sent them at a file that would not
+		// have cleared the check. The CI-shape twin
+		// (check-decisions.yml.template) already says it this way.
+		fmt.Fprintf(stdout, "⚠  %d lines changed without updating docs/decisions-branches/<branch>.md.\n", total)
 		fmt.Fprintln(stdout, "   Log this decision: logmind log \"Your decision here\"")
 		fmt.Fprintln(stdout, "   To skip this check: git commit --no-verify")
 		if !opts.noFail {

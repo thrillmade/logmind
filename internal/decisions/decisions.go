@@ -59,10 +59,13 @@ type NonBranchSource struct {
 //
 //   - decisions.md — the pre-§3.2 main log. Still WRITTEN, but only where no
 //     branch NAME exists to name a file after: a non-git directory, a
-//     detached HEAD, an unborn repo, or decisions.branch_aware explicitly off
-//     (resolveDecisionsPath in internal/cli/log.go routes those here). It is
-//     no longer where a decision made ON the default branch goes — that is
-//     docs/decisions-branches/main.md like any other branch.
+//     detached HEAD, or decisions.branch_aware explicitly off
+//     (resolveDecisionsPath in internal/cli/log.go routes those three here,
+//     and owns the rule). An unborn repo is NOT among them — symbolic-ref
+//     resolves HEAD's ref before the first commit, so a fresh `git init`
+//     routes to main.md. It is no longer where a decision made ON the
+//     default branch goes — that is docs/decisions-branches/main.md like any
+//     other branch.
 //   - decisions-archive.md — the pre-§3.2 rotation overflow, written by the
 //     retired `max_recent` cap. NOTHING writes it now, in any state. It is
 //     read-only legacy: a repo that rotated before upgrading keeps every

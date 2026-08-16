@@ -93,9 +93,11 @@ is `main.md`. One rule, no exception: the default branch is a branch like
 any other. You don't manage this — `logmind log` does.
 
 `docs/decisions.md` is a legacy source. Where it still exists it is read,
-never written, except on the three paths that have no branch to route by:
-`decisions.branch_aware: false`, a non-git directory, and a detached or
-unborn HEAD.
+never written, except on the three paths that have no branch NAME to route
+by: `decisions.branch_aware: false`, a non-git directory, and a detached
+HEAD. A repo with no commits yet is not one of them — `git symbolic-ref
+--short HEAD` succeeds before the first commit, so a fresh `git init` routes
+to `main.md` like any other branch.
 
 ### Branch summary (headline)
 

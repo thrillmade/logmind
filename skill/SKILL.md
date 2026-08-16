@@ -56,9 +56,11 @@ like any other. You do not need to manage this routing — `logmind log`
 does it automatically.
 
 `docs/decisions.md` is a legacy source. Where it still exists it is read,
-never written, except on the three paths that have no branch to route by:
-`decisions.branch_aware: false`, a non-git directory, and a detached or
-unborn HEAD.
+never written, except on the three paths that have no branch NAME to route
+by: `decisions.branch_aware: false`, a non-git directory, and a detached
+HEAD. A repo with no commits yet is not one of them — `git symbolic-ref
+--short HEAD` succeeds before the first commit, so a fresh `git init` routes
+to `main.md` like any other branch.
 
 ## Reading prior context
 

@@ -119,12 +119,19 @@ func TopLevel(cwd string) (string, bool) {
 }
 
 // CurrentBranch returns the current branch name (e.g. "v1-go-rewrite")
-// or an empty string when HEAD is detached, the repo is unborn without
-// a usable symbolic-ref answer, or any error path. Mirrors
-// git_handler.current_branch.
+// or an empty string when HEAD is detached, when cwd is not a repo, or on
+// any other error path. Mirrors git_handler.current_branch.
 //
-// Implementation: `git symbolic-ref --short HEAD`. Returns "" on
-// detached HEAD (symbolic-ref exits non-zero in that case).
+// Implementation: `git symbolic-ref --short HEAD`. Returns "" on detached
+// HEAD — symbolic-ref exits non-zero there because HEAD holds a raw SHA
+// rather than a ref.
+//
+// An UNBORN repo (no commits yet) is NOT an empty-string case, and callers
+// have assumed otherwise. symbolic-ref resolves HEAD's ref WITHOUT
+// dereferencing it to a commit, so it succeeds before the first commit and
+// answers with the branch HEAD already points at (a fresh `git init` gives
+// `main`, exit 0) even while `git rev-parse --verify HEAD` fails. Anything
+// that needs "does this repo have a commit" must ask rev-parse, not this.
 func CurrentBranch(repoRoot string) string {
 	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
 	cmd.Dir = repoRoot
