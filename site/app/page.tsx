@@ -14,12 +14,18 @@ const PIP_LEGACY = "pip install 'logmind==0.6.16'";
 // TO RELEASE v2.0.0: update these three lines (CURRENT_VERSION,
 // CURRENT_SPEC, CURRENT_RELEASE_DATE) — everything below derives from
 // them, and every "forthcoming" / "in design" caveat on the page clears
-// itself automatically once CURRENT_VERSION === NEXT_VERSION. No other
-// edit is required — UNLESS internal/version/version.go's own `Areas`
-// string has changed since AREAS below was last copied. AREAS is not
-// part of the three-line flip: it mirrors what the binary claims under
-// SPEC §7.3, which is orthogonal to the version number, so it only needs
-// touching when the binary's declared areas change, not at every release.
+// itself automatically once CURRENT_VERSION === NEXT_VERSION. The areas
+// line (see AREAS_SINCE below) clears the same way, off the same flip,
+// because AREAS_SINCE is set to "2.0.0" too — but it derives from
+// CURRENT_VERSION >= AREAS_SINCE, not from NEXT_VERSION, so it keeps
+// showing once CURRENT_VERSION moves past v2.0.0 into whatever comes
+// after. No other edit is required — UNLESS internal/version/version.go's
+// own `Areas` string has changed since AREAS below was last copied.
+// AREAS is not part of the three-line flip: it mirrors what the binary
+// claims under SPEC §7.3, which is orthogonal to the version number, so
+// it only needs touching when the binary's declared areas change, not at
+// every release. AREAS_SINCE only needs touching if that first-printed
+// release is ever revised (it should not be, once true).
 //
 // CURRENT_* is what `brew install thrillmade/tap/logmind` / curl / the
 // skill installs *today*. Verified against `gh release list --repo
@@ -43,13 +49,38 @@ const NEXT_VERSION: string = "2.0.0";
 const IS_NEXT_RELEASED = CURRENT_VERSION === NEXT_VERSION;
 // SPEC §7.3's second `--version` line — mirrored byte-for-byte from
 // internal/version/version.go's `Areas` (comma-and-space-joined, fixed
-// vocabulary order). The released 1.2.0 binary predates this line — it
-// shipped after 1.2.0, ahead of internal/version/version.go's own
-// CURRENT_VERSION bump — so it's gated on IS_NEXT_RELEASED rather than
-// shown unconditionally; hardcoding it in today's one-line output would
-// claim something the installed binary doesn't print.
+// vocabulary order). AREAS_SINCE names the release whose binary first
+// prints this line (it landed alongside the v2.0.0 cut). Gated on
+// "CURRENT_VERSION >= AREAS_SINCE", NOT on IS_NEXT_RELEASED
+// (CURRENT_VERSION === NEXT_VERSION): those two questions only coincide
+// while NEXT_VERSION happens to equal AREAS_SINCE, today. The moment the
+// v2.0.0 tag lands and the next dev cycle opens NEXT_VERSION on to
+// "2.1.0", IS_NEXT_RELEASED goes permanently false even though the
+// *released* 2.0.0 binary keeps printing the areas line — using it here
+// would silently drop the line from the site the day after the release
+// it was added to celebrate. compareVersions compares numerically, not
+// as strings: "2.10.0" < "2.9.0" lexically, and that is a real future
+// version number.
+const AREAS_SINCE = "2.0.0";
 const AREAS = "orient, work, record, propagate, gates";
-const VERIFY_OUTPUT = IS_NEXT_RELEASED
+
+// compareVersions compares two plain "major.minor.patch" version strings
+// numerically. CURRENT_VERSION / NEXT_VERSION / AREAS_SINCE on this page
+// are always plain release numbers — no "-dev"/prerelease suffix; that
+// only exists on the Go binary's own unreleased builds — so a bare
+// split-on-"." + Number compare is sufficient here.
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+const SHOWS_AREAS_LINE = compareVersions(CURRENT_VERSION, AREAS_SINCE) >= 0;
+const VERIFY_OUTPUT = SHOWS_AREAS_LINE
   ? `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})\nareas: ${AREAS}`
   : `logmind ${CURRENT_VERSION} (spec ${CURRENT_SPEC})`;
 
