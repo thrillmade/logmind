@@ -221,3 +221,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 08:01 - guard-commit: judge each diff hunk on its own, and terminate a section on the three headers the SPEC names
+
+**Reasoning:** Two defects, both inside the previous round's own fix. First, a real bypass: the reader joined every added line in a file into one string, and -U0 concatenates non-adjacent hunks with no gap, so prose added in a later unrelated hunk became an earlier entry's reasoning body. Reproduced on both surfaces — an entry whose **Reasoning:** is visibly empty on disk let 302 lines of new Go through the commit gate at exit 0, and cleared check-decisions in range mode too; control, the same tree minus the second hunk, exit 65. Second, the opposite error: the section terminator matched anything opening a bold run with a colon, so a reasoning body beginning **Root cause:** was read as a new section and the entry was refused — the round-15 fix re-blocking the very shape it existed to allow.
+
+**Alternatives considered:** Revert to a blank line ending the section — rejected; §3.1 forbids requiring section order and that was the round-15 defect. Keep matching any bolded colon run — rejected on the reviewer's reading, which is better than mine was: §3.1's 'MUST NOT require a section ORDER' argues against a fixed order, not against knowing the section NAMES, and §3.1 names them. Judge the entry as it will read in the file rather than per hunk — deliberately NOT taken; see below.
+
+**Implications:**
+- The reader now returns hunks rather than a flat list, as a named type, so the joined-list API a future caller could scan across no longer exists. Both surfaces route through the one DecisionRecorded primitive and an agreement test pins all three. Ruled on the lane's escalation: per-hunk judging false-rejects a genuine entry when a change REWRITES a decision file instead of appending, because git matches the blank lines between sections as context and shreds one entry across three hunks. Keeping per-hunk anyway — §3.2 makes decision files append-only so a rewrite is already out of contract, the sanctioned path appends as a single hunk (measured 3 of 3), and this fails closed. The alternative needs a reader reporting untouched context alongside added lines, which is a larger change than a round that has carried a new defect four times running should attempt.
+
+---
+

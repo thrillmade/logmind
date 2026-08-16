@@ -201,10 +201,10 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 	// below, exactly as if it had not been touched.
 	//
 	// The scope is this run's: the staged index, or the base...head range.
-	// addedLines carries that distinction, so the shared judgement never
+	// addedHunks carries that distinction, so the shared judgement never
 	// has to know which surface called it.
-	evidence, err := guardcommit.DecisionRecorded(names, func(path string) ([]string, error) {
-		return addedLines(repoRoot, path, opts)
+	evidence, err := guardcommit.DecisionRecorded(names, func(path string) ([]gitcli.AddedHunk, error) {
+		return addedHunks(repoRoot, path, opts)
 	})
 	if err != nil {
 		return err
@@ -270,11 +270,13 @@ func collectCheckDiff(repoRoot string, opts checkDecisionsOpts) ([]string, []git
 	return names, rows, nil
 }
 
-// addedLines returns the lines opts' scope ADDED to path, for the
-// well-formedness check above.
-func addedLines(repoRoot, path string, opts checkDecisionsOpts) ([]string, error) {
+// addedHunks returns the lines opts' scope ADDED to path, grouped by
+// hunk, for the well-formedness check above. The grouping is not a
+// detail of the reader: it is what stops a §3.1 section opened in one
+// hunk from being satisfied by prose added in another (gitcli.AddedHunk).
+func addedHunks(repoRoot, path string, opts checkDecisionsOpts) ([]gitcli.AddedHunk, error) {
 	if opts.base == "" {
-		return gitcli.DiffCachedAddedLines(repoRoot, path), nil
+		return gitcli.DiffCachedAddedHunks(repoRoot, path), nil
 	}
-	return gitcli.DiffRangeAddedLines(repoRoot, opts.base, opts.head, path)
+	return gitcli.DiffRangeAddedHunks(repoRoot, opts.base, opts.head, path)
 }

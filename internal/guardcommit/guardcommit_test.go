@@ -316,11 +316,11 @@ func TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks(t *testing.T) {
 // propagation the CI gate depends on (an unresolvable ref must not read as
 // an empty diff).
 func TestDecisionRecorded_IsTheOnlyQuestion(t *testing.T) {
-	entry := strings.Split(strings.TrimRight(wellFormedEntry, "\n"), "\n")
+	entry := []gitcli.AddedHunk{strings.Split(strings.TrimRight(wellFormedEntry, "\n"), "\n")}
 
 	t.Run("a well-formed entry in a decision file records a decision", func(t *testing.T) {
 		ev, err := DecisionRecorded([]string{"src/main.go", "docs/decisions-branches/feature.md"},
-			func(path string) ([]string, error) { return entry, nil })
+			func(path string) ([]gitcli.AddedHunk, error) { return entry, nil })
 		if err != nil || !ev.Recorded {
 			t.Fatalf("DecisionRecorded = %+v, %v; want Recorded", ev, err)
 		}
@@ -331,7 +331,7 @@ func TestDecisionRecorded_IsTheOnlyQuestion(t *testing.T) {
 
 	t.Run("the same entry in a NON-decision file records nothing", func(t *testing.T) {
 		ev, err := DecisionRecorded([]string{"README.md"},
-			func(path string) ([]string, error) { return entry, nil })
+			func(path string) ([]gitcli.AddedHunk, error) { return entry, nil })
 		if err != nil || ev.Recorded {
 			t.Fatalf("DecisionRecorded = %+v, %v; want not Recorded", ev, err)
 		}
@@ -339,7 +339,9 @@ func TestDecisionRecorded_IsTheOnlyQuestion(t *testing.T) {
 
 	t.Run("a decision file with nothing well-formed added is Touched, not Recorded", func(t *testing.T) {
 		ev, err := DecisionRecorded([]string{"docs/decisions.md"},
-			func(path string) ([]string, error) { return []string{"# Decision Log", "no entries here"}, nil })
+			func(path string) ([]gitcli.AddedHunk, error) {
+				return []gitcli.AddedHunk{{"# Decision Log", "no entries here"}}, nil
+			})
 		if err != nil || ev.Recorded {
 			t.Fatalf("DecisionRecorded = %+v, %v; want not Recorded", ev, err)
 		}
@@ -351,7 +353,7 @@ func TestDecisionRecorded_IsTheOnlyQuestion(t *testing.T) {
 	t.Run("the reader's error is propagated, not swallowed", func(t *testing.T) {
 		want := errors.New("bad ref")
 		ev, err := DecisionRecorded([]string{"docs/decisions.md"},
-			func(path string) ([]string, error) { return nil, want })
+			func(path string) ([]gitcli.AddedHunk, error) { return nil, want })
 		if !errors.Is(err, want) {
 			t.Fatalf("err = %v; want %v — a diff git could not read must not report as 'no decision'", err, want)
 		}
@@ -363,7 +365,7 @@ func TestDecisionRecorded_IsTheOnlyQuestion(t *testing.T) {
 	t.Run("only decision files are read at all", func(t *testing.T) {
 		var asked []string
 		if _, err := DecisionRecorded([]string{"src/main.go", "docs/plan.md", "docs/decisions.md"},
-			func(path string) ([]string, error) { asked = append(asked, path); return nil, nil }); err != nil {
+			func(path string) ([]gitcli.AddedHunk, error) { asked = append(asked, path); return nil, nil }); err != nil {
 			t.Fatalf("DecisionRecorded: %v", err)
 		}
 		if len(asked) != 1 || asked[0] != "docs/decisions.md" {
@@ -663,7 +665,7 @@ func TestSubstantiveLines_MarkdownOutsideDocsCounts(t *testing.T) {
 func TestWellFormedDecisionAdded(t *testing.T) {
 	cases := []struct {
 		name  string
-		added []string
+		added gitcli.AddedHunk
 		want  bool
 	}{
 		{
@@ -730,11 +732,59 @@ func TestWellFormedDecisionAdded(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := WellFormedDecisionAdded(tc.added); got != tc.want {
+			if got := WellFormedDecisionAdded([]gitcli.AddedHunk{tc.added}); got != tc.want {
 				t.Fatalf("WellFormedDecisionAdded(%q) = %v; want %v", tc.added, got, tc.want)
 			}
 		})
 	}
+}
+
+// TestWellFormedDecisionAdded_HunksAreJudgedSeparately is the regression
+// pin for the round-16 bypass. The reader returned ONE flat list of added
+// lines, so `-U0` hunks that git had every reason to keep apart —
+// separated by content the change never touched — arrived concatenated.
+// A section opened at the end of one hunk was then satisfied by the first
+// prose in the next, and the gate reported an entry that is not in the
+// file.
+//
+// Measured on the PR head, hook installed and the freshly built binary
+// first on PATH: an empty `**Reasoning:**` in hunk 1 plus one unrelated
+// bullet added further down the same file → `git commit` exit 0 "allowed
+// (decision-recorded)" and `check-decisions --base --head` exit 0, for
+// 302 lines of new Go whose reasoning section is visibly empty on disk.
+// The identical change minus that second hunk → exit 65 and exit 1.
+//
+// The three rows are the same content cut three ways, so what they
+// isolate is the boundary and nothing else.
+func TestWellFormedDecisionAdded_HunksAreJudgedSeparately(t *testing.T) {
+	openedSection := gitcli.AddedHunk{
+		"## 2026-08-14 09:00 - Collapse the decision layout",
+		"",
+		reasoningMarker,
+		"",
+	}
+	unrelatedProse := gitcli.AddedHunk{"- whether the parser reads a section the way a person does"}
+
+	t.Run("prose from a later hunk does not fill an earlier hunk's section", func(t *testing.T) {
+		if WellFormedDecisionAdded([]gitcli.AddedHunk{openedSection, unrelatedProse}) {
+			t.Fatal("an empty reasoning section was satisfied by a line added elsewhere in the file — " +
+				"302 lines of code clear both gates on an entry that documents nothing")
+		}
+	})
+
+	t.Run("control: the same lines with nothing after the header still fail", func(t *testing.T) {
+		if WellFormedDecisionAdded([]gitcli.AddedHunk{openedSection}) {
+			t.Fatal("an empty reasoning section cleared the gate on its own; the row above measures nothing")
+		}
+	})
+
+	t.Run("control: the same lines IN ONE hunk pass, because then they are in the file", func(t *testing.T) {
+		together := append(append(gitcli.AddedHunk{}, openedSection...), unrelatedProse...)
+		if !WellFormedDecisionAdded([]gitcli.AddedHunk{together}) {
+			t.Fatal("a reasoning body written directly under its header was refused — " +
+				"the fix has stopped judging adjacency and started refusing everything")
+		}
+	})
 }
 
 // TestWellFormedDecisionAdded_ShippedSentinel is the control on the
@@ -743,8 +793,8 @@ func TestWellFormedDecisionAdded(t *testing.T) {
 // hole; every later loosening of the section-boundary rule has to prove
 // it is still closed, and against the file rather than a paraphrase.
 func TestWellFormedDecisionAdded_ShippedSentinel(t *testing.T) {
-	split := func(body string) []string {
-		return strings.Split(strings.TrimRight(body, "\n"), "\n")
+	split := func(body string) []gitcli.AddedHunk {
+		return []gitcli.AddedHunk{strings.Split(strings.TrimRight(body, "\n"), "\n")}
 	}
 	if WellFormedDecisionAdded(split(templates.DecisionsPointerTemplate())) {
 		t.Errorf("the shipped docs/decisions.md sentinel clears the gate; it carries no entry:\n%s",
@@ -847,6 +897,30 @@ func TestHasReasoning_SectionBoundaries(t *testing.T) {
 			raw:  "## 2026-08-07 10:00 - t\n\n**Provenance:** a section logmind never emits\n\n**Reasoning:**\n\nwhy, at the bottom\n\n---\n",
 			want: true,
 		},
+		// --- a bolded LEAD-IN is body, not the next section's header.
+		// These are the round-16 false rejection: the boundary test
+		// matched anything that opened a bold run and carried a colon,
+		// so the most ordinary way to start a reasoning paragraph read
+		// as an empty section and the commit was refused. Measured, with
+		// the first content line under a bare **Reasoning:**: plain prose
+		// → exit 0; `**Root cause:** ...` → exit 65; `- **Latency:** ...`
+		// → exit 0. The last row is the control the loosening must not
+		// break — a header §3.1 NAMES still ends the section.
+		{
+			name: "reasoning body opening with a bolded lead-in",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n**Root cause:** the parser ended a section at the first blank line.\n\n---\n",
+			want: true,
+		},
+		{
+			name: "bolded lead-in with no blank line above it",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n**Root cause:** the section boundary, again.\n\n---\n",
+			want: true,
+		},
+		{
+			name: "empty reasoning still ends at a NAMED section, blank line or not",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n**Implications:**\n- the gate would read this bullet as the reason\n\n---\n",
+			want: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -857,14 +931,31 @@ func TestHasReasoning_SectionBoundaries(t *testing.T) {
 	}
 }
 
-// TestIsSectionHeader covers the shape test directly. It is deliberately
-// shape-based rather than a fixed list of known section names, because
-// SPEC §3.1 says a consumer "MUST NOT require a section order beyond the
-// title coming first" — a hand-written entry may carry a section this
-// build has never heard of.
+// TestIsSectionHeader covers the section-boundary test directly. It is a
+// list of the section names SPEC §3.1 NAMES, not a shape: §3.1's "MUST
+// NOT require a section order beyond the title coming first" argues
+// against requiring an ORDER, and §3.1 names the sections in its own
+// template. Matching by name keeps `**Alternatives considered:**` ending
+// the section above it while leaving a bolded lead-in like `**Root
+// cause:**` as body, which is what the shape version got wrong.
 func TestIsSectionHeader(t *testing.T) {
-	yes := []string{"**Reasoning:**", "**Alternatives considered:** none", "**Anything At All:**"}
-	no := []string{"", "plain text", "**bold but no colon**", "*single star:*", "**unterminated:"}
+	yes := []string{
+		"**Reasoning:**",
+		"**Alternatives considered:** none",
+		"**Implications:**",
+	}
+	no := []string{
+		"", "plain text", "**bold but no colon**", "*single star:*", "**unterminated:",
+		// The round-16 false rejection: a bolded lead-in opening a
+		// reasoning paragraph is BODY. Treated as a header, the section
+		// above it read as empty and the commit was refused (measured:
+		// exit 65 on the hook, exit 1 on the gate).
+		"**Root cause:** the parser ended a section at the first blank line.",
+		"**Provenance:** a section logmind never emits",
+		// A named marker in a bullet is body too — a list item, not the
+		// start of a section.
+		"- **Implications:** it would end the section from inside a list",
+	}
 	for _, s := range yes {
 		if !isSectionHeader(s) {
 			t.Errorf("isSectionHeader(%q) = false, want true", s)
@@ -873,6 +964,23 @@ func TestIsSectionHeader(t *testing.T) {
 	for _, s := range no {
 		if isSectionHeader(s) {
 			t.Errorf("isSectionHeader(%q) = true, want false", s)
+		}
+	}
+}
+
+// TestSectionMarkersMatchTheSpec pins the list against §3.1's template
+// rather than against the test author's memory of it: the three headers
+// §3.1 prints, in §3.1's spelling. A marker that drifts from the SPEC
+// stops ending the section it names, and `logmind log`'s own output is
+// what drifts first.
+func TestSectionMarkersMatchTheSpec(t *testing.T) {
+	want := []string{"**Reasoning:**", "**Alternatives considered:**", "**Implications:**"}
+	if len(sectionMarkers) != len(want) {
+		t.Fatalf("sectionMarkers = %q; want the %d headers SPEC §3.1 names: %q", sectionMarkers, len(want), want)
+	}
+	for i, m := range want {
+		if sectionMarkers[i] != m {
+			t.Errorf("sectionMarkers[%d] = %q; want %q (SPEC §3.1's spelling)", i, sectionMarkers[i], m)
 		}
 	}
 }

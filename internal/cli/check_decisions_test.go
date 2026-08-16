@@ -197,6 +197,23 @@ func TestGateAndHookAgreeOnWhatRecordsADecision(t *testing.T) {
 			path: "docs/decisions-branches/feature.md",
 			body: "## 2026-08-07 14:30 - Blank-separated body\n\n**Reasoning:**\n\n" +
 				"The author pressed return before writing the reason.\n\n---\n", wantBlocked: false},
+		// Round 16's false rejection: the boundary test ended the section
+		// at anything bolded with a colon, so a reasoning paragraph that
+		// OPENS with a bolded lead-in — an ordinary way to write one —
+		// read as an empty section and both surfaces refused the commit
+		// (measured: exit 65 and exit 1, against exit 0 for the same
+		// entry with the lead-in unbolded).
+		{name: "a bolded lead-in opens the reasoning body, it does not end the section",
+			path: "docs/decisions-branches/feature.md",
+			body: "## 2026-08-07 14:30 - Bolded lead-in\n\n**Reasoning:**\n\n" +
+				"**Root cause:** the parser ended a section at the first blank line.\n\n---\n", wantBlocked: false},
+		// The control that keeps the loosening honest: a header §3.1
+		// NAMES still ends the section above it, so an empty reasoning
+		// section is not rescued by the next section's text.
+		{name: "an empty reasoning section still ends at a named §3.1 header",
+			path: "docs/decisions-branches/feature.md",
+			body: "## 2026-08-07 14:30 - Empty above a real header\n\n**Reasoning:**\n\n" +
+				"**Alternatives considered:** none\n\n---\n", wantBlocked: true},
 		{name: "no decision file at all",
 			wantBlocked: true},
 	}
@@ -245,6 +262,166 @@ func TestGateAndHookAgreeOnWhatRecordsADecision(t *testing.T) {
 			}
 		})
 	}
+}
+
+// decisionFileWithFooter is the state of a branch file BEFORE the change
+// under judgement below: one properly recorded entry, and a
+// hand-maintained footer under it. The footer is not decoration — it is
+// what puts an edit near the top and an edit at the bottom into two
+// non-adjacent `-U0` hunks, which is the only condition the round-16
+// bypass needed.
+const decisionFileWithFooter = "← back to [docs/timeline.md](../timeline.md)\n\n" +
+	"## 2026-08-01 10:00 - Earlier decision\n\n" +
+	"**Reasoning:** Recorded properly, months ago.\n\n" +
+	"---\n\n" +
+	"## Open questions\n\n" +
+	"- whether the footer belongs here at all\n"
+
+// TestBothSurfacesRefuseASectionFilledFromAnotherHunk is the round-16
+// BLOCKING pin, and it is deliberately end-to-end: real git, real diffs,
+// both enforcement surfaces, both scopes.
+//
+// The reader handed guardcommit ONE flat list of every added line in the
+// file, so two hunks git had separated by untouched content arrived
+// concatenated. An entry whose `**Reasoning:**` header is followed by
+// NOTHING was then satisfied by the first prose in the next hunk —
+// somewhere else in the file entirely — and both surfaces reported a
+// documented change. Measured on the PR head with the hook installed and
+// a freshly built binary first on PATH: `git commit` exit 0 "allowed
+// (decision-recorded)" and `check-decisions --base --head` exit 0, for
+// 302 lines of new Go whose reasoning section is visibly empty on disk;
+// the identical change minus the second hunk, exit 65 and exit 1.
+//
+// The three bodies are one file cut three ways. The last is round 15's
+// fix — a reasoning body a paragraph below its header — and it has to
+// stay green, or this fix has bought a closed bypass with a false
+// rejection.
+func TestBothSurfacesRefuseASectionFilledFromAnotherHunk(t *testing.T) {
+	const decisionPath = "docs/decisions-branches/feature.md"
+
+	cases := []struct {
+		name        string
+		body        string
+		wantHunks   int
+		wantBlocked bool
+	}{
+		{
+			name: "an empty section in one hunk, unrelated prose in another",
+			body: "← back to [docs/timeline.md](../timeline.md)\n\n" +
+				"## 2026-08-14 09:00 - Collapse the decision layout\n\n" +
+				"**Reasoning:**\n\n" +
+				"## 2026-08-01 10:00 - Earlier decision\n\n" +
+				"**Reasoning:** Recorded properly, months ago.\n\n" +
+				"---\n\n" +
+				"## Open questions\n\n" +
+				"- whether the footer belongs here at all\n" +
+				"- whether the parser reads a section the way a person does\n",
+			wantHunks:   2,
+			wantBlocked: true,
+		},
+		{
+			name: "control: the same change without the second hunk",
+			body: "← back to [docs/timeline.md](../timeline.md)\n\n" +
+				"## 2026-08-14 09:00 - Collapse the decision layout\n\n" +
+				"**Reasoning:**\n\n" +
+				"## 2026-08-01 10:00 - Earlier decision\n\n" +
+				"**Reasoning:** Recorded properly, months ago.\n\n" +
+				"---\n\n" +
+				"## Open questions\n\n" +
+				"- whether the footer belongs here at all\n",
+			wantHunks:   1,
+			wantBlocked: true,
+		},
+		{
+			name: "control: a genuine entry whose body sits a paragraph below its header",
+			body: decisionFileWithFooter +
+				"\n## 2026-08-14 09:00 - Collapse the decision layout\n\n" +
+				"**Reasoning:**\n\n" +
+				"The old layout made a reader open three files to answer one question.\n\n" +
+				"---\n",
+			wantHunks:   1,
+			wantBlocked: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			stageFile(t, repo, decisionPath, decisionFileWithFooter)
+			commit(t, repo, "seed the decision file [skip-logmind]")
+			base := revParse(t, repo, "HEAD")
+
+			stageFile(t, repo, decisionPath, tc.body)
+			stageLines(t, repo, "source.txt", 25)
+
+			// Control on the fixture itself: if git stopped splitting this
+			// edit the way the bypass needs, the row below proves nothing
+			// about hunk boundaries.
+			if got := stagedHunks(t, repo, decisionPath); got != tc.wantHunks {
+				t.Fatalf("git produced %d hunks for %s; the fixture wants %d — this row no longer tests what it says",
+					got, decisionPath, tc.wantHunks)
+			}
+
+			var gateOut bytes.Buffer
+			gateStaged := errors.Is(runCheckDecisions(stagedOpts(repo), &gateOut), ErrSilent)
+
+			msgFile := filepath.Join(repo, "COMMIT_EDITMSG")
+			if err := os.WriteFile(msgFile, []byte("feat: land it\n"), 0o644); err != nil {
+				t.Fatalf("write msg file: %v", err)
+			}
+			var hookOut, hookErr bytes.Buffer
+			exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, false, true,
+				strings.NewReader(""), &hookOut, &hookErr)
+			if err != nil {
+				t.Fatalf("runGuardCommit: %v", err)
+			}
+			hookBlocked := exitCode != 0
+
+			// The merge gate over the range — the higher-stakes surface,
+			// and the one a local escape hatch cannot reach.
+			commit(t, repo, "land the payload [skip-logmind]")
+			rangeOpts := stagedOpts(repo)
+			rangeOpts.base, rangeOpts.head = base, revParse(t, repo, "HEAD")
+			var rangeOut bytes.Buffer
+			gateRange := errors.Is(runCheckDecisions(rangeOpts, &rangeOut), ErrSilent)
+
+			for _, got := range []struct {
+				surface string
+				blocked bool
+				detail  string
+			}{
+				{"check-decisions (staged)", gateStaged, gateOut.String()},
+				{"guard-commit --layer git-hook", hookBlocked, hookErr.String()},
+				{"check-decisions --base --head", gateRange, rangeOut.String()},
+			} {
+				if got.blocked != tc.wantBlocked {
+					t.Errorf("%s blocked = %v; want %v (out: %q)\nThe surfaces share guardcommit.DecisionRecorded; "+
+						"one of them answering differently is that one rule having become two.",
+						got.surface, got.blocked, tc.wantBlocked, got.detail)
+				}
+			}
+		})
+	}
+}
+
+// stagedHunks counts the `-U0` hunks the staged diff produces for one
+// path — the fixture control for the test above, which is only about
+// hunk boundaries when git actually draws them where it expects.
+func stagedHunks(t *testing.T, repo, path string) int {
+	t.Helper()
+	cmd := exec.Command("git", "diff", "--cached", "-U0", "--", path)
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git diff --cached -U0 -- %s: %v", path, err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "@@ ") {
+			n++
+		}
+	}
+	return n
 }
 
 // TestCheckDecisions_ExcludedSurfacesDoNotCount walks SPEC §3.4's
