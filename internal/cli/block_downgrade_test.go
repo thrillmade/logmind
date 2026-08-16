@@ -12,6 +12,8 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -300,5 +302,50 @@ func TestReportAgentsBlockRefusal_NilIsSilent(t *testing.T) {
 	})
 	if got := strings.Count(buf.String(), "\n"); got != 1 {
 		t.Errorf("refusal wrote %d lines; want exactly 1:\n%s", got, buf.String())
+	}
+}
+
+// TestRepoAgentsMD_MatchesBundledSlimBlock is the dogfood guard for the
+// failure this file's own PR shipped: the slim template's BODY changed (the
+// required-reading list dropped docs/decisions.md) and its
+// `logmind-block-version` marker did not move, so `logmind doctor` reported
+// `AGENTS.md v9-pointer current` about a body that no longer matched the
+// marker's description. The full template was bumped v8→v9 in the same
+// change; the slim one — the variant EnsureAgentsMD installs BY DEFAULT, and
+// therefore the only marker most consumers ever see — was missed.
+//
+// A marker-only assertion cannot catch that, because the marker stayed
+// self-consistent. Byte-equality against the bundled block can: this repo
+// dogfoods the slim block, so any edit to either side that is not mirrored on
+// the other trips here, marker and body alike. Same shape as
+// TestRepoDecisionsPointer_IsInstalledHere and the gitattr dogfood test.
+func TestRepoAgentsMD_MatchesBundledSlimBlock(t *testing.T) {
+	repoRoot := repoRootFromCaller(t)
+	body, err := os.ReadFile(filepath.Join(repoRoot, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read this repo's AGENTS.md: %v", err)
+	}
+
+	installed, ok := inserter.ExtractMarkerBlock(string(body))
+	if !ok {
+		t.Fatalf("this repo's AGENTS.md carries no logmind block — it is supposed to dogfood the one init installs")
+	}
+	bundled, ok := inserter.ExtractMarkerBlock(templates.AgentsSlimTemplate())
+	if !ok {
+		t.Fatal("the bundled slim template carries no logmind block")
+	}
+
+	if installed != bundled {
+		t.Errorf("this repo's AGENTS.md logmind block has drifted from the bundled slim template.\n"+
+			"If the template body was edited, its `logmind-block-version` marker must move too — a body "+
+			"change under an unchanged marker is what `logmind doctor` reports as `current`.\n"+
+			"--- repo AGENTS.md ---\n%s\n--- bundled slim ---\n%s", installed, bundled)
+	}
+
+	// CONTROL — ExtractMarkerBlock returns the marker line, so the compare
+	// above actually covers the version token and not just the prose.
+	if !strings.Contains(installed, "logmind-block-version:") {
+		t.Error("control failed: the extracted block carries no version marker, " +
+			"so byte-equality here would not notice a marker that failed to move")
 	}
 }

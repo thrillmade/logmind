@@ -181,10 +181,11 @@ var Allowlist = map[string]Exception{
 	// them, which is what an unowned gap being filed rather than fixed is
 	// for). Every one of those now routes through atomicio, so the next raw
 	// write in any of those files is a failure again instead of a licence.
-	"internal/gitattr/gitattr.go": {
-		Sites:  []string{"ensureBlockWithLines:os.WriteFile", "RemoveBlock:os.WriteFile"},
-		Reason: "LANE HANDOFF to PR #301, which owns internal/gitattr/gitattr.go. Vulnerable; not converted here to avoid an edit collision.",
-	},
+	//
+	// PR #301 HAS LANDED, so its entry is gone too: internal/gitattr/gitattr.go
+	// (ensureBlockWithLines, RemoveBlock, and the third site the same sweep
+	// added) now routes every write through atomicio.WriteFile, which is what
+	// this handoff was owed. There are no outstanding handoffs.
 }
 
 // Finding is one raw call site.

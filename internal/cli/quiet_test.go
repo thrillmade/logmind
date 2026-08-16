@@ -122,9 +122,9 @@ func TestQuietEnabled_ExplicitFlagBeatsEnv(t *testing.T) {
 
 func TestQuiet_Timeline_StdoutSingleOK(t *testing.T) {
 	cwd := makeDocs(t,
-		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
+		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", nil)
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", false, true, &out, &errBuf); err != nil {
+	if err := runTimeline(cwd, "", halfDefault, false, true, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline quiet: %v", err)
 	}
 	assertSingleOK(t, out.String(), "timeline", "bytes=", "mode=canonical")
@@ -135,9 +135,9 @@ func TestQuiet_Timeline_StdoutSingleOK(t *testing.T) {
 
 func TestQuiet_Timeline_DefaultUnchanged(t *testing.T) {
 	cwd := makeDocs(t,
-		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
+		"## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", nil)
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", false, false, &out, &errBuf); err != nil {
+	if err := runTimeline(cwd, "", halfDefault, false, false, &out, &errBuf); err != nil {
 		t.Fatalf("runTimeline default: %v", err)
 	}
 	// Default mode keeps the legacy trailer AND the rendered body.
@@ -152,7 +152,7 @@ func TestQuiet_Timeline_DefaultUnchanged(t *testing.T) {
 func TestQuiet_Timeline_ErrorToStderr(t *testing.T) {
 	cwd := t.TempDir() // no docs/
 	var out, errBuf bytes.Buffer
-	if err := runTimeline(cwd, "", false, true, &out, &errBuf); err == nil {
+	if err := runTimeline(cwd, "", halfDefault, false, true, &out, &errBuf); err == nil {
 		t.Fatal("expected ErrSilent when docs/ missing")
 	}
 	if out.Len() != 0 {
@@ -190,16 +190,20 @@ func TestQuiet_FileStructure_DefaultUnchanged(t *testing.T) {
 }
 
 func TestQuiet_Headline_SkippedSingleOK(t *testing.T) {
-	cwd := t.TempDir() // not a git repo → default-branch skip
+	// Not a git repo, so resolveDecisionsPath routes to docs/decisions.md and
+	// there is no branch file for a §1.6.3 marker to live in. NOT a
+	// default-branch skip — the default branch gets a summary like every other
+	// branch (branchSummaryApplies).
+	cwd := t.TempDir()
 	var out, errBuf bytes.Buffer
 	if err := runHeadline(cwd, "A summary", "", true, &out, &errBuf); err != nil {
 		t.Fatalf("runHeadline quiet: %v", err)
 	}
-	assertSingleOK(t, out.String(), "headline", "state=skipped", "reason=default-branch")
+	assertSingleOK(t, out.String(), "headline", "state=skipped", "reason=no-branch-file")
 }
 
 func TestQuiet_Headline_DefaultUnchanged(t *testing.T) {
-	cwd := t.TempDir() // not a git repo → default-branch skip
+	cwd := t.TempDir() // not a git repo → no branch file to hold a marker
 	var out, errBuf bytes.Buffer
 	if err := runHeadline(cwd, "A summary", "", false, &out, &errBuf); err != nil {
 		t.Fatalf("runHeadline default: %v", err)
@@ -207,7 +211,7 @@ func TestQuiet_Headline_DefaultUnchanged(t *testing.T) {
 	if strings.Contains(out.String(), "ok ") {
 		t.Errorf("default mode emitted an ok line it never had before: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "the default branch logs to docs/decisions.md") {
+	if !strings.Contains(out.String(), "Branch summaries live in a branch decision file") {
 		t.Errorf("default mode dropped its guidance line: %q", out.String())
 	}
 }
@@ -309,7 +313,7 @@ func TestQuiet_Log_SingleOK(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("log quiet: %v\n%s", err, errBuf.String())
 			}
-			assertSingleOK(t, out.String(), "logged", "path=docs/decisions.md", "committed=false")
+			assertSingleOK(t, out.String(), "logged", "path=docs/decisions-branches/main.md", "committed=false")
 			if strings.Contains(out.String(), "✓ Logged") {
 				t.Errorf("quiet log leaked the ✓ chatter to stdout: %q", out.String())
 			}

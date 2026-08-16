@@ -9,30 +9,41 @@
 // not a hardcoded docs/decisions.md — so `show` always reflects "this branch's
 // recent decisions", matching the documented contract.
 //
-// PROTOCOL SPEC §3.2 additionally specifies --all's "every branch decisions
-// file" half (not just the archive), --brief, and --json with a NORMATIVE
-// schema. This file now implements all three:
+// PROTOCOL SPEC §3.2 additionally grounds --all's "every branch decisions
+// file" half (not just the archive) — every branch gets its own file per
+// §3.2, --all is this CLI's own flag for surfacing that. --brief and --json
+// are entirely logmind's own: the SPEC defines no CLI output format at all,
+// json included — grep it before citing it here again. This file now
+// implements all three:
 //
-//   - default: streams the resolved decision file verbatim (UNCHANGED byte
-//     for byte from the pre-§3.2 behavior — existing goldens still pin this).
-//   - --all: appends every OTHER docs/decisions-branches/*.md file (the base
-//     file, when on a feature branch, is already the primary body — never
-//     duplicated) under BRANCH DECISIONS banners, then
-//     docs/decisions-archive.md under an ARCHIVED DECISIONS banner, in that
-//     order, when each exists.
+//   - default: streams the resolved decision file verbatim, then any decision
+//     file named after NO branch (docs/decisions.md, docs/decisions-archive.md)
+//     that holds decisions, under its own banner. In a repo where neither holds
+//     any — every repo `logmind init` creates today, whose docs/decisions.md is
+//     the compatibility pointer — this is UNCHANGED byte for byte from the
+//     pre-§3.2 behavior, and existing goldens still pin that. See extraSources
+//     for why the legacy files are not behind --all and why an entry-less one
+//     is skipped anyway.
+//   - --all: additionally appends every OTHER docs/decisions-branches/*.md
+//     file (the base file, when on a branch, is already the primary body —
+//     never duplicated) under BRANCH DECISIONS banners, ahead of the
+//     non-branch banners. Implied when the base is NOT a branch file, which is
+//     the state every CI run is in — see extraSources.
 //   - --brief: title + timestamp only, one line per decision. Under --all,
 //     lines are grouped under a "[source]" tag matching the --json source
-//     value exactly (main / archive / branch:<name>).
-//   - --json: the SPEC §3.2 NORMATIVE schema —
+//     value exactly (legacy / archive / branch:<name>).
+//   - --json: logmind's OWN schema, stated here and pinned by
+//     TestShow_JSON_SchemaKeysAndValues (show_test.go) — the PROTOCOL SPEC
+//     defines no --json output for any command —
 //     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
-//     "implications":[],"source":"main|archive|branch:<name>"}]}. Stdout
+//     "implications":[],"source":"legacy|archive|branch:<name>"}]}. Stdout
 //     carries ONLY the JSON document — no chatter, no ok trailer, regardless
 //     of --quiet, so it is always pipeable into `jq` unmodified.
-//   - --brief --json: the schema's keys never change (NORMATIVE — same key
-//     names, same nesting), but --brief's "title + timestamp only" contract
-//     wins for CONTENT: reasoning/alternatives/implications are present but
-//     zeroed ("" / [] / []) rather than parsed out of the entry body, since
-//     --brief's whole point is to skip exactly that.
+//   - --brief --json: the schema's keys never change (pinned by the same
+//     test — same key names, same nesting), but --brief's "title + timestamp
+//     only" contract wins for CONTENT: reasoning/alternatives/implications
+//     are present but zeroed ("" / [] / []) rather than parsed out of the
+//     entry body, since --brief's whole point is to skip exactly that.
 //
 // Entry parsing reuses internal/decisions.SplitRaw/SplitRawBytes (the
 // header-boundary byte-range splitter added for SPEC §1.3.2 rotation) rather
@@ -73,27 +84,36 @@ func newShowCmd() *cobra.Command {
 		Long: `Show recent decisions on the current branch.
 
 Streams the decision file "logmind log" would write to right now:
-docs/decisions.md on the default branch, or
-docs/decisions-branches/<branch>.md on a feature branch (when
-decisions.branch_aware is on and this branch has entries).
+docs/decisions-branches/<branch>.md for the branch you are on — the default
+branch included, it is a branch like any other — followed by any legacy
+docs/decisions.md and docs/decisions-archive.md that HOLDS decisions, under
+their own banners. Those two are named after no branch, so no branch file
+supersedes them and they are never hidden behind a flag; one holding no
+decisions (the pointer "logmind init" seeds) is skipped, having nothing to
+surface.
 
 Pass --all to also include every OTHER docs/decisions-branches/<branch>.md
-file and docs/decisions-archive.md, each appended under its own banner.
+file, each appended under its own banner. Where there is no current branch
+at all — a detached HEAD, which is what actions/checkout leaves on a
+pull_request run, plus a non-git directory or decisions.branch_aware:false —
+every branch file is included without the flag: "other branches" needs a
+current branch to be other than.
 
 Pass --brief for title + timestamp only, one line per decision (under --all,
 lines are grouped by source).
 
-Pass --json for structured output matching PROTOCOL SPEC section sec-3-2's
-NORMATIVE schema:
+Pass --json for structured output in logmind's own schema (the PROTOCOL SPEC
+defines no --json output for any command — this contract is stated here and
+nowhere else):
     {"decisions":[{"title","timestamp","reasoning","alternatives":[],
-    "implications":[],"source":"main|archive|branch:<name>"}]}
+    "implications":[],"source":"legacy|archive|branch:<name>"}]}
 --json is machine-clean: stdout carries ONLY the JSON document, safe to pipe
 into jq unmodified, regardless of --quiet.
 
---brief --json together keep the full schema (all keys always present, per
-the NORMATIVE contract) but zero out reasoning/alternatives/implications
-("" / [] / []) rather than parsing them, honoring --brief's "title +
-timestamp only" contract for content while never dropping a schema key.
+--brief --json together keep the full schema (all keys always present) but
+zero out reasoning/alternatives/implications ("" / [] / []) rather than
+parsing them, honoring --brief's "title + timestamp only" contract for
+content while never dropping a schema key.
 
 Examples:
     logmind show
@@ -111,77 +131,138 @@ Examples:
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false,
-		"Also include every other docs/decisions-branches/*.md file and docs/decisions-archive.md, each under its own banner.")
+		"Also include every other docs/decisions-branches/*.md file, each under its own banner (implied where there is no current branch, e.g. a detached HEAD). Legacy docs/decisions.md and docs/decisions-archive.md are shown with or without this flag, when they hold decisions.")
 	cmd.Flags().BoolVar(&brief, "brief", false,
 		"Title + timestamp only, one line per decision. Combined with --json, zeroes reasoning/alternatives/implications instead of dropping them.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
-		"Structured output matching PROTOCOL SPEC section sec-3-2's NORMATIVE schema. Machine-clean: stdout is JSON only.")
+		"Structured output in logmind's own schema (not defined by the PROTOCOL SPEC). Machine-clean: stdout is JSON only.")
 	return cmd
 }
 
-// showSource pairs a decisions file path with its NORMATIVE `source` label
-// (SPEC section sec-3-2's grammar: "main" | "archive" | "branch:<name>").
+// showSource pairs a decisions file path with its `source` label — logmind's
+// own --json/--brief grammar ("legacy" | "archive" | "branch:<name>"), not a
+// PROTOCOL SPEC grammar; the SPEC defines no --json output at all.
 type showSource struct {
 	path  string
 	label string
 }
 
-// branchLabelFromFilename reverses logmind log's branch-name sanitization
-// (sanitizeBranchName in log.go: "/" and "\\" -> "__", ":" -> "_") well
-// enough for display/source-tag purposes: strip ".md", turn "__" back into
-// "/". Mirrors decisions.branchLabelFromFilename (unexported in
-// internal/decisions, used there for timeline source labels) — duplicated
-// here rather than exported across a package boundary for one call site.
-func branchLabelFromFilename(name string) string {
-	stem := strings.TrimSuffix(name, ".md")
-	return strings.ReplaceAll(stem, "__", "/")
-}
-
-// listBranchSources returns every docs/decisions-branches/*.md file as a
-// showSource labeled "branch:<name>", excluding excludePath so a base file
-// already shown as the primary body is never duplicated. Order matches
-// decisions.ListBranchFiles (sorted by filename).
-func listBranchSources(docsPath, excludePath string) ([]showSource, error) {
-	dir := filepath.Join(docsPath, "decisions-branches")
-	files, err := decisions.ListBranchFiles(dir)
+// extraSources returns the ordered sources `show` appends after the base
+// file's body, discovered by ranging over decisions.ListSources — the one
+// enumeration `search`, the timeline and Collect also read. Nothing here
+// resolves a branch name.
+//
+// Two bands:
+//
+//   - ALWAYS (bare `show` included): every decision file that is named after
+//     NO branch — docs/decisions.md and docs/decisions-archive.md — that
+//     exists, is not already the base, AND HOLDS AT LEAST ONE DECISION.
+//     Nothing supersedes these files: §3.2 moved main's decisions into main's
+//     branch file, so in a repo that upgraded across §3.2 the pre-§3.2 main
+//     log is history that lives in no branch file at all. Bare `show` on the
+//     default branch of such a repo printed "No decisions logged yet on this
+//     branch." over a docs/decisions.md full of them, while `search` and
+//     `show --all` found them — the reader least likely to know a second
+//     command exists got the emptiest answer.
+//
+//     The entry-count test is what keeps that band honest now that `logmind
+//     init` scaffolds docs/decisions.md as a POINTER rather than a log
+//     (ensureLegacyPointer). Streaming a file with no decisions in it under a
+//     "LEGACY MAIN LOG" banner would put an empty section in front of every
+//     freshly-initialised repo's bare `show`. This band exists to surface
+//     decisions that live in no branch file; a file holding none has nothing
+//     for it to surface. Measured against the file's own parser, not its
+//     name, so it stays true for any entry-less non-branch file.
+//
+//   - BRANCH FILES: every branch's decisions file other than the base. Under
+//     --all always. ALSO when the base is not itself a branch file, because
+//     then there is no current branch for these to be the complement OF and
+//     "another branch's decisions" is not a thing that can be said.
+//     resolveDecisionsPath returns a non-branch base in exactly three states
+//     — branch_aware off, non-git, and detached HEAD — and the third is the
+//     one CI is always in: actions/checkout detaches on `pull_request`. Bare
+//     `show` there resolved to docs/decisions.md, which since §3.2 holds no
+//     decisions, and answered "No decisions logged yet on this branch." /
+//     `{"decisions": null}` with the whole record sitting in
+//     docs/decisions-branches/. Every other read path — Collect, the
+//     timeline, `search` — enumerates unconditionally and never had the bug;
+//     --all is a NARROWING of that, and a narrowing to "not the current
+//     branch" is meaningless when there is no current branch.
+//
+// Branch files come first so the raw stream, --brief and --json all visit
+// sources in one order: base → other branches → legacy non-branch files.
+// Both non-branch labels are already in logmind's own source grammar
+// ("legacy" | "archive" | "branch:<name>" — see showSource), so surfacing
+// them needs no schema change.
+func extraSources(docsPath, excludePath string, all, baseIsBranchFile bool) ([]showSource, error) {
+	srcs, err := decisions.ListSources(docsPath)
 	if err != nil {
 		return nil, err
 	}
 	var out []showSource
-	for _, f := range files {
-		if f == excludePath {
+	if all || !baseIsBranchFile {
+		for _, s := range srcs {
+			if !s.IsBranch || s.Path == excludePath {
+				continue
+			}
+			out = append(out, showSource{path: s.Path, label: "branch:" + s.Label})
+		}
+	}
+	for _, s := range srcs {
+		if s.IsBranch || s.Path == excludePath {
 			continue
 		}
-		out = append(out, showSource{
-			path:  f,
-			label: "branch:" + branchLabelFromFilename(filepath.Base(f)),
-		})
+		hasEntries, err := sourceHasDecisions(s.Path)
+		if err != nil {
+			return nil, err
+		}
+		if !hasEntries {
+			continue
+		}
+		out = append(out, showSource{path: s.Path, label: s.Label})
 	}
 	return out, nil
 }
 
-// allExtraSources returns the ordered list of sources `--all` contributes
-// beyond the base file: every OTHER branch decisions file (see
-// listBranchSources), then docs/decisions-archive.md last, when present.
-// Shared by --brief and --json so both group sources identically; the
-// default raw-stream mode below reimplements this same ordering (branches
-// then archive) to keep its existing archive code path — and the goldens
-// pinned to it — untouched.
-func allExtraSources(docsPath, excludePath string) ([]showSource, error) {
-	out, err := listBranchSources(docsPath, excludePath)
+// sourceHasDecisions reports whether path holds at least one decision entry,
+// by the same header split every other read path uses — so a file this calls
+// empty is a file `search`, the timeline and --json all read as empty too. A
+// read error is returned rather than swallowed: extraSources' callers only
+// ever pass paths decisions.ListSources found on disk, so "cannot read" there
+// means a dangling symlink or a permissions fault, never "optional file
+// absent".
+func sourceHasDecisions(path string) (bool, error) {
+	_, raws, err := decisions.SplitRaw(path)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	archivePath := filepath.Join(docsPath, "decisions-archive.md")
-	if pathExists(archivePath) {
-		out = append(out, showSource{path: archivePath, label: "archive"})
-	}
-	return out, nil
+	return len(raws) > 0, nil
 }
 
-// showJSONEntry mirrors SPEC section sec-3-2's NORMATIVE --json schema
-// EXACTLY: same key names, same nesting, same source grammar. Do not add,
-// rename, or drop keys here — it is a wire contract, not an internal type.
+// showBannerTitle maps a showSource label (logmind's own source grammar:
+// "legacy" | "archive" | "branch:<name>" — see showSource) to the banner
+// heading the raw `--all` stream prints above that source's verbatim body.
+//
+// "archive" keeps the historical ARCHIVED DECISIONS wording so a reader who
+// upgraded across §3.2 sees the same section title they saw before.
+func showBannerTitle(label string) string {
+	switch {
+	case strings.HasPrefix(label, "branch:"):
+		return "BRANCH DECISIONS: " + strings.TrimPrefix(label, "branch:")
+	case label == "archive":
+		return "ARCHIVED DECISIONS"
+	case label == "legacy":
+		return "LEGACY MAIN LOG"
+	default:
+		return strings.ToUpper(label)
+	}
+}
+
+// showJSONEntry mirrors logmind's own --json schema (stated in this file's
+// package comment above; the PROTOCOL SPEC defines no --json output for any
+// command) EXACTLY: same key names, same nesting, same source grammar. Do
+// not add, rename, or drop keys here — it is a wire contract, not an
+// internal type — and TestShow_JSON_SchemaKeysAndValues pins it.
 type showJSONEntry struct {
 	Title        string   `json:"title"`
 	Timestamp    string   `json:"timestamp"`
@@ -197,18 +278,17 @@ type showJSONOutput struct {
 }
 
 // collectShowEntries gathers every decision across basePath (labeled
-// baseLabel) plus, when all is true, allExtraSources(docsPath, basePath) —
-// the SPEC section sec-3-2 "--all: include archive and every branch
-// decisions file" set. withBody controls whether the Reasoning /
-// Alternatives / Implications sub-fields are parsed out of each entry's raw
-// text (skipped under --brief --json: those fields stay zeroed either way,
-// so parsing them would be wasted work).
+// baseLabel) plus extraSources(docsPath, basePath, all) — the legacy
+// non-branch files always, and under --all the SPEC section sec-3-2
+// "include archive and every branch decisions file" set as well. withBody
+// controls whether the Reasoning / Alternatives / Implications sub-fields are
+// parsed out of each entry's raw text (skipped under --brief --json: those
+// fields stay zeroed either way, so parsing them would be wasted work).
 //
 // Entries within each source preserve on-disk (chronological, oldest-first)
-// order — decisions.md and decisions-archive.md are append-only — and
-// sources are concatenated in the order they're visited (base, then
-// branches, then archive).
-func collectShowEntries(docsPath, basePath, baseLabel string, all, withBody bool) ([]showJSONEntry, error) {
+// order — every decision file is append-only — and sources are concatenated
+// in the order they're visited (base, then branches, then legacy).
+func collectShowEntries(docsPath, basePath, baseLabel string, all, baseIsBranchFile, withBody bool) ([]showJSONEntry, error) {
 	var out []showJSONEntry
 
 	appendFile := func(path, label string) error {
@@ -242,15 +322,27 @@ func collectShowEntries(docsPath, basePath, baseLabel string, all, withBody bool
 	if err := appendFile(basePath, baseLabel); err != nil {
 		return nil, err
 	}
-	if all {
-		extra, err := allExtraSources(docsPath, basePath)
-		if err != nil {
-			return nil, err
+	extra, err := extraSources(docsPath, basePath, all, baseIsBranchFile)
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range extra {
+		// s.path came from decisions.ListSources' directory enumeration, so
+		// unlike basePath (a branch's file legitimately may not exist yet —
+		// zero decisions logged), something IS on disk at this path. A read
+		// failure here is never "nothing to show": decisions.SplitRaw treats
+		// os.IsNotExist as "optional file absent, zero entries, no error" —
+		// correct for that case, but a dangling symlink resolves to the SAME
+		// ENOENT, so SplitRaw was silently dropping it, alone among the four
+		// read paths (search, timeline, and show's own default/--all text
+		// stream all fail loud on the identical file — logmind#301 round 5).
+		// Read it directly first so an enumerated-but-unreadable entry is
+		// reported, not under-counted.
+		if _, err := os.ReadFile(s.path); err != nil {
+			return nil, fmt.Errorf("read %s: %w", s.path, err)
 		}
-		for _, s := range extra {
-			if err := appendFile(s.path, s.label); err != nil {
-				return nil, err
-			}
+		if err := appendFile(s.path, s.label); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
@@ -324,11 +416,11 @@ func parseDecisionBody(raw string) (reasoning string, alternatives, implications
 }
 
 // writeBriefEntries prints entries in "--brief" text form: one
-// "TIMESTAMP - TITLE" line per decision. Under --all (grouped, more than the
-// base source), each new source starts a "[source]" tag line matching the
-// --json source value exactly (main / archive / branch:<name>), so brief
+// "TIMESTAMP - TITLE" line per decision. When more than the base source is in
+// play (`grouped`), each new source starts a "[source]" tag line matching the
+// --json source value exactly (legacy / archive / branch:<name>), so brief
 // text output and --json output agree on source identity.
-func writeBriefEntries(stdout io.Writer, entries []showJSONEntry, all bool) {
+func writeBriefEntries(stdout io.Writer, entries []showJSONEntry, grouped bool) {
 	if len(entries) == 0 {
 		fmt.Fprintln(stdout, "No decisions logged yet on this branch.")
 		return
@@ -336,7 +428,7 @@ func writeBriefEntries(stdout io.Writer, entries []showJSONEntry, all bool) {
 	currentSource := ""
 	first := true
 	for _, e := range entries {
-		if all && e.Source != currentSource {
+		if grouped && e.Source != currentSource {
 			currentSource = e.Source
 			if !first {
 				fmt.Fprintln(stdout)
@@ -361,25 +453,28 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
 	rel := relForOk(cwd, target)
 
-	baseLabel := "main"
+	baseLabel := "legacy"
 	if isBranchFile {
 		branch := gitcli.CurrentBranch(cwd)
 		if branch == "" {
-			// Detached HEAD / unborn repo shouldn't reach here (resolveDecisionsPath
-			// would have returned isBranchFile=false), but fall back to reversing
+			// Detached HEAD shouldn't reach here (resolveDecisionsPath would
+			// have returned isBranchFile=false), but fall back to reversing
 			// the filename's sanitization rather than emitting an empty label.
-			branch = branchLabelFromFilename(filepath.Base(target))
+			// An unborn repo is not the case being guarded: symbolic-ref
+			// answers there, so branch is non-empty and isBranchFile is true.
+			branch = decisions.BranchLabelFromFilename(filepath.Base(target))
 		}
 		baseLabel = "branch:" + branch
 	}
 
-	// --json: SPEC section sec-3-2's NORMATIVE schema. Always the full key
-	// set; --brief only zeroes reasoning/alternatives/implications (see
+	// --json: logmind's own schema (not a PROTOCOL SPEC schema — see the
+	// package comment). Always the full key set; --brief only zeroes
+	// reasoning/alternatives/implications (see
 	// collectShowEntries's withBody=!brief). No chatter, no ok trailer,
 	// --quiet has no additional effect — stdout is the JSON document, full
 	// stop.
 	if jsonOut {
-		entries, err := collectShowEntries(docsPath, target, baseLabel, all, !brief)
+		entries, err := collectShowEntries(docsPath, target, baseLabel, all, isBranchFile, !brief)
 		if err != nil {
 			return err
 		}
@@ -396,7 +491,7 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 
 	// --brief (text, non-JSON): title + timestamp only.
 	if brief {
-		entries, err := collectShowEntries(docsPath, target, baseLabel, all, false)
+		entries, err := collectShowEntries(docsPath, target, baseLabel, all, isBranchFile, false)
 		if err != nil {
 			return err
 		}
@@ -404,7 +499,14 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 			q.ok("show brief=true all=%t decisions=%d", all, len(entries))
 			return nil
 		}
-		writeBriefEntries(stdout, entries, all)
+		// Source tags whenever more than the base file contributed — under
+		// --all always, and in a pre-§3.2 repo where the legacy non-branch
+		// files ride along without it.
+		briefExtras, err := extraSources(docsPath, target, all, isBranchFile)
+		if err != nil {
+			return err
+		}
+		writeBriefEntries(stdout, entries, all || len(briefExtras) > 0)
 		suffix := ""
 		if all {
 			suffix = " (--all)"
@@ -420,88 +522,99 @@ func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writ
 			return fmt.Errorf("read %s: %w", target, err)
 		}
 		body = string(data)
+		// A NON-BRANCH base that holds no decisions streams nothing — the same
+		// test extraSources applies to the non-branch band, applied to the
+		// file that band excluded only because it happened to be the base.
+		//
+		// A branch file is the reader's own log for the branch they are on and
+		// is printed verbatim whatever it holds. docs/decisions.md is not that
+		// since §3.2: `logmind init` seeds it as a pointer explaining where
+		// decisions actually live (ensureLegacyPointer), and it is the base in
+		// exactly the three states resolveDecisionsPath names — branch_aware
+		// off, non-git, detached HEAD. Without this, every `show` on a CI
+		// checkout (always detached) would open with fourteen lines about
+		// v1.2.0's install sentinel before reaching a single decision.
+		if !isBranchFile {
+			if _, raws := decisions.SplitRawBytes(body); len(raws) == 0 {
+				body = ""
+			}
+		}
 	}
 
-	// --all's branch-file half of SPEC section sec-3-2 ("include archive and
-	// every branch decisions file"): every OTHER docs/decisions-branches/*.md
-	// file, appended verbatim under its own BRANCH DECISIONS banner, ordered
-	// before the archive section below (unchanged from before this feature).
-	type branchBlock struct {
+	// The legacy non-branch files always, and under --all every OTHER
+	// docs/decisions-branches/*.md file too — each appended verbatim under its
+	// own banner, in extraSources order so the raw stream, --brief and --json
+	// all visit sources identically. See extraSources for why the non-branch
+	// half is not behind the flag.
+	type extraBlock struct {
 		label string
 		body  string
 	}
-	var branchBlocks []branchBlock
-	if all {
-		branchSrcs, err := listBranchSources(docsPath, target)
-		if err != nil {
-			return err
-		}
-		for _, s := range branchSrcs {
-			data, err := os.ReadFile(s.path)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", s.path, err)
-			}
-			branchBlocks = append(branchBlocks, branchBlock{label: s.label, body: string(data)})
-		}
+	var extraBlocks []extraBlock
+	branchCount := 0
+	nonBranchCount := 0
+	extraSrcs, err := extraSources(docsPath, target, all, isBranchFile)
+	if err != nil {
+		return err
 	}
-
-	var archiveBody string
-	archiveShown := false
-	if all {
-		archivePath := filepath.Join(docsPath, "decisions-archive.md")
-		if pathExists(archivePath) {
-			data, err := os.ReadFile(archivePath)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", archivePath, err)
-			}
-			archiveBody = string(data)
-			archiveShown = true
+	for _, s := range extraSrcs {
+		data, err := os.ReadFile(s.path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", s.path, err)
+		}
+		extraBlocks = append(extraBlocks, extraBlock{label: s.label, body: string(data)})
+		if strings.HasPrefix(s.label, "branch:") {
+			branchCount++
+		} else {
+			nonBranchCount++
 		}
 	}
 
 	if quiet {
-		q.ok("show path=%s bytes=%d all=%t archive=%t branches=%d", rel, len(body), all, archiveShown, len(branchBlocks))
+		q.ok("show path=%s bytes=%d all=%t branches=%d legacy=%d", rel, len(body), all, branchCount, nonBranchCount)
 		return nil
 	}
 
-	if body == "" {
-		fmt.Fprintln(stdout, "No decisions logged yet on this branch.")
-	} else {
+	switch {
+	case body != "":
 		fmt.Fprint(stdout, body)
+	case len(extraBlocks) == 0:
+		// Nothing anywhere. Byte-exact historical wording.
+		fmt.Fprintln(stdout, "No decisions logged yet on this branch.")
+	default:
+		// The base contributed nothing but other sources did — say so once,
+		// rather than asserting emptiness immediately above a banner full of
+		// decisions. On a detached HEAD there is no branch for the historical
+		// wording to be about in the first place.
+		fmt.Fprintln(stdout, "No decisions in the file `logmind log` would write here — showing what else is on disk.")
 	}
 
-	for _, b := range branchBlocks {
+	for _, b := range extraBlocks {
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, strings.Repeat("=", 80))
-		fmt.Fprintf(stdout, "BRANCH DECISIONS: %s\n", strings.TrimPrefix(b.label, "branch:"))
+		fmt.Fprintln(stdout, showBannerTitle(b.label))
 		fmt.Fprintln(stdout, strings.Repeat("=", 80))
 		fmt.Fprintln(stdout)
 		fmt.Fprint(stdout, b.body)
 	}
 
-	if archiveShown {
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, strings.Repeat("=", 80))
-		fmt.Fprintln(stdout, "ARCHIVED DECISIONS")
-		fmt.Fprintln(stdout, strings.Repeat("=", 80))
-		fmt.Fprintln(stdout)
-		fmt.Fprint(stdout, archiveBody)
+	// The trailer names every source that was streamed, so a reader can tell
+	// "this branch has nothing" from "this branch has nothing AND nothing else
+	// was reachable". Bare `show` with no legacy files keeps the historical
+	// bare "(N bytes)" form byte for byte.
+	var extras []string
+	if branchCount > 0 {
+		extras = append(extras, fmt.Sprintf("%d branch file(s)", branchCount))
 	}
-
+	if nonBranchCount > 0 {
+		extras = append(extras, fmt.Sprintf("%d legacy file(s)", nonBranchCount))
+	}
 	suffix := ""
-	if all {
-		var extras []string
-		if len(branchBlocks) > 0 {
-			extras = append(extras, fmt.Sprintf("%d branch file(s)", len(branchBlocks)))
-		}
-		if archiveShown {
-			extras = append(extras, "archive")
-		}
-		if len(extras) == 0 {
-			suffix = " (no archive)"
-		} else {
-			suffix = " + " + strings.Join(extras, " + ")
-		}
+	switch {
+	case len(extras) > 0:
+		suffix = " + " + strings.Join(extras, " + ")
+	case all:
+		suffix = " (no other branch files)"
 	}
 	fmt.Fprintf(stdout, "ok show: %s (%d bytes%s)\n", rel, len(body), suffix)
 	return nil

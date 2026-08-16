@@ -89,6 +89,10 @@ func TestCollectAllSources(t *testing.T) {
 		[]byte("## 2026-06-01 10:00 - main entry\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A legacy docs/decisions-archive.md MUST be collected. §3.2 stopped
+	// WRITING the archive; it did not make the decisions already in one stop
+	// counting. A repo that rotated under the retired `max_recent: 20`
+	// default would otherwise lose them all on upgrade.
 	if err := os.WriteFile(filepath.Join(docs, "decisions-archive.md"),
 		[]byte("## 2026-05-01 09:00 - archived entry\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -104,7 +108,7 @@ func TestCollectAllSources(t *testing.T) {
 		t.Fatalf("Collect: %v", err)
 	}
 	if len(entries) != 3 {
-		t.Fatalf("got %d; want 3", len(entries))
+		t.Fatalf("got %d; want 3 (the branch file + the legacy main log + the legacy archive)", len(entries))
 	}
 	// Newest-first
 	if entries[0].SourceLabel != "feat/alpha" {
@@ -113,11 +117,17 @@ func TestCollectAllSources(t *testing.T) {
 	if entries[0].SourcePath != "decisions-branches/feat__alpha.md" {
 		t.Errorf("entries[0].SourcePath = %q", entries[0].SourcePath)
 	}
-	if entries[1].SourceLabel != "main" {
-		t.Errorf("entries[1].SourceLabel = %q; want main", entries[1].SourceLabel)
+	if entries[1].SourceLabel != "legacy" {
+		t.Errorf("entries[1].SourceLabel = %q; want legacy", entries[1].SourceLabel)
 	}
 	if entries[2].SourceLabel != "archive" {
 		t.Errorf("entries[2].SourceLabel = %q; want archive", entries[2].SourceLabel)
+	}
+	if entries[2].SourcePath != "decisions-archive.md" {
+		t.Errorf("entries[2].SourcePath = %q; want decisions-archive.md", entries[2].SourcePath)
+	}
+	if !strings.Contains(entries[2].Title, "archived entry") {
+		t.Errorf("entries[2].Title = %q; want the archived entry's title", entries[2].Title)
 	}
 }
 
@@ -234,9 +244,9 @@ func TestBranchLabelFromFilename(t *testing.T) {
 		{"foo__bar__baz.md", "foo/bar/baz"},
 	}
 	for _, c := range cases {
-		got := branchLabelFromFilename(c.in)
+		got := BranchLabelFromFilename(c.in)
 		if got != c.want {
-			t.Errorf("branchLabelFromFilename(%q) = %q; want %q", c.in, got, c.want)
+			t.Errorf("BranchLabelFromFilename(%q) = %q; want %q", c.in, got, c.want)
 		}
 	}
 }

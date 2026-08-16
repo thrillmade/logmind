@@ -1,15 +1,19 @@
 # First Decision Example
 
-## What gets written to docs/decisions.md on init
+## What gets written on init
 
-After running `logmind init`, the `docs/decisions.md` file will contain:
+`logmind init` writes the repository's first decision to the file named for
+the branch it is on — `docs/decisions-branches/main.md` in a fresh repo, since
+the default branch is a branch like any other (SPEC §3.2). The file opens with
+the backlink header and the timeline marker every branch file carries:
 
 ```markdown
-# Decision Log
+← back to [docs/timeline.md](../timeline.md)
 
-This file contains the 20 most recent decisions. Older decisions are archived in [decisions-archive.md](decisions-archive.md).
+<!-- logmind-entry-start: 2025-10-19-initialize-logmind-decision-tracking -->
+- **2025-10-19** — Initialize logmind decision tracking
+<!-- logmind-entry-end -->
 
----
 ## 2025-10-19 15:42 - Initialize logmind decision tracking
 
 **Reasoning:** Starting structured decision logging for this project to maintain clear documentation of architectural choices and provide context for AI agents.
@@ -18,12 +22,12 @@ This file contains the 20 most recent decisions. Older decisions are archived in
 
 **Implications:**
 - All significant decisions should now be logged using `logmind.log()`
-- AI agents will have access to decision history via docs/decisions.md
+- AI agents will have access to decision history via docs/timeline.md
 - Git history will serve as an audit trail for all decisions
 
 ---
 
-[Future decisions will be appended here]
+[Future decisions will be appended here — the file is append-only and uncapped]
 ```
 
 ## Why this matters

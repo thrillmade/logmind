@@ -21,9 +21,6 @@ func TestDefaultConfig(t *testing.T) {
 	if c.Git.CommitMessageTemplate != "logmind: {decision}" {
 		t.Errorf("Git.CommitMessageTemplate = %q", c.Git.CommitMessageTemplate)
 	}
-	if c.Decisions.MaxRecent != 20 {
-		t.Errorf("Decisions.MaxRecent = %d; want 20", c.Decisions.MaxRecent)
-	}
 	if !c.Decisions.BranchAware {
 		t.Errorf("Decisions.BranchAware = false; want true")
 	}
@@ -210,9 +207,6 @@ func TestLoadUserOverride(t *testing.T) {
 	if !cfg.Git.AutoCommit {
 		t.Errorf("Git.AutoCommit should still be default true after user override")
 	}
-	if cfg.Decisions.MaxRecent != 20 {
-		t.Errorf("Decisions.MaxRecent = %d; want default 20", cfg.Decisions.MaxRecent)
-	}
 }
 
 func TestLoadMalformedYaml(t *testing.T) {
@@ -380,5 +374,60 @@ func TestDefaultMap_PrivacyScannerSubkeysExist(t *testing.T) {
 			t.Errorf("DefaultMap missing key %q — fresh install would 404 on `logmind config get %s`",
 				path, path)
 		}
+	}
+}
+
+// TestLoad_RetiredMaxRecentKeyIsIgnoredAndRoundTripped covers SPEC §1.6's
+// lenient-read rule for the key SPEC §3.2 removed: "An unrecognised key MUST
+// NOT cause a failure, and any tool that rewrites the file MUST round-trip
+// that key unchanged."
+//
+// `decisions.max_recent` capped docs/decisions.md and rotated the overflow
+// into docs/decisions-archive.md. Both are gone, and DecisionsConfig no longer
+// names the key — so every repo in the fleet is carrying a config the schema
+// does not describe until someone tidies it. Loading such a config must
+// succeed, the keys that DO exist must still resolve, and a `config set`
+// must not silently drop the stale key on rewrite.
+func TestLoad_RetiredMaxRecentKeyIsIgnoredAndRoundTripped(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".logmind")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "decisions:\n  max_recent: 20\n  branch_aware: false\ngit:\n  auto_push: false\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load errored on a config carrying the retired decisions.max_recent key: %v", err)
+	}
+	// The neighbouring keys must still have been applied — an "ignored"
+	// unknown key that also discards its siblings is not lenient, it is
+	// silently lossy.
+	if cfg.Decisions.BranchAware {
+		t.Errorf("Decisions.BranchAware = true; want the file's false — the sibling key was dropped alongside the unknown one")
+	}
+	if cfg.Git.AutoPush {
+		t.Errorf("Git.AutoPush = true; want the file's false — a whole section was dropped")
+	}
+
+	// Round-trip: the map view a `config set` rewrites through must carry the
+	// unrecognised key back out unchanged.
+	m, err := LoadAsMap(dir)
+	if err != nil {
+		t.Fatalf("LoadAsMap errored on the retired key: %v", err)
+	}
+	decisions, ok := m.Get("decisions")
+	if !ok {
+		t.Fatalf("LoadAsMap dropped the decisions section entirely")
+	}
+	section, ok := decisions.(*OrderedMap)
+	if !ok {
+		t.Fatalf("decisions section is %T; want *OrderedMap", decisions)
+	}
+	if _, ok := section.Get("max_recent"); !ok {
+		t.Errorf("LoadAsMap dropped decisions.max_recent — §1.6 requires an unrecognised key to round-trip unchanged")
 	}
 }

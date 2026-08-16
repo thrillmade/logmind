@@ -10,7 +10,7 @@
 # regenerations.
 #
 # v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook
-# auto-staged docs/timeline.md + docs/file-structure.md, but the
+# auto-staged the derived docs, but the
 # staged-but-uncommitted files then blocked `git checkout main` on
 # every PR cycle (post-merge fires from `git pull --rebase` after a
 # squash merge — there's no commit being constructed, so staging was
@@ -75,7 +75,11 @@ if command -v logmind >/dev/null 2>&1 && [ -f .logmind/config.yml ]; then
     fi
   fi
   if [ -d docs ]; then
+    # Both halves of the SPEC 3.3 split, each named explicitly:
+    # --write writes the file it is given and NO other, so the pair is
+    # two invocations, not one that guesses a sibling path.
     logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true
+    logmind timeline --write docs/timeline-archive.md --half archive >/dev/null 2>&1 || true
     logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true
   fi
 fi

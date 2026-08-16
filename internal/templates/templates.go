@@ -35,7 +35,7 @@ import (
 )
 
 //go:embed AGENTS.md.template AGENTS.md.slim.template agent-stub.md logmind-section.md
-//go:embed config.yml.template decisions.md.template decisions-archive.md.template file-structure.md.template
+//go:embed config.yml.template file-structure.md.template decisions-pointer.md.template
 //go:embed decisions-branch-header.md.template
 //go:embed dependabot.yml.template
 //go:embed spec.md.template
@@ -43,14 +43,29 @@ import (
 //go:embed auto/*.yml.template
 var embedFS embed.FS
 
-// AgentsTemplate returns the full v8 AGENTS.md template (the inline
+// AgentsTemplate returns the full v9 AGENTS.md template (the inline
 // procedure variant) — used when the host doesn't have skills.sh
 // available, or when the caller explicitly requests the full body.
 //
 // The block between `<!-- logmind-start -->` and `<!-- logmind-end -->`
-// carries the version marker `<!-- logmind-block-version: v8 -->`. The
+// carries the version marker `<!-- logmind-block-version: v9 -->`. The
 // inserter package uses that marker to decide whether an installed block
 // is stale.
+//
+// The §3.2 layout-collapse wave bumped v8→v9: the body now says every
+// decision routes to docs/decisions-branches/<branch>.md with the default
+// branch no exception, describes docs/decisions.md as the compatibility
+// pointer it became, drops docs/decisions-archive.md from required reading in
+// favour of docs/timeline-archive.md, and presents `logmind headline` and
+// `logmind log -H` as the interchangeable forms they now genuinely are.
+//
+// The bump is not cosmetic. `logmind doctor` reports the installed block by
+// this marker — a consumer on the previous generation shows `AGENTS.md v8
+// STALE (latest: v9)` and knows to refresh, where holding the marker at v8
+// across a rewritten body would have left doctor reporting `current` about a
+// body it no longer matches. inserter.go refreshes on body diff rather than on
+// the marker, so the file is rewritten either way; what the bump buys is that
+// the marker keeps IDENTIFYING the body.
 //
 // The stale-binary-hardening / enforcement wave bumped v7→v8: the
 // DO-NOT-git-commit blockquote now reflects that the commit-msg hook and
@@ -67,13 +82,31 @@ func AgentsTemplate() string {
 	return readEmbed("AGENTS.md.template")
 }
 
-// AgentsSlimTemplate returns the slim v9-pointer AGENTS.md template
+// AgentsSlimTemplate returns the slim v10-pointer AGENTS.md template
 // (defaults to slim for new repos since logmind v0.6.8+). Body marker
-// is `<!-- logmind-block-version: v9-pointer -->`.
+// is `<!-- logmind-block-version: v10-pointer -->`.
 //
 // Slim defers the WHAT/WHEN/HOW procedure to the `logmind` skill on
 // skills.sh — short body, less to maintain, less for the agent to wade
 // through if the skill is already installed.
+//
+// THIS is the variant EnsureAgentsMD installs by default, so it is the marker
+// that actually ships. The §3.2 layout-collapse wave bumped
+// v9-pointer→v10-pointer: the required-reading list drops docs/decisions.md,
+// which stopped being a decision log when §3.2 collapsed every entry into
+// docs/decisions-branches/<branch>.md and left that path a compatibility
+// pointer. Sending an agent to read it is sending it to a file with no
+// decisions in it.
+//
+// The bump is the same obligation the full template's v8→v9 note below
+// spells out, and it was missed once here for one round: the body changed and
+// the marker did not, so `logmind doctor` reported `AGENTS.md v9-pointer
+// current` about a body it no longer described — measured on a repo scaffolded
+// by the previous binary, whose block still named docs/decisions.md. Because
+// slim is the default, that silence was the one consumers would actually have
+// seen. inserter.go refreshes on body diff rather than on the marker, so the
+// file is rewritten either way; what the bump buys is that the marker keeps
+// IDENTIFYING the body, and that doctor says STALE instead of nothing.
 //
 // The stale-binary-hardening / enforcement wave bumped v8-pointer→v9-pointer:
 // same enforcement-prose update as the full template's v7→v8 bump (BLOCKS,
@@ -122,26 +155,43 @@ func readEmbed(name string) string {
 }
 
 // ConfigTemplate returns the bundled .logmind/config.yml seed content
-// emitted by `logmind init`. Byte-identical to
-// src/logmind/templates/config.yml.template.
+// emitted by `logmind init`. Carries one placeholder,
+// __LOGMIND_RECENT_LIMIT__ (the SPEC §3.3 bound the prose in the
+// `decisions:` block restates), which init.go substitutes with
+// strconv.Itoa(timeline.RecentLimit) before writing — otherwise
+// byte-identical to src/logmind/templates/config.yml.template.
 func ConfigTemplate() string {
 	return readEmbed("config.yml.template")
-}
-
-// DecisionsTemplate returns the bundled docs/decisions.md seed.
-func DecisionsTemplate() string {
-	return readEmbed("decisions.md.template")
-}
-
-// DecisionsArchiveTemplate returns the bundled docs/decisions-archive.md seed.
-func DecisionsArchiveTemplate() string {
-	return readEmbed("decisions-archive.md.template")
 }
 
 // FileStructureTemplate returns the bundled docs/file-structure.md seed
 // (used as a placeholder before the first real tree walk overwrites it).
 func FileStructureTemplate() string {
 	return readEmbed("file-structure.md.template")
+}
+
+// DecisionsPointerTemplate returns the body `logmind init` writes to
+// docs/decisions.md. Since §3.2 that file holds no decisions — every decision
+// lands in docs/decisions-branches/<branch>.md — so the body is a pointer at
+// the real layout plus the reason the file still exists at all.
+//
+// The reason is COMPATIBILITY, and it is load-bearing rather than tidiness.
+// logmind v1.2.0 — the newest release, the one Homebrew and setup-logmind
+// install — decides "is this repo already initialised?" by testing for
+// docs/decisions.md. A v2-scaffolded repo without that file reads to a v1.2.0
+// binary as a FRESH repo, so `logmind init` there takes the whole
+// fresh-install path and rewrites .logmind/config.yml over the top of the
+// user's settings (measured: git.enforce_commits and
+// git.commit_line_threshold both lost). v1.2.0 cannot be changed, so this
+// side stays recognisable to it. See ensureLegacyPointer in
+// internal/cli/init.go for the writer, which is also the ONLY writer.
+//
+// The body deliberately contains no `## YYYY-MM-DD HH:MM - ` header, which is
+// the only shape any read path counts (decisions.Iter / SplitRawBytes), so the
+// file contributes zero entries to the timeline, `show`, `search` and
+// `context` no matter how many of them read it.
+func DecisionsPointerTemplate() string {
+	return readEmbed("decisions-pointer.md.template")
 }
 
 // DecisionsBranchHeader returns the single-line backlink header
@@ -162,10 +212,13 @@ func FileStructureTemplate() string {
 // append the new decision entry after existing content (header
 // preserved verbatim).
 //
-// Not added to the default-branch `docs/decisions.md` (no `..` parent
-// hop needed; the link target would be `timeline.md` not
-// `../timeline.md`, and `decisions.md` is the original entry point
-// rather than a derived per-branch file).
+// Not added to `docs/decisions.md` (no `..` parent hop needed; the link
+// target would be `timeline.md` not `../timeline.md`, and `decisions.md` is
+// the original entry point rather than a derived per-branch file). Since
+// §3.2 that file is no longer "the default branch's log" — the default
+// branch writes `docs/decisions-branches/main.md`, which DOES get the
+// header like any other branch file. `docs/decisions.md` is now only the
+// no-branch-name fallback (see resolveDecisionsPath in internal/cli/log.go).
 func DecisionsBranchHeader() string {
 	return readEmbed("decisions-branch-header.md.template")
 }

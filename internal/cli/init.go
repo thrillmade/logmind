@@ -2,9 +2,12 @@
 //
 // Scaffolds a fresh logmind install into the current repository:
 //
-//   - docs/decisions.md, docs/decisions-archive.md, docs/file-structure.md,
-//     docs/timeline.md (seed contents from embedded templates)
-//   - .logmind/config.yml (verbatim copy of config.yml.template)
+//   - docs/file-structure.md, docs/timeline.md, docs/timeline-archive.md
+//     (seed contents from embedded templates)
+//   - docs/decisions.md — the compatibility pointer, not a decision log; see
+//     ensureLegacyPointer for why a v2 repo still carries the file
+//   - .logmind/config.yml (config.yml.template with __LOGMIND_RECENT_LIMIT__
+//     substituted; every other byte is a verbatim copy)
 //   - AGENTS.md slim-or-full block (slim is the SPEC §1.1 default)
 //   - per-agent stubs for every enabled agent (claude + cursor by default)
 //   - .gitignore + .gitattributes logmind blocks
@@ -14,10 +17,17 @@
 //   - first decision log entry
 //
 // Refresh mode: when called against a repo where logmind is already
-// initialised (.logmind/config.yml + docs/decisions.md exist), init
-// reruns only the idempotent refresh steps — workflow template
-// updates, AGENTS.md marker refresh, .gitattributes block, git config
-// drivers, and hooks. docs/ and .logmind/ are left untouched.
+// initialised (.logmind/config.yml plus evidence init has scaffolded docs/
+// before — docsScaffolded), init reruns only the idempotent refresh steps —
+// workflow template updates, AGENTS.md marker refresh, .gitattributes block,
+// git config drivers, and hooks. Its only unconditional docs/ write is
+// ensureLegacyPointer restoring docs/decisions.md when it is missing
+// entirely — never over content — and it leaves .logmind/ alone.
+//
+// --spec is the one exception to both, by design and in refresh mode too:
+// it scaffolds docs/spec.md when absent and sets context.spec_file in
+// .logmind/config.yml when that key is unset (applyInitSpec). Neither half
+// overwrites anything already there.
 //
 // Flags mirror the Python CLI's init command:
 //
@@ -44,6 +54,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -118,7 +129,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	enabled := enabledAgentList(f.agentsList, f.allAgents)
 	claudeAgentEnabled := slices.Contains(enabled, "claude")
 
-	alreadyInit := pathExists(filepath.Join(docsPath, "decisions.md")) && pathExists(configPath)
+	alreadyInit := pathExists(configPath) && docsScaffolded(docsPath)
 	if alreadyInit {
 		return runInitRefresh(cmd, f, cwd, docsPath, claudeAgentEnabled)
 	}
@@ -139,15 +150,26 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	}
 	fmt.Fprintln(out, "✓ Created docs/")
 
-	if err := writeFile(filepath.Join(docsPath, "decisions.md"), templates.DecisionsTemplate()); err != nil {
+	// pointerRel comes back from the writer rather than being spelled again
+	// at the commit site below — see legacyPointerRel for what the second
+	// spelling cost.
+	//
+	// The receipt line is conditional because this branch is REACHABLE with
+	// the file already present: the install sentinel is `.logmind/config.yml`
+	// plus docsScaffolded, so a repo carrying docs/decisions.md and no
+	// .logmind/ takes the whole fresh-install path. "✓ Created" over a file
+	// nothing created is the cheapest kind of lie for a receipt to tell —
+	// and the content IS preserved (ensureLegacyPointer never overwrites),
+	// so only the line was ever wrong.
+	pointerRel, pointerCreated, err := ensureLegacyPointer(docsPath)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "✓ Created docs/decisions.md")
-
-	if err := writeFile(filepath.Join(docsPath, "decisions-archive.md"), templates.DecisionsArchiveTemplate()); err != nil {
-		return err
+	if pointerCreated {
+		fmt.Fprintln(out, "✓ Created docs/decisions.md")
+	} else {
+		fmt.Fprintln(out, "✓ docs/decisions.md already present — left as-is, staged for the initial commit")
 	}
-	fmt.Fprintln(out, "✓ Created docs/decisions-archive.md")
 
 	// file-structure.md + timeline.md are seeded here but get rewritten
 	// AFTER the first decision is logged. Python emits the placeholder
@@ -159,18 +181,26 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	}
 	fmt.Fprintln(out, "✓ Created docs/file-structure.md")
 
-	if body, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
+	if body, archive, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), body)
+		_ = writeFile(filepath.Join(docsPath, "timeline-archive.md"), archive)
 	} else {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), "# Timeline\n")
+		_ = writeFile(filepath.Join(docsPath, "timeline-archive.md"), "# Timeline — Archive\n")
 	}
 	fmt.Fprintln(out, "✓ Created docs/timeline.md")
+	fmt.Fprintln(out, "✓ Created docs/timeline-archive.md")
 
-	// .logmind/config.yml (verbatim template).
+	// .logmind/config.yml. Written once, never refreshed (see the package
+	// doc above), so the __LOGMIND_RECENT_LIMIT__ placeholder is substituted
+	// here rather than through renderWorkflowTemplate — that function is
+	// scoped to the workflow templates, which DO get re-rendered on refresh.
 	if err := os.MkdirAll(logmindDir, 0o755); err != nil {
 		return fmt.Errorf("create .logmind/: %w", err)
 	}
-	if err := writeFile(configPath, templates.ConfigTemplate()); err != nil {
+	configBody := strings.ReplaceAll(templates.ConfigTemplate(),
+		"__LOGMIND_RECENT_LIMIT__", strconv.Itoa(timeline.RecentLimit))
+	if err := writeFile(configPath, configBody); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, "✓ Created .logmind/config.yml")
@@ -301,8 +331,10 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 	}
 
-	// First decision log entry — append to docs/decisions.md.
-	if err := logFirstDecision(docsPath); err != nil {
+	// First decision log entry — into the file `logmind log` would write on
+	// this branch (docs/decisions-branches/main.md in a fresh repo).
+	firstDecisionPath, err := logFirstDecision(cwd, docsPath)
+	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: first decision log failed:", err)
 	} else {
 		fmt.Fprintln(out, "✓ Logged first decision: \"Initialize logmind decision tracking\"")
@@ -315,20 +347,29 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	// timeline regen path. Without this re-render, the tree-walk only
 	// sees docs/ and the timeline lacks the first decision row.
 	_, _ = tree.WriteFileStructure(filepath.Join(docsPath, "file-structure.md"), cwd, 2)
-	if body, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
+	if body, archive, err := timeline.Generate(docsPath, cmd.ErrOrStderr()); err == nil {
 		_ = writeFile(filepath.Join(docsPath, "timeline.md"), body)
+		_ = writeFile(filepath.Join(docsPath, "timeline-archive.md"), archive)
 	}
 
 	// Commit everything (best-effort; never fatal).
 	if !f.noGit {
 		var filesToCommit []string
 		filesToCommit = append(filesToCommit,
-			"docs/decisions.md",
-			"docs/decisions-archive.md",
+			// The v1.2.0 compatibility sentinel, from the writer's own
+			// return value. TestInit_LegacyPointerIsCommitted_NotJustWritten
+			// is what keeps it here.
+			pointerRel,
 			"docs/file-structure.md",
 			"docs/timeline.md",
+			"docs/timeline-archive.md",
 			".logmind/config.yml",
 		)
+		if firstDecisionPath != "" {
+			if rel, err := filepath.Rel(cwd, firstDecisionPath); err == nil {
+				filesToCommit = append(filesToCommit, filepath.ToSlash(rel))
+			}
+		}
 		filesToCommit = append(filesToCommit, installedWorkflows...)
 		if gitignoreChanged {
 			filesToCommit = append(filesToCommit, ".gitignore")
@@ -387,14 +428,145 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	return nil
 }
 
+// scaffoldedDocs names the docs/ artifacts whose presence proves `logmind
+// init` has run against this repository before. Any ONE of them is enough:
+// they are written at different moments and a repo may legitimately have
+// dropped some.
+//
+//   - decisions.md — the compatibility pointer (ensureLegacyPointer). Present
+//     in every repo v1.2.0 or this binary scaffolded; a repo that migrated its
+//     pre-§3.2 main log into main.md and deleted the file has it back after
+//     one refresh.
+//   - timeline.md / file-structure.md — derived, but scaffolded by init and
+//     rewritten (never deleted) by every regeneration since.
+//   - decisions-branches/ — the record itself. A repo cannot have logged a
+//     decision without it.
+var scaffoldedDocs = []string{
+	"decisions.md",
+	"timeline.md",
+	"file-structure.md",
+	"decisions-branches",
+}
+
+// docsScaffolded is half of the install sentinel — the other half is
+// .logmind/config.yml, tested by the caller.
+//
+// It asks "has init scaffolded docs/ before?", NOT "does docs/ exist?". The
+// difference is a repo carrying a config.yml beside an EMPTY docs/ — a
+// half-installed state a bare pathExists(docsPath) reads as initialised, so
+// init short-circuits into refresh mode and the repo is never scaffolded at
+// all. It also must not be the old single test for docs/decisions.md: since
+// §3.2 that file holds no decisions, and a repo that appended its old main log
+// to docs/decisions-branches/main.md and removed it would read as
+// UNINITIALISED and take the whole fresh-install path — rewriting
+// .logmind/config.yml over the top of its settings. Naming several artifacts
+// and accepting any one of them is what makes both states unrepresentable.
+func docsScaffolded(docsPath string) bool {
+	if !pathExists(docsPath) {
+		return false
+	}
+	for _, name := range scaffoldedDocs {
+		if pathExists(filepath.Join(docsPath, name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// legacyPointerRel is the ONE spelling of the compatibility sentinel's
+// repo-relative path: the path ensureLegacyPointer writes and the path the
+// fresh-install commit stages. It is a constant, and it is RETURNED by the
+// writer rather than re-typed at the commit site, because a second hand-kept
+// spelling is exactly how this file came to be written and never committed —
+// the writer was added and `filesToCommit`, a restatement of what init wrote,
+// was not updated to match. A sentinel that exists only in the working tree
+// is not a sentinel: it never reaches a clone, which is the only place a
+// v1.2.0 binary is going to ask the question.
+const legacyPointerRel = "docs/decisions.md"
+
+// ensureLegacyPointer writes docs/decisions.md if — and only if — nothing is
+// there. It returns legacyPointerRel so the caller commits the same path this
+// wrote, and whether it CREATED the file. It is the ONE writer of that path,
+// shared by the fresh-install path and by refresh, so both routes through
+// `logmind init` leave the file present.
+//
+// The path comes back even when the file was already there. "Present" is not
+// the obligation — TRACKED is — and a fresh-install repo that happened to
+// carry an untracked docs/decisions.md already needs it staged just as much
+// as one this call created. TestInit_PreExistingUntrackedPointerIsCommitted
+// is what keeps that branch honest.
+//
+// `created` is returned rather than recomputed by each caller for the same
+// reason the path is: it is one fact about what this call did, and the two
+// callers both report it. Both statements a caller makes about this file —
+// the fresh path's receipt line and refresh's "Restored … commit it" notice —
+// are now conditioned on the writer's own answer instead of a pathExists the
+// caller runs separately and hopes still agrees.
+//
+// NOT `logmind doctor --fix`: that goes through applyRefresh directly
+// (doctor.go), never through runInitRefresh, so it does not restore a missing
+// pointer and does not report one. Deliberate for now — applyRefresh's
+// contract is "move a stale marker forward", and writing a docs/ file from a
+// drift-remediation pass is a wider change than this fix needs. The gap is
+// real and nothing else covers it: doctor has NO probe for this file
+// (measured — with only the sentinel deleted, `doctor` prints "Stack status:
+// OK" and not one drift line, while a stale workflow marker in the same repo
+// yields DRIFT plus "# then re-run: logmind init"). So a pre-fix v2 repo
+// whose owner only ever runs `doctor --fix` stays exposed and is told
+// nothing.
+//
+// Only ONE of the two callers commits what this writes. The fresh-install
+// path stages the returned path (filesToCommit); refresh commits nothing at
+// all and says so on stdout instead. So "the next `logmind init` picks it up"
+// is true of the working tree and NOT of the repository — the file becomes
+// tracked when the owner commits it, or at the next `logmind log`, whose
+// `git add -A` sweeps it in. `logmind log --stage scoped` does not.
+//
+// Never overwrites. In a repo that predates §3.2 the file is a real decision
+// log with real entries in it, and rewriting a user-owned artifact is not this
+// code's business (SPEC line 1101).
+//
+// See templates.DecisionsPointerTemplate for what the file is for: v1.2.0
+// tests for it to decide whether a repo is already initialised, and re-runs
+// the whole scaffold — config.yml included — when it is absent.
+func ensureLegacyPointer(docsPath string) (rel string, created bool, err error) {
+	path := filepath.Join(docsPath, "decisions.md")
+	if pathExists(path) {
+		return legacyPointerRel, false, nil
+	}
+	if err := writeFile(path, templates.DecisionsPointerTemplate()); err != nil {
+		return "", false, err
+	}
+	return legacyPointerRel, true, nil
+}
+
 // runInitRefresh handles the idempotent re-init path. Mirrors Python's
 // already_initialized branch in cli.init: refresh workflows + AGENTS.md
-// marker + .gitattributes + git config + hooks, leave docs/ and
-// .logmind/ alone.
+// marker + .gitattributes + git config + hooks, and leave .logmind/ alone.
+// docs/ is left alone too but for one write — see ensureLegacyPointer, which
+// only ever fills an absence.
 func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, claudeAgentEnabled bool) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "logmind is already initialized — running in refresh mode.")
 	fmt.Fprintln(out)
+
+	// The one docs/ write refresh makes. Restores the v1.2.0 install sentinel
+	// in a repo scaffolded before ensureLegacyPointer existed, which without
+	// it stays exposed to a v1.2.0 binary re-scaffolding over its config.
+	//
+	// Refresh commits NOTHING — not workflows, not .gitattributes, not this —
+	// and that contract is not being changed here for one file. So the
+	// restored sentinel lands UNTRACKED, and an untracked sentinel is absent
+	// from every clone, which is the only place v1.2.0 asks the question.
+	// The user is the one who can close that, so the user is told: silence
+	// here would leave a file on disk that looks like the fix and is not.
+	if _, pointerRestored, err := ensureLegacyPointer(docsPath); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: could not write docs/decisions.md:", err)
+	} else if pointerRestored {
+		fmt.Fprintln(out, "✓ Restored docs/decisions.md (logmind v1.x install sentinel)")
+		fmt.Fprintln(out, "  Commit it — refresh does not commit, and a clone without this file")
+		fmt.Fprintln(out, "  reads as uninitialised to logmind v1.x, which rewrites .logmind/config.yml.")
+	}
 
 	// docs/spec.md + context.spec_file — --spec works in refresh mode too
 	// (H2 design point): a repo that ran `logmind init` before this feature
@@ -825,6 +997,17 @@ func installWorkflowTemplatesMode(repoRoot string, mode workflowInstallMode) ([]
 //
 //	__LOGMIND_VERSION__        → the current binary's version constant
 //	__LOGMIND_DEFAULT_BRANCH__ → this repository's default branch
+//	__LOGMIND_RECENT_LIMIT__   → timeline.RecentLimit, the SPEC §3.3 bound
+//
+// __LOGMIND_RECENT_LIMIT__ exists because two workflow templates
+// (check-doc-links.yml.template's v10 note, regen-timeline.yml.template's
+// v13 note) restate the bound in a changelog-style comment explaining why
+// the archive joined the gate. Substituting it here — the SAME function
+// every bundled workflow template already renders through — means the
+// prose can never drift from the constant it describes, the way a
+// hand-typed "50" could the moment RecentLimit moved and nobody noticed
+// the comment. See TestEmbeddedTemplates_StateRecentLimit (internal/templates)
+// for the guard that would have caught the drift if this weren't derived.
 //
 // NOTE: as of the v12/v9 template generation NO bundled template contains
 // __LOGMIND_VERSION__ — the version pin it existed for went away when CI
@@ -854,7 +1037,8 @@ func installWorkflowTemplatesMode(repoRoot string, mode workflowInstallMode) ([]
 // two and warns when they drift.
 func renderWorkflowTemplate(text, defaultBranch string) string {
 	text = strings.ReplaceAll(text, "__LOGMIND_VERSION__", version.Version)
-	return strings.ReplaceAll(text, "__LOGMIND_DEFAULT_BRANCH__", defaultBranch)
+	text = strings.ReplaceAll(text, "__LOGMIND_DEFAULT_BRANCH__", defaultBranch)
+	return strings.ReplaceAll(text, "__LOGMIND_RECENT_LIMIT__", strconv.Itoa(timeline.RecentLimit))
 }
 
 // NOTE on the branch value: gitcli.DefaultBranch owns this fact and its
@@ -985,28 +1169,58 @@ func ensureGitignoreBlock(path string) (bool, error) {
 	return true, nil
 }
 
-// logFirstDecision appends an initial decision entry to
-// docs/decisions.md. Mirrors src/logmind/core/logger.log_first_decision —
-// a single dated header + reasoning block introducing logmind tracking.
+// logFirstDecision appends the initial decision entry to whichever file
+// `logmind log` would write on this branch (resolveDecisionsPath — SPEC §3.2:
+// docs/decisions-branches/main.md in a fresh repo, since the default branch is
+// a branch like any other). Returns the path it wrote, so the caller can stage
+// it for the initial commit.
 //
-// Byte-format note: the entry is appended immediately after the `---`
-// header separator in the template, no intervening blank line, so the
-// output matches Python's logger.log line-for-line.
-func logFirstDecision(docsPath string) error {
-	path := filepath.Join(docsPath, "decisions.md")
+// A branch file created here gets the same opening as one created by
+// `logmind log`: the backlink header, then the §1.6.3 timeline marker, then
+// the entry — so the repo's very first decision shows up in the timeline
+// exactly like every later one.
+//
+// Byte-format note: the entry is appended immediately after whatever preamble
+// is already present, no intervening blank line, so the output matches
+// Python's logger.log line-for-line.
+func logFirstDecision(cwd, docsPath string) (string, error) {
+	cfg, _ := config.Load(cwd)
+	path, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
 	existing, err := os.ReadFile(path)
-	if err != nil {
-		return err
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
 	}
 	entry := buildFirstDecisionEntry()
-	// The template ends with `---\n`. Append entry directly so the
-	// `## YYYY-MM-DD ...` line sits on the next line, matching Python.
-	newContent := strings.TrimRight(string(existing), "\n") + "\n" + entry + "\n"
-	// atomicio via writeFile: docs/decisions.md is the decision record itself,
-	// so a torn write here loses history, and a symlink at the path would send
-	// the first decision somewhere logmind does not own.
-	return writeFile(path, newContent)
+	var newContent string
+	if len(existing) == 0 && isBranchFile {
+		// A fresh branch file, opened exactly as `logmind log` opens one:
+		// backlink header, then the §1.6.3 marker, then the entry. Both of
+		// those already end in a blank line, so the entry is appended as-is
+		// rather than through the trim below.
+		newContent = templates.DecisionsBranchHeader() +
+			buildTimelineMarker(time.Now(), firstDecisionTitle, prSuffixFromEnv()) +
+			entry + "\n"
+	} else {
+		// An existing file ends with `---\n`. Append the entry directly so the
+		// `## YYYY-MM-DD ...` line sits on the next line, matching Python.
+		newContent = strings.TrimRight(string(existing), "\n") + "\n" + entry + "\n"
+	}
+	// atomicio via writeFile: this is the decision record itself, so a torn
+	// write here loses history, and a symlink at the path would send the first
+	// decision somewhere logmind does not own.
+	if err := writeFile(path, newContent); err != nil {
+		return "", err
+	}
+	return path, nil
 }
+
+// firstDecisionTitle is the title buildFirstDecisionEntry renders, single-
+// sourced so the timeline marker's <date>-<slug> key and the entry header
+// can never drift apart.
+const firstDecisionTitle = "Initialize logmind decision tracking"
 
 // buildFirstDecisionEntry renders the same markdown shape Python's
 // log_first_decision produces. Byte-identical wording to
@@ -1021,12 +1235,12 @@ func logFirstDecision(docsPath string) error {
 func buildFirstDecisionEntry() string {
 	now := time.Now().Format("2006-01-02 15:04")
 	return fmt.Sprintf(
-		"## %s - Initialize logmind decision tracking\n\n"+
+		"## %s - "+firstDecisionTitle+"\n\n"+
 			"**Reasoning:** Starting structured decision logging for this project to maintain clear documentation of architectural choices and provide context for AI agents.\n\n"+
 			"**Alternatives considered:** Manual decision documentation, ADR (Architecture Decision Records)\n\n"+
 			"**Implications:**\n"+
 			"- All significant decisions should now be logged using `logmind.log()`\n"+
-			"- AI agents will have access to decision history via docs/decisions.md\n"+
+			"- AI agents will have access to decision history via docs/timeline.md\n"+
 			"- Git history will serve as an audit trail for all decisions\n\n"+
 			"---",
 		now,

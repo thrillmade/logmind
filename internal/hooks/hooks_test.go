@@ -246,7 +246,22 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 	// true merge-base, actively writing wrong bytes. HEAD has no such
 	// dependency. The repair capability moved to `logmind warp`, the one
 	// surface that fetches before it restores (see internal/cli/warp.go).
-	const restore = `git checkout HEAD -- docs/timeline.md docs/file-structure.md`
+	// All THREE derived docs (SPEC §3.3: "the history, its archive, or the
+	// map") — a restore that names only two leaves the omitted one free to
+	// ride into a commit on a branch, which is the exact state the gate
+	// exists to make impossible.
+	// ONE path per checkout — a combined `git checkout HEAD -- a b c` is
+	// all-or-nothing and restores NOTHING when any pathspec is untracked
+	// (which docs/timeline-archive.md is, in every repo that has not
+	// regenerated on main since it was introduced).
+	const restoreLoop = `for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do`
+	if !strings.Contains(body, restoreLoop) {
+		t.Fatalf("pre-commit body missing the per-path restore loop %q", restoreLoop)
+	}
+	if strings.Contains(body, `git checkout HEAD -- docs/timeline.md docs`) {
+		t.Errorf("pre-commit body restores several paths in ONE `git checkout` — that is all-or-nothing and restores nothing when any path is untracked")
+	}
+	const restore = `git checkout HEAD -- "$d"`
 	ri := strings.Index(body, restore)
 	if ri < 0 {
 		t.Fatalf("pre-commit body missing the restore command %q", restore)
@@ -269,6 +284,40 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 	}
 }
 
+// regenCommands is every command a regenerating hook body must run, one per
+// derived doc. The owner of "which docs are derived" is
+// internal/cli/derived.go's derivedDocPaths; this package cannot import it
+// (internal/cli imports internal/hooks), so the coupling is restated here and
+// nowhere else in this package.
+//
+// The archive's own line is the load-bearing one, and it is pinned HERE rather
+// than only in testdata/*.golden because a golden is regenerated from whatever
+// the body currently says: deleting the line and re-running `make snapshot`
+// leaves the whole suite green while docs/timeline-archive.md silently stops
+// being regenerated on the only branch that ever regenerates it.
+//
+// `logmind timeline --write` writes the ONE file it is given (see
+// internal/cli/timeline.go), so a body that names only docs/timeline.md
+// regenerates only docs/timeline.md. There is no invocation that writes both.
+var regenCommands = []string{
+	"logmind timeline --write docs/timeline.md",
+	"logmind timeline --write docs/timeline-archive.md --half archive",
+	"logmind file-structure --write docs/file-structure.md",
+}
+
+// TestPostRewriteBody_RegeneratesEveryDerivedDoc is the post-merge invariant's
+// twin: post-rewrite sweeps a rebase/amend, and it stages what it regenerates,
+// so a doc it never regenerates is one it stages stale.
+func TestPostRewriteBody_RegeneratesEveryDerivedDoc(t *testing.T) {
+	body := BuildPostRewriteBody()
+	for _, must := range regenCommands {
+		if !strings.Contains(body, must) {
+			t.Errorf("post-rewrite body missing regen %q — it `git add`s docs/timeline-archive.md "+
+				"either way, so a missing regen stages the STALE file", must)
+		}
+	}
+}
+
 // TestPostMergeBody_RollupInvariants pins the Slice 2 roll-up contract as
 // INTENT (distinct from the byte-golden): the post-merge hook MUST regenerate
 // the timeline + file-structure (so a main-canonical repo rebuilds its §1.6.4
@@ -280,10 +329,7 @@ func TestPreCommitBody_GatesRestoreAndAlwaysExitsZero(t *testing.T) {
 // substring-match that here.)
 func TestPostMergeBody_RollupInvariants(t *testing.T) {
 	body := BuildPostMergeBody()
-	for _, must := range []string{
-		"logmind timeline --write docs/timeline.md",
-		"logmind file-structure --write docs/file-structure.md",
-	} {
+	for _, must := range regenCommands {
 		if !strings.Contains(body, must) {
 			t.Errorf("post-merge body missing roll-up regen %q", must)
 		}
@@ -414,7 +460,10 @@ func TestPostRewriteHook_NonDefaultBranchAlwaysSkipsRegen(t *testing.T) {
 	for _, action := range []string{
 		"logmind timeline --write docs/timeline.md",
 		"logmind file-structure --write docs/file-structure.md",
-		"git add docs/timeline.md docs/file-structure.md",
+		// Staged one path at a time: `git add a b c` is all-or-nothing and
+		// stages NOTHING when any pathspec is untracked.
+		"for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do",
+		`git add "$d"`,
 	} {
 		if n := strings.Count(body, action); n != 1 {
 			t.Errorf("action %q appears %d time(s); want exactly 1", action, n)

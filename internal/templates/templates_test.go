@@ -8,13 +8,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/thrillmade/logmind/internal/timeline"
 )
 
-// TestAgentsTemplate_HasV8Marker pins the protocol-version marker. The
+// TestAgentsTemplate_HasV9Marker pins the protocol-version marker. The
 // `agents update --apply` workflow keys on this marker to decide
 // whether an installed block is stale.
 //
@@ -25,53 +28,65 @@ import (
 // `git.enforce_commits: false` carve-outs. The Slice-2 branch-summary
 // wave bumped v6→v7: the full inline procedure carries the
 // branch-summary (headline) convention.
-func TestAgentsTemplate_HasV8Marker(t *testing.T) {
+func TestAgentsTemplate_HasV9Marker(t *testing.T) {
 	body := AgentsTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v8 -->") {
-		t.Fatalf("full template missing v8 marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v9 -->") {
+		t.Fatalf("full template missing v9 marker")
 	}
 	if !strings.Contains(body, "<!-- logmind-start -->") || !strings.Contains(body, "<!-- logmind-end -->") {
 		t.Fatalf("full template missing start/end markers")
 	}
 	if !strings.Contains(body, "REQUIRED for substantive commits") {
-		t.Fatalf("v8 template missing REQUIRED framing in heading")
+		t.Fatalf("v9 template missing REQUIRED framing in heading")
 	}
 	if !strings.Contains(body, "DO NOT run `git add` / `git commit` / `git push`") {
-		t.Fatalf("v8 template missing DO-NOT-git-commit blockquote")
+		t.Fatalf("v9 template missing DO-NOT-git-commit blockquote")
 	}
 	// v8 delta: enforcement prose. BLOCK, not warn; the carve-outs.
 	if !strings.Contains(body, "BLOCK") {
-		t.Fatalf("v8 template missing BLOCK framing (must not just say the hook warns)")
+		t.Fatalf("v9 template missing BLOCK framing (must not just say the hook warns)")
 	}
 	if !strings.Contains(body, "[skip-logmind]") {
-		t.Fatalf("v8 template missing the [skip-logmind] carve-out")
+		t.Fatalf("v9 template missing the [skip-logmind] carve-out")
 	}
 	if !strings.Contains(body, "LOGMIND_ALLOW_GIT_COMMIT=1") {
-		t.Fatalf("v8 template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
+		t.Fatalf("v9 template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
 	}
 	if !strings.Contains(body, "git.enforce_commits: false") {
-		t.Fatalf("v8 template missing the git.enforce_commits: false per-repo off-ramp")
+		t.Fatalf("v9 template missing the git.enforce_commits: false per-repo off-ramp")
 	}
 	// v7 delta (retained): the branch-summary (headline) convention. Pin
 	// the heading, both authoring forms, and the verbatim-into-timeline
 	// promise so a future revert that drops the convention trips this test.
 	if !strings.Contains(body, "Branch summary (headline)") {
-		t.Fatalf("v8 template missing the branch-summary (headline) subsection")
+		t.Fatalf("v9 template missing the branch-summary (headline) subsection")
 	}
 	if !strings.Contains(body, `logmind headline "<one sentence>"`) {
-		t.Fatalf("v8 template missing the `logmind headline` authoring form")
+		t.Fatalf("v9 template missing the `logmind headline` authoring form")
 	}
 	if !strings.Contains(body, `logmind log "..." -H "<one sentence>"`) {
-		t.Fatalf("v8 template missing the bundled `logmind log -H` authoring form")
+		t.Fatalf("v9 template missing the bundled `logmind log -H` authoring form")
 	}
 	if !strings.Contains(body, "copied verbatim into") {
-		t.Fatalf("v8 template missing the verbatim-into-timeline promise")
+		t.Fatalf("v9 template missing the verbatim-into-timeline promise")
 	}
 }
 
-// TestAgentsSlimTemplate_HasV9PointerMarker pins the slim variant
+// TestAgentsSlimTemplate_HasV10PointerMarker pins the slim variant
 // marker so the byte-identical-rewrite path can never confuse the two
 // templates' marker versions.
+//
+// The §3.2 layout-collapse wave bumped v9-pointer→v10-pointer: the
+// required-reading list drops docs/decisions.md, which §3.2 turned from a
+// decision log into a compatibility pointer holding nothing.
+//
+// That delta is asserted BELOW, not just described here, and the reason is
+// this generation's own near-miss: the slim body was edited and the marker
+// left at v9-pointer for a full review round, which had `logmind doctor`
+// reporting `AGENTS.md v9-pointer current` about a body it no longer
+// described. A marker assertion alone cannot catch that — the marker was
+// self-consistent — so the marker and the body change this generation made
+// are pinned in the SAME test, and neither can move without the other.
 //
 // The stale-binary-hardening / enforcement wave bumped v8-pointer→v9-pointer:
 // same enforcement-prose delta as the full template's v7→v8 bump (BLOCKS,
@@ -79,29 +94,49 @@ func TestAgentsTemplate_HasV8Marker(t *testing.T) {
 // tone/length. v0.6.16 bumped v7-pointer→v8-pointer: heading reframed as
 // "REQUIRED for substantive commits" + DO-NOT-git-commit blockquote
 // paired with the commit-msg hook.
-func TestAgentsSlimTemplate_HasV9PointerMarker(t *testing.T) {
+func TestAgentsSlimTemplate_HasV10PointerMarker(t *testing.T) {
 	body := AgentsSlimTemplate()
-	if !strings.Contains(body, "<!-- logmind-block-version: v9-pointer -->") {
-		t.Fatalf("slim template missing v9-pointer marker")
+	if !strings.Contains(body, "<!-- logmind-block-version: v10-pointer -->") {
+		t.Fatalf("slim template missing v10-pointer marker")
+	}
+
+	// The v10-pointer delta itself. docs/decisions.md holds no decisions
+	// since §3.2 (it is the v1.x install sentinel), so a required-reading
+	// list that names it sends every agent to an empty file.
+	if strings.Contains(body, "[`docs/decisions.md`](docs/decisions.md)") {
+		t.Errorf("slim template still sends agents to docs/decisions.md as required reading — " +
+			"§3.2 made that path a compatibility pointer with no decisions in it.\n" +
+			"If this list is being changed back, the marker has to move with it: a body edit " +
+			"under an unchanged marker is what `logmind doctor` reports as `current`.")
+	}
+	// CONTROL — the probe is looking at a list that exists. The two paths
+	// that DID survive §3.2 must still be named, or the assertion above
+	// would pass on a template that had lost the required-reading list
+	// altogether.
+	for _, want := range []string{"docs/timeline.md", "docs/decisions-branches/<branch>.md"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("slim template no longer names %q in required reading — "+
+				"the docs/decisions.md check above is not measuring a live list", want)
+		}
 	}
 	if !strings.Contains(body, "REQUIRED for substantive commits") {
-		t.Fatalf("v9-pointer template missing REQUIRED framing in heading")
+		t.Fatalf("v10-pointer template missing REQUIRED framing in heading")
 	}
 	if !strings.Contains(body, "DO NOT run raw `git add` / `git commit` / `git push`") {
-		t.Fatalf("v9-pointer template missing DO-NOT-git-commit blockquote")
+		t.Fatalf("v10-pointer template missing DO-NOT-git-commit blockquote")
 	}
-	// v9-pointer delta: enforcement prose. BLOCK, not warn; the carve-outs.
+	// v9-pointer delta, still pinned: enforcement prose. BLOCK, not warn; the carve-outs.
 	if !strings.Contains(body, "BLOCK") {
-		t.Fatalf("v9-pointer template missing BLOCK framing (must not just say the hook warns)")
+		t.Fatalf("v10-pointer template missing BLOCK framing (must not just say the hook warns)")
 	}
 	if !strings.Contains(body, "[skip-logmind]") {
-		t.Fatalf("v9-pointer template missing the [skip-logmind] carve-out")
+		t.Fatalf("v10-pointer template missing the [skip-logmind] carve-out")
 	}
 	if !strings.Contains(body, "LOGMIND_ALLOW_GIT_COMMIT=1") {
-		t.Fatalf("v9-pointer template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
+		t.Fatalf("v10-pointer template missing the LOGMIND_ALLOW_GIT_COMMIT=1 carve-out")
 	}
 	if !strings.Contains(body, "git.enforce_commits: false") {
-		t.Fatalf("v9-pointer template missing the git.enforce_commits: false per-repo off-ramp")
+		t.Fatalf("v10-pointer template missing the git.enforce_commits: false per-repo off-ramp")
 	}
 }
 
@@ -231,10 +266,16 @@ func TestWorkflowTemplates_SetupLogmindStepsCarryToken(t *testing.T) {
 func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	body := Workflow("regen-timeline.yml.template")
 
-	// Marker bump v11 → v12 (the push credential is now a degrading chain;
-	// see TestRegenTimelineTemplate_V12_CredentialChainDegrades).
-	if !strings.Contains(body, "# logmind-template-version: v12") {
-		t.Errorf("regen-timeline template missing v12 marker")
+	// Marker bump v10 → v11 (push-refusal now fails the job; see v11 note
+	// above). v11 → v12: the push credential is a degrading chain (see
+	// TestRegenTimelineTemplate_V12_CredentialChainDegrades). v12 → v13: the
+	// archive-gate change (see the v13 note in the template) had to move off
+	// v12 after logmind#301 round 5 found it colliding with
+	// fix/template-v12's unrelated, already in-flight v12. v13 is v12's body
+	// PLUS the archive — the credential chain and the resolved default branch
+	// the v12 tests below assert are still there, and are asserted there.
+	if !strings.Contains(body, "# logmind-template-version: v13") {
+		t.Errorf("regen-timeline template missing v13 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
@@ -255,8 +296,11 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	if !strings.Contains(body, "gh pr diff") || !strings.Contains(body, "--name-only") {
 		t.Errorf("regen-timeline v10 PR gate must use `gh pr diff --name-only`")
 	}
-	if !strings.Contains(body, `grep -qxE 'docs/(timeline|file-structure)\.md'`) {
-		t.Errorf("regen-timeline v10 PR gate must match exactly the two derived docs as whole lines")
+	// All THREE derived docs of SPEC §3.3 — "the history, its archive, or
+	// the map" — as whole lines. A gate that names only two leaves the
+	// omitted one editable on a branch, undetected.
+	if !strings.Contains(body, `grep -qxE 'docs/(timeline|timeline-archive|file-structure)\.md'`) {
+		t.Errorf("regen-timeline PR gate must match exactly the three derived docs as whole lines")
 	}
 	// Event-gated jobs: gate runs only on pull_request, regen only on push.
 	if !strings.Contains(body, "github.event_name == 'pull_request'") ||
@@ -369,6 +413,104 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	}
 }
 
+// templateMarkerPins pins bundled workflow templates' declared
+// `# logmind-template-version:` marker to a SHA256 of the marker's FULL
+// body.
+//
+// logmind#301 round 5 BLOCK: feat/collapse-decision-layout (this branch)
+// and fix/template-v12 (logmind#314) independently bumped
+// regen-timeline.yml.template's marker from v11 to v12 with UNRELATED
+// content. installWorkflowTemplates (internal/cli/init.go) refreshes an
+// installed workflow only when the installed and bundled marker STRINGS
+// differ — never when they merely match, even if the bytes underneath
+// don't — so whichever v12 a repo installed first would have kept it
+// forever, silently, even after the other v12 shipped upstream; `doctor`
+// would have reported that repo current the whole time. This branch
+// resolved the actual collision by moving to v13 (see the NOTE in the
+// template itself); this table is what would have made it IMPOSSIBLE to
+// ship silently in the first place.
+//
+// The collision's SECOND half is what the merge of #314 into this branch had
+// to get right, and it is a distinct failure from the one above: taking this
+// branch's v13 wholesale would have reverted #314's credential chain and
+// resolved default branch while ADVERTISING a higher version number, and
+// since installWorkflowTemplates rewrites only on marker inequality, every
+// fleet repo would have taken that v13 and never seen v12's content again.
+// v13's body is therefore v12's body PLUS the archive, and the digest below
+// is over that merged body. TestRegenTimelineTemplate_V12_* still assert
+// #314's content against the same file, which is what stops a future "newer
+// version" from quietly deleting it.
+//
+// It works from inside ONE repo's tree, at test time, on the CI of
+// whichever branch runs second: the first branch to land a marker's
+// checksum here owns that number's content from then on. A second branch
+// that independently reuses the same marker for different content fails
+// THIS test the moment it merges/rebases past the first branch's entry —
+// without ever needing to see the other branch's diff. If it instead
+// edits the pin to match its own content, that edit shows up as a
+// reviewable change to a line that used to mean something else: loud,
+// not silent.
+//
+// What this does NOT catch: two branches that both introduce the SAME new
+// marker and BOTH merge into dev before either ever rebases onto the
+// other (a true simultaneous-merge race). Git still flags that case as a
+// textual merge conflict on this table's entry — the same "loud, not
+// silent" outcome — so the residual gap is narrower still: a collision
+// where neither branch's own test run ever recorded a pin for the number
+// it claims. Closing THAT would need something that can see both trees
+// before either merges (e.g. a bot diffing open PRs' bundled markers
+// against each other); nothing in this repo does that today, and nothing
+// caught the actual v12/v12 collision this pins against — a human review
+// pass did.
+// The v13 digest was repinned once more inside #301 — the regen step now
+// names docs/timeline-archive.md explicitly, because `logmind timeline
+// --write` writes the one file it is given. "A SHIPPED marker's content must
+// never change" is the rule, and v13 has not shipped: it is introduced by the
+// same PR, so no repository holds it and a bump would reach nothing. Minting
+// a v14 for an edit to v13's own unreleased body would leave a v13 that
+// existed nowhere — which is the confusion the v12/v12 collision above WAS.
+var templateMarkerPins = map[string]struct {
+	marker string
+	sha256 string
+}{
+	// Re-pinned a second time inside #301 round 11: the v13 changelog note
+	// (the paragraph this pin covers) hand-typed the SPEC §3.3 bound as a
+	// literal "50" instead of the __LOGMIND_RECENT_LIMIT__ placeholder
+	// every other scaffold-time fact in this file already uses. Same
+	// ruling as the note above — v13 has still not shipped, so re-pinning
+	// costs nothing downstream; minting v14 for an edit to v13's own
+	// unreleased body would only repeat the confusion this comment
+	// already describes.
+	"regen-timeline.yml.template": {"v13", "151276d1e2790b84e9400c07762ec1fc13aea4a0db9159997b6f0827706dbeb2"},
+}
+
+func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
+	for name, pin := range templateMarkerPins {
+		body := Workflow(name)
+		wantMarkerLine := "# logmind-template-version: " + pin.marker
+		if !strings.HasPrefix(body, wantMarkerLine) {
+			t.Errorf("%s: expected to start with %q — if this is a deliberate "+
+				"version bump, update THIS entry's marker and sha256 in "+
+				"templateMarkerPins to the new version (the map is keyed by "+
+				"filename, so a second entry for %s is a compile error: "+
+				"duplicate key)", name, wantMarkerLine, name)
+			continue
+		}
+		sum := sha256.Sum256([]byte(body))
+		got := hex.EncodeToString(sum[:])
+		if got != pin.sha256 {
+			t.Errorf("%s: content under marker %s changed (sha256 %s, want %s). "+
+				"A shipped marker's content must never change silently: whether "+
+				"this is a genuine content edit or a collision with another "+
+				"branch that already claimed marker %s for different content, "+
+				"bump the template's marker to a new, unclaimed version and "+
+				"update THIS entry's marker and sha256 to match — the map is "+
+				"keyed by filename, so a second entry for %s is a compile error.",
+				name, pin.marker, got, pin.sha256, pin.marker, name)
+		}
+	}
+}
+
 // TestCheckDocLinksTemplate_V8_AdvisoryNoStrand pins the v1.2.0 advisory
 // contract for the doc-link gate: like regen-timeline, it must NEVER
 // hard-block a PR and must NEVER push with the default GITHUB_TOKEN (a
@@ -379,9 +521,30 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 func TestCheckDocLinksTemplate_V8_AdvisoryNoStrand(t *testing.T) {
 	body := Workflow("check-doc-links.yml.template")
 
-	// Marker bump v8 → v9 (setup-logmind action pin v1.0.0 → v1.0.1).
-	if !strings.Contains(body, "# logmind-template-version: v9") {
-		t.Errorf("check-doc-links template missing v9 marker")
+	// Marker bump v9 → v10 (the self-heal regenerates the archive too).
+	// The marker is the ONLY thing doctor and logmind-self-update compare —
+	// they never diff the body — so a content fix shipped without a bump
+	// leaves every repo already running the old version on the old body,
+	// with no drift row to say so.
+	if !strings.Contains(body, "# logmind-template-version: v10") {
+		t.Errorf("check-doc-links template missing v10 marker")
+	}
+
+	// The derived-doc self-heal must regenerate ALL THREE derived docs.
+	// `logmind timeline --write` writes the one file it is given, so the
+	// archive needs its own invocation: without it an archive-sourced
+	// broken link survives every self-heal pass — the job re-runs, changes
+	// nothing, and reports the same finding next time. linkcheck's own
+	// remediation advice for that case is this exact command, so dropping
+	// it leaves the workflow printing a fix it cannot itself run.
+	for _, want := range []string{
+		"logmind timeline --write docs/timeline.md",
+		"logmind timeline --write docs/timeline-archive.md --half archive",
+		"logmind file-structure --write docs/file-structure.md",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("check-doc-links self-heal does not run %q — a derived doc it omits is one it can never fix", want)
+		}
 	}
 
 	// Advisory: the old `exit $rc` (re-raise the linkcheck exit) red-lit
@@ -783,6 +946,19 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 		t.Fatalf("regen-timeline template no longer contains %s — the default branch has been "+
 			"hardcoded again, which is the defect this placeholder exists to prevent", branchPlaceholder)
 	}
+
+	// Difference 3 (added #301 round 11): the same scaffold-time treatment
+	// for the SPEC §3.3 bound. The v13 note restates RecentLimit in prose;
+	// the installed copy carries the rendered digit where the template
+	// carries __LOGMIND_RECENT_LIMIT__. Same guard shape as the branch
+	// placeholder above — a re-hardcoded literal here fails loudly instead
+	// of the two copies quietly agreeing on a number neither derives.
+	const recentLimitPlaceholder = "__LOGMIND_RECENT_LIMIT__"
+	if !strings.Contains(tmplBody, recentLimitPlaceholder) {
+		t.Fatalf("regen-timeline template no longer contains %s — the SPEC §3.3 bound has been "+
+			"hardcoded again, which is the defect this placeholder exists to prevent", recentLimitPlaceholder)
+	}
+	tmplBody = strings.ReplaceAll(tmplBody, recentLimitPlaceholder, strconv.Itoa(timeline.RecentLimit))
 	tmplBody = strings.ReplaceAll(tmplBody, branchPlaceholder, "main")
 
 	// The four boundaries that carve both files into the same regions. Each
@@ -893,11 +1069,18 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 // content, and a literal here would be a hand-kept second copy that reads
 // as true until one quietly isn't. The failure prints the current content
 // so the change is reviewed, not just re-hashed.
+// v13 (logmind#265/#301) moved A and F: the PR gate now names three derived
+// docs rather than two, and the push step's `git status --porcelain` and
+// `git add` name three paths rather than two. B and D are untouched by that
+// change and their digests are unchanged, which is the evidence that the
+// archive layered ONTO v12 rather than replacing it — a v13 that had reverted
+// #314 would have moved B (the regen-on-main preamble) and D (the checkout
+// stanza) as well.
 const (
-	digestRegionA = "cd53b292bbb4eea340684995fc2f09d41dcc1bf64ab49a320f1561f0c4f2e655"
+	digestRegionA = "75a4a82048f9b28379db76cd5630c3c7aa9918bba1341a149ff2e00b68c68c18"
 	digestRegionB = "60c9f3ef2d00a0a58c4057f1c36637b1054658019a21f47ef3667059e4445346"
 	digestRegionD = "7e2d788d136cdff688f698527cd505c1d70633f4134d4df2951fbff59b7fc612"
-	digestRegionF = "431714e9dd9f21db5c8127aeb3353af1052e11dbcddb60bbc39334bc9d73a322"
+	digestRegionF = "bbe3a145536916b0c0ae850ae84e5e5e0662554d9d7059f79d9c7cd1844e117a"
 )
 
 // requireContentDigest pins a region's EXECUTABLE content to a digest.
@@ -971,9 +1154,18 @@ const (
 	// the subcommands, the flags, the OUTPUT PATHS — is common, and a regen
 	// pointed anywhere but docs/ is a job that reports "already current"
 	// forever while the derived docs rot.
+	//
+	// The archive gets its OWN invocation, and that is load-bearing rather
+	// than stylistic: `logmind timeline --write` writes the one file it is
+	// given, so dropping this line does not "simplify" the step, it stops
+	// docs/timeline-archive.md being regenerated at all — on the only branch
+	// that ever regenerates it, with every run still green.
 	wantRegenStep = `        run: |
           set -euo pipefail
+          # Both halves of the SPEC §3.3 split, each named explicitly:
+          # ` + "`--write`" + ` writes the file it is given and no other.
           %[1]s timeline --write docs/timeline.md
+          %[1]s timeline --write docs/timeline-archive.md --half archive
           %[1]s file-structure --write docs/file-structure.md`
 )
 
@@ -1243,10 +1435,38 @@ func TestWorkflowActionSurface_IsPinned(t *testing.T) {
 // Update procedure: change a template → bump its marker → the test prints
 // the new digest → paste it here, same commit.
 var bundledTemplateFingerprints = map[string]string{
-	"check-decisions.yml.template":     "v6:5fbd605bfc774cae66e321405a634baa0f0d3e93a47ffa661623100219430559",
-	"check-doc-links.yml.template":     "v9:49fd3ffc32bed1c1ac5054c7e478d8d6794390a2f6423f93e9b418a9da838008",
+	"check-decisions.yml.template": "v6:5fbd605bfc774cae66e321405a634baa0f0d3e93a47ffa661623100219430559",
+	// v10 = v9's body plus the archive half of the derived-doc self-heal:
+	// `logmind timeline --write docs/timeline-archive.md --half archive`.
+	// The marker moves WITH the content by the rule this map exists to
+	// enforce — a content-only fix would have left every repo already
+	// holding v9 running the two-of-three self-heal forever, with `doctor`
+	// calling them current. See the v10 note in the template itself.
+	// Re-pinned inside #301 round 11: the v10 note's "50" is now the
+	// __LOGMIND_RECENT_LIMIT__ placeholder (see renderWorkflowTemplate).
+	// v10 has not shipped — introduced by this same PR (merge-base with
+	// dev is still v9) — so re-pinning costs no consumer a stale refresh.
+	"check-doc-links.yml.template":     "v10:6215db8a97aeccb8581cea915f597a79b4713d8b068c93e4297aed1859f28f44",
 	"logmind-self-update.yml.template": "v11:d4214fb3d201997b3089e8bdaf824ea513da27b0d40093d71d663016b6e903d9",
-	"regen-timeline.yml.template":      "v12:31a61bcf330a1bc81f825517725c27ed95a7ddd3d4fee634ac787e2f3f500cf1",
+	// v13 = v12's body plus docs/timeline-archive.md in the PR gate and the
+	// push step (logmind#265/#301). It is a SUPERSET of v12, not a
+	// replacement: had the merge taken #301's v13 wholesale it would have
+	// reverted this file to the v11 base under a higher marker, and the
+	// rewrite-on-marker-inequality rule above is exactly what would have made
+	// that permanent for every repo that took it.
+	//
+	// The digest moved once more inside #301, WITHOUT the marker: the regen
+	// step now names docs/timeline-archive.md explicitly, because `logmind
+	// timeline --write` writes the one file it is given. That is a repin, not
+	// a skipped bump — v13 is introduced by this same PR and no repository
+	// holds it, so there is no installed v13 for a bump to reach. A marker
+	// only has to move when the content it names has already SHIPPED; moving
+	// it for an edit to its own unreleased body would mint a v13 that never
+	// existed anywhere, which is the confusion the v12 collision above was.
+	// Re-pinned again in #301 round 11 — same rule, third time: v13 still
+	// has not shipped, this edit swaps the v13 note's hand-typed "50" for
+	// __LOGMIND_RECENT_LIMIT__.
+	"regen-timeline.yml.template": "v13:151276d1e2790b84e9400c07762ec1fc13aea4a0db9159997b6f0827706dbeb2",
 }
 
 // TestWorkflowTemplateMarkers_MoveWithContent enforces the binding above.
@@ -1976,6 +2196,71 @@ func TestWorkflowTemplates_SetupLogmindPinIsUniformAndCurrent(t *testing.T) {
 			"these workflows:", len(pins))
 		for pin, sites := range pins {
 			t.Errorf("  %s ← %v", pin, sites)
+		}
+	}
+}
+
+// TestEmbeddedTemplates_StateRecentLimit is internal/templates' own guard
+// against the SPEC §3.3 bound (timeline.RecentLimit) drifting from its
+// restatements inside the shipped, embedded template bytes.
+//
+// Round 10 left this package unguarded on the premise that the restatement
+// was "prose written for a reader, not output the tool generates." Round
+// 11 (#301) found that false: every one of these lands, verbatim or
+// substituted, in a `logmind init`-scaffolded repo's tree — the reader IS
+// a consumer of generated output, same as docs/timeline.md's own header.
+//
+// Two different shapes, because the sites themselves differ:
+//
+//   - AGENTS.md.template and logmind-section.md hand-type the number in
+//     prose with no substitution path — they ship byte-frozen (the
+//     former gated by `<!-- logmind-block-version -->`, the latter with
+//     no marker at all), so a placeholder isn't worth the marker-bump
+//     cost this round chose to spend on config.yml.template and the two
+//     workflow templates instead (both had never shipped — see the
+//     round-11 fix report). This half of the test is TestHandDocs_
+//     StateRecentLimit's exact pattern (internal/timeline), applied to
+//     the embedded templates it deliberately excluded.
+//   - config.yml.template, check-doc-links.yml.template and
+//     regen-timeline.yml.template instead carry __LOGMIND_RECENT_LIMIT__,
+//     substituted at scaffold time (internal/cli/init.go — the same
+//     mechanism __LOGMIND_DEFAULT_BRANCH__ already uses). A drift there
+//     is structurally impossible once substituted, so this half checks
+//     the INVERSE: the raw embedded bytes still carry the PLACEHOLDER,
+//     not a re-hardcoded literal — the failure mode that would silently
+//     reopen the gap this round closed.
+func TestEmbeddedTemplates_StateRecentLimit(t *testing.T) {
+	limit := timeline.RecentLimit
+	literalChecks := []struct {
+		name, body, want string
+	}{
+		{"AGENTS.md.template (required-reading line)", AgentsTemplate(),
+			fmt.Sprintf("the %d most recent decisions", limit)},
+		{"AGENTS.md.template (additional-reference line)", AgentsTemplate(),
+			fmt.Sprintf("older than the %d entries in", limit)},
+		{"logmind-section.md", LogmindSection(),
+			fmt.Sprintf("older than the %d entries in", limit)},
+	}
+	for _, c := range literalChecks {
+		if !strings.Contains(c.body, c.want) {
+			t.Errorf("%s does not state RecentLimit (%d); want a substring %q", c.name, limit, c.want)
+		}
+	}
+
+	const placeholder = "__LOGMIND_RECENT_LIMIT__"
+	derivedChecks := []struct {
+		name, body string
+	}{
+		{"config.yml.template", ConfigTemplate()},
+		{"check-doc-links.yml.template", Workflow("check-doc-links.yml.template")},
+		{"regen-timeline.yml.template", Workflow("regen-timeline.yml.template")},
+	}
+	for _, c := range derivedChecks {
+		if !strings.Contains(c.body, placeholder) {
+			t.Errorf("%s does not carry the %s placeholder — either it was re-hardcoded to a "+
+				"literal number (which can drift silently from RecentLimit, the gap this test "+
+				"exists to close) or the placeholder was renamed without updating the substitution "+
+				"site (internal/cli/init.go)", c.name, placeholder)
 		}
 	}
 }

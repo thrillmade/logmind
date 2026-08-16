@@ -91,6 +91,27 @@ func TestCheck_DefaultAllowlistSkipsDecisions(t *testing.T) {
 	}
 }
 
+// TestCheck_DefaultAllowlistSkipsDecisionsArchive pins logmind#301 round-5
+// LOW: the collapse-decision-layout rewrite of DefaultAllowOrphans dropped
+// docs/decisions-archive.md while adding docs/timeline-archive.md, instead
+// of keeping both. The legacy archive only has no parseable `## ` headers
+// (nothing links to it) during a half-migrated upgrade — exactly the state
+// an upgrader passes through — so losing this entry turns that transition
+// into a false-positive orphan finding.
+func TestCheck_DefaultAllowlistSkipsDecisionsArchive(t *testing.T) {
+	dir := setupFixture(t, map[string]string{
+		"README.md":                 "# Project\n",
+		"docs/decisions-archive.md": "# Archive\n",
+	})
+	_, orphans, err := Check(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(orphans) != 0 {
+		t.Fatalf("orphans = %v; want [] (decisions-archive.md is allowlisted)", orphans)
+	}
+}
+
 func TestCheck_DirectoryPrefixAllowlist(t *testing.T) {
 	// docs/decisions-branches/ trailing-slash entry: any .md under
 	// it must be exempt.
@@ -377,5 +398,30 @@ func TestCheckWithReport_FindingFields(t *testing.T) {
 		if f.SuggestedFix == "" {
 			t.Errorf("Finding.SuggestedFix is empty: %+v", f)
 		}
+	}
+}
+
+// TestSuggestBrokenLinkFix_EachTimelineHalfGetsItsOwnRegen: the advice printed
+// for a stale row has to be the command that rewrites the file the row is IN.
+//
+// `logmind timeline --write` writes the one file it is given, so the command
+// that fixes docs/timeline.md does not touch docs/timeline-archive.md.
+// Advising it against the archive is advice that cannot work: run and re-run,
+// the same broken links stay exactly where they were.
+func TestSuggestBrokenLinkFix_EachTimelineHalfGetsItsOwnRegen(t *testing.T) {
+	const target = "docs/decisions-branches/feat__gone.md"
+	for _, tc := range []struct {
+		source string
+		want   string
+	}{
+		{"docs/timeline.md", "→ run: logmind timeline --write docs/timeline.md"},
+		{"docs/timeline-archive.md", "→ run: logmind timeline --write docs/timeline-archive.md --half archive"},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			got := suggestBrokenLinkFix(t.TempDir(), tc.source, target)
+			if got != tc.want {
+				t.Errorf("advice for a dead branch link in %s = %q; want %q", tc.source, got, tc.want)
+			}
+		})
 	}
 }

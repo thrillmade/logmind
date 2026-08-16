@@ -345,7 +345,7 @@ func guardCommitHarness(stdin io.Reader, stdout, stderr io.Writer, repoRootFlag 
 	//
 	// v2.0.0 4b-quater — same "skip an already-staged path" filter as
 	// commitDecision's L1 (log.go), and for the same reason: `logmind
-	// warp`'s merge-base repair deliberately STAGES the two derived docs so
+	// warp`'s merge-base repair deliberately STAGES the derived docs so
 	// the fix survives into the caller's next commit. This layer guards a
 	// DIFFERENT trigger than L1 — a literal `git commit` (bare, `-am`,
 	// `--no-verify`, or inside a compound `&&`/`;` command) run directly via
@@ -634,7 +634,7 @@ func firstLineOfFile(path string) (string, error) {
 // This is not a shell parser: a message that comes from $EDITOR, a
 // template, or is buried inside a substitution simply contributes nothing
 // here, which just means the [skip-logmind] carve-out won't apply — every
-// other carve-out (env var, decision-file-staged, under-threshold) still
+// other carve-out (env var, decision-recorded, under-threshold) still
 // works normally.
 func extractSubjectHint(command string) string {
 	words := splitCommandWords(command)

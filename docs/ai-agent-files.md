@@ -39,7 +39,11 @@ run — there's no separate stub to write.
 
 `logmind init` inserts the logmind block between
 `<!-- logmind-start -->` / `<!-- logmind-end -->` markers, versioned via
-`<!-- logmind-block-version: v9-pointer -->`. If the marker is already
+`<!-- logmind-block-version: v10-pointer -->` for the slim body `init`
+installs by default (the full body is a generation behind at `v9`, and the
+two flavours bump independently — read the current pair off the templates
+with `grep -h logmind-block-version internal/templates/AGENTS.md*.template`
+rather than trusting this line). If the marker is already
 present, the block is left alone on a plain re-run (`logmind doctor --fix`
 or a version bump refreshes a *stale* block in place); any other existing
 content in `AGENTS.md` — `## Project Overview`, `## Development Commands`,
@@ -69,10 +73,11 @@ pointed to from the `AGENTS.md` block:
 
 - **[docs/timeline.md](timeline.md)** — auto-generated, main-canonical
   union of every decision across every branch; start here
-- **[docs/decisions.md](decisions.md)** — 20 most recent decisions on the
-  default branch
+- **`docs/timeline-archive.md`** — the history older than the 50 entries in
+  `docs/timeline.md`, same format (both are written by one regeneration)
 - **[docs/decisions-branches/](decisions-branches/)** — per-branch
-  decision logs for in-flight feature work
+  decision logs; the record itself, one file per branch (the default
+  branch included), append-only and uncapped
 - **[docs/file-structure.md](file-structure.md)** — current project tree
 
 ## CLI Commands
@@ -137,10 +142,9 @@ $ logmind init
 Initializing logmind...
 
 ✓ Created docs/
-✓ Created docs/decisions.md
-✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
 ✓ Created docs/timeline.md
+✓ Created docs/timeline-archive.md
 ✓ Created .logmind/config.yml
 Created AGENTS.md (canonical agent instructions)
 ✓ Created CLAUDE.md
@@ -169,10 +173,9 @@ $ logmind init --agents claude,cursor,windsurf
 Initializing logmind...
 
 ✓ Created docs/
-✓ Created docs/decisions.md
-✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
 ✓ Created docs/timeline.md
+✓ Created docs/timeline-archive.md
 ✓ Created .logmind/config.yml
 Created AGENTS.md (canonical agent instructions)
 ✓ Created CLAUDE.md

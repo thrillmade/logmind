@@ -88,23 +88,80 @@ func TestCommitMsgHook_RealGitCommit_EnforcesAndCarveOuts(t *testing.T) {
 		assertCommitCount(t, dir, binDir, 2)
 	})
 
-	t.Run("allows when a decision file is staged alongside the change", func(t *testing.T) {
-		dir := newEnforcingRepo(t, binDir)
-		writeBigFile(t, dir, "app.go")
-		if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "docs", "decisions.md"), []byte("# Decisions\n\n## entry\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		runGitIn(t, dir, binDir, nil, "add", "app.go", "docs/decisions.md")
+	// Carve-out 5, at the only surface that proves the WIRING: a real
+	// `git commit` under the really-installed hook, against the really-
+	// built binary.
+	//
+	// This subtest used to stage "# Decisions\n\n## entry\n" — a
+	// decision-shaped PATH carrying no entry — and assert it was ALLOWED.
+	// That was the sentinel hole in miniature: the gate answered on the
+	// filename, so `git add docs/decisions.md` cleared it for any amount
+	// of code. Round 14 closed the hole and left this assertion behind,
+	// which is why the branch shipped a red suite. Every row now stages
+	// CONTENT, and the rows are each other's mutation test: flip the
+	// predicate in either direction and at least one fails.
+	for _, tc := range []struct {
+		name, body  string
+		wantAllowed bool
+	}{
+		{
+			name: "an entry with reasoning on the marker line",
+			body: "# Decisions\n\n## 2026-08-07 14:30 - Inline reasoning\n\n" +
+				"**Reasoning:** the shape logmind log writes.\n\n---\n",
+			wantAllowed: true,
+		},
+		{
+			// THE FIELD BUG. An ordinary hand-written entry whose body
+			// sits below a blank line. Measured before the fix: exit 65,
+			// commit refused, three sentences of reasoning right there in
+			// the index.
+			name: "an entry whose reasoning body sits below a blank line",
+			body: "# Decisions\n\n## 2026-08-07 14:30 - Blank-separated body\n\n" +
+				"**Reasoning:**\n\nThe author pressed return before writing the reason.\n" +
+				"That is a paragraph break, not an empty section.\n\n---\n",
+			wantAllowed: true,
+		},
+		{
+			// A decision-shaped file with no entry in it. §3.4: a decision
+			// "clears the gate by being written, not by existing."
+			name:        "a decision file carrying no entry at all",
+			body:        "# Decisions\n\n## entry\n",
+			wantAllowed: false,
+		},
+		{
+			// §3.1 makes omitting an empty section's header a MUST, so a
+			// header with nothing under it is malformed rather than sparse.
+			name: "an entry whose reasoning header has nothing under it",
+			body: "# Decisions\n\n## 2026-08-07 14:30 - Empty section\n\n" +
+				"**Reasoning:**\n\n**Alternatives considered:** none\n\n---\n",
+			wantAllowed: false,
+		},
+	} {
+		t.Run("staged decision file: "+tc.name, func(t *testing.T) {
+			dir := newEnforcingRepo(t, binDir)
+			writeBigFile(t, dir, "app.go")
+			if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "docs", "decisions.md"), []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGitIn(t, dir, binDir, nil, "add", "app.go", "docs/decisions.md")
 
-		out, err := attemptGitCommit(t, dir, binDir, nil, "substantive change with a decision log")
-		if err != nil {
-			t.Fatalf("expected the commit to be ALLOWED via a staged decision file; got error: %v\n%s", err, out)
-		}
-		assertCommitCount(t, dir, binDir, 2)
-	})
+			out, err := attemptGitCommit(t, dir, binDir, nil, "substantive change with a decision log")
+			switch {
+			case tc.wantAllowed && err != nil:
+				t.Fatalf("expected the commit to be ALLOWED — the staged diff adds a §3.1 entry; got error: %v\n%s", err, out)
+			case !tc.wantAllowed && err == nil:
+				t.Fatalf("expected the commit to be BLOCKED — the staged diff records no decision; it succeeded:\n%s", out)
+			}
+			want := 1 // only newEnforcingRepo's initial commit
+			if tc.wantAllowed {
+				want = 2
+			}
+			assertCommitCount(t, dir, binDir, want)
+		})
+	}
 }
 
 // TestCommitMsgHook_StaleBinaryOnPath_FailsOpen is the load-bearing

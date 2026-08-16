@@ -632,3 +632,67 @@ func TestNumstat_RenameOutOfDocsIsSplit(t *testing.T) {
 		t.Fatalf("no row for src/payload.go — the rename was not split:\n%+v", rows)
 	}
 }
+
+// TestDiffCachedAddedHunks_KeepsNonAdjacentHunksApart pins the boundary
+// AddedHunk exists to carry, and it drives real git rather than asserting
+// on a synthetic diff string: what matters is where git actually splits
+// an edit, not where a hand-written fixture says it does.
+//
+// The flat []string this replaced concatenated non-adjacent hunks with no
+// gap, so guardcommit read a §3.1 section opened near the top of a file as
+// if the first prose from the bottom sat under it. Measured on the PR
+// head: 302 lines of new Go cleared `git commit` (exit 0, "allowed
+// (decision-recorded)") and `check-decisions --base --head` (exit 0) on an
+// entry whose reasoning section is empty in the file on disk.
+func TestDiffCachedAddedHunks_KeepsNonAdjacentHunksApart(t *testing.T) {
+	repo := initRepo(t)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, "notes.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("top\nmiddle one\nmiddle two\nmiddle three\nbottom\n")
+	run("add", "notes.md")
+	run("commit", "-q", "-m", "seed")
+
+	// Two edits with untouched content between them — the shape git has
+	// every reason to render as two hunks, and the only shape the bypass
+	// needed.
+	write("top\nadded near the top\nmiddle one\nmiddle two\nmiddle three\nbottom\nadded at the bottom\n")
+	run("add", "notes.md")
+
+	hunks := DiffCachedAddedHunks(repo, "notes.md")
+	if len(hunks) != 2 {
+		t.Fatalf("DiffCachedAddedHunks = %q (%d groups); want 2 — git split this edit in two and the "+
+			"reader must not hand them over as one run", hunks, len(hunks))
+	}
+	if len(hunks[0]) != 1 || hunks[0][0] != "added near the top" {
+		t.Errorf("hunks[0] = %q; want [\"added near the top\"]", hunks[0])
+	}
+	if len(hunks[1]) != 1 || hunks[1][0] != "added at the bottom" {
+		t.Errorf("hunks[1] = %q; want [\"added at the bottom\"]", hunks[1])
+	}
+
+	// Control on the control: one contiguous edit is ONE group, or the
+	// assertion above is about a reader that splits everything rather than
+	// about where git drew the boundary.
+	write("top\nadded near the top\nand the line under it\nmiddle one\nmiddle two\nmiddle three\nbottom\n")
+	run("add", "notes.md")
+	contiguous := DiffCachedAddedHunks(repo, "notes.md")
+	if len(contiguous) != 1 {
+		t.Fatalf("a contiguous two-line insertion produced %d groups: %q; want 1", len(contiguous), contiguous)
+	}
+	if len(contiguous[0]) != 2 {
+		t.Errorf("the contiguous group holds %d lines: %q; want 2", len(contiguous[0]), contiguous[0])
+	}
+}

@@ -69,11 +69,12 @@ my-ai-project/
 ├── .logmind/
 │   └── config.yml             # project configuration
 ├── docs/
-│   ├── decisions.md           # 20 most recent decisions (default branch)
-│   ├── decisions-branches/    # per-feature-branch decision logs
-│   ├── decisions-archive.md   # older decisions, chronological
-│   ├── timeline.md            # auto-generated cross-branch overview
-│   └── file-structure.md      # auto-generated project tree
+│   ├── decisions-branches/    # per-branch decision logs — THE record,
+│   │                          #   one file per branch (main included),
+│   │                          #   append-only and uncapped
+│   ├── timeline.md            # derived: the 50 most recent decisions
+│   ├── timeline-archive.md    # derived: everything older, same format
+│   └── file-structure.md      # derived: project tree
 └── [existing project files]
 ```
 
@@ -83,11 +84,27 @@ my-ai-project/
 
 `logmind log "<summary>" -r "<why>" -a "<alternative>" -i "<implication>"`
 writes the decision, stages it plus its companion derived docs, and
-commits — one command, no separate `git add` / `git commit`. Branch-aware:
-entries on the default branch go to `docs/decisions.md`; entries on a
-feature branch go to `docs/decisions-branches/<sanitized-branch>.md`. On
-PR merge, CI appends a one-line pointer from the branch file into
-`docs/decisions.md`.
+commits — one command, no separate `git add` / `git commit`. Branch-aware,
+with ONE path rule and no exception to it: an entry goes to
+`docs/decisions-branches/<sanitized-branch>.md` for the branch it was made
+on, and the default branch is a branch like any other (`main.md`).
+`docs/decisions.md` is a legacy source: on the branch-aware path it is read
+and never written. `logmind init` still SEEDS it, once, with a pointer at the
+branch layout — logmind v1.2.0 tests for that path to decide whether a repo is
+already initialised, and re-runs its whole scaffold (overwriting
+`.logmind/config.yml`) when it is missing, so a v2 tree stays recognisable to
+it (`ensureLegacyPointer`, `internal/cli/init.go`). Seeding is not writing
+decisions: the pointer body carries no `## ` header, so it contributes no rows
+to the timeline, `show`, `search` or `context`. It is not unwritable, and the
+exceptions are not a
+default-branch carve-out — `resolveDecisionsPath` falls back to it, creating
+and appending, in exactly three cases, all of them cases where the router
+cannot resolve a branch name to route by: `decisions.branch_aware: false`;
+`git` reporting this is not a repository (which also fires when the `git`
+binary itself is unreachable, even inside a real repo on a real branch); and
+a detached HEAD. A repo with no commits yet is not one of them: `git
+symbolic-ref --short HEAD` succeeds before the first commit, so a fresh `git
+init` routes to `main.md`.
 
 ### 2. The timeline — main-canonical, unconditionally
 
@@ -122,12 +139,32 @@ orient in:
 
 ### 4. Reading and auditing decisions
 
-`logmind show` (recent decisions on the current branch), `logmind search
-"<keyword>"` (full-text across recent + archive), `logmind headline`
+`logmind show` (this branch's decisions, plus any legacy `docs/decisions.md` /
+`docs/decisions-archive.md` that HOLDS decisions — those are named after no
+branch, so no branch file supersedes them, and one holding none has nothing to
+surface; `--all` adds every other branch's file, as does having no current
+branch at all, since a detached HEAD — every CI checkout — has nothing for
+"other branches" to be other THAN), `logmind search
+"<keyword>"` (full-text across every decision file that exists, enumerated —
+never resolved from a branch name; `--no-archive` opts the legacy archive
+out), `logmind headline`
 (sets/reads the agent-authored branch summary), and `logmind doctor
 [--fix]` (stack-status: version drift, hook drift, missing markers —
 `--fix` backfills what it safely can, including timeline markers and
 `--file` targeting) round out the read/audit surface.
+
+**Known gap — `doctor` does not probe the v1.2.0 install sentinel.** A repo
+missing `docs/decisions.md` is re-scaffolded by any pre-v2.0 binary, losing
+`.logmind/config.yml` (`ensureLegacyPointer`, `internal/cli/init.go`).
+`logmind init` restores the file on both its paths; `doctor --fix` goes
+through `applyRefresh` directly and does neither restore nor report it, so a
+repo whose owner only ever runs `doctor --fix` stays exposed and is told
+nothing. Reporting it is NOT a one-line probe: `WorkflowStatus` has no
+report-without-fixing state, so a `Drift: "missing"` entry would enrol the
+sentinel in `doctor --fix` (the widening we declined) and shift the
+stale-component counts the `logmind log` pulse advisory asserts. It needs the
+status model extended first — same class as the #318 probes that check a
+sentinel rather than the thing.
 
 ## Development History
 
@@ -234,19 +271,19 @@ auto-fix in the `check-doc-links` workflow).
   section — never against Python archaeology
 
 ### Storage: markdown, no database
-- **Today:** `docs/decisions-branches/<branch>.md` (one file per branch) is
-  where every decision is written. `docs/decisions.md` (116 lines) and
-  `docs/decisions-archive.md` (9 lines) still exist in the tree but are
-  effectively dead — the newest entry in `decisions.md` is 2026-07-16 and
-  the archive holds zero entries, because a PR-required default branch
-  means nothing can commit to them directly.
-- **Changing:** [#265](https://github.com/thrillmade/logmind/issues/265)
-  removes that layout. Per SPEC §3.2 decision files are append-only and
-  **uncapped** — "a decision written is a decision kept" — so there is no
-  main log, no cap and no archive to port. `rotateDecisions` is deleted
-  outright rather than moved.
-- `docs/timeline.md` and `docs/file-structure.md` are derived, regenerated
-  automatically — never hand-edited
+- `docs/decisions-branches/<branch>.md` — one file per branch, and the
+  default branch is not an exception (SPEC §3.2) — is where every decision
+  is written. Files are append-only and **uncapped**: "a decision written
+  is a decision kept." Nothing rotates, nothing overflows, nothing is
+  archived. There is no separate main log, because `docs/timeline.md`
+  already is one.
+- What is bounded is the VIEW, not the record (SPEC §3.3): `docs/timeline.md`
+  renders the 50 most recent entries and `docs/timeline-archive.md` the
+  remainder, both from the branch files on every regeneration. Moving that
+  number is a regeneration, not a migration — nothing is transferred between
+  the two files and neither is ever read to produce the other.
+- `docs/timeline.md`, `docs/timeline-archive.md` and `docs/file-structure.md`
+  are derived, regenerated automatically — never hand-edited
 - Human-readable, AI-friendly, greppable, works offline, git provides full
   versioning
 
@@ -256,12 +293,19 @@ auto-fix in the `check-doc-links` workflow).
   main-canonical) design — less config surface, no risk of the two
   renderers drifting apart
 - **§3.3 also caps the rendered timeline at 50 entries**, with everything
-  older rendered to `docs/timeline-archive.md`. That file does not exist
-  in this repo yet. It is a split in a *rendering*, not a move: nothing
-  transfers between files, and both regenerate from the same sources every
-  time. It adds a **third** derived file that every restore path and
-  `check-derived-docs` must know about — both name only two today. Tracked
-  as part of [#265](https://github.com/thrillmade/logmind/issues/265).
+  older rendered to `docs/timeline-archive.md`. It is a split in a
+  *rendering*, not a move: nothing transfers between files, and both
+  regenerate from the same sources every time. It is a **third** derived
+  file, and `derivedDocPaths`, the pre-commit restore, `warp`,
+  `.gitattributes` (its own driver, `logmind-timeline-archive`) and
+  `regen-timeline.yml` all name it.
+- **`logmind timeline --write PATH` writes PATH and no other file.**
+  `--half recent|archive` picks which half of the split goes into it;
+  regenerating both means naming both, which is what the hooks and the
+  workflow do. A `--write` that also wrote an inferred sibling put an
+  untracked `timeline-archive.md` at the worktree root on every merge
+  (git hands a merge driver a scratch file there) and replaced the
+  contents of a tracked file of that name where one existed.
 
 ### Derived docs: regenerated at the integration point (v2.0.0) — unconditional
 
@@ -352,22 +396,32 @@ Verified against current source and against each consumer repository's
   `logmind-self-update.yml.template` titles its own pull requests with the
   skip marker — the exact case §3.4 calls out. These must close together,
   or the gate stays decorative.
-- **The fleet is running much older copies than this repo ships.** logmind
-  ships `check-decisions.yml.template` at `v4`. protocol, clud-bug,
-  clud-bug-app and agent-skills all run `v2`; reporulez runs an unversioned
-  copy predating the marker; skdd has no `check-decisions.yml` at all. All
-  five installed copies carry both the `*.md` exclusion and the skip-marker
-  read. Template versions are **per file** — `regen-timeline.yml.template`
-  is at `v11`, `logmind-self-update.yml.template` at `v10`,
-  `check-doc-links.yml.template` at `v8` — so "the fleet is on v4" is not a
-  single number. Tracked by
-  [#257](https://github.com/thrillmade/logmind/issues/257).
-- **`check-derived-docs` in the fleet is the pre-v11 shape**, which
-  regenerates from the branch's own sources and fails on the diff —
-  enforcing the opposite of §3.3.
+- **The fleet is running much older copies than this repo ships.** protocol,
+  clud-bug, clud-bug-app and agent-skills all run an older
+  `check-decisions.yml`; reporulez runs an unversioned copy predating the
+  marker; skdd has none on `main` at all. Every installed copy carries both
+  the `*.md` exclusion and the skip-marker read. Template versions are **per
+  file**, so "the fleet is on vN" is not a single number.
+
+  The version numbers themselves — what this repo ships and what each fleet
+  repo runs — live in [roadmap.md § The fleet,
+  measured](roadmap.md#the-fleet-measured), which owns that table and is where
+  the migration is sequenced. They are deliberately not repeated here: they
+  move most releases (this branch alone advances two of them), and a second
+  hand-kept copy in an architecture document reads as true until one quietly
+  is not. Re-derive what this repo ships with:
+
+  ```bash
+  head -1 internal/templates/github/*.template
+  ```
+
+  Tracked by [#257](https://github.com/thrillmade/logmind/issues/257).
+- **`check-derived-docs` in the fleet is an older shape**, which regenerates
+  from the branch's own sources and fails on the diff — enforcing the
+  opposite of §3.3.
   [#277](https://github.com/thrillmade/logmind/issues/277) reports this;
-  logmind's own copy and its shipped `v11` template are already correct, so
-  it is a propagation problem carried by #257, not new code here.
+  logmind's own copy and its shipped template are already correct, so it is a
+  propagation problem carried by #257, not new code here.
 - **Hooks resolve their engine by bare name**
   ([#270](https://github.com/thrillmade/logmind/issues/270)), so any PATH
   skew silently disables the local gate. §3.4 requires fail-open, and that

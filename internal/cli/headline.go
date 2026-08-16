@@ -37,7 +37,10 @@ decision file and copied verbatim into docs/timeline.md. The <date>-<slug>
 key stays stable — only the sentence changes, so you can refine it as the
 branch grows.
 
-A no-op on the default branch (which logs to docs/decisions.md directly).
+Applies on every branch, the default branch included: main's decisions live in
+its own branch file like every other branch's (SPEC §3.2), and that file
+carries a marker and a timeline row like every other branch's too. Identical
+to the -H/--headline flag on 'logmind log'.
 Set LOGMIND_PR to append a (#NN) suffix to the visible line.
 
 Example:
@@ -86,10 +89,15 @@ func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr i
 	} else {
 		docsPath := filepath.Join(cwd, "docs")
 		t, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
-		if !isBranchFile {
-			q.chat("Branch summaries apply on a feature branch; the default branch logs to docs/decisions.md directly.\n")
+		if !branchSummaryApplies(isBranchFile) {
+			// Not a default-branch refusal — the default branch gets a summary
+			// like every other branch. This is the case where `logmind log`
+			// itself would not write a branch file, so there is no §1.6.3
+			// marker to set a headline in: branch_aware off, non-git, or a
+			// detached HEAD. Use --file to target a branch file directly.
+			q.chat("Branch summaries live in a branch decision file, and `logmind log` would not write one here (detached HEAD, not a git repo, or decisions.branch_aware is off). Use --file docs/decisions-branches/<branch>.md to target one directly.\n")
 			if quiet {
-				q.ok("headline state=skipped reason=default-branch")
+				q.ok("headline state=skipped reason=no-branch-file")
 			}
 			return nil
 		}
@@ -160,4 +168,65 @@ func relForOk(cwd, target string) string {
 		return target
 	}
 	return filepath.ToSlash(rel)
+}
+
+// branchSummaryApplies reports whether a one-sentence branch summary CAN be
+// set where `logmind log` would write right now. The two ways to set one share
+// this single answer so they cannot disagree: `logmind headline <summary>` and
+// `logmind log --headline`'s marker write.
+//
+// Distinct from branchSummaryNudgeApplies, which asks whether logmind should
+// PROMPT for one unasked. "Can the user set this" and "should we interrupt to
+// ask for it" are different questions and collapsing them is what produced the
+// bug below — the prompt's reasonable reticence about main leaked onto the
+// command whose entire job is to set the thing.
+//
+// The answer is "wherever a branch file is written", with no default-branch
+// exception, because the §1.6.3 marker the summary lives in has none. As of
+// v2.0.0 main-canonical is the sole timeline model: log.go writes a marker
+// into EVERY branch file it creates, main.md included, and timeline.Generate
+// renders a row from each. So main.md already carries a headline — seeded
+// from the first decision's summary — and it is already rendered into
+// docs/timeline.md.
+//
+// This function used to AND in onNonDefaultBranch, on the argument that main
+// has no in-flight unit of work for one sentence to describe. The argument
+// does not survive what the code does: the sentence is being written on main
+// either way, `logmind log -H` overwrites it happily, and doctor's
+// placeholder-summary report names main.md and tells the reader to enrich it.
+// The gate only ever stopped the ONE command named after the job from doing
+// it — `logmind headline "x"` refused on main and left the seeded placeholder
+// standing, while `logmind log … -H "x"` two lines later replaced it. The
+// shipped AGENTS.md block presents them as interchangeable forms of one
+// operation ("It applies on every branch — the default branch is a branch
+// like any other"), which is now true of both.
+//
+// It remains NOT a decision-routing rule. SPEC §3.2 has exactly one of those
+// and this is not it (resolveDecisionsPath). The parameter is the routing
+// decision's OUTPUT: a summary belongs where a branch file does, so the two
+// answers move together by construction.
+func branchSummaryApplies(isBranchFile bool) bool {
+	return isBranchFile
+}
+
+// branchSummaryNudgeApplies reports whether `logmind log` should PROMPT for a
+// branch summary it was not given — the unasked-for interruption, not the
+// capability.
+//
+// Everything branchSummaryApplies requires, plus a non-default branch. The
+// summary captions a bounded unit of work: the branch this PR is about, from
+// its first decision to its merge. The default branch has no such unit — main
+// is permanent and its file is never "the branch this PR is about" — so
+// prompting "summarise the whole branch" after every direct-to-main log asks
+// for a sentence nobody can write, on a cadence nobody asked for.
+//
+// That reticence is right for a PROMPT and wrong for a COMMAND, which is the
+// whole distinction this pair of functions exists to hold. main.md carries a
+// §1.6.3 marker like every other branch file (log.go writes one on creation)
+// and timeline.Generate renders a row from it, so the sentence exists on main
+// whether or not anyone is asked for it — seeded from the first decision's
+// summary. `logmind headline` and `logmind log -H` must therefore be able to
+// refine it there; only the unprompted nudge stays quiet.
+func branchSummaryNudgeApplies(cwd string, isBranchFile bool) bool {
+	return branchSummaryApplies(isBranchFile) && onNonDefaultBranch(cwd)
 }

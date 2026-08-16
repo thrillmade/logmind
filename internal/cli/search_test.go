@@ -7,7 +7,8 @@
 //   - highlighting works for a query containing regex-special characters
 //   - scope: a term living ONLY in docs/decisions.md IS found while on an
 //     unrelated feature branch; a branch-file-only term is also found there
-//   - --case-sensitive / --no-archive flag matrix (table-driven)
+//   - --case-sensitive / --no-archive flag matrix (table-driven), including
+//     that a legacy docs/decisions-archive.md is searched either way
 //   - empty query → error
 //   - no matches → friendly message, exit 0
 //   - --quiet collapses stdout to exactly one `ok k=v` line
@@ -104,22 +105,22 @@ func TestSearch_LiteralSemantics(t *testing.T) {
 	}
 }
 
-// TestSearch_Scope_SpansMainAndBranch: search must span docs/decisions.md
-// (main's decisions) AND the current branch file even when checked out on an
-// unrelated feature branch — a term living ONLY in decisions.md is found, and
-// a term living ONLY in the branch file is found.
-func TestSearch_Scope_SpansMainAndBranch(t *testing.T) {
+// TestSearch_Scope_LegacyMainLogAndBranch: search must span the pre-§3.2
+// docs/decisions.md, where one still exists, AND the current branch file even
+// when checked out on an unrelated feature branch.
+func TestSearch_Scope_LegacyMainLogAndBranch(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
-		// A decision on main → docs/decisions.md.
-		withFakeTTY(t, false, func() { logOnce(t, "Use PostgreSQL for storage") })
+		// A leftover main log from before §3.2 collapsed the layout.
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"## 2026-06-01 10:00 - Use PostgreSQL for storage\n\n**Reasoning:** why\n\n---\n")
 
 		// Move to an unrelated feature branch and log there.
 		checkoutBranch(t, d, "feat/unrelated")
 		withFakeTTY(t, false, func() { logOnce(t, "Add rate limiting") })
 
-		// Main's decision IS found from the feature branch.
+		// The legacy main log IS still searched from the feature branch.
 		body := runSearchCmd(t, "PostgreSQL")
 		mustContain(t, body, "Found 1 match for: PostgreSQL")
 		mustContain(t, body, "docs/decisions.md")
@@ -145,8 +146,17 @@ func TestSearch_FlagMatrix(t *testing.T) {
 		{name: "case-insensitive default matches mixed case", query: "postgresql", wantHit: true},
 		{name: "case-sensitive rejects mismatched case", query: "postgresql", extraArgs: []string{"--case-sensitive"}, wantHit: false},
 		{name: "case-sensitive accepts exact case", query: "PostgreSQL", extraArgs: []string{"--case-sensitive"}, wantHit: true},
-		{name: "archive included by default", query: "archived-term", wantHit: true},
-		{name: "no-archive excludes the archive", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: false},
+		// §3.2 stopped rotation, so nothing writes docs/decisions-archive.md
+		// any more — but a file left behind by a pre-§3.2 binary holds real
+		// decisions and IS searched by default. "A decision written is a
+		// decision kept."
+		{name: "a leftover archive IS searched by default", query: "archived-term", wantHit: true},
+		// --no-archive means what its name and every shipped AGENTS.md say:
+		// the archive comes OUT of the scan. The pair above/below is the
+		// control — same repo, same query, only the flag differs — so a
+		// no-op implementation cannot pass both.
+		{name: "--no-archive excludes the archive", query: "archived-term", extraArgs: []string{"--no-archive"}, wantHit: false},
+		{name: "--no-archive leaves the non-archive sources alone", query: "PostgreSQL", extraArgs: []string{"--no-archive"}, wantHit: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

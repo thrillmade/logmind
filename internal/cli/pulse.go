@@ -19,7 +19,7 @@
 //   - Main-decisions pulse (v2.0.0 derived-docs-on-main freshness layer): on a
 //     NON-default branch, the last-fetched origin/<default> remote-tracking
 //     ref carries one or more decision-touching commits (docs/decisions.md,
-//     docs/decisions-branches/, docs/decisions-archive.md) the branch does
+//     docs/decisions-branches/) the branch does
 //     not yet have — see mainDecisionsPulseLine:
 //     `logmind: main has <n> new decision commit(s) — run 'logmind warp' to catch up`
 //
@@ -69,12 +69,12 @@ import (
 
 // specPulseThreshold is the number of decision entries that must postdate
 // context.spec_file's last git commit before the spec pulse fires.
-// Implementation-defined (no SPEC-mandated value, hence no config key): 20
-// mirrors decisions.max_recent's default archive-rotation size — roughly
-// "an archive-rotation's worth of decisions have landed since anyone
-// touched the spec" is a reasonable staleness bar for a hand-authored,
-// forward-looking doc that (unlike timeline.md / file-structure.md) is
-// never auto-regenerated.
+// Implementation-defined (no SPEC-mandated value, hence no config key): 20 is
+// roughly "a couple of weeks of decisions have landed since anyone touched the
+// spec", a reasonable staleness bar for a hand-authored, forward-looking doc
+// that (unlike the derived docs) is never auto-regenerated. It is deliberately
+// unrelated to §3.3's 50-entry timeline bound: that one governs how much
+// history a reader is shown, this one how long a spec may sit unexamined.
 const specPulseThreshold = 20
 
 // emitPulse prints ZERO, ONE, or TWO advisory lines to stderr — drift
@@ -153,7 +153,7 @@ func driftPulseLine(cwd string) (string, bool) {
 //     shouldn't turn around and ask "is this still accurate?" about the
 //     file it's mid-edit on. See gitcli.StatusPorcelain.
 //   - at least specPulseThreshold decision entries — collected from
-//     docs/decisions.md, docs/decisions-archive.md, and
+//     docs/decisions.md and
 //     docs/decisions-branches/*.md via decisions.Collect, the same
 //     aggregator `logmind timeline` uses — carry a `## YYYY-MM-DD HH:MM`
 //     header timestamp strictly AFTER the spec file's last commit
@@ -235,7 +235,7 @@ func mainDecisionsPulseLine(cwd string) (string, bool) {
 		return "", false
 	}
 	out, _, err := gitcli.RunCaptured(cwd, "rev-list", "--count", "HEAD..origin/"+def, "--",
-		"docs/decisions.md", "docs/decisions-branches", "docs/decisions-archive.md")
+		"docs/decisions.md", "docs/decisions-branches")
 	if err != nil {
 		return "", false
 	}

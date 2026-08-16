@@ -124,8 +124,14 @@ type GitConfig struct {
 }
 
 // DecisionsConfig mirrors the `decisions:` section.
+//
+// `max_recent` used to live here, capping docs/decisions.md and rotating the
+// overflow into docs/decisions-archive.md. SPEC §3.2 removed the cap outright
+// — every decision file is append-only and uncapped — so the key is gone. A
+// config that still carries it is not an error: §1.6 requires an unrecognised
+// key to be ignored and round-tripped unchanged, which is what LoadAsMap's
+// merge does with any key this struct does not name.
 type DecisionsConfig struct {
-	MaxRecent   int  `yaml:"max_recent"`
 	BranchAware bool `yaml:"branch_aware"`
 }
 
@@ -269,7 +275,6 @@ func DefaultConfig() Config {
 			CommitLineThreshold:   20,
 		},
 		Decisions: DecisionsConfig{
-			MaxRecent:   20,
 			BranchAware: true,
 		},
 		FileStructure: FileStructureConfig{
@@ -387,7 +392,6 @@ func DefaultMap() *OrderedMap {
 	root.Set("git", git)
 
 	decisions := NewOrderedMap()
-	decisions.Set("max_recent", 20)
 	decisions.Set("branch_aware", true)
 	root.Set("decisions", decisions)
 

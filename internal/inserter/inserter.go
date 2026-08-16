@@ -19,8 +19,11 @@
 //     quotes — matches the Python v0.6.11+ widened pattern.
 //
 //   - Template version markers gate "is the installed block stale".
-//     `<!-- logmind-block-version: v8 -->` for the full template,
-//     `<!-- logmind-block-version: v9-pointer -->` for slim (the
+//     `<!-- logmind-block-version: v9 -->` for the full template,
+//     `<!-- logmind-block-version: v10-pointer -->` for slim (the §3.2
+//     layout-collapse wave bumped full v8→v9 AND slim
+//     v9-pointer→v10-pointer — both bodies dropped docs/decisions.md from
+//     required reading, so both markers had to move; the
 //     stale-binary-hardening / enforcement wave bumped full v7→v8 and
 //     slim v8-pointer→v9-pointer; the Slice-2 branch-summary wave bumped
 //     the full template v6→v7; v0.6.16 bumped it v5→v6 and the slim
@@ -379,17 +382,38 @@ func agentTemplate(agentName string) string {
 	return templates.Stub()
 }
 
-// jsonAgentBody is the verbatim JSON template Python ships for cody
-// and zed. Both tools take the same body — preserved as a single
-// string constant here for byte-identical parity.
+// jsonAgentBody is the shared JSON body written to .sourcegraph/cody.json
+// and .zed/settings.json (see internal/agents registry). Both tools take
+// the same body.
+//
+// This is NOT the verbatim Python string any more, and deliberately so.
+// Python's version predates SPEC §3.2 and pointed both tools at
+// docs/decisions.md as "recent decisions" — the one file the branch-aware
+// write path never writes. An agent that loaded this config read a legacy
+// file that is empty in every repo initialised after §3.2, and never saw
+// docs/decisions-branches/ or docs/timeline.md at all. Byte-parity with a
+// pre-§3.2 Python release is not worth shipping two AI tools a stale map.
+//
+// Ordering mirrors the canonical reading order in skill/SKILL.md and
+// AGENTS.md.template: timeline first (the source-derived union of every
+// branch), then the per-branch detail, then the tree. docs/decisions.md
+// stays LAST and is still listed — it is read-where-it-exists legacy, and a
+// repo that predates §3.2 keeps its history findable.
+//
+// docs/decisions-branches/ is named as a directory: the branch file's name
+// is not known when this config is written, and both tools accept a
+// directory in this list. Entries that do not exist yet are inert in both.
 func jsonAgentBody() string {
 	return `{
   "logmind": {
     "enabled": true,
-    "description": "This project uses logmind for decision tracking. See docs/decisions.md for recent decisions.",
+    "description": "This project uses logmind for decision tracking. Decisions live in docs/decisions-branches/<branch>.md — one file per branch, the default branch included (main.md). Start from docs/timeline.md, the source-derived union of every branch.",
     "context_files": [
-      "docs/decisions.md",
-      "docs/file-structure.md"
+      "docs/timeline.md",
+      "docs/timeline-archive.md",
+      "docs/decisions-branches/",
+      "docs/file-structure.md",
+      "docs/decisions.md"
     ]
   }
 }
@@ -475,9 +499,15 @@ func EnsureAgentsMD(repoRoot string) (string, *AgentsBlockRefusal, error) {
 }
 
 // agentsMDTemplate returns the canonical AGENTS.md body. Defaults to
-// slim per SPEC §1.1 (the v9-pointer variant — defers to skills.sh;
-// the stale-binary-hardening / enforcement wave bumped this from
-// v8-pointer, which itself bumped it from v7-pointer).
+// slim per SPEC §1.1 (the v10-pointer variant — defers to skills.sh; the
+// §3.2 layout-collapse wave bumped this from v9-pointer, which the
+// stale-binary-hardening / enforcement wave bumped from v8-pointer, which
+// itself bumped it from v7-pointer).
+//
+// This default is why the slim marker is the one that MATTERS: a body change
+// shipped under an unchanged slim marker reaches every repo scaffolded
+// without an explicit flavour request, and `logmind doctor` calls all of them
+// current.
 // The Python implementation auto-detects skills availability; the Go
 // binary defaults to slim because:
 //
@@ -576,7 +606,7 @@ func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, *AgentsBl
 }
 
 // blockVersionRE captures the version token out of an AGENTS.md block
-// marker: `<!-- logmind-block-version: v9-pointer -->` → "v9-pointer".
+// marker: `<!-- logmind-block-version: v10-pointer -->` → "v10-pointer".
 // Mirrors internal/doctor's logmindBlockVersionRe — doctor PROBES the
 // marker, inserter WRITES against it, so the pattern lives once per side
 // of that boundary.
@@ -635,8 +665,10 @@ type blockPlan struct {
 //     {v5,v6,v7,v8,v7-pointer,v8-pointer,v9-pointer} set, which made
 //     every FUTURE generation "unrecognised" — and EnsureAgentsMD read
 //     unrecognised as "install the slim default", silently downgrading
-//     any repo a newer binary had moved forward (#267). Extending that
-//     set to v10, v11, ... would re-break at the next bump; ordering
+//     any repo a newer binary had moved forward (#267). That set is
+//     already one bump out of date (slim ships v10-pointer now), which is
+//     the point: extending it to v10, v11, ... would re-break at the next
+//     bump; ordering
 //     against the bundled marker cannot go stale, because the next
 //     generation is newer by arithmetic rather than by enumeration.
 //     Mixed binary versions is not an edge case during a fleet migration

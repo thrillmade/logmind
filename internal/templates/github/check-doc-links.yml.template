@@ -1,4 +1,4 @@
-# logmind-template-version: v9
+# logmind-template-version: v10
 name: logmind / check-links
 
 # Flag broken or orphaned markdown links so agents stay in context when
@@ -62,6 +62,27 @@ name: logmind / check-links
 # warns if the two have since drifted apart. Same ruling as the credential
 # chain and the regen refspec: logmind must work standalone, which means
 # assuming nothing about how a repository is set up.
+#
+# v10 — the derived-doc self-heal regenerates the ARCHIVE too. The history is
+# rendered in two halves since §3.3 (docs/timeline.md carries the
+# __LOGMIND_RECENT_LIMIT__ most recent entries, docs/timeline-archive.md the
+# remainder), and `logmind timeline --write` writes the ONE file it is
+# given — so the pair is two invocations, exactly as regen-timeline.yml v13
+# already does it. This step
+# ran only the timeline and the map, so a broken link living in the archive
+# survived every self-heal pass: the job re-ran, changed nothing, and
+# reported the same finding next time. Worse, linkcheck's own advice for an
+# archive-sourced break is `logmind timeline --write docs/timeline-archive.md
+# --half archive` (internal/linkcheck: remediation heuristic) — the workflow
+# printed a fix it could not itself run.
+#
+# The marker bump is the point, not paperwork. `doctor` and
+# logmind-self-update compare the `# logmind-template-version:` marker, never
+# the body, so a content-only fix would leave every repo already running v9
+# with the two-of-three self-heal forever and no drift row to say so. The
+# cost is the designed one: consumers see check-doc-links.yml flagged stale
+# and refreshed on the next `logmind doctor --fix` / self-update, which
+# overwrites local edits to that file — the same trade every prior bump made.
 
 on:
   pull_request:
@@ -254,8 +275,12 @@ jobs:
 
           # Auto-fix common derived-doc cases by re-running the regen
           # commands (idempotent; no-op when content is already correct).
+          # `logmind timeline --write` writes the ONE file named, so the
+          # two halves of the history are two invocations (§3.3). Omitting
+          # the archive left archive-sourced breaks unfixable by this job.
           if [ -d docs ]; then
             logmind timeline --write docs/timeline.md || true
+            logmind timeline --write docs/timeline-archive.md --half archive || true
             logmind file-structure --write docs/file-structure.md || true
           fi
 

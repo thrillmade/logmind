@@ -62,10 +62,17 @@ const (
 	// CarveOutCherryPickOrRevert: .git/CHERRY_PICK_HEAD or
 	// .git/REVERT_HEAD exists.
 	CarveOutCherryPickOrRevert CarveOut = "cherry-pick-or-revert-in-progress"
-	// CarveOutDecisionFileStaged: a decision-log file (docs/decisions.md,
-	// docs/decisions-branches/*.md, or any path ending in "/decisions.md")
-	// is already staged — the commit IS the documentation.
-	CarveOutDecisionFileStaged CarveOut = "decision-file-staged"
+	// CarveOutDecisionRecorded: the staged change WROTE a well-formed
+	// §3.1 entry into a decision-log file — the commit IS the
+	// documentation. Staging the file is not enough; see DecisionRecorded.
+	//
+	// The token reads `decision-recorded`, not the `decision-file-staged`
+	// it was through v2.0. It is printed to a human ("✓ guard-commit:
+	// allowed (decision-recorded)") and the old spelling names the
+	// question this gate STOPPED asking — the one a content-free file
+	// passed. Nothing parses it: the commit-msg hook branches on exit
+	// status alone, and the line is suppressed under --quiet.
+	CarveOutDecisionRecorded CarveOut = "decision-recorded"
 	// CarveOutUnderThreshold: the computed substantive-line count is below
 	// the configured threshold — too small to be worth a decision log.
 	CarveOutUnderThreshold CarveOut = "under-threshold"
@@ -126,7 +133,7 @@ func allowedBy(carveOut CarveOut, lines int) Decision {
 //  4. git is mid-rebase/merge/cherry-pick/revert → Allow (the matching
 //     in-progress carve-out) — these are git-internal commits, not
 //     developer-authored ones.
-//  5. a decision-log file is already staged → Allow (decision-file-staged)
+//  5. the staged change RECORDED a decision → Allow (decision-recorded)
 //  6. substantive lines < threshold       → Allow (under-threshold)
 //  7. otherwise                           → Block, with a Reason
 func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
@@ -175,11 +182,19 @@ func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
 		return allowedBy(CarveOutCherryPickOrRevert, 0)
 	}
 
-	// 5. The commit itself documents the decision.
-	for _, f := range gitcli.DiffCachedNames(repoRoot) {
-		if IsDecisionFile(f) {
-			return allowedBy(CarveOutDecisionFileStaged, 0)
-		}
+	// 5. The commit itself documents the decision — RECORDED, not merely
+	// staged. The index is the right scope in both modes: this asks what
+	// the commit about to be made will carry, and a decision file sitting
+	// unstaged carries nothing into it.
+	evidence, _ := DecisionRecorded(gitcli.DiffCachedNames(repoRoot), func(path string) ([]gitcli.AddedHunk, error) {
+		// DiffCachedAddedHunks is best-effort by contract (nil on any git
+		// failure), so there is no error to propagate here — a git that
+		// cannot answer yields no added lines, which fails CLOSED into the
+		// line count below rather than into an allow.
+		return gitcli.DiffCachedAddedHunks(repoRoot, path), nil
+	})
+	if evidence.Recorded {
+		return allowedBy(CarveOutDecisionRecorded, 0)
 	}
 
 	// 6/7. Compute the substantive-line count per the requested diff mode
@@ -189,14 +204,38 @@ func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
 		return allowedBy(CarveOutUnderThreshold, lines)
 	}
 	return Decision{
-		Allow: false,
-		Lines: lines,
-		Reason: fmt.Sprintf(
-			"%d lines changed without a decision log — record it with `logmind log` "+
-				"(or add [skip-logmind] to the subject / set LOGMIND_ALLOW_GIT_COMMIT=1 to bypass)",
-			lines,
-		),
+		Allow:  false,
+		Lines:  lines,
+		Reason: blockReason(lines, evidence.Touched),
 	}
+}
+
+// blockEscapeHatches names SPEC §3.4's two per-commit escapes. One owner
+// for the sentence: a block that names the remedy and forgets the escapes
+// (or names them in one branch below and not the other) is a gate the
+// author cannot get past without guessing.
+const blockEscapeHatches = "record it with `logmind log` " +
+	"(or add [skip-logmind] to the subject / set LOGMIND_ALLOW_GIT_COMMIT=1 to bypass)"
+
+// blockReason renders Evaluate's Block explanation. `touched` names the
+// decision files the change wrote to WITHOUT recording anything a §3.1
+// reader can find.
+//
+// That second shape needs its own sentence. Reporting the bare "N lines
+// changed without a decision log" over a diff that visibly stages
+// docs/decisions.md reads as a bug in the gate — the author looks at the
+// index, sees the decision file, and concludes the block is spurious. It
+// is not: the file is there and the entry is not, and only the message can
+// say which.
+func blockReason(lines int, touched []string) string {
+	if len(touched) == 0 {
+		return fmt.Sprintf("%d lines changed without a decision log — %s", lines, blockEscapeHatches)
+	}
+	return fmt.Sprintf(
+		"%d lines changed without a decision log — %s is staged but adds no entry a §3.1 reader "+
+			"can find (a title, a timestamp, and non-empty reasoning), so it documents nothing; %s",
+		lines, strings.Join(touched, ", "), blockEscapeHatches,
+	)
 }
 
 // collectRows gathers the gitcli.NumstatLine rows relevant to mode.
@@ -228,14 +267,101 @@ func collectRows(repoRoot string, mode DiffMode) []gitcli.NumstatLine {
 	}
 }
 
-// IsDecisionFile reports whether path is a decision-log file. Moved
-// verbatim from internal/cli/check_decisions.go's former isDecisionFile so
-// both check-decisions and guard-commit share one predicate:
+// AddedHunksFunc reports the lines a change ADDED to one repo-relative
+// path, grouped by hunk and with git's leading "+" already stripped:
+// gitcli.DiffCachedAddedHunks for an index, gitcli.DiffRangeAddedHunks
+// for a base...head range.
+//
+// Taking the reader as a parameter is what lets the two local
+// interception points and the CI gate share DecisionRecorded's judgement
+// while each keeps its own diff scope. The alternative — passing a
+// repoRoot and a mode — would put every scope this rule is ever judged
+// over inside this package, which is how the scopes drift.
+//
+// It reports HUNKS rather than one flat list because the gate reads
+// structure — a §3.1 section and the body under it — and structure only
+// means anything within a run of lines that are actually adjacent in the
+// file. See gitcli.AddedHunk for the hole a flat list opened.
+type AddedHunksFunc func(path string) ([]gitcli.AddedHunk, error)
+
+// DecisionEvidence is DecisionRecorded's answer.
+type DecisionEvidence struct {
+	// Recorded is the gate's actual question: the change ADDED a
+	// §3.1-well-formed entry to a decision file.
+	Recorded bool
+	// Touched names the decision files the change wrote to without
+	// recording anything well-formed. Empty whenever Recorded is true —
+	// it exists only so a BLOCK can name the file that was staged in vain.
+	Touched []string
+}
+
+// DecisionRecorded answers "did this change record a decision?" — the ONE
+// question every enforcement surface asks, and the one place it is
+// answered. `logmind guard-commit` (Evaluate's carve-out 5) and the
+// `check-decisions` gate (internal/cli/check_decisions.go) both route
+// through it.
+//
+// Two halves, and BOTH are required:
+//
+//   - the path is a decision file (isDecisionFile), and
+//   - the lines the change ADDED to it carry an entry that is well-formed
+//     under §3.1 (WellFormedDecisionAdded).
+//
+// The path half alone is not an answer, and shipping it as one was a live
+// gate hole: since SPEC §3.2, docs/decisions.md is an install sentinel
+// that "is not written to, and holds no decisions of its own", so
+// `git add docs/decisions.md` staged a file logmind itself had written and
+// cleared the commit gate for any amount of code. Measured on the PR head:
+// 302 lines of new Go, sentinel staged, `guard-commit --layer git-hook`
+// exit 0 "allowed (decision-file-staged)". check-decisions asked the
+// second half and guard-commit did not, which is the whole defect — two
+// callers of one path predicate, two different answers to the question the
+// SPEC actually poses. There is now no exported way to ask the path half
+// on its own.
+//
+// SPEC §3.4: "A decision clears the gate by being written, not by
+// existing. ... MUST NOT be satisfied by the decision file merely
+// appearing in the diff."
+//
+// The error is addedHunks' own and is returned unwrapped, so the gate's
+// loud-on-failure contract (an unresolvable ref must not read as an empty
+// diff) survives the trip through here.
+func DecisionRecorded(names []string, addedHunks AddedHunksFunc) (DecisionEvidence, error) {
+	var ev DecisionEvidence
+	for _, path := range names {
+		if !isDecisionFile(path) {
+			continue
+		}
+		hunks, err := addedHunks(path)
+		if err != nil {
+			return DecisionEvidence{}, err
+		}
+		if WellFormedDecisionAdded(hunks) {
+			return DecisionEvidence{Recorded: true}, nil
+		}
+		ev.Touched = append(ev.Touched, path)
+	}
+	return ev, nil
+}
+
+// isDecisionFile reports whether path is a decision-log file:
 //
 //   - exact path "docs/decisions.md"
 //   - suffix "/decisions.md" (covers nested decisions.md)
 //   - prefix "docs/decisions-branches/" (per-branch decision files)
-func IsDecisionFile(path string) bool {
+//
+// UNEXPORTED on purpose. It answers "is this the kind of file a decision
+// lives in", which is only ever half of "did this change record a
+// decision" — and the half that a content-free file passes. It was
+// exported once, one caller asked it alone, and that caller was the
+// commit gate. DecisionRecorded is the exported question; this is an
+// implementation detail of it.
+//
+// docs/decisions.md stays on the list even though nothing writes it since
+// §3.2: a repository that predates the collapse carries a real decision
+// log at that path, and a change that appends an entry there has recorded
+// a decision by any reading of §3.4.
+func isDecisionFile(path string) bool {
 	if path == "docs/decisions.md" {
 		return true
 	}
@@ -253,6 +379,15 @@ func IsDecisionFile(path string) bool {
 // with nothing under it is malformed, not merely sparse.
 const reasoningMarker = "**Reasoning:**"
 
+// sectionMarkers are the section headers SPEC §3.1 NAMES — the three in
+// its entry template, in its spelling, and no others. isSectionHeader
+// tests against this list; see it for why a list and not a shape.
+var sectionMarkers = []string{
+	reasoningMarker,
+	"**Alternatives considered:**",
+	"**Implications:**",
+}
+
 // WellFormedDecisionAdded reports whether the lines a diff ADDED to a
 // decision file carry an entry well-formed enough to clear the
 // `check-decisions` gate.
@@ -264,22 +399,59 @@ const reasoningMarker = "**Reasoning:**"
 // the diff. A test that asks only whether the file was touched is passed
 // by a single meaningless line."
 //
-// added is the diff's added lines with git's leading "+" already
-// stripped, in file order. Title and timestamp come free from
-// decisions.SplitRawBytes, which only opens an entry on a line matching
-// `## YYYY-MM-DD HH:MM - <title>` whose date/time actually parses — the
-// same boundary rule every other reader in this codebase uses. This
-// function adds §3.4's one extra requirement on top: non-empty reasoning.
+// hunks is the diff's added lines with git's leading "+" already
+// stripped, grouped by hunk and in file order. Title and timestamp come
+// free from decisions.SplitRawBytes, which only opens an entry on a line
+// matching `## YYYY-MM-DD HH:MM - <title>` whose date/time actually
+// parses — the same boundary rule every other reader in this codebase
+// uses. This function adds §3.4's one extra requirement on top:
+// non-empty reasoning.
+//
+// EACH HUNK IS JUDGED ON ITS OWN, and that is the load-bearing part.
+// An entry is a structure — a title, then a section header, then a body
+// under it — and a structure only exists among lines that are adjacent
+// in the file. Under -U0 a hunk's added lines are exactly one contiguous
+// range of the new file; two hunks are separated by content this change
+// never wrote. Judging the concatenation lets a section opened in one
+// hunk be satisfied by prose added somewhere else entirely, which is the
+// gate reading an entry that is not in the file. Measured: an empty
+// `**Reasoning:**` plus one unrelated bullet added further down cleared
+// BOTH surfaces for 302 lines of new Go, while the identical change
+// minus that bullet was refused by both.
+//
+// The sanctioned path is unaffected, and that is measured rather than
+// assumed: `logmind log` APPENDS a whole entry, and git renders a pure
+// append as one hunk — three consecutive `logmind log` commits into a
+// populated branch file, one hunk each (`@@ -42,0 +43,12 @@` for the
+// third). §3.2 makes every decision file append-only for the same
+// reason, so this is the shape the record is written in.
+//
+// KNOWN COST, and it is a real one. A change that REWRITES a decision
+// file rather than appending to it can have a single genuine entry
+// shredded across hunks, because git matches the blank lines BETWEEN its
+// sections as context. Measured, replacing `logmind init`'s seed entry
+// with a hand-written one: three hunks, holding the title, the
+// `**Reasoning:**` header and the body line respectively, and this
+// function refuses it. The stricter rule is the safe direction — it
+// fails CLOSED, and `logmind log` is the path that shape was meant to
+// take anyway — but it is a refusal of a genuinely written decision, and
+// the honest fix is a rule that judges the entry as it will read IN THE
+// FILE while requiring both its title and at least one line of its
+// reasoning body to be lines this change wrote. That needs a reader that
+// reports untouched context alongside added lines; it is not this
+// change.
 //
 // Note this is shape, not quality — §3.4 is explicit that "a determined
 // author can still write three plausible sentences that explain nothing,
 // and no gate can catch that." What it removes is the version that costs
 // nothing.
-func WellFormedDecisionAdded(added []string) bool {
-	_, entries := decisions.SplitRawBytes(strings.Join(added, "\n"))
-	for _, e := range entries {
-		if hasReasoning(e.Raw) {
-			return true
+func WellFormedDecisionAdded(hunks []gitcli.AddedHunk) bool {
+	for _, hunk := range hunks {
+		_, entries := decisions.SplitRawBytes(strings.Join(hunk, "\n"))
+		for _, e := range entries {
+			if hasReasoning(e.Raw) {
+				return true
+			}
 		}
 	}
 	return false
@@ -287,22 +459,48 @@ func WellFormedDecisionAdded(added []string) bool {
 
 // hasReasoning reports whether raw carries a reasoningMarker section with
 // content under it. Content may sit on the marker's own line (what
-// `logmind log` writes) or on the lines that follow it up to the first
-// blank line (a hand-written entry that wrapped). A marker with neither
-// is an empty section and does not count.
+// `logmind log` writes) or anywhere below it until the section ends. A
+// marker with nothing at all under it is an empty section and does not
+// count.
 //
-// A section also ends at the NEXT section header, not only at a blank
-// line. §3.1's entry format separates sections with a blank line, but an
-// entry that omits it is still an entry a consumer "MUST treat ... as
-// absent rather than as a parse error" — and without this the following
-// header's own text is swallowed as the previous section's body, so
+// A SECTION ENDS AT THE NEXT SECTION HEADER OR AT THE ENTRY TERMINATOR —
+// NOT AT A BLANK LINE. §3.1's own template separates sections with a
+// blank line, but a blank line inside a section is a paragraph break, and
+// treating it as the end reads an ordinary hand-written entry
+//
+//	**Reasoning:**
+//
+//	Three sentences of prose that say exactly why.
+//
+//	---
+//
+// as an EMPTY reasoning section and blocks the commit. Measured across
+// four identically-built repos before this was fixed: reasoning inline on
+// the marker line → exit 0; wrapped onto the next line with no blank →
+// exit 0; a blank line after the marker → exit 65; a bullet list after a
+// blank → exit 65. The last two carry real reasoning. §3.1 also forbids
+// the shape this was implicitly assuming: a consumer "MUST NOT require a
+// section order beyond the title coming first and `---` terminating the
+// entry", and "the body starts on the marker's line or the one after it"
+// is exactly such a requirement.
+//
+// The next-section-header stop is what keeps the loosening honest. §3.1
+// says a producer MUST omit an empty section's header, so
 //
 //	**Reasoning:**
 //	**Alternatives considered:** none
 //
-// reads as non-empty reasoning when §3.1 defines it as an empty section.
-// That is the "single meaningless line" §3.4 rejects, one blank line away
-// from being caught.
+// is an empty reasoning section, and without the header stop the
+// following header's own text would be swallowed as this section's body
+// — the "single meaningless line" §3.4 rejects. Blank-separated or not
+// makes no difference to that, which is the point: the header ends the
+// section either way.
+//
+// Scope note: raw is one entry within ONE hunk — cut by
+// decisions.SplitRawBytes at its own title and at the next one, and by
+// WellFormedDecisionAdded at the hunk boundary — so this scan can run
+// into neither a neighbouring entry's prose nor lines the change added
+// somewhere else in the file.
 func hasReasoning(raw string) bool {
 	lines := strings.Split(raw, "\n")
 	for i, line := range lines {
@@ -312,7 +510,7 @@ func hasReasoning(raw string) bool {
 		body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), reasoningMarker))
 		for _, next := range lines[i+1:] {
 			trimmed := strings.TrimSpace(next)
-			if trimmed == "" || isSectionHeader(trimmed) || trimmed == entryTerminator {
+			if isSectionHeader(trimmed) || trimmed == entryTerminator {
 				break
 			}
 			body += trimmed
@@ -328,22 +526,48 @@ func hasReasoning(raw string) bool {
 // terminating the entry"). Reasoning cannot run past it.
 const entryTerminator = "---"
 
-// isSectionHeader reports whether a trimmed line opens a new §3.1 section
-// — a bolded label, e.g. `**Alternatives considered:**`. Deliberately
-// shape-based rather than a fixed list of the known section names: §3.1
-// says a consumer "MUST NOT require a section order", and a hand-written
-// entry may carry a section this build has never heard of. Anything that
-// opens a bold run and carries a colon terminates the previous section.
+// isSectionHeader reports whether a trimmed line opens one of the §3.1
+// sections BY NAME — the line starts with a marker from sectionMarkers.
+//
+// A NAMED LIST, NOT A SHAPE. The shape rule this replaced ended the
+// previous section at anything that opened a bold run and carried a
+// colon, which is also how an ordinary paragraph opens:
+//
+//	**Reasoning:**
+//
+//	**Root cause:** the parser ended a section at the first blank line.
+//
+// read as an EMPTY reasoning section and refused the commit (measured:
+// exit 65 on the hook, exit 1 on the gate; the same entry with unbolded
+// prose in that line, exit 0 on both). That is round 15's own defect
+// recurring inside round 15's fix — the fix exists to let a reasoning
+// paragraph sit below its header, and a bolded lead-in is a common way
+// to open one.
+//
+// The shape rule was justified by §3.1's "MUST NOT require a section
+// order beyond the title coming first", but that clause argues against
+// requiring an ORDER, not against knowing the section NAMES: §3.1 names
+// them, in its own template. Order is still not required — sectionMarkers
+// is a set, matched wherever a section appears.
+//
+// What the named list gives up is terminating on a section §3.1 does not
+// name, so an empty `**Reasoning:**` followed by `**Provenance:** x`
+// reads the Provenance line as reasoning body. That is the cheaper error
+// of the two available, and no rule avoids both: `**Root cause:**` and
+// `**Provenance:**` are the same string shape, so a shape test cannot
+// tell body from header, and the version that guesses "header" refuses
+// entries that carry real reasoning. The entry that slips through still
+// carries prose a §3.1 reader can see — it is not §3.4's "single
+// meaningless line", which is what the header stop exists to catch and
+// which `**Alternatives considered:**` (named, so it still stops the
+// section) is the shape of.
 func isSectionHeader(trimmed string) bool {
-	if !strings.HasPrefix(trimmed, "**") {
-		return false
+	for _, marker := range sectionMarkers {
+		if strings.HasPrefix(trimmed, marker) {
+			return true
+		}
 	}
-	rest := trimmed[2:]
-	end := strings.Index(rest, "**")
-	if end < 0 {
-		return false
-	}
-	return strings.Contains(rest[:end], ":")
+	return false
 }
 
 // docsPrefix and configPrefix are the two directory exclusions of SPEC

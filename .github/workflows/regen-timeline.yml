@@ -1,10 +1,10 @@
 name: logmind / check-derived-docs
 
-# v2.0.0 derived-docs-on-main. The two derived docs are regenerated ONLY here on
+# v2.0.0 derived-docs-on-main. The derived docs are regenerated ONLY here on
 # main. On a PR this gate is NON-mutating and BLOCKING: it fails if the branch
-# edited either derived doc (which would cause cross-PR merge conflicts). A
-# branch's real decisions live in docs/decisions-branches/<branch>.md; timeline
-# and file-structure regenerate on main after merge.
+# edited any derived doc (which would cause cross-PR merge conflicts). A
+# branch's real decisions live in docs/decisions-branches/<branch>.md; the
+# timeline, its archive and file-structure regenerate on main after merge.
 #
 # v10: the zero-conflict invariant is now UNCONDITIONAL for every repo running
 # this workflow — v9's per-repo `derived_docs.mode: integration-point`
@@ -50,6 +50,27 @@ name: logmind / check-derived-docs
 # when the two have drifted apart. Same principle as the credential chain:
 # logmind must work standalone, which means assuming nothing about how a
 # repository is set up.
+#
+# v13: docs/timeline-archive.md joins the gate (SPEC §3.3, logmind#265). The
+# history is now rendered in two halves — docs/timeline.md carries the
+# 50 most recent entries and the archive the
+# remainder — and §3.3 governs all three alike: "A non-default branch MUST
+# NOT modify any derived file — the history, its archive, or the map." A
+# branch that edits the archive is blocked exactly as one that edits the
+# timeline. The regen step on the default branch names the archive
+# explicitly too: `logmind timeline --write` writes the ONE file it is
+# given, so the pair is two invocations. It used to be one, with the archive
+# inferred as a sibling of whatever path `--write` named — which dropped a
+# stray `timeline-archive.md` beside git's merge scratch file at the worktree
+# root, and, where a file of that name was tracked, replaced its contents.
+#
+# NOTE on the version number: this was v12 until logmind#301 round 5 caught
+# it colliding with a DIFFERENT, already in-flight v12 (logmind#314) — two
+# branches independently bumped v11 to v12 with unrelated content, and nothing
+# compared the two beyond the marker string matching. This archive change
+# moves to v13 so the two numbers stay one-to-one with one piece of content
+# each. v13's body is v12's body plus the archive: the credential chain and
+# the resolved default branch below are #314's and are NOT reverted here.
 
 on:
   pull_request:
@@ -115,8 +136,8 @@ jobs:
             echo "::warning title=Derived-doc regen is wired to the wrong branch::This workflow's 'on: push:' filter was scaffolded for '$SCAFFOLDED_BRANCH', but this repository's default branch is now '$DEFAULT_BRANCH'. The regen job therefore never fires, and the derived docs on '$DEFAULT_BRANCH' will drift stale — silently, because nothing else reports it. Fix: run 'logmind init --refresh' to rewrite the trigger."
           fi
           changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
-          if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|file-structure)\.md'; then
-            echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md and/or docs/file-structure.md. These are DERIVED, default-branch-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to the default branch's version — run 'logmind warp', or 'git checkout origin/$DEFAULT_BRANCH -- docs/timeline.md docs/file-structure.md' — then commit. Their real content regenerates on '$DEFAULT_BRANCH' after merge."
+          if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|timeline-archive|file-structure)\.md'; then
+            echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md, docs/timeline-archive.md and/or docs/file-structure.md. These are DERIVED, default-branch-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to the default branch's version — run 'logmind warp', or 'git checkout origin/$DEFAULT_BRANCH -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md' — then commit. Their real content regenerates on '$DEFAULT_BRANCH' after merge."
             exit 1
           fi
           echo "Branch did not edit the derived docs — the merge cannot conflict on them."
@@ -158,7 +179,10 @@ jobs:
       - name: Regenerate derived docs
         run: |
           set -euo pipefail
+          # Both halves of the SPEC §3.3 split, each named explicitly:
+          # `--write` writes the file it is given and no other.
           ./bin/logmind timeline --write docs/timeline.md
+          ./bin/logmind timeline --write docs/timeline-archive.md --half archive
           ./bin/logmind file-structure --write docs/file-structure.md
       # Rung 1: mint a short-lived (1 hour) App installation token, but only
       # when App credentials are actually configured. The `if:` reads the job
@@ -189,7 +213,7 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain -- docs/timeline.md docs/file-structure.md)" ]; then
+          if [ -z "$(git status --porcelain -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md)" ]; then
             echo "Derived docs already current on '$DEFAULT_BRANCH'."
             exit 0
           fi
@@ -226,7 +250,7 @@ jobs:
           # nothing and cost a line the two copies of this file could drift on.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/timeline.md docs/file-structure.md
+          git add docs/timeline.md docs/timeline-archive.md docs/file-structure.md
           git commit -m "[skip-logmind] chore: regen derived docs"
           # SPEC-2 §3.3: "Three outcomes, and they MUST NOT look alike."
           # Nothing-to-push exits 0 quietly. No credential at all (above)

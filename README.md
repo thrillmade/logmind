@@ -145,8 +145,10 @@ derived-doc conflict impossible by construction on any single merge):
 
 Without that toggle, the derived-doc invariant still holds per merge — a
 branch's copy is always byte-identical to its own merge-base, so git takes
-`main`'s (regenerated) side automatically, and the `logmind-timeline` merge
-driver is belt-and-suspenders for the rare case a branch diverges anyway.
+`main`'s (regenerated) side automatically, and the `logmind-timeline` /
+`logmind-timeline-archive` / `logmind-file-structure` merge drivers — one per
+derived doc — are belt-and-suspenders for the rare case a branch diverges
+anyway.
 Being up to date mainly helps avoid unrelated conflicts elsewhere (e.g. two
 branches editing the same decision file) and keeps history linear.
 

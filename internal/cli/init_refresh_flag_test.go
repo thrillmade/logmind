@@ -79,7 +79,7 @@ func TestInitRefresh_RepairsAStaleScaffoldedTrigger(t *testing.T) {
 
 	// The default branch is renamed. Nothing about the template version
 	// changed, so nothing a version-ordered refresh looks at changed either.
-	if out, err := gitIn(dir, "branch", "-M", "release2"); err != nil {
+	if out, err := gitTry(dir, "branch", "-M", "release2"); err != nil {
 		t.Fatalf("rename the default branch: %v\n%s", err, out)
 	}
 
@@ -146,7 +146,7 @@ func TestInitRefresh_DoesNotWidenOwnership(t *testing.T) {
 	seedRepo(t, dir, "release")
 	runInitIn(t, dir, "--no-git")
 
-	if out, err := gitIn(dir, "branch", "-M", "release2"); err != nil {
+	if out, err := gitTry(dir, "branch", "-M", "release2"); err != nil {
 		t.Fatalf("rename the default branch: %v\n%s", err, out)
 	}
 
@@ -326,7 +326,7 @@ func TestInitRefresh_OneUnwritableWorkflowDoesNotStopTheRest(t *testing.T) {
 
 	// Force every OTHER workflow to need a rewrite, so "the rest were still
 	// processed" is a claim with something behind it.
-	if out, err := gitIn(dir, "branch", "-M", "release2"); err != nil {
+	if out, err := gitTry(dir, "branch", "-M", "release2"); err != nil {
 		t.Fatalf("rename the default branch: %v\n%s", err, out)
 	}
 
@@ -374,7 +374,7 @@ func TestInitRefresh_EveryWriteFailureIsRecordedNotAborted(t *testing.T) {
 	runInitIn(t, dir, "--no-git")
 
 	// Force every workflow to need a rewrite.
-	if out, err := gitIn(dir, "branch", "-M", "release2"); err != nil {
+	if out, err := gitTry(dir, "branch", "-M", "release2"); err != nil {
 		t.Fatalf("rename the default branch: %v\n%s", err, out)
 	}
 
@@ -703,7 +703,7 @@ func TestInitRefresh_ReadErrorDoesNotAbortTheRest(t *testing.T) {
 
 	// Force every OTHER workflow to need a rewrite, so "the rest were still
 	// processed" is a claim with something behind it.
-	if out, err := gitIn(dir, "branch", "-M", "release2"); err != nil {
+	if out, err := gitTry(dir, "branch", "-M", "release2"); err != nil {
 		t.Fatalf("rename the default branch: %v\n%s", err, out)
 	}
 

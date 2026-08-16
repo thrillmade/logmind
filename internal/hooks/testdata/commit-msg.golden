@@ -6,8 +6,9 @@
 # PreToolUse guard). Delegates the enforce/allow decision entirely to
 # `logmind guard-commit --layer git-hook` — see internal/guardcommit for
 # the carve-outs (git.enforce_commits:false, [skip-logmind],
-# LOGMIND_ALLOW_GIT_COMMIT=1, a staged decision file, under-threshold,
-# rebase/merge/cherry-pick in progress).
+# LOGMIND_ALLOW_GIT_COMMIT=1, a decision ENTRY in the staged diff (not
+# merely a staged decision FILE), under-threshold, rebase/merge/
+# cherry-pick in progress).
 #
 # Fails open when logmind isn't on PATH: a missing binary should never
 # block a commit. Fail-open is NOT silent though (issue #270): every

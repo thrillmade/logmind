@@ -12,9 +12,23 @@ import (
 	"github.com/thrillmade/logmind/internal/testgit"
 )
 
-// gitIn runs a git command in dir. Local to this file so it does not
-// depend on (or collide with) any shared test-repo helper.
-func gitIn(dir string, args ...string) (string, error) {
+// gitTry runs a git command in dir and hands back its combined output and
+// error for the caller to judge. gitIn (search_clone_shapes_test.go) is the
+// must-succeed wrapper over it, so the two contracts — "inspect the failure"
+// and "fail the test" — are two call shapes rather than two copies of
+// exec.Command.
+//
+// It is NOT the package's only git-exec site: `grep -c 'exec.Command("git"'
+// internal/cli/*_test.go` counts 31 across 14 files. An earlier revision of
+// this comment claimed it was the one, which was a claim about a sweep nobody
+// had run.
+//
+// It was called gitIn until #301 merged #314, at which point two files each
+// held a different `gitIn` and the package stopped compiling. The comment
+// that used to sit here claimed the helper was "local to this file so it
+// does not collide" — Go has no file-local scope, so that was never true;
+// it only looked true while nothing else claimed the name.
+func gitTry(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -114,7 +128,7 @@ func TestRenderedWorkflow_TriggersOnTheRepositorysOwnBranch(t *testing.T) {
 	// the end-to-end render is pinned on exactly that repo shape.
 	masterRepo := t.TempDir()
 	seedRepo(t, masterRepo, "master")
-	if out, err := gitIn(masterRepo, "branch", "main"); err != nil {
+	if out, err := gitTry(masterRepo, "branch", "main"); err != nil {
 		t.Fatalf("create the stray local main: %v\n%s", err, out)
 	}
 
@@ -154,7 +168,7 @@ func seedRepo(t *testing.T, dir, branch string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		if out, err := gitIn(dir, args...); err != nil {
+		if out, err := gitTry(dir, args...); err != nil {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}

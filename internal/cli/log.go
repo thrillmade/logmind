@@ -12,11 +12,13 @@
 //
 // Behavior overview:
 //
-//   - Branch-aware routing. On a feature branch with branch_aware=true
-//     in config, writes to docs/decisions-branches/<sanitized-branch>.md.
-//     On the default branch, in non-git dirs, on detached HEAD, or when
-//     branch_aware is off, writes to docs/decisions.md. Matches Python
-//     logger._resolve_decisions_path.
+//   - Branch routing (SPEC §3.2). A decision goes in a file named for the
+//     branch it was made on — docs/decisions-branches/<sanitized-branch>.md
+//     — and the default branch is not an exception to that rule. Only a
+//     directory resolveDecisionsPath cannot resolve a branch name to route
+//     by (non-git — including an unreachable git binary — or detached HEAD)
+//     or an explicit branch_aware:false falls back to docs/decisions.md. An
+//     unborn repo is NOT one of them: see resolveDecisionsPath.
 //
 //   - First-write backlink header. When creating a branch decision file
 //     for the first time, prepends `← back to [docs/timeline.md]` so
@@ -63,12 +65,11 @@
 // carry as "out of scope"): suppresses the auto-push step. gitcli.Push
 // wraps the underlying `git push`.
 //
-// decisions-archive rotation (SPEC §1.3.2): when appending the new entry
-// would push docs/decisions.md's count above decisions.max_recent, the
-// OLDEST entry (or entries, if more than one overflow needs migrating at
-// once) is moved verbatim to docs/decisions-archive.md before the new entry
-// is appended — see rotateDecisions / appendToArchive below. Branch decision
-// files never rotate (SPEC §1.4 — no capacity cap there).
+// No rotation, no archive (SPEC §3.2). Every decision file is append-only
+// and uncapped: "a decision written is a decision kept." What is bounded is
+// the VIEW — docs/timeline.md renders the 50 most recent entries and
+// docs/timeline-archive.md the remainder (§3.3, internal/timeline) — and
+// that split is a rendering, so nothing here moves, peels or overflows.
 //
 // Out of scope for v1.2.0 (carried until v1.3.x or folded into a follow-up):
 //
@@ -89,7 +90,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
-	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/linkcheck"
 	"github.com/thrillmade/logmind/internal/templates"
@@ -169,11 +169,10 @@ func newLogCmd() *cobra.Command {
 		Long: `Log a decision to the decision log.
 
 Writes a dated entry (summary + reasoning + alternatives + implications) to
-either docs/decisions.md (default branch / non-git / detached HEAD) or
-docs/decisions-branches/<sanitized-branch>.md (feature branch with
-branch_aware=true). When creating a branch decision file for the first
-time, prepends a backlink header pointing at docs/timeline.md so the
-two files cross-link bidirectionally.
+docs/decisions-branches/<sanitized-branch>.md — the file named for the branch
+you are on, with the default branch treated like any other. When creating a
+branch decision file for the first time, prepends a backlink header pointing
+at docs/timeline.md so the two files cross-link bidirectionally.
 
 After committing (unless --no-commit), pushes (unless --no-push or
 git.auto_push: false in .logmind/config.yml), then runs linkcheck.Check()
@@ -257,13 +256,25 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// clear the merge gate for any change over the threshold, and the
 	// author finds out in CI rather than here.
 	//
-	// Deliberately still a warning and not an error. SPEC §3.1 says an
-	// entry "MUST carry a title and a timestamp, and SHOULD carry the
-	// reasoning", and states outright that "an entry of title plus `---`
-	// is well-formed" — so refusing to write one would over-implement
-	// the record format. §3.1 and §3.4 disagree about this; raised as
-	// thrillmade/protocol#93. Until that resolves, logmind writes what
-	// §3.1 permits and warns about what §3.4 will do to it.
+	// Deliberately still a warning and not an error — but that is now a
+	// GAP, not a resting place. §3.1 and §3.4 disagreed about whether
+	// reasoning is required (raised as thrillmade/protocol#93), and while
+	// that was open this surface wrote what §3.1 permitted and warned
+	// about what §3.4 would do to it.
+	//
+	// #93 was RULED on 2026-08-15: reasoning is required, §3.4 is right,
+	// and §3.1's "an entry of title plus `---` is well-formed" is the
+	// sentence that moves. SPEC.md does not yet carry the amendment.
+	//
+	// So the producer and the gate now agree on the RULE and disagree on
+	// the CONSEQUENCE: this warns, then writes an entry its own gate will
+	// refuse for any change over the threshold, and the author discovers
+	// it when the commit is blocked. Under the ruling the honest shape is
+	// to refuse HERE, before anything is written — which changes `-r`
+	// from optional to required on a core verb and needs its own decision
+	// about the sub-threshold and --no-commit cases. Not taken in passing.
+	// Filed rather than guessed; the refused commit at least exits
+	// non-zero now and says so (see commitRefused below).
 	if strings.TrimSpace(f.reasoning) == "" {
 		fmt.Fprintln(stderr, "Warning: -r/--reasoning is empty. Decision logs without reasoning lose most of their value,")
 		fmt.Fprintln(stderr, "         and the check-decisions gate rejects a reasoning-less entry (SPEC §3.4) — so this")
@@ -344,22 +355,6 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 		existing = data
 	}
 
-	// SPEC §1.3.2 capacity — docs/decisions.md only. Branch files have no
-	// cap: §1.4 states plainly "Branch decision files have no capacity cap
-	// (no archive overflow)." Rotate BEFORE composing body below, so the
-	// archive gets the oldest entry (or entries) FIRST and only THEN does
-	// the new one get appended — the SPEC's own ordering: "the OLDEST entry
-	// MUST be moved verbatim to docs/decisions-archive.md ... before the new
-	// entry is appended."
-	if !isBranchFile {
-		if kept, migrated := rotateDecisions(existing, cfg.Decisions.MaxRecent); migrated != "" {
-			if err := appendToArchive(docsPath, migrated); err != nil {
-				return fmt.Errorf("archive overflow decisions: %w", err)
-			}
-			existing = kept
-		}
-	}
-
 	// Compose: header (if first-creation branch file) + the §1.6.3 timeline
 	// marker (unconditional since v2.0) + existing + entry. Header is the
 	// templates.DecisionsBranchHeader() POSIX-terminated single line +
@@ -371,9 +366,13 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// Open the branch detail page with its timeline marker (the PR headline
 	// the main-canonical union consumes). First creation emits it right after
 	// the header; a later append inserts one only if the file has none yet
-	// (e.g. a legacy file predating markers). Gated only on isBranchFile —
-	// main-canonical is the sole, unconditional timeline model as of v2.0.0.
-	if isBranchFile {
+	// (e.g. a legacy file predating markers). Routed through
+	// branchSummaryApplies — the ONE owner of "does the summary surface apply
+	// here" — so this write, `logmind headline`, and the nudge below cannot
+	// drift apart. They had: this site gated on isBranchFile alone while the
+	// other two also required a non-default branch, so on main `logmind log
+	// -H "x"` set the headline and `logmind headline "x"` refused to.
+	if branchSummaryApplies(isBranchFile) {
 		now := time.Now()
 		prSuffix := prSuffixFromEnv()
 		// The headline is the branch SUMMARY when --headline is given, else the
@@ -450,8 +449,12 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	lines := newStdinLines(stdin)
 	stdinOK := stdinReadable(stdin)
 
+	// The unprompted ask, which is narrower than the capability: see
+	// branchSummaryNudgeApplies for why a prompt stays off the default branch
+	// while `logmind headline` and -H do not. Skipped when --headline already
+	// supplied the sentence, and under --quiet, where there is nobody to ask.
 	summaryEdited := false
-	if isBranchFile && f.headline == "" && !quiet {
+	if branchSummaryNudgeApplies(cwd, isBranchFile) && f.headline == "" && !quiet {
 		summaryEdited = nudgeBranchSummary(target, f.noInteractive, stdinOK, lines, stderr)
 	}
 
@@ -462,13 +465,39 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// itself failed — e.g. no upstream on a fresh local repo).
 	committed := false
 	pushed := false
+	// commitRefused holds the error from a commit that was ATTEMPTED and
+	// refused. Non-nil makes this run exit non-zero and suppresses the
+	// --quiet `ok` receipt; see the return at the bottom of runLog.
+	var commitRefused error
 	if shouldCommit && gitcli.IsRepo(cwd) {
 		if err := commitDecision(cwd, target, relTarget, f.stage, summary, cfg); err != nil {
-			// Commit failure isn't fatal to the decision-logging
-			// surface: the file is on disk; the user can commit
-			// manually. Surface the error to stderr so the user knows
-			// to follow up.
-			fmt.Fprintf(stderr, "Warning: auto-commit failed: %v\n", err)
+			// A refused commit is a FAILURE, and the caller has to be able
+			// to tell. SPEC §3.3 draws the line for the regenerator and it
+			// is the same line here: "Nothing to push is success. No
+			// credential to push with is a warning and a successful exit
+			// ... A push that was attempted and refused is a failure, and
+			// MUST be reported as one. A refused write is the job not
+			// doing its job, and a run that reports success after one is
+			// indistinguishable from a run that had nothing to do."
+			//
+			// This used to print `Warning: auto-commit failed` and exit 0.
+			// Measured on that build, in a repository with the enforcing
+			// commit-msg hook installed: `logmind log "no reasoning flag"`
+			// exited 0 while the repository's commit count did not move,
+			// and the remedy the relayed block named was the command that
+			// had just failed. An agent reading the exit code — which is
+			// what an agent reads — was told the decision had landed.
+			//
+			// Still not an abort: the entry IS on disk and staged, so the
+			// work is recoverable and nothing below is skipped. What
+			// changes is only that the run stops claiming success.
+			fmt.Fprintf(stderr, "Error: the decision was written to %s, but the commit was REFUSED: %v\n", relTarget, err)
+			// The remedy must not be the command that just failed —
+			// `logmind log` again would append a SECOND entry and meet the
+			// same refusal. Point at the staged index instead: whatever
+			// refused the commit is printed directly above.
+			fmt.Fprintf(stderr, "The entry is written and staged. Resolve the refusal above, then `git commit` — do not re-run `logmind log`, which would append a second copy of this decision.\n")
+			commitRefused = err
 		} else {
 			committed = true
 			if shouldPush {
@@ -525,7 +554,12 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// QUIET receipt — the single chainable summary line. Default mode keeps
 	// its historical multi-line ✓ output (no `ok` trailer) for byte parity;
 	// this line is the quiet MODE's sole stdout output.
-	if quiet {
+	//
+	// Suppressed when the commit was refused, per SPEC §2.7: "On a non-zero
+	// exit the `ok` line MUST NOT be printed, because that line is a receipt
+	// asserting success." `committed=false` on the line is NOT a substitute
+	// — --no-commit prints exactly that and is a success.
+	if quiet && commitRefused == nil {
 		q.ok("logged path=%s committed=%t pushed=%t", relTarget, committed, pushed)
 	}
 
@@ -537,40 +571,85 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	// so emitting here never touches either.
 	emitPulse(cwd, stderr)
 
+	// A refused commit exits non-zero. Deliberately LAST, so a refusal
+	// costs the caller nothing else this run already offered: the entry is
+	// written, the link self-heal ran, the pulse advisories were emitted.
+	// ErrSilent because the two explanatory lines are already on stderr and
+	// cobra would otherwise print a third, less specific one.
+	if commitRefused != nil {
+		return ErrSilent
+	}
 	return nil
 }
 
-// resolveDecisionsPath mirrors Python's logger._resolve_decisions_path
-// branch-aware routing. Returns the target file path AND a bool
-// indicating whether it's a branch-specific file (used to decide
-// whether to write the backlink header on first creation).
+// resolveDecisionsPath implements SPEC §3.2's ONE path rule: a decision goes
+// in a file named for the branch it was made on, and the default branch is
+// not an exception to it. Returns the target file path AND a bool indicating
+// whether it's a branch-specific file (used to decide whether to write the
+// backlink header + timeline marker on first creation).
 //
-//	on default branch / non-git / detached HEAD / branch_aware off
-//	  → docs/decisions.md, isBranchFile=false
-//	on feature branch with branch_aware=true
+//	on any branch (main included), branch_aware on
 //	  → docs/decisions-branches/<sanitized>.md, isBranchFile=true
+//	where the router cannot resolve a branch name to route by — non-git
+//	(including an unreachable git binary), or detached HEAD — or
+//	branch_aware is explicitly off
+//	  → docs/decisions.md, isBranchFile=false
+//
+// Exactly three code paths below reach docs/decisions.md, and that is the
+// whole list: branch_aware off, non-git, detached HEAD. They are not a
+// default-branch special case; they are the states where the router cannot
+// resolve a branch name to name a file after — not always because no name
+// exists. IsRepo's exit code conflates "not a repository" with "the `git`
+// binary itself is unreachable", so the non-git case can fire inside a real
+// repo on a real branch; branch_aware:false is a policy opt-out, not an
+// absence either — a name may well exist, it is simply not consulted. Only
+// detached HEAD is genuinely nameless. `main` used to be routed here too,
+// which is what made the main log look like a second kind of decision file
+// with its own conventions; that case is gone, and main's decisions live in
+// main's own branch file.
+//
+// An UNBORN repo is NOT one of the three, and the intuition that it is has
+// been written into this comment before. `git symbolic-ref --short HEAD`
+// resolves HEAD's ref without dereferencing it to a commit, so it SUCCEEDS
+// before the first commit — a fresh `git init` answers with the branch HEAD
+// already points at (e.g. `main`, exit 0) even though `git rev-parse
+// --verify HEAD` fails. CurrentBranch is therefore non-empty and the first
+// decision in an empty repo lands in docs/decisions-branches/main.md, not
+// docs/decisions.md. Detached HEAD is the case that yields "" — symbolic-ref
+// exits non-zero there because HEAD holds a raw SHA, not a ref.
+// Both halves are pinned by TestResolveDecisionsPathUnbornVsDetached.
 func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target string, isBranchFile bool) {
-	defaultPath := filepath.Join(docsPath, "decisions.md")
+	branchlessPath := filepath.Join(docsPath, "decisions.md")
 	if !cfg.Decisions.BranchAware {
-		return defaultPath, false
+		return branchlessPath, false
 	}
 	if !gitcli.IsRepo(cwd) {
-		return defaultPath, false
+		return branchlessPath, false
 	}
 	branch := gitcli.CurrentBranch(cwd)
 	if branch == "" {
-		// Detached HEAD or unborn repo.
-		return defaultPath, false
-	}
-	defaultBranch := gitcli.DefaultBranch(cwd)
-	if branch == defaultBranch {
-		return defaultPath, false
+		// Detached HEAD. NOT an unborn repo — symbolic-ref answers `main`
+		// there; see this function's doc comment.
+		return branchlessPath, false
 	}
 	branchFile := filepath.Join(docsPath, "decisions-branches",
 		sanitizeBranchName(branch)+".md")
 	return branchFile, true
 }
 
+// DELIBERATELY ABSENT: a defaultBranchDecisionsPath helper.
+//
+// A read path that wants the repo's accumulated history — not just the
+// working branch's — must ENUMERATE the decision files
+// (decisions.ListSources), never build one out of a resolved branch name.
+// `search` did the latter, and gitcli.DefaultBranch's fallback chain ends
+// "single-branch repo → that branch IS the default → 'main'": wherever
+// origin/HEAD is unset (a `git clone --single-branch`, an `actions/checkout`
+// working copy, every locally-created repo), the name collapsed onto the
+// current branch or onto a main.md that does not exist, and the default
+// branch's file was dropped from the read while sitting on disk. Enumeration
+// cannot miss a file that exists. See decisions.ListSources.
+//
 // sanitizeBranchName mirrors Python's logger._sanitize_branch:
 // `/` → `__`, `\` → `__`, `:` → `_`. Everything else passes through
 // (most VCS-legal branch names use those three plus dashes and dots,
@@ -628,75 +707,6 @@ func buildDecisionEntry(summary, reasoning string, alternatives, implications []
 
 	b.WriteString("---\n\n")
 	return b.String()
-}
-
-// rotateDecisions applies SPEC §1.3.2 capacity to decisionsMD's current raw
-// bytes: when adding ONE more entry (the one `logmind log` is about to
-// append) would push the count above maxRecent, it peels enough of the
-// OLDEST entries off the front — decisions.md is append-only, so the
-// oldest entry is always the first one after the header — to bring the
-// count back down to maxRecent, and returns:
-//
-//   - kept: decisionsMD with the peeled entries removed (its preamble +
-//     the remaining entries' RAW bytes, concatenated verbatim). No entry is
-//     ever re-rendered here — only the set of entries present changes.
-//   - migrated: the peeled entries' raw bytes, concatenated in FIFO
-//     (oldest-first) order, ready to append to docs/decisions-archive.md
-//     verbatim. "" means nothing needed to move.
-//
-// maxRecent <= 0 disables rotation entirely — treating 0 as "archive
-// everything currently on file" would be a destructive surprise no config
-// author setting decisions.max_recent is likely to intend, and the SPEC's
-// default is a positive 20.
-func rotateDecisions(decisionsMD []byte, maxRecent int) (kept []byte, migrated string) {
-	if maxRecent <= 0 {
-		return decisionsMD, ""
-	}
-	preamble, entries := decisions.SplitRawBytes(string(decisionsMD))
-	// +1 accounts for the new entry this call to `logmind log` is about to
-	// append on top of what's already on disk.
-	overflow := len(entries) + 1 - maxRecent
-	if overflow <= 0 {
-		return decisionsMD, ""
-	}
-	if overflow > len(entries) {
-		overflow = len(entries) // defensive: never migrate more than exists
-	}
-
-	var mig strings.Builder
-	for _, e := range entries[:overflow] {
-		mig.WriteString(e.Raw)
-	}
-
-	var keptBuf strings.Builder
-	keptBuf.WriteString(preamble)
-	for _, e := range entries[overflow:] {
-		keptBuf.WriteString(e.Raw)
-	}
-	return []byte(keptBuf.String()), mig.String()
-}
-
-// appendToArchive appends migrated (already newline-terminated, verbatim
-// entry bytes — see rotateDecisions) to docs/decisions-archive.md, creating
-// it from the standard template first if it doesn't exist yet (mirrors
-// `logmind init`'s scaffold, so a repo that somehow reaches rotation without
-// ever having run init still ends up with a valid, headed archive file
-// rather than a bare entry dump).
-//
-// Always a pure byte append — never re-sorts existing content. SPEC §1.5:
-// "Archive ordering is append-on-overflow. Tools MUST NOT re-sort the
-// archive on write."
-func appendToArchive(docsPath, migrated string) error {
-	archivePath := filepath.Join(docsPath, "decisions-archive.md")
-	existing := templates.DecisionsArchiveTemplate()
-	if pathExists(archivePath) {
-		data, err := os.ReadFile(archivePath)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", archivePath, err)
-		}
-		existing = string(data)
-	}
-	return writeAtomic(archivePath, existing+migrated)
 }
 
 // buildTimelineMarker renders the §1.6.3 entry-block headline that opens a
@@ -1026,7 +1036,7 @@ func commitDecision(cwd, targetAbs, targetRel, stage, summary string, cfg config
 	// v2.0.0 4b-quater — the L1-vs-`warp` seam, and its fix: moving the
 	// repair to `logmind warp` (above) reintroduced the exact bug that move
 	// was meant to avoid, one level up. `warp`'s repair DELIBERATELY STAGES
-	// the two derived docs (`git checkout <merge-base> -- <path>`, which
+	// the derived docs (`git checkout <merge-base> -- <path>`, which
 	// writes the index too — see runWarp) so the fix rides into the
 	// caller's NEXT commit. But this restore ran unconditionally, so the
 	// remediation sequence the CI gate's own failure message tells a user

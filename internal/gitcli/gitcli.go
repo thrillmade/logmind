@@ -119,12 +119,19 @@ func TopLevel(cwd string) (string, bool) {
 }
 
 // CurrentBranch returns the current branch name (e.g. "v1-go-rewrite")
-// or an empty string when HEAD is detached, the repo is unborn without
-// a usable symbolic-ref answer, or any error path. Mirrors
-// git_handler.current_branch.
+// or an empty string when HEAD is detached, when cwd is not a repo, or on
+// any other error path. Mirrors git_handler.current_branch.
 //
-// Implementation: `git symbolic-ref --short HEAD`. Returns "" on
-// detached HEAD (symbolic-ref exits non-zero in that case).
+// Implementation: `git symbolic-ref --short HEAD`. Returns "" on detached
+// HEAD — symbolic-ref exits non-zero there because HEAD holds a raw SHA
+// rather than a ref.
+//
+// An UNBORN repo (no commits yet) is NOT an empty-string case, and callers
+// have assumed otherwise. symbolic-ref resolves HEAD's ref WITHOUT
+// dereferencing it to a commit, so it succeeds before the first commit and
+// answers with the branch HEAD already points at (a fresh `git init` gives
+// `main`, exit 0) even while `git rev-parse --verify HEAD` fails. Anything
+// that needs "does this repo have a commit" must ask rev-parse, not this.
 func CurrentBranch(repoRoot string) string {
 	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
 	cmd.Dir = repoRoot
@@ -367,16 +374,36 @@ func DiffRangeNumstat(repoRoot, base, head string) ([]NumstatLine, error) {
 	return parseNumstat(out), nil
 }
 
-// DiffCachedAddedLines returns the lines the staged diff ADDS to one
-// path, with git's leading "+" stripped. Nil on any failure, matching
-// its DiffCached* siblings.
+// AddedHunk is the run of lines ONE diff hunk added, with git's leading
+// "+" stripped, in file order.
+//
+// The type exists so the boundary cannot be dropped by accident. Under
+// -U0 a hunk covers a contiguous range of the NEW file — its "+" lines
+// are exactly that range, adjacent to each other and to nothing else —
+// while two hunks are separated by content the change never touched.
+// Returning one flat []string throws that away: non-adjacent hunks
+// concatenate with no gap, and a reader that scans for structure across
+// the join reads text from one part of the file as if it sat in another.
+// That was a live gate hole. guardcommit.WellFormedDecisionAdded scanned
+// the joined string for a §3.1 section, so prose added by a LATER,
+// unrelated hunk became the body of a reasoning section opened in an
+// EARLIER one. Measured on the PR head: 302 lines of new Go, an empty
+// `**Reasoning:**` in one hunk and an unrelated bullet in another →
+// `git commit` exit 0 "allowed (decision-recorded)" and
+// `check-decisions --base --head` exit 0; the same change minus the
+// second hunk → exit 65 and exit 1.
+type AddedHunk []string
+
+// DiffCachedAddedHunks returns the lines the staged diff ADDS to one
+// path, grouped by hunk, with git's leading "+" stripped. Nil on any
+// failure, matching its DiffCached* siblings.
 //
 // -U0 asks for no context lines, so every "+" line inside a hunk is
 // genuinely new content rather than an unchanged neighbour. Callers use
 // this to judge what a change WROTE to a file, not what the file
 // contains — SPEC §3.4: "A decision clears the gate by being written,
 // not by existing."
-func DiffCachedAddedLines(repoRoot, path string) []string {
+func DiffCachedAddedHunks(repoRoot, path string) []AddedHunk {
 	cmd := exec.Command("git", "diff", "--cached", "-U0", "--", path)
 	cmd.Dir = repoRoot
 	var stdout, stderr bytes.Buffer
@@ -385,17 +412,17 @@ func DiffCachedAddedLines(repoRoot, path string) []string {
 	if err := cmd.Run(); err != nil {
 		return nil
 	}
-	return parseAddedLines(stdout.String())
+	return parseAddedHunks(stdout.String())
 }
 
-// DiffRangeAddedLines is DiffCachedAddedLines over a base...head range,
+// DiffRangeAddedHunks is DiffCachedAddedHunks over a base...head range,
 // with DiffRangeNames' loud-on-failure contract.
-func DiffRangeAddedLines(repoRoot, base, head, path string) ([]string, error) {
+func DiffRangeAddedHunks(repoRoot, base, head, path string) ([]AddedHunk, error) {
 	out, err := runDiffRange(repoRoot, base, head, "-U0", "--", path)
 	if err != nil {
 		return nil, err
 	}
-	return parseAddedLines(out), nil
+	return parseAddedHunks(out), nil
 }
 
 // runDiffRange runs `git diff <flags...> base...head` (with the range
@@ -430,28 +457,44 @@ func runDiffRange(repoRoot, base, head string, flags ...string) (string, error) 
 	return stdout.String(), nil
 }
 
-// parseAddedLines pulls the added-content lines out of a unified diff,
-// stripping the leading "+".
+// parseAddedHunks pulls the added-content lines out of a unified diff,
+// stripping the leading "+", one AddedHunk per "@@" hunk.
 //
 // It tracks hunk state rather than filtering on a "+++" prefix: a real
 // added line whose own content begins with "++" renders as "+++...", so
 // a prefix test would silently drop it. Only lines after a "@@" header
 // are content; a "diff --git" line starts the next file's header block
 // and ends the current one.
-func parseAddedLines(out string) []string {
-	var lines []string
+//
+// Every "@@" opens a new group, so a caller can never see two hunks'
+// lines as one run — see AddedHunk for why that boundary is the whole
+// point. A hunk that added nothing (a pure deletion) contributes no
+// group rather than an empty one, so `len(hunks)` counts what was
+// written rather than what was edited.
+func parseAddedHunks(out string) []AddedHunk {
+	var hunks []AddedHunk
+	var current AddedHunk
 	inHunk := false
+	flush := func() {
+		if len(current) > 0 {
+			hunks = append(hunks, current)
+		}
+		current = nil
+	}
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
+			flush()
 			inHunk = false
 		case strings.HasPrefix(line, "@@ "):
+			flush()
 			inHunk = true
 		case inHunk && strings.HasPrefix(line, "+"):
-			lines = append(lines, strings.TrimPrefix(line, "+"))
+			current = append(current, strings.TrimPrefix(line, "+"))
 		}
 	}
-	return lines
+	flush()
+	return hunks
 }
 
 // UntrackedFiles returns the repo-relative paths of every untracked

@@ -2,6 +2,7 @@ package guardcommit
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/thrillmade/logmind/internal/agents"
 	"github.com/thrillmade/logmind/internal/gitcli"
+	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/testgit"
 )
 
@@ -214,15 +216,28 @@ func TestEvaluate_RevertInProgress(t *testing.T) {
 	}
 }
 
+// wellFormedEntry is what a change that RECORDED a decision writes: a
+// title, a timestamp, and a reasoning section that is not empty (SPEC
+// §3.1, as §3.4 requires the gate to check). Tests that mean "a decision
+// was recorded" stage this; tests that mean "a decision-shaped file was
+// staged" stage something else.
+const wellFormedEntry = "## 2026-08-07 14:30 - Share one evaluation\n\n" +
+	"**Reasoning:** Two callers of one path predicate gave two answers.\n\n" +
+	"---\n"
+
+// TestEvaluate_DecisionFileStaged — the legacy pre-§3.2 shape, and the
+// case the fix for the sentinel hole must NOT regress: a repository whose
+// docs/decisions.md is a real decision log clears the gate by appending a
+// real entry to it. Those repositories exist and their commits still pass.
 func TestEvaluate_DecisionFileStaged(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "big.go", linesOf(50))
-	writeFile(t, dir, "docs/decisions.md", "## decision\n")
+	writeFile(t, dir, "docs/decisions.md", wellFormedEntry)
 	run(t, dir, "add", "big.go", "docs/decisions.md")
 	for _, mode := range []DiffMode{StagedOnly, WorkingTreeUnion} {
 		d := Evaluate(dir, "subject", 20, mode)
-		if !d.Allow || d.CarveOut != CarveOutDecisionFileStaged {
-			t.Fatalf("mode=%v: Decision = %+v; want Allow via CarveOutDecisionFileStaged", mode, d)
+		if !d.Allow || d.CarveOut != CarveOutDecisionRecorded {
+			t.Fatalf("mode=%v: Decision = %+v; want Allow via CarveOutDecisionRecorded", mode, d)
 		}
 	}
 }
@@ -230,12 +245,133 @@ func TestEvaluate_DecisionFileStaged(t *testing.T) {
 func TestEvaluate_BranchDecisionFileStaged(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "big.go", linesOf(50))
-	writeFile(t, dir, "docs/decisions-branches/feature.md", "## decision\n")
+	writeFile(t, dir, "docs/decisions-branches/feature.md", wellFormedEntry)
 	run(t, dir, "add", "big.go", "docs/decisions-branches/feature.md")
 	d := Evaluate(dir, "subject", 20, StagedOnly)
-	if !d.Allow || d.CarveOut != CarveOutDecisionFileStaged {
-		t.Fatalf("Decision = %+v; want Allow via CarveOutDecisionFileStaged", d)
+	if !d.Allow || d.CarveOut != CarveOutDecisionRecorded {
+		t.Fatalf("Decision = %+v; want Allow via CarveOutDecisionRecorded", d)
 	}
+}
+
+// TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks is the regression
+// pin for the hole a round-14 panel found: carve-out 5 asked only whether
+// a decision-shaped PATH was staged, so `git add docs/decisions.md` — the
+// content-free v1.2.0 install sentinel `logmind init` itself writes, which
+// says in its own body that it holds no decisions — cleared the commit
+// gate for any amount of code.
+//
+// Measured on the PR head with the shipped binary: 302 lines of new Go,
+// sentinel staged, `guard-commit --layer git-hook` exit 0 "allowed
+// (decision-file-staged)"; with the same sentinel UNSTAGED, exit 65. The
+// gate's answer turned on whether a file logmind wrote was named in the
+// index.
+//
+// Both diff modes, because both hook layers are served by this one
+// function and only the line count differs between them.
+func TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks(t *testing.T) {
+	// The shipped sentinel's REAL bytes — the template `logmind init`
+	// installs — not a paraphrase of them, so this pins the file rather
+	// than the test author's memory of it. If a future edit ever gives
+	// the sentinel a `## <date> <time> - <title>` line and a reasoning
+	// section, this is what says so.
+	sentinel := templates.DecisionsPointerTemplate()
+
+	for _, tc := range []struct{ name, path, body string }{
+		{"the v1.2.0 install sentinel", "docs/decisions.md", sentinel},
+		{"a single meaningless line", "docs/decisions.md", ".\n"},
+		{"a branch file with a header but no reasoning", "docs/decisions-branches/feature.md",
+			"## 2026-08-07 14:30 - Untitled thought\n\n---\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, mode := range []DiffMode{StagedOnly, WorkingTreeUnion} {
+				dir := initRepo(t)
+				writeFile(t, dir, "big.go", linesOf(50))
+				writeFile(t, dir, tc.path, tc.body)
+				run(t, dir, "add", "big.go", tc.path)
+
+				d := Evaluate(dir, "subject", 20, mode)
+				if d.Allow {
+					t.Fatalf("mode=%v: Decision = %+v; want Block — staging %s records no decision, "+
+						"and %d lines of code would land undocumented", mode, d, tc.path, 50)
+				}
+				// The message the author actually reads has to say which
+				// file was staged in vain, or the block reads as spurious
+				// with the decision file sitting right there in the index.
+				if !strings.Contains(d.Reason, tc.path) {
+					t.Errorf("mode=%v: Reason does not name the staged-but-empty decision file %q; got %q",
+						mode, tc.path, d.Reason)
+				}
+				for _, hatch := range []string{"logmind log", "skip-logmind", "LOGMIND_ALLOW_GIT_COMMIT"} {
+					if !strings.Contains(d.Reason, hatch) {
+						t.Errorf("mode=%v: Reason drops the %q escape hatch (SPEC §3.4); got %q", mode, hatch, d.Reason)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestDecisionRecorded_IsTheOnlyQuestion covers the shared primitive
+// directly, including the two halves that must BOTH hold and the error
+// propagation the CI gate depends on (an unresolvable ref must not read as
+// an empty diff).
+func TestDecisionRecorded_IsTheOnlyQuestion(t *testing.T) {
+	entry := []gitcli.AddedHunk{strings.Split(strings.TrimRight(wellFormedEntry, "\n"), "\n")}
+
+	t.Run("a well-formed entry in a decision file records a decision", func(t *testing.T) {
+		ev, err := DecisionRecorded([]string{"src/main.go", "docs/decisions-branches/feature.md"},
+			func(path string) ([]gitcli.AddedHunk, error) { return entry, nil })
+		if err != nil || !ev.Recorded {
+			t.Fatalf("DecisionRecorded = %+v, %v; want Recorded", ev, err)
+		}
+		if len(ev.Touched) != 0 {
+			t.Errorf("Touched = %v; want empty when a decision was recorded", ev.Touched)
+		}
+	})
+
+	t.Run("the same entry in a NON-decision file records nothing", func(t *testing.T) {
+		ev, err := DecisionRecorded([]string{"README.md"},
+			func(path string) ([]gitcli.AddedHunk, error) { return entry, nil })
+		if err != nil || ev.Recorded {
+			t.Fatalf("DecisionRecorded = %+v, %v; want not Recorded", ev, err)
+		}
+	})
+
+	t.Run("a decision file with nothing well-formed added is Touched, not Recorded", func(t *testing.T) {
+		ev, err := DecisionRecorded([]string{"docs/decisions.md"},
+			func(path string) ([]gitcli.AddedHunk, error) {
+				return []gitcli.AddedHunk{{"# Decision Log", "no entries here"}}, nil
+			})
+		if err != nil || ev.Recorded {
+			t.Fatalf("DecisionRecorded = %+v, %v; want not Recorded", ev, err)
+		}
+		if len(ev.Touched) != 1 || ev.Touched[0] != "docs/decisions.md" {
+			t.Errorf("Touched = %v; want [docs/decisions.md]", ev.Touched)
+		}
+	})
+
+	t.Run("the reader's error is propagated, not swallowed", func(t *testing.T) {
+		want := errors.New("bad ref")
+		ev, err := DecisionRecorded([]string{"docs/decisions.md"},
+			func(path string) ([]gitcli.AddedHunk, error) { return nil, want })
+		if !errors.Is(err, want) {
+			t.Fatalf("err = %v; want %v — a diff git could not read must not report as 'no decision'", err, want)
+		}
+		if ev.Recorded {
+			t.Errorf("Recorded = true on an error; want false")
+		}
+	})
+
+	t.Run("only decision files are read at all", func(t *testing.T) {
+		var asked []string
+		if _, err := DecisionRecorded([]string{"src/main.go", "docs/plan.md", "docs/decisions.md"},
+			func(path string) ([]gitcli.AddedHunk, error) { asked = append(asked, path); return nil, nil }); err != nil {
+			t.Fatalf("DecisionRecorded: %v", err)
+		}
+		if len(asked) != 1 || asked[0] != "docs/decisions.md" {
+			t.Errorf("read %v; want only docs/decisions.md", asked)
+		}
+	})
 }
 
 func TestEvaluate_UnderThreshold_Allows(t *testing.T) {
@@ -369,7 +505,10 @@ func TestEvaluate_CarveOutPrecedence_EnvBeatsSkipMarkerCheck(t *testing.T) {
 
 func TestEvaluate_InProgressStateBeatsDecisionFileCheck(t *testing.T) {
 	dir := initRepo(t)
-	writeFile(t, dir, "docs/decisions.md", "## decision\n")
+	// A RECORDED decision, so both carve-outs genuinely apply and the
+	// assertion below is about their order rather than about only one of
+	// them being able to fire.
+	writeFile(t, dir, "docs/decisions.md", wellFormedEntry)
 	run(t, dir, "add", "docs/decisions.md")
 	gitDir, err := gitcli.GitDir(dir)
 	if err != nil {
@@ -382,12 +521,18 @@ func TestEvaluate_InProgressStateBeatsDecisionFileCheck(t *testing.T) {
 	// Either carve-out would Allow; assert the DOCUMENTED order actually
 	// fires (merge-in-progress, checked before the staged-files loop).
 	if !d.Allow || d.CarveOut != CarveOutMergeInProgress {
-		t.Fatalf("Decision = %+v; want Allow via CarveOutMergeInProgress (checked before decision-file-staged)", d)
+		t.Fatalf("Decision = %+v; want Allow via CarveOutMergeInProgress (checked before decision-recorded)", d)
 	}
 }
 
-// --- IsDecisionFile / SubstantiveLines (moved verbatim from
+// --- isDecisionFile / SubstantiveLines (moved verbatim from
 // check_decisions.go — behavior-preserving unit coverage lives here now) --
+//
+// isDecisionFile is HALF of the gate's question (see DecisionRecorded, and
+// TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks for what shipping
+// the half alone cost). The path rules below are still worth pinning: a
+// path this predicate rejects can never record a decision no matter what
+// the change wrote into it.
 
 func TestIsDecisionFile(t *testing.T) {
 	cases := map[string]bool{
@@ -400,8 +545,8 @@ func TestIsDecisionFile(t *testing.T) {
 		"src/decisions.txt":                       false,
 	}
 	for path, want := range cases {
-		if got := IsDecisionFile(path); got != want {
-			t.Errorf("IsDecisionFile(%q) = %v; want %v", path, got, want)
+		if got := isDecisionFile(path); got != want {
+			t.Errorf("isDecisionFile(%q) = %v; want %v", path, got, want)
 		}
 	}
 }
@@ -520,7 +665,7 @@ func TestSubstantiveLines_MarkdownOutsideDocsCounts(t *testing.T) {
 func TestWellFormedDecisionAdded(t *testing.T) {
 	cases := []struct {
 		name  string
-		added []string
+		added gitcli.AddedHunk
 		want  bool
 	}{
 		{
@@ -587,22 +732,107 @@ func TestWellFormedDecisionAdded(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := WellFormedDecisionAdded(tc.added); got != tc.want {
+			if got := WellFormedDecisionAdded([]gitcli.AddedHunk{tc.added}); got != tc.want {
 				t.Fatalf("WellFormedDecisionAdded(%q) = %v; want %v", tc.added, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestHasReasoning_SectionEndsAtNextHeader pins the hole an adversarial
-// review found in PR #287: the body accumulator stopped only at a blank
-// line, so an entry whose next section header is NOT blank-separated had
-// that header's own text swallowed as the previous section's body —
-// making an empty **Reasoning:** read as non-empty. SPEC §3.1 defines
-// that shape as an empty section, and §3.4 rejects exactly this "single
-// meaningless line". One blank line was all that separated a caught case
-// from an uncaught one.
-func TestHasReasoning_SectionEndsAtNextHeader(t *testing.T) {
+// TestWellFormedDecisionAdded_HunksAreJudgedSeparately is the regression
+// pin for the round-16 bypass. The reader returned ONE flat list of added
+// lines, so `-U0` hunks that git had every reason to keep apart —
+// separated by content the change never touched — arrived concatenated.
+// A section opened at the end of one hunk was then satisfied by the first
+// prose in the next, and the gate reported an entry that is not in the
+// file.
+//
+// Measured on the PR head, hook installed and the freshly built binary
+// first on PATH: an empty `**Reasoning:**` in hunk 1 plus one unrelated
+// bullet added further down the same file → `git commit` exit 0 "allowed
+// (decision-recorded)" and `check-decisions --base --head` exit 0, for
+// 302 lines of new Go whose reasoning section is visibly empty on disk.
+// The identical change minus that second hunk → exit 65 and exit 1.
+//
+// The three rows are the same content cut three ways, so what they
+// isolate is the boundary and nothing else.
+func TestWellFormedDecisionAdded_HunksAreJudgedSeparately(t *testing.T) {
+	openedSection := gitcli.AddedHunk{
+		"## 2026-08-14 09:00 - Collapse the decision layout",
+		"",
+		reasoningMarker,
+		"",
+	}
+	unrelatedProse := gitcli.AddedHunk{"- whether the parser reads a section the way a person does"}
+
+	t.Run("prose from a later hunk does not fill an earlier hunk's section", func(t *testing.T) {
+		if WellFormedDecisionAdded([]gitcli.AddedHunk{openedSection, unrelatedProse}) {
+			t.Fatal("an empty reasoning section was satisfied by a line added elsewhere in the file — " +
+				"302 lines of code clear both gates on an entry that documents nothing")
+		}
+	})
+
+	t.Run("control: the same lines with nothing after the header still fail", func(t *testing.T) {
+		if WellFormedDecisionAdded([]gitcli.AddedHunk{openedSection}) {
+			t.Fatal("an empty reasoning section cleared the gate on its own; the row above measures nothing")
+		}
+	})
+
+	t.Run("control: the same lines IN ONE hunk pass, because then they are in the file", func(t *testing.T) {
+		together := append(append(gitcli.AddedHunk{}, openedSection...), unrelatedProse...)
+		if !WellFormedDecisionAdded([]gitcli.AddedHunk{together}) {
+			t.Fatal("a reasoning body written directly under its header was refused — " +
+				"the fix has stopped judging adjacency and started refusing everything")
+		}
+	})
+}
+
+// TestWellFormedDecisionAdded_ShippedSentinel is the control on the
+// table above: the §3.2 install sentinel's REAL bytes, split the way a
+// diff hands them over, must not clear the gate. Round 14 closed that
+// hole; every later loosening of the section-boundary rule has to prove
+// it is still closed, and against the file rather than a paraphrase.
+func TestWellFormedDecisionAdded_ShippedSentinel(t *testing.T) {
+	split := func(body string) []gitcli.AddedHunk {
+		return []gitcli.AddedHunk{strings.Split(strings.TrimRight(body, "\n"), "\n")}
+	}
+	if WellFormedDecisionAdded(split(templates.DecisionsPointerTemplate())) {
+		t.Errorf("the shipped docs/decisions.md sentinel clears the gate; it carries no entry:\n%s",
+			templates.DecisionsPointerTemplate())
+	}
+	// Control on the control: the same call on a known-passing input, so
+	// the line above is evidence about the sentinel rather than about a
+	// predicate that says no to everything.
+	if !WellFormedDecisionAdded(split(wellFormedEntry)) {
+		t.Fatal("the control entry does not clear the gate either — the check above measures nothing")
+	}
+}
+
+// TestHasReasoning_SectionBoundaries pins where a §3.1 section ends —
+// at the next section header or at the entry terminator, and at NEITHER
+// a blank line nor a fixed offset from the marker. Two holes, opposite
+// directions, and the rows below hold both shut at once.
+//
+// Too loose (PR #287, found by an adversarial review): the body
+// accumulator stopped only at a blank line, so an entry whose next
+// section header is NOT blank-separated had that header's own text
+// swallowed as the previous section's body — making an empty
+// **Reasoning:** read as non-empty. §3.1 defines that shape as an empty
+// section and §3.4 rejects exactly this "single meaningless line".
+//
+// Too tight (PR #301 round 14, found in the field): the accumulator ALSO
+// stopped at a blank line, so an ordinary entry whose body sits below one
+// read as an EMPTY section and the commit was refused. Measured across
+// four identically-built repos: reasoning inline → exit 0; wrapped with
+// no blank → 0; a blank after the marker → 65; a bullet list after a
+// blank → 65. §3.1 forbids the assumption behind it outright — a consumer
+// "MUST NOT require a section order beyond the title coming first and
+// `---` terminating the entry."
+//
+// One blank line was all that separated a caught case from an uncaught
+// one in the first hole, and a working entry from a blocked one in the
+// second.
+func TestHasReasoning_SectionBoundaries(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
@@ -633,6 +863,64 @@ func TestHasReasoning_SectionEndsAtNextHeader(t *testing.T) {
 			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\nreal content\n**Implications:** x\n\n---\n",
 			want: true,
 		},
+		// --- a blank line is a PARAGRAPH BREAK, not the end of a section.
+		// These four are the round-14 regression: the scan stopped at the
+		// first blank line, so an ordinary entry whose body sits below one
+		// read as an empty section and its commit was refused (exit 65,
+		// measured). The two `want: false` rows are the control — the
+		// loosening must not let an actually-empty section through.
+		{
+			name: "reasoning body below a blank line",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\nThree sentences that say exactly why.\n\n---\n",
+			want: true,
+		},
+		{
+			name: "reasoning body is a bullet list below a blank line",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n- one\n- two\n\n---\n",
+			want: true,
+		},
+		{
+			name: "empty reasoning, blank line, then the next header",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n**Alternatives considered:** none\n\n---\n",
+			want: false,
+		},
+		{
+			name: "empty reasoning, blank line, then the terminator",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n---\n",
+			want: false,
+		},
+		{
+			// §3.1: a consumer "MUST NOT require a section order beyond
+			// the title coming first". Reasoning last, below a section
+			// this build has never heard of, still counts.
+			name: "reasoning last, after an unknown section",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Provenance:** a section logmind never emits\n\n**Reasoning:**\n\nwhy, at the bottom\n\n---\n",
+			want: true,
+		},
+		// --- a bolded LEAD-IN is body, not the next section's header.
+		// These are the round-16 false rejection: the boundary test
+		// matched anything that opened a bold run and carried a colon,
+		// so the most ordinary way to start a reasoning paragraph read
+		// as an empty section and the commit was refused. Measured, with
+		// the first content line under a bare **Reasoning:**: plain prose
+		// → exit 0; `**Root cause:** ...` → exit 65; `- **Latency:** ...`
+		// → exit 0. The last row is the control the loosening must not
+		// break — a header §3.1 NAMES still ends the section.
+		{
+			name: "reasoning body opening with a bolded lead-in",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n**Root cause:** the parser ended a section at the first blank line.\n\n---\n",
+			want: true,
+		},
+		{
+			name: "bolded lead-in with no blank line above it",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n**Root cause:** the section boundary, again.\n\n---\n",
+			want: true,
+		},
+		{
+			name: "empty reasoning still ends at a NAMED section, blank line or not",
+			raw:  "## 2026-08-07 10:00 - t\n\n**Reasoning:**\n\n**Implications:**\n- the gate would read this bullet as the reason\n\n---\n",
+			want: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -643,14 +931,31 @@ func TestHasReasoning_SectionEndsAtNextHeader(t *testing.T) {
 	}
 }
 
-// TestIsSectionHeader covers the shape test directly. It is deliberately
-// shape-based rather than a fixed list of known section names, because
-// SPEC §3.1 says a consumer "MUST NOT require a section order beyond the
-// title coming first" — a hand-written entry may carry a section this
-// build has never heard of.
+// TestIsSectionHeader covers the section-boundary test directly. It is a
+// list of the section names SPEC §3.1 NAMES, not a shape: §3.1's "MUST
+// NOT require a section order beyond the title coming first" argues
+// against requiring an ORDER, and §3.1 names the sections in its own
+// template. Matching by name keeps `**Alternatives considered:**` ending
+// the section above it while leaving a bolded lead-in like `**Root
+// cause:**` as body, which is what the shape version got wrong.
 func TestIsSectionHeader(t *testing.T) {
-	yes := []string{"**Reasoning:**", "**Alternatives considered:** none", "**Anything At All:**"}
-	no := []string{"", "plain text", "**bold but no colon**", "*single star:*", "**unterminated:"}
+	yes := []string{
+		"**Reasoning:**",
+		"**Alternatives considered:** none",
+		"**Implications:**",
+	}
+	no := []string{
+		"", "plain text", "**bold but no colon**", "*single star:*", "**unterminated:",
+		// The round-16 false rejection: a bolded lead-in opening a
+		// reasoning paragraph is BODY. Treated as a header, the section
+		// above it read as empty and the commit was refused (measured:
+		// exit 65 on the hook, exit 1 on the gate).
+		"**Root cause:** the parser ended a section at the first blank line.",
+		"**Provenance:** a section logmind never emits",
+		// A named marker in a bullet is body too — a list item, not the
+		// start of a section.
+		"- **Implications:** it would end the section from inside a list",
+	}
 	for _, s := range yes {
 		if !isSectionHeader(s) {
 			t.Errorf("isSectionHeader(%q) = false, want true", s)
@@ -659,6 +964,23 @@ func TestIsSectionHeader(t *testing.T) {
 	for _, s := range no {
 		if isSectionHeader(s) {
 			t.Errorf("isSectionHeader(%q) = true, want false", s)
+		}
+	}
+}
+
+// TestSectionMarkersMatchTheSpec pins the list against §3.1's template
+// rather than against the test author's memory of it: the three headers
+// §3.1 prints, in §3.1's spelling. A marker that drifts from the SPEC
+// stops ending the section it names, and `logmind log`'s own output is
+// what drifts first.
+func TestSectionMarkersMatchTheSpec(t *testing.T) {
+	want := []string{"**Reasoning:**", "**Alternatives considered:**", "**Implications:**"}
+	if len(sectionMarkers) != len(want) {
+		t.Fatalf("sectionMarkers = %q; want the %d headers SPEC §3.1 names: %q", sectionMarkers, len(want), want)
+	}
+	for i, m := range want {
+		if sectionMarkers[i] != m {
+			t.Errorf("sectionMarkers[%d] = %q; want %q (SPEC §3.1's spelling)", i, sectionMarkers[i], m)
 		}
 	}
 }

@@ -9,6 +9,7 @@
 package doctor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/inserter"
+	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/version"
 )
 
@@ -922,6 +925,249 @@ func TestRenderStatus_AheadRowNamesTheDirection(t *testing.T) {
 	}
 	if strings.Contains(body, "STALE") {
 		t.Errorf("an ahead row must not read STALE; got:\n%s", body)
+	}
+}
+
+// --- AGENTS.md block drift (probeAgentsMD) ----------------------------
+//
+// This function had NO test at all: `grep -rn "probeAgentsMD"
+// --include="*_test.go" .` returned 0 while the same grep for
+// classifyMarker returned 2 — the ordered comparator was unit-tested on a
+// helper the shipped AGENTS.md path bypassed entirely.
+
+// plantAgentsBlock writes an AGENTS.md that is the BUNDLED block of the
+// marker's own flavour with its version id rewritten to `marker`, so the
+// only thing differing from what this binary would install is the id under
+// test. That fidelity is load-bearing for the writer-agreement test below:
+// inserter compares BODIES once the id passes its guards, so a hand-rolled
+// stub body would read as "needs refreshing" at every id, including the
+// current one, and the agreement would be measuring the fixture.
+func plantAgentsBlock(t *testing.T, dir, marker string) {
+	t.Helper()
+	body := templates.AgentsSlimTemplate()
+	if blockMarkerFlavour(marker) == "" {
+		body = templates.AgentsTemplate()
+	}
+	planted := logmindBlockVersionRe.ReplaceAllString(body, "<!-- logmind-block-version: "+marker+" -->")
+	if planted == body && marker != bundledMarkerOf(t, body) {
+		t.Fatalf("fixture failed: no block-version marker was rewritten in the bundled template")
+	}
+	mustWrite(t, filepath.Join(dir, "AGENTS.md"), planted)
+}
+
+// bundledMarkerOf reads the version id out of one of our own template
+// bodies — used only to let plantAgentsBlock tell "nothing was rewritten
+// because the id already matched" from "nothing was rewritten because the
+// template lost its marker".
+func bundledMarkerOf(t *testing.T, body string) string {
+	t.Helper()
+	m := logmindBlockVersionRe.FindStringSubmatch(body)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+// bumpedMarker returns the marker `by` generations from the bundled one
+// for the named flavour: bumpedMarker(t, "-pointer", +1) is the slim block
+// a binary one wave ahead of this one installs.
+func bumpedMarker(t *testing.T, flavour string, by int) string {
+	t.Helper()
+	slim, full := bundledAgentsMDBlockVersions()
+	bundled := full
+	if flavour == "-pointer" {
+		bundled = slim
+	}
+	if bundled == nil {
+		t.Fatalf("this binary bundles no %q-flavour AGENTS.md block marker", flavour)
+	}
+	gen, ok := inserter.ParseMarkerGeneration(*bundled)
+	if !ok {
+		t.Fatalf("bundled marker %q does not parse as a generation", *bundled)
+	}
+	return fmt.Sprintf("v%d%s", gen+by, flavour)
+}
+
+// TestProbeAgentsMD_OrdersTheInstalledMarker is the row-level pin. The
+// verdict that matters is `ahead`: a repository carrying a block NEWER
+// than this binary bundles is not stale, and calling it stale sends the
+// operator to a `--fix` that correctly refuses — an unclearable row plus
+// two contradictory statements about one file.
+func TestProbeAgentsMD_OrdersTheInstalledMarker(t *testing.T) {
+	slim, full := bundledAgentsMDBlockVersions()
+	if slim == nil || full == nil {
+		t.Fatal("this binary bundles an AGENTS.md template with no readable block-version marker")
+	}
+	cases := []struct {
+		name    string
+		marker  string // "" plants no marker line
+		want    string
+		wantCmp *string // the bundled marker the row must report; nil = none
+	}{
+		{name: "bundled slim marker is current", marker: *slim, want: "current", wantCmp: slim},
+		{name: "bundled full marker is current", marker: *full, want: "current", wantCmp: full},
+		{name: "an older slim block is stale", marker: bumpedMarker(t, "-pointer", -1),
+			want: "stale", wantCmp: slim},
+		{name: "a NEWER slim block is ahead, not stale", marker: bumpedMarker(t, "-pointer", +1),
+			want: "ahead", wantCmp: slim},
+		{name: "a newer slim block many waves out is still ahead", marker: bumpedMarker(t, "-pointer", +90),
+			want: "ahead", wantCmp: slim},
+		{name: "an older full block is stale", marker: bumpedMarker(t, "", -1),
+			want: "stale", wantCmp: full},
+		// The case bare equality got wrong in BOTH directions: a full
+		// block one generation ahead of the bundled full marker read
+		// "stale (latest: <the slim marker>)" — wrong verdict, wrong
+		// flavour — because it matched neither bundled token exactly.
+		{name: "a NEWER full block is ahead of the FULL marker", marker: bumpedMarker(t, "", +1),
+			want: "ahead", wantCmp: full},
+		{name: "an unorderable id is unknown, not stale", marker: "vNEXT-pointer",
+			want: "unknown", wantCmp: nil},
+		{name: "a flavour this binary does not ship is unknown", marker: "v10-experimental",
+			want: "unknown", wantCmp: nil},
+		{name: "no marker at all is markerless", marker: "", want: "markerless", wantCmp: slim},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.marker == "" {
+				mustWrite(t, filepath.Join(dir, "AGENTS.md"), "# AGENTS.md\n\nhand-written, no logmind block\n")
+			} else {
+				plantAgentsBlock(t, dir, tc.marker)
+			}
+
+			row := probeAgentsMD(dir)
+			if row.Drift != tc.want {
+				t.Errorf("Drift = %q; want %q (installed %q)", row.Drift, tc.want, tc.marker)
+			}
+			switch {
+			case tc.wantCmp == nil && row.BundledMarker != nil:
+				t.Errorf("BundledMarker = %q; want none — there is nothing this block can be moved to",
+					*row.BundledMarker)
+			case tc.wantCmp != nil && row.BundledMarker == nil:
+				t.Errorf("BundledMarker is nil; want %q", *tc.wantCmp)
+			case tc.wantCmp != nil && *row.BundledMarker != *tc.wantCmp:
+				t.Errorf("BundledMarker = %q; want %q — the row must name the marker it actually compared "+
+					"against, or it tells the reader to move to a block of the other flavour",
+					*row.BundledMarker, *tc.wantCmp)
+			}
+		})
+	}
+
+	// CONTROL — the probe discriminates. A file that is missing entirely
+	// must not read as any of the verdicts above, or the table proves
+	// nothing about what was on disk.
+	if row := probeAgentsMD(t.TempDir()); row.Drift != "missing" || row.Installed {
+		t.Fatalf("control failed: probeAgentsMD on a repo with no AGENTS.md = %+v; want missing", row)
+	}
+}
+
+// TestProbeAgentsMD_AgreesWithTheWriter is the cross-component pin, and
+// the reason the ordering above is written the way it is: doctor REPORTS
+// this file's drift and inserter WRITES it, and the two answering
+// differently is the defect (#299's lesson, applied to the block).
+//
+// The writer's verdict is read from its own exported surface —
+// inserter.FindOutdatedMarkerBlocks, the function `agents update` and
+// `doctor --fix` route through — against the same bytes on disk. So a
+// change to the writer's flavour or ordering rule fails HERE rather than
+// in a fleet repo.
+func TestProbeAgentsMD_AgreesWithTheWriter(t *testing.T) {
+	slim, _ := bundledAgentsMDBlockVersions()
+	if slim == nil {
+		t.Fatal("this binary bundles a slim AGENTS.md template with no readable block-version marker")
+	}
+	markers := []string{
+		*slim,                           // current
+		bumpedMarker(t, "-pointer", -1), // behind this binary
+		bumpedMarker(t, "-pointer", +1), // ahead of it — the #257 rollout state
+		bumpedMarker(t, "", +1),         // ahead, other flavour
+		"vNEXT-pointer",                 // unorderable
+	}
+	for _, marker := range markers {
+		t.Run(marker, func(t *testing.T) {
+			dir := t.TempDir()
+			plantAgentsBlock(t, dir, marker)
+
+			entries, refusal, err := inserter.FindOutdatedMarkerBlocks(dir)
+			if err != nil {
+				t.Fatalf("FindOutdatedMarkerBlocks: %v", err)
+			}
+			drift := probeAgentsMD(dir).Drift
+
+			switch {
+			case refusal != nil && refusal.Ahead:
+				if drift != "ahead" {
+					t.Errorf("the writer refuses to downgrade this block (installed %s is NEWER than %s) "+
+						"but doctor reports %q — the same run would say the block is behind AND ahead",
+						refusal.Installed, refusal.Bundled, drift)
+				}
+			case refusal != nil:
+				if drift != "unknown" && drift != "markerless" {
+					t.Errorf("the writer refuses this block as unreadable but doctor reports %q, which "+
+						"sends the reader to a --fix that will decline", drift)
+				}
+			case len(entries) > 0:
+				if drift != "stale" {
+					t.Errorf("the writer would refresh this block but doctor reports %q", drift)
+				}
+			default:
+				if drift != "current" {
+					t.Errorf("the writer considers this block current but doctor reports %q", drift)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderStatus_AheadAgentsMDRowNamesTheDirection pins the STRING the
+// operator reads, end to end — CollectStatus through RenderStatus — for
+// the same reason TestRenderStatus_AheadRowNamesTheDirection does for
+// workflows: a test that constructs `Drift: "ahead"` by hand stays green
+// while the probe that produces it says "stale".
+//
+// Wording is deliberately the workflow rows' ("ahead of this binary
+// (bundles: …)"), not a third vocabulary for the same fact.
+func TestRenderStatus_AheadAgentsMDRowNamesTheDirection(t *testing.T) {
+	dir := freshRepo(t)
+	ahead := bumpedMarker(t, "-pointer", +1)
+	plantAgentsBlock(t, dir, ahead)
+
+	r := CollectStatus(dir, true)
+	body := RenderStatus(r)
+
+	line := ""
+	for _, l := range strings.Split(body, "\n") {
+		if strings.Contains(l, "AGENTS.md") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no AGENTS.md row in the rendered report:\n%s", body)
+	}
+	if !strings.Contains(line, "ahead of this binary") {
+		t.Errorf("the AGENTS.md row does not name the direction; got %q", line)
+	}
+	if strings.Contains(line, "STALE") {
+		t.Errorf("a block NEWER than this binary reads STALE — the inverted verdict; got %q", line)
+	}
+	if strings.Contains(line, "latest: ") {
+		t.Errorf("the row calls the OLDER bundled marker \"latest\"; got %q", line)
+	}
+	// And it must not drag the whole stack to DRIFT, which is what sends
+	// the operator to a `--fix` that will (correctly) refuse to touch it.
+	if r.Overall == "DRIFT" {
+		t.Errorf("a block ahead of this binary flipped the stack to DRIFT:\n%s", body)
+	}
+
+	// CONTROL — the same repo with a block one generation BEHIND must
+	// still read STALE and still flip the stack, or the assertions above
+	// are passing on a row that reports nothing at all.
+	plantAgentsBlock(t, dir, bumpedMarker(t, "-pointer", -1))
+	stale := CollectStatus(dir, true)
+	staleBody := RenderStatus(stale)
+	if !strings.Contains(staleBody, "STALE") || stale.Overall != "DRIFT" {
+		t.Errorf("control failed: an OLDER block does not report STALE/DRIFT, so the ahead assertions "+
+			"above prove nothing:\n%s", staleBody)
 	}
 }
 

@@ -3,7 +3,7 @@ name: logmind
 description: |
   MUST be loaded for any task in a project that uses logmind (detect by:
   .logmind/config.yml at repo root, or AGENTS.md / CLAUDE.md mentioning
-  logmind, or docs/decisions.md present). Use BEFORE writing >20 lines of
+  logmind, or docs/decisions-branches/ present). Use BEFORE writing >20 lines of
   new code, BEFORE choosing between alternatives, BEFORE adding a
   dependency, BEFORE modifying existing functionality, BEFORE making any
   security or performance trade-off, BEFORE renaming or moving any
@@ -49,24 +49,37 @@ file + its companion docs when you have unrelated WIP.
 
 ## Branch-aware logging
 
-When you are on a feature branch (anything other than the project's default
-branch), the entry is written to
-`docs/decisions-branches/<sanitized-branch>.md` rather than
-`docs/decisions.md`. You do not need to manage this routing — `logmind
-log` does it automatically.
+Every entry is written to `docs/decisions-branches/<sanitized-branch>.md`
+for the branch it was made on — the default branch included, where the
+file is `main.md`. One rule, no exception: the default branch is a branch
+like any other. You do not need to manage this routing — `logmind log`
+does it automatically.
+
+`docs/decisions.md` is a legacy source. `logmind init` seeds it with a pointer
+at this layout and never touches it again — it exists so a logmind older than
+v2.0 still recognises the repo as initialised instead of re-scaffolding over
+`.logmind/config.yml`. Where it holds real entries (a repo that predates §3.2)
+they are read, never rewritten. It is written to on only three paths, all of
+them ones where the router cannot resolve a branch name to route by:
+`decisions.branch_aware: false`; `git` reporting
+this is not a repository, which also fires when the `git` binary itself is
+unreachable — even inside a real repo, on a real branch; and a detached
+HEAD. A repo with no commits yet is not one of them — `git symbolic-ref
+--short HEAD` succeeds before the first commit, so a fresh `git init` routes
+to `main.md` like any other branch.
 
 ## Reading prior context
 
 Before starting non-trivial work, read in order:
 
 1. **`docs/timeline.md`** — the main-canonical, source-derived union of
-   every decision across every branch; start here.
-2. **`docs/decisions.md`** — direct-on-main decisions in detail (20 most
-   recent).
-3. **`docs/decisions-branches/<your-branch>.md`** (if present) — decisions
-   made earlier on the same feature branch.
-4. **`docs/file-structure.md`** — current project tree.
-5. The project's **spec file**, if configured (`context.spec_file` in
+   every decision across every branch; start here. Its older half
+   continues in **`docs/timeline-archive.md`**.
+2. **`docs/decisions-branches/<your-branch>.md`** (if present) — decisions
+   made earlier on the branch you are on, in full detail. On the default
+   branch that file is `docs/decisions-branches/main.md`.
+3. **`docs/file-structure.md`** — current project tree.
+4. The project's **spec file**, if configured (`context.spec_file` in
    `.logmind/config.yml`, typically `docs/spec.md`) — the forward-looking
    contract to build toward, not just the history behind you.
 
@@ -76,8 +89,8 @@ piecing this together by hand.
 
 ```bash
 logmind show               # recent decisions on the current branch
-logmind show --all         # include archive
-logmind search "postgres"  # full-text across recent + archive
+logmind show --all         # include every other branch's decision file
+logmind search "postgres"  # full-text across every decision file that exists
 ```
 
 As an agent, set `LOGMIND_QUIET=1` for terse, chainable machine output on

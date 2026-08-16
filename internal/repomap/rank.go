@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/tokens"
 )
 
@@ -71,20 +72,36 @@ func Pack(ranked []FileSymbols, maxTokens int) (kept []FileSymbols, omitted int)
 // decisionLinkedPaths returns the set of file paths (from files) that are named
 // in the repo's decision docs or timeline — a logmind-native importance signal.
 // Deterministic: reads committed docs in a fixed order.
+//
+// The decision half of the corpus comes from decisions.ListSources — the one
+// source-discovery primitive every read path shares — not from a literal
+// spelled out here. A hand-kept copy is how docs/decisions-archive.md silently
+// dropped out of this corpus: the list was retyped without it, in the same
+// change that declared decisions.NonBranchSources() the owner, and a file
+// named only in a repo's legacy archive stopped counting as load-bearing. The
+// two DERIVED docs are named literally because they are this package's own
+// corpus choice, not part of the decision-file set.
 func decisionLinkedPaths(repoRoot string, files []FileSymbols) map[string]bool {
+	docsDir := filepath.Join(repoRoot, "docs")
 	var corpus strings.Builder
-	for _, p := range []string{"decisions.md", "decisions-archive.md", "timeline.md"} {
-		if data, err := os.ReadFile(filepath.Join(repoRoot, "docs", p)); err == nil {
+	read := func(path string) {
+		if data, err := os.ReadFile(path); err == nil {
 			corpus.Write(data)
 			corpus.WriteByte('\n')
 		}
 	}
-	branches, _ := filepath.Glob(filepath.Join(repoRoot, "docs", "decisions-branches", "*.md"))
-	sort.Strings(branches)
-	for _, p := range branches {
-		if data, err := os.ReadFile(p); err == nil {
-			corpus.Write(data)
-			corpus.WriteByte('\n')
+	srcs, _ := decisions.ListSources(docsDir)
+	for _, s := range srcs {
+		if !s.IsBranch {
+			read(s.Path)
+		}
+	}
+	for _, p := range []string{"timeline.md", "timeline-archive.md"} {
+		read(filepath.Join(docsDir, p))
+	}
+	for _, s := range srcs {
+		if s.IsBranch {
+			read(s.Path)
 		}
 	}
 	text := corpus.String()
