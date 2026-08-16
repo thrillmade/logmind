@@ -202,7 +202,7 @@ across the tag boundary.
 |---|---|
 | **#288** | the current template turns a refused push into `::error` + `exit 1`. Migrating first makes every repo go red on every merge to `main` touching a derived doc — permanently, and the job says it will not self-heal. Strictly worse than the storm it replaces. |
 | **a release carrying the verb** | the new gate template calls `logmind check-decisions --base/--head`, and `setup-logmind` installs the latest **release**. v1.2.0 does not have the verb. |
-| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-16: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100` returns **8** repos — seven consumers plus logmind's own `logmind-self-update.yml`. Control: the `@v1.0.0` query returns 9, so the probe is not matching nothing.) |
+| **template v12** | **Built and on `dev`** (#314). The shipped template pushed with a raw `LOGMIND_AUTO_REGEN_PAT` while logmind's own copy minted a steward token; it now degrades App → PAT → `GITHUB_TOKEN`, resolves the default branch instead of hardcoding it in four places, and pins every action ref. The pin was `@v1.0.0` against seven consumers on `@v1.0.1` — not five. (measured 2026-08-16: `gh search code "thrillmade/setup-logmind@v1.0.1" --owner thrillmade --limit 100` returns **8** repos — seven consumers plus logmind's own `logmind-self-update.yml`. Control, **same unit**: the `@v1.0.0` query returns **2** repos (25 vs 13 raw rows — an earlier revision quoted the row count against the repo count, which is why this now states the unit).) |
 
 ### 3 — Remaining pre-tag work
 
@@ -276,7 +276,7 @@ name two today.
 **#277 rides here too.** It reports `check-derived-docs` enforcing the opposite
 of §3.3 — regenerating from the branch's own sources and failing on the diff, so
 it demands the branch commit exactly what §3.3 forbids. logmind's own copy and
-its shipped `v11` template are **already correct**; the defect is a stale
+its shipped `v12` template are **already correct**; the defect is a stale
 installed copy in the consumer repos. So it is a #257 payload, not code to write
 here, and it closes when the fleet takes the current template.
 
@@ -298,8 +298,25 @@ ships.
 | clud-bug | `v2` | `v4` | **yes** |
 | clud-bug-app | `v2` | `v4` | **yes** |
 | agent-skills | `v2` | `v4` | **yes** |
+| rezgen | `v2` | `v4` | **yes** |
+| tokenomics | `v2` | `v4` | **yes** |
 | reporulez | *unversioned* | *unmarked* | no |
 | skdd | *absent* on `main`, **`v4`** on `dev` | *absent* on `main`, **`v11`** on `dev` | no |
+
+`rezgen` and `tokenomics` were missing from an earlier revision of this table
+while the search two sections above named them — §4 sizes "one fleet move" off
+this table, so an undercount here understates the migration. Regenerate it,
+rather than trusting it:
+
+```sh
+for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
+  for w in check-decisions regen-timeline; do
+    printf '%s %s %s\n' "$r" "$w" \
+      "$(gh api "repos/thrillmade/$r/contents/.github/workflows/$w.yml" --jq .content \
+         2>/dev/null | base64 -d 2>/dev/null | head -1 | grep -oE 'v[0-9]+' || echo absent)"
+  done
+done
+```
 
 **logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9`, `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.

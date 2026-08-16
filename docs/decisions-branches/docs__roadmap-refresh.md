@@ -37,3 +37,14 @@
 
 ---
 
+## 2026-08-16 01:01 - roadmap: state the unit, correct a version the file contradicted itself on, and add the two repos the fleet table missed
+
+**Reasoning:** Three findings, all mine, and all the two shapes this file keeps failing on. The control beside the consumer count reported rows where the headline reported repositories, so no consistent reading of the sentence was true: the queries return eight repositories in twenty-five rows and two repositories in thirteen. A sentence twenty-five lines above the version table still called the shipped template eleven while the table said twelve. And the fleet table listed six repositories while the search two sections above named eight, omitting two that carry exactly the stale pair the table exists to enumerate.
+
+**Alternatives considered:** Add the two rows and move on. Rejected: the table is what sizes the fleet migration, so an undercount understates the work, and nothing in the file would have caught the next omission either. The command that regenerates the table now sits beside it, so the next reader can rebuild rather than trust it.
+
+**Implications:**
+- Both numbers in the consumer sentence now state their unit, and the sentence records that an earlier revision quoted one against the other, because that is the mistake a reader is most likely to repeat. The two added repositories were measured directly rather than inferred from the search: both carry check-decisions at two and regen-timeline at four, matching the four already listed, with a repository the table already contained as the control.
+
+---
+
