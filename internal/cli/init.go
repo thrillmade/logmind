@@ -20,9 +20,14 @@
 // initialised (.logmind/config.yml plus evidence init has scaffolded docs/
 // before — docsScaffolded), init reruns only the idempotent refresh steps —
 // workflow template updates, AGENTS.md marker refresh, .gitattributes block,
-// git config drivers, and hooks. .logmind/ is left untouched, and the single
-// docs/ write is ensureLegacyPointer restoring docs/decisions.md when it is
-// missing entirely — never over content.
+// git config drivers, and hooks. Its only unconditional docs/ write is
+// ensureLegacyPointer restoring docs/decisions.md when it is missing
+// entirely — never over content — and it leaves .logmind/ alone.
+//
+// --spec is the one exception to both, by design and in refresh mode too:
+// it scaffolds docs/spec.md when absent and sets context.spec_file in
+// .logmind/config.yml when that key is unset (applyInitSpec). Neither half
+// overwrites anything already there.
 //
 // Flags mirror the Python CLI's init command:
 //
@@ -148,11 +153,23 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	// pointerRel comes back from the writer rather than being spelled again
 	// at the commit site below — see legacyPointerRel for what the second
 	// spelling cost.
-	pointerRel, err := ensureLegacyPointer(docsPath)
+	//
+	// The receipt line is conditional because this branch is REACHABLE with
+	// the file already present: the install sentinel is `.logmind/config.yml`
+	// plus docsScaffolded, so a repo carrying docs/decisions.md and no
+	// .logmind/ takes the whole fresh-install path. "✓ Created" over a file
+	// nothing created is the cheapest kind of lie for a receipt to tell —
+	// and the content IS preserved (ensureLegacyPointer never overwrites),
+	// so only the line was ever wrong.
+	pointerRel, pointerCreated, err := ensureLegacyPointer(docsPath)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "✓ Created docs/decisions.md")
+	if pointerCreated {
+		fmt.Fprintln(out, "✓ Created docs/decisions.md")
+	} else {
+		fmt.Fprintln(out, "✓ docs/decisions.md already present — left as-is, staged for the initial commit")
+	}
 
 	// file-structure.md + timeline.md are seeded here but get rewritten
 	// AFTER the first decision is logged. Python emits the placeholder
@@ -468,24 +485,35 @@ func docsScaffolded(docsPath string) bool {
 const legacyPointerRel = "docs/decisions.md"
 
 // ensureLegacyPointer writes docs/decisions.md if — and only if — nothing is
-// there, and returns legacyPointerRel so the caller commits the same path
-// this wrote. It is the ONE writer of that path, shared by the fresh-install
-// path and by refresh, so both routes through `logmind init` leave the file
-// present.
+// there. It returns legacyPointerRel so the caller commits the same path this
+// wrote, and whether it CREATED the file. It is the ONE writer of that path,
+// shared by the fresh-install path and by refresh, so both routes through
+// `logmind init` leave the file present.
 //
 // The path comes back even when the file was already there. "Present" is not
 // the obligation — TRACKED is — and a fresh-install repo that happened to
 // carry an untracked docs/decisions.md already needs it staged just as much
-// as one this call created.
+// as one this call created. TestInit_PreExistingUntrackedPointerIsCommitted
+// is what keeps that branch honest.
+//
+// `created` is returned rather than recomputed by each caller for the same
+// reason the path is: it is one fact about what this call did, and the two
+// callers both report it. Both statements a caller makes about this file —
+// the fresh path's receipt line and refresh's "Restored … commit it" notice —
+// are now conditioned on the writer's own answer instead of a pathExists the
+// caller runs separately and hopes still agrees.
 //
 // NOT `logmind doctor --fix`: that goes through applyRefresh directly
 // (doctor.go), never through runInitRefresh, so it does not restore a missing
 // pointer and does not report one. Deliberate for now — applyRefresh's
 // contract is "move a stale marker forward", and writing a docs/ file from a
-// drift-remediation pass is a wider change than this fix needs, given
-// doctor's own DRIFT output already tells the reader to re-run `logmind
-// init`. It does leave a gap: a pre-fix v2 repo whose owner only ever runs
-// `doctor --fix` stays exposed and is told nothing.
+// drift-remediation pass is a wider change than this fix needs. The gap is
+// real and nothing else covers it: doctor has NO probe for this file
+// (measured — with only the sentinel deleted, `doctor` prints "Stack status:
+// OK" and not one drift line, while a stale workflow marker in the same repo
+// yields DRIFT plus "# then re-run: logmind init"). So a pre-fix v2 repo
+// whose owner only ever runs `doctor --fix` stays exposed and is told
+// nothing.
 //
 // Only ONE of the two callers commits what this writes. The fresh-install
 // path stages the returned path (filesToCommit); refresh commits nothing at
@@ -501,15 +529,15 @@ const legacyPointerRel = "docs/decisions.md"
 // See templates.DecisionsPointerTemplate for what the file is for: v1.2.0
 // tests for it to decide whether a repo is already initialised, and re-runs
 // the whole scaffold — config.yml included — when it is absent.
-func ensureLegacyPointer(docsPath string) (string, error) {
+func ensureLegacyPointer(docsPath string) (rel string, created bool, err error) {
 	path := filepath.Join(docsPath, "decisions.md")
 	if pathExists(path) {
-		return legacyPointerRel, nil
+		return legacyPointerRel, false, nil
 	}
 	if err := writeFile(path, templates.DecisionsPointerTemplate()); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return legacyPointerRel, nil
+	return legacyPointerRel, true, nil
 }
 
 // runInitRefresh handles the idempotent re-init path. Mirrors Python's
@@ -532,8 +560,7 @@ func runInitRefresh(cmd *cobra.Command, f *initFlags, cwd, docsPath string, clau
 	// from every clone, which is the only place v1.2.0 asks the question.
 	// The user is the one who can close that, so the user is told: silence
 	// here would leave a file on disk that looks like the fix and is not.
-	pointerRestored := !pathExists(filepath.Join(docsPath, "decisions.md"))
-	if _, err := ensureLegacyPointer(docsPath); err != nil {
+	if _, pointerRestored, err := ensureLegacyPointer(docsPath); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: could not write docs/decisions.md:", err)
 	} else if pointerRestored {
 		fmt.Fprintln(out, "✓ Restored docs/decisions.md (logmind v1.x install sentinel)")

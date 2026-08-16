@@ -136,6 +136,120 @@ func TestInit_LegacyPointerIsCommitted_NotJustWritten(t *testing.T) {
 	})
 }
 
+// TestInit_PreExistingUntrackedPointerIsCommitted drives the branch every
+// other test in this file leaves cold: ensureLegacyPointer's "it was already
+// there" early return.
+//
+// Every other case starts from a repo with no docs/decisions.md, so
+// `pointerRel` is always the freshly-created return and a mutant that dropped
+// the path on the already-present branch survives the whole file. What it
+// breaks is not hypothetical — it is the fleet's common shape. A repository
+// that predates §3.2 carries a REAL decision log at docs/decisions.md; if it
+// is untracked when `logmind init` runs (a fresh checkout of a directory
+// someone had been keeping locally, a repo whose .logmind/ was removed and
+// re-inited), the file must still end up in the index. Otherwise the clone
+// everyone else works from has no docs/decisions.md at all, and a v1.2.0
+// binary run there reads the repository as UNINITIALISED and rewrites
+// .logmind/config.yml over its settings — the exact failure this whole file
+// exists to fence, arrived by the one route nothing tested.
+//
+// The fresh-install path is genuinely reachable in that state: the install
+// sentinel is `.logmind/config.yml` AND docsScaffolded, so a repo with
+// docs/decisions.md and no .logmind/ is not "already initialised".
+func TestInit_PreExistingUntrackedPointerIsCommitted(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+
+		// A pre-§3.2 main decision log, written and never committed.
+		legacy := "# Decisions\n\n## 2019-05-05 11:11 - Chose Postgres over MySQL\n\n" +
+			"**Reasoning:** pre-upgrade-rationale\n\n---\n"
+		pointer := filepath.Join(d, "docs", "decisions.md")
+		mustMkdir(t, filepath.Join(d, "docs"))
+		mustWrite(t, pointer, legacy)
+		if gitcli.IsTrackedFile(d, legacyPointerRel) {
+			t.Fatal("fixture precondition: the pointer must start UNTRACKED")
+		}
+
+		// NOT --no-git: the commit is the thing under test.
+		runQuiet(t, []string{"init"})
+
+		if got := mustReadFile(t, pointer); got != legacy {
+			t.Fatalf("`logmind init` rewrote a pre-§3.2 decision log.\nwant:\n%s\ngot:\n%s", legacy, got)
+		}
+		if !gitcli.IsTrackedFile(d, legacyPointerRel) {
+			t.Errorf("`logmind init` left a pre-existing %s untracked.\n"+
+				"\"Present\" is not the obligation — TRACKED is: an untracked sentinel reaches no clone, "+
+				"so a v1.2.0 binary reads the repository as UNINITIALISED and rewrites .logmind/config.yml.\n"+
+				"git status: %s", legacyPointerRel, gitcli.StatusPorcelain(d, legacyPointerRel))
+		}
+
+		// The scenario itself: v1.2.0's question, asked of a fresh clone,
+		// which carries the index and not the working tree.
+		clone := filepath.Join(t.TempDir(), "clone")
+		testgit.CloneRepo(t, clone, "-q", d)
+		if !v120AlreadyInitialised(clone) {
+			t.Errorf("a CLONE of a repository whose docs/decisions.md was already on disk reads as "+
+				"UNINITIALISED to logmind v1.2.0.\nclone docs/ contains: %v",
+				lsDir(t, filepath.Join(clone, "docs")))
+		}
+		// And the log itself travelled, not just a path of that name.
+		if got := mustReadFile(t, filepath.Join(clone, "docs", "decisions.md")); got != legacy {
+			t.Errorf("the clone's docs/decisions.md is not the log that was on disk.\nwant:\n%s\ngot:\n%s",
+				legacy, got)
+		}
+	})
+}
+
+// TestInit_PreExistingPointerIsNotReportedAsCreated: the receipt must match
+// what happened. `✓ Created docs/decisions.md` used to be unconditional, and
+// on the merge base that was harmless — the old sentinel tested for
+// decisions.md itself, so the fresh path was unreachable with the file
+// present. Widening the sentinel (docsScaffolded) made the branch reachable
+// and the line false: content preserved, receipt lying.
+func TestInit_PreExistingPointerIsNotReportedAsCreated(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		mustMkdir(t, filepath.Join(d, "docs"))
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"), "# Decisions\n\nheld locally\n")
+
+		out := initCapturingOutput(t)
+		if strings.Contains(out, "✓ Created docs/decisions.md") {
+			t.Errorf("init reported creating a file that was already on disk.\n--- stdout ---\n%s", out)
+		}
+		if !strings.Contains(out, "docs/decisions.md already present") {
+			t.Errorf("init said nothing about the file it staged.\n--- stdout ---\n%s", out)
+		}
+	})
+
+	// CONTROL — the line IS printed when init really does create it, so the
+	// assertion above is measuring the branch and not the absence of any
+	// mention at all.
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		out := initCapturingOutput(t)
+		if !strings.Contains(out, "✓ Created docs/decisions.md") {
+			t.Errorf("control failed: a genuine fresh install does not report creating the sentinel, "+
+				"so the negative assertion above proves nothing.\n--- stdout ---\n%s", out)
+		}
+	})
+}
+
+// initCapturingOutput runs `logmind init --no-git` against the current cwd
+// and returns stdout. Sibling of refreshCapturingOutput below, for the
+// fresh-install path's own receipt lines.
+func initCapturingOutput(t *testing.T) string {
+	t.Helper()
+	root := NewRootCmd()
+	root.SetArgs([]string{"init", "--no-git"})
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+	}
+	return out.String()
+}
+
 // v120AlreadyInitialised is logmind v1.2.0's install sentinel, transcribed
 // from the released binary's internal/cli/init.go:
 //

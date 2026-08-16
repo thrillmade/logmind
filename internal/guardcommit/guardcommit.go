@@ -62,9 +62,9 @@ const (
 	// CarveOutCherryPickOrRevert: .git/CHERRY_PICK_HEAD or
 	// .git/REVERT_HEAD exists.
 	CarveOutCherryPickOrRevert CarveOut = "cherry-pick-or-revert-in-progress"
-	// CarveOutDecisionFileStaged: a decision-log file (docs/decisions.md,
-	// docs/decisions-branches/*.md, or any path ending in "/decisions.md")
-	// is already staged — the commit IS the documentation.
+	// CarveOutDecisionFileStaged: the staged change WROTE a well-formed
+	// §3.1 entry into a decision-log file — the commit IS the
+	// documentation. Staging the file is not enough; see DecisionRecorded.
 	CarveOutDecisionFileStaged CarveOut = "decision-file-staged"
 	// CarveOutUnderThreshold: the computed substantive-line count is below
 	// the configured threshold — too small to be worth a decision log.
@@ -126,7 +126,7 @@ func allowedBy(carveOut CarveOut, lines int) Decision {
 //  4. git is mid-rebase/merge/cherry-pick/revert → Allow (the matching
 //     in-progress carve-out) — these are git-internal commits, not
 //     developer-authored ones.
-//  5. a decision-log file is already staged → Allow (decision-file-staged)
+//  5. the staged change RECORDED a decision → Allow (decision-file-staged)
 //  6. substantive lines < threshold       → Allow (under-threshold)
 //  7. otherwise                           → Block, with a Reason
 func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
@@ -175,11 +175,19 @@ func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
 		return allowedBy(CarveOutCherryPickOrRevert, 0)
 	}
 
-	// 5. The commit itself documents the decision.
-	for _, f := range gitcli.DiffCachedNames(repoRoot) {
-		if IsDecisionFile(f) {
-			return allowedBy(CarveOutDecisionFileStaged, 0)
-		}
+	// 5. The commit itself documents the decision — RECORDED, not merely
+	// staged. The index is the right scope in both modes: this asks what
+	// the commit about to be made will carry, and a decision file sitting
+	// unstaged carries nothing into it.
+	evidence, _ := DecisionRecorded(gitcli.DiffCachedNames(repoRoot), func(path string) ([]string, error) {
+		// DiffCachedAddedLines is best-effort by contract (nil on any git
+		// failure), so there is no error to propagate here — a git that
+		// cannot answer yields no added lines, which fails CLOSED into the
+		// line count below rather than into an allow.
+		return gitcli.DiffCachedAddedLines(repoRoot, path), nil
+	})
+	if evidence.Recorded {
+		return allowedBy(CarveOutDecisionFileStaged, 0)
 	}
 
 	// 6/7. Compute the substantive-line count per the requested diff mode
@@ -189,14 +197,38 @@ func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
 		return allowedBy(CarveOutUnderThreshold, lines)
 	}
 	return Decision{
-		Allow: false,
-		Lines: lines,
-		Reason: fmt.Sprintf(
-			"%d lines changed without a decision log — record it with `logmind log` "+
-				"(or add [skip-logmind] to the subject / set LOGMIND_ALLOW_GIT_COMMIT=1 to bypass)",
-			lines,
-		),
+		Allow:  false,
+		Lines:  lines,
+		Reason: blockReason(lines, evidence.Touched),
 	}
+}
+
+// blockEscapeHatches names SPEC §3.4's two per-commit escapes. One owner
+// for the sentence: a block that names the remedy and forgets the escapes
+// (or names them in one branch below and not the other) is a gate the
+// author cannot get past without guessing.
+const blockEscapeHatches = "record it with `logmind log` " +
+	"(or add [skip-logmind] to the subject / set LOGMIND_ALLOW_GIT_COMMIT=1 to bypass)"
+
+// blockReason renders Evaluate's Block explanation. `touched` names the
+// decision files the change wrote to WITHOUT recording anything a §3.1
+// reader can find.
+//
+// That second shape needs its own sentence. Reporting the bare "N lines
+// changed without a decision log" over a diff that visibly stages
+// docs/decisions.md reads as a bug in the gate — the author looks at the
+// index, sees the decision file, and concludes the block is spurious. It
+// is not: the file is there and the entry is not, and only the message can
+// say which.
+func blockReason(lines int, touched []string) string {
+	if len(touched) == 0 {
+		return fmt.Sprintf("%d lines changed without a decision log — %s", lines, blockEscapeHatches)
+	}
+	return fmt.Sprintf(
+		"%d lines changed without a decision log — %s is staged but adds no entry a §3.1 reader "+
+			"can find (a title, a timestamp, and non-empty reasoning), so it documents nothing; %s",
+		lines, strings.Join(touched, ", "), blockEscapeHatches,
+	)
 }
 
 // collectRows gathers the gitcli.NumstatLine rows relevant to mode.
@@ -228,14 +260,96 @@ func collectRows(repoRoot string, mode DiffMode) []gitcli.NumstatLine {
 	}
 }
 
-// IsDecisionFile reports whether path is a decision-log file. Moved
-// verbatim from internal/cli/check_decisions.go's former isDecisionFile so
-// both check-decisions and guard-commit share one predicate:
+// AddedLinesFunc reports the lines a change ADDED to one repo-relative
+// path, with git's leading "+" already stripped:
+// gitcli.DiffCachedAddedLines for an index, gitcli.DiffRangeAddedLines for
+// a base...head range.
+//
+// Taking the reader as a parameter is what lets the two local
+// interception points and the CI gate share DecisionRecorded's judgement
+// while each keeps its own diff scope. The alternative — passing a
+// repoRoot and a mode — would put every scope this rule is ever judged
+// over inside this package, which is how the scopes drift.
+type AddedLinesFunc func(path string) ([]string, error)
+
+// DecisionEvidence is DecisionRecorded's answer.
+type DecisionEvidence struct {
+	// Recorded is the gate's actual question: the change ADDED a
+	// §3.1-well-formed entry to a decision file.
+	Recorded bool
+	// Touched names the decision files the change wrote to without
+	// recording anything well-formed. Empty whenever Recorded is true —
+	// it exists only so a BLOCK can name the file that was staged in vain.
+	Touched []string
+}
+
+// DecisionRecorded answers "did this change record a decision?" — the ONE
+// question every enforcement surface asks, and the one place it is
+// answered. `logmind guard-commit` (Evaluate's carve-out 5) and the
+// `check-decisions` gate (internal/cli/check_decisions.go) both route
+// through it.
+//
+// Two halves, and BOTH are required:
+//
+//   - the path is a decision file (isDecisionFile), and
+//   - the lines the change ADDED to it carry an entry that is well-formed
+//     under §3.1 (WellFormedDecisionAdded).
+//
+// The path half alone is not an answer, and shipping it as one was a live
+// gate hole: since SPEC §3.2, docs/decisions.md is an install sentinel
+// that "is not written to, and holds no decisions of its own", so
+// `git add docs/decisions.md` staged a file logmind itself had written and
+// cleared the commit gate for any amount of code. Measured on the PR head:
+// 302 lines of new Go, sentinel staged, `guard-commit --layer git-hook`
+// exit 0 "allowed (decision-file-staged)". check-decisions asked the
+// second half and guard-commit did not, which is the whole defect — two
+// callers of one path predicate, two different answers to the question the
+// SPEC actually poses. There is now no exported way to ask the path half
+// on its own.
+//
+// SPEC §3.4: "A decision clears the gate by being written, not by
+// existing. ... MUST NOT be satisfied by the decision file merely
+// appearing in the diff."
+//
+// The error is addedLines' own and is returned unwrapped, so the gate's
+// loud-on-failure contract (an unresolvable ref must not read as an empty
+// diff) survives the trip through here.
+func DecisionRecorded(names []string, addedLines AddedLinesFunc) (DecisionEvidence, error) {
+	var ev DecisionEvidence
+	for _, path := range names {
+		if !isDecisionFile(path) {
+			continue
+		}
+		added, err := addedLines(path)
+		if err != nil {
+			return DecisionEvidence{}, err
+		}
+		if WellFormedDecisionAdded(added) {
+			return DecisionEvidence{Recorded: true}, nil
+		}
+		ev.Touched = append(ev.Touched, path)
+	}
+	return ev, nil
+}
+
+// isDecisionFile reports whether path is a decision-log file:
 //
 //   - exact path "docs/decisions.md"
 //   - suffix "/decisions.md" (covers nested decisions.md)
 //   - prefix "docs/decisions-branches/" (per-branch decision files)
-func IsDecisionFile(path string) bool {
+//
+// UNEXPORTED on purpose. It answers "is this the kind of file a decision
+// lives in", which is only ever half of "did this change record a
+// decision" — and the half that a content-free file passes. It was
+// exported once, one caller asked it alone, and that caller was the
+// commit gate. DecisionRecorded is the exported question; this is an
+// implementation detail of it.
+//
+// docs/decisions.md stays on the list even though nothing writes it since
+// §3.2: a repository that predates the collapse carries a real decision
+// log at that path, and a change that appends an entry there has recorded
+// a decision by any reading of §3.4.
+func isDecisionFile(path string) bool {
 	if path == "docs/decisions.md" {
 		return true
 	}

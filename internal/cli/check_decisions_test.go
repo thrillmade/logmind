@@ -153,6 +153,95 @@ func TestCheckDecisions_TouchedButMalformedDecisionDoesNotClear(t *testing.T) {
 	checkGolden(t, "check_decisions_over_threshold.golden", stdout.String())
 }
 
+// TestGateAndHookAgreeOnWhatRecordsADecision is the class-level pin for
+// the hole a round-14 panel found: `logmind guard-commit` and
+// `check-decisions` are two consumers of ONE rule, and they had grown two
+// answers to it. The gate asked whether the change ADDED a well-formed
+// entry; the commit hook asked only whether a decision-shaped PATH was
+// staged — so `git add docs/decisions.md`, the content-free v1.2.0 install
+// sentinel `logmind init` writes and which says in its own body that it
+// holds no decisions, cleared the commit gate for any amount of code while
+// CI still blocked the same change.
+//
+// Measured on the PR head: sentinel staged beside 302 lines of new Go,
+// `guard-commit --layer git-hook` exit 0 "allowed (decision-file-staged)",
+// `check-decisions` exit 1.
+//
+// So the assertion is AGREEMENT, not two independent expectations. A fix
+// that closes the hook's hole by teaching it a second copy of the rule
+// passes a per-surface test and fails this one the moment the copies
+// drift; both surfaces route through guardcommit.DecisionRecorded.
+func TestGateAndHookAgreeOnWhatRecordsADecision(t *testing.T) {
+	// The shipped sentinel's shape: prose, and no `## <date> <time> -
+	// <title>` header anywhere in it.
+	const sentinel = "# Decision Log\n\nDecisions are not kept in this file. Since SPEC §3.2 every\n" +
+		"decision lands in `docs/decisions-branches/<branch>.md`.\n\n" +
+		"It is not written to, and it holds no decisions of its own.\n"
+
+	cases := []struct {
+		name        string
+		path, body  string // decision file staged alongside the code; "" for none
+		wantBlocked bool
+	}{
+		{name: "the v1.2.0 install sentinel records nothing",
+			path: "docs/decisions.md", body: sentinel, wantBlocked: true},
+		{name: "a legacy decisions.md with a real entry records a decision",
+			path: "docs/decisions.md", body: wellFormedEntry, wantBlocked: false},
+		{name: "the branch file logmind log writes records a decision",
+			path: "docs/decisions-branches/feature.md", body: wellFormedEntry, wantBlocked: false},
+		{name: "a header with no reasoning records nothing",
+			path: "docs/decisions-branches/feature.md",
+			body: "## 2026-08-07 14:30 - Untitled thought\n\n---\n", wantBlocked: true},
+		{name: "no decision file at all",
+			wantBlocked: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			stageLines(t, repo, "source.txt", 25)
+			if tc.path != "" {
+				stageFile(t, repo, tc.path, tc.body)
+			}
+
+			var gateOut bytes.Buffer
+			gateBlocked := errors.Is(runCheckDecisions(stagedOpts(repo), &gateOut), ErrSilent)
+
+			msgFile := filepath.Join(repo, "COMMIT_EDITMSG")
+			if err := os.WriteFile(msgFile, []byte("feat: land it\n"), 0o644); err != nil {
+				t.Fatalf("write msg file: %v", err)
+			}
+			var hookOut, hookErr bytes.Buffer
+			exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, false, true,
+				strings.NewReader(""), &hookOut, &hookErr)
+			if err != nil {
+				t.Fatalf("runGuardCommit: %v", err)
+			}
+			hookBlocked := exitCode != 0
+
+			if gateBlocked != hookBlocked {
+				t.Fatalf("the gate and the commit hook DISAGREE about whether this change recorded a decision.\n"+
+					"  check-decisions blocked = %v (out: %q)\n"+
+					"  guard-commit    blocked = %v (exit %d, stderr: %q)\n"+
+					"One rule, two consumers — a change either recorded a decision or it did not.",
+					gateBlocked, gateOut.String(), hookBlocked, exitCode, hookErr.String())
+			}
+			if gateBlocked != tc.wantBlocked {
+				t.Fatalf("both surfaces agree on blocked=%v, but want %v (gate out: %q, hook stderr: %q)",
+					gateBlocked, tc.wantBlocked, gateOut.String(), hookErr.String())
+			}
+			// The hook's block signal is 65 (EX_DATAERR) specifically — the
+			// commit-msg hook body treats every OTHER nonzero code as "not
+			// our block signal" and falls open, so an agreement test that
+			// only asked "nonzero" would pass on a gate that no longer aborts
+			// the commit.
+			if hookBlocked && exitCode != exGitHookBlock {
+				t.Errorf("guard-commit blocked with exit %d; want %d — the commit-msg hook only aborts on that code",
+					exitCode, exGitHookBlock)
+			}
+		})
+	}
+}
+
 // TestCheckDecisions_ExcludedSurfacesDoNotCount walks SPEC §3.4's
 // exclusion table end-to-end through the verb, one path per row, at a
 // size that would otherwise trip the gate.

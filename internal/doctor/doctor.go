@@ -673,18 +673,78 @@ func bundledAgentsMDBlockVersions() (*string, *string) {
 	return read(templates.AgentsSlimTemplate()), read(templates.AgentsTemplate())
 }
 
+// bundledForBlock picks WHICH bundled marker an installed AGENTS.md block
+// is measured against — nil when this binary has nothing it may compare.
+//
+// It mirrors inserter.planBlockRefresh, the WRITER's rule, guard for
+// guard, because the reader and the writer answering differently about one
+// file is what #299 was:
+//
+//   - ORDERABLE. An id this binary cannot parse as a generation is one the
+//     writer refuses to move at all, so there is nothing to be stale
+//     against. nil here → classifyMarker says "unknown", which is the
+//     honest answer and does not send the reader to a `--fix` that will
+//     decline.
+//   - FLAVOUR. SPEC §1.1 forbids a silent full↔slim flip, so the writer
+//     compares a slim block against the bundled SLIM marker and a full one
+//     against the bundled FULL marker. Comparing against the wrong flavour
+//     is how a current full block reads as stale, and how a stale one is
+//     told to "upgrade" to a marker of the other flavour entirely.
+//
+// The flavour is read OFF the token rather than enumerated (the tag is
+// everything from the first "-", matching inserter.parseBlockMarker's own
+// split), so a generation this binary has never heard of still classifies
+// into the right camp instead of falling into a default.
+// TestProbeAgentsMD_AgreesWithTheWriter is what keeps the two in step.
+func bundledForBlock(marker string, slim, full *string) *string {
+	if _, ok := inserter.ParseMarkerGeneration(marker); !ok {
+		return nil
+	}
+	want := blockMarkerFlavour(marker)
+	for _, bundled := range []*string{slim, full} {
+		if bundled != nil && blockMarkerFlavour(*bundled) == want {
+			return bundled
+		}
+	}
+	return nil
+}
+
+// blockMarkerFlavour returns a block marker's flavour tag: "-pointer" for
+// the slim block, "" for the full one.
+func blockMarkerFlavour(marker string) string {
+	if i := strings.IndexByte(marker, '-'); i >= 0 {
+		return marker[i:]
+	}
+	return ""
+}
+
+// probeAgentsMD reports the AGENTS.md logmind block's drift.
+//
+// ORDERED, like every other marker row (classifyMarker) — this used to be
+// bare equality plus a `default: stale`, which inverts the verdict for a
+// repository running AHEAD of the binary reading it. That is not a corner:
+// it is the staggered-rollout state by construction (#257), and the wave
+// that bumps the slim block to v10-pointer is what puts the fleet into it.
+// A released binary bundling v9-pointer would have reported
+// `AGENTS.md v10-pointer STALE (latest: v9-pointer)` — verdict and label
+// both backwards — while REFUSING, correctly, to downgrade the block in
+// the same run, and printing that refusal on stderr. Three contradictory
+// statements about one file, and a row nothing could clear.
 func probeAgentsMD(projectRoot string) WorkflowStatus {
 	slim, full := bundledAgentsMDBlockVersions()
-	display := slim
-	if display == nil {
-		display = full
+	// What init would install here (SPEC §1.1: slim by default) — the only
+	// meaningful "bundled" value when there is no installed block to
+	// measure against.
+	fallback := slim
+	if fallback == nil {
+		fallback = full
 	}
 	path := filepath.Join(projectRoot, "AGENTS.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return WorkflowStatus{
 			Name: "AGENTS.md", Installed: false, Marker: nil,
-			BundledMarker: display, Drift: "missing",
+			BundledMarker: fallback, Drift: "missing",
 		}
 	}
 	m := logmindBlockVersionRe.FindStringSubmatch(string(data))
@@ -693,20 +753,16 @@ func probeAgentsMD(projectRoot string) WorkflowStatus {
 		v := m[1]
 		marker = &v
 	}
-	drift := "markerless"
-	switch {
-	case marker == nil:
-		drift = "markerless"
-	case slim == nil && full == nil:
-		drift = "unknown"
-	case (slim != nil && *marker == *slim) || (full != nil && *marker == *full):
-		drift = "current"
-	default:
-		drift = "stale"
+	// The bundled marker REPORTED is the one actually compared against, so
+	// an "(latest: …)" / "(bundles: …)" the reader is shown names a marker
+	// their block could really move to.
+	bundled := fallback
+	if marker != nil {
+		bundled = bundledForBlock(*marker, slim, full)
 	}
 	return WorkflowStatus{
 		Name: "AGENTS.md", Installed: true, Marker: marker,
-		BundledMarker: display, Drift: drift,
+		BundledMarker: bundled, Drift: classifyMarker(marker, bundled),
 	}
 }
 

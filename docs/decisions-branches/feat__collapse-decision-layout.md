@@ -199,3 +199,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 06:10 - guard-commit: ask whether a decision was RECORDED, not whether a decision-shaped path was staged
+
+**Reasoning:** This PR redefines docs/decisions.md as a content-free install sentinel, but guardcommit still answered the path question, and that predicate sits outside the diff. Reproduced: staging the restored sentinel — a file with zero entries — let 302 lines of new Go through the git-hook layer as 'allowed (decision-file-staged)', exit 0; control, same tree with the sentinel unstaged, exit 65. The window is precisely the fleet migration, when every consumer repo runs init or refresh and the next git add -A sweeps the sentinel in. Fixed at the class: one exported primitive, DecisionRecorded(names, AddedLinesFunc), combines the path predicate with WellFormedDecisionAdded over the lines the change ADDED, and both surfaces call it. IsDecisionFile is now unexported, so the half-question a content-free file passes has no exported spelling left and a future caller cannot re-create the split.
+
+**Alternatives considered:** Special-case the pointer path — rejected; that is a patch at one call site plus a promise to remember, and the next content-free artifact reopens it. Make the CI gate and the hook each hold their own answer — rejected; two lists that mean the same thing are two lists that will disagree, which is what a new agreement test now pins.
+
+**Implications:**
+- Panel correction I had repeated: check-decisions did NOT share the hole — measured, the sentinel gives exit 1 there. The real class defect was the two callers disagreeing. Legacy repos are unaffected: an entry appended to a real docs/decisions.md is still well-formed, verified as a control (exit 0). Also in this round: doctor's AGENTS.md row now routes through classifyMarker against a flavour-matched bundled marker, so a v11-pointer repo read by a v10-pointer binary reads 'ahead ... upgrade logmind' instead of 'STALE (latest: v10-pointer)' and stops contradicting the refuse-to-downgrade note printed in the same run; the ensureLegacyPointer already-present branch is now tested through the commit path and a clone; the fresh-install receipt is conditional; and four false comments were corrected, two of which the sweep found beyond the two reported.
+
+---
+

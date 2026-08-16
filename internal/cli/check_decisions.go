@@ -19,9 +19,10 @@ import (
 // gate of §6.2, "the one that actually blocks a merge." It judges the
 // same rule as the two local points (the commit-msg hook and the harness
 // hook, both served by `logmind guard-commit`) and shares their
-// evaluation: guardcommit.IsExcludedPath / SubstantiveLines decide what
-// counts, here as there. §3.4: "Both interception points and the gate
-// MUST use this one list."
+// evaluation on BOTH halves of it: guardcommit.SubstantiveLines (with
+// IsExcludedPath inside it) decides what counts, and
+// guardcommit.DecisionRecorded decides what clears — here as there. §3.4:
+// "Both interception points and the gate MUST use this one list."
 //
 // What the gate does NOT share is the local allowances. §3.4: every
 // allowance "that depends on local process state — the environment
@@ -31,13 +32,18 @@ import (
 // decision, or it falls under the threshold." So there is deliberately no
 // [skip-logmind] arm and no LOGMIND_ALLOW_GIT_COMMIT arm below.
 //
-// Output strings on the staged path are byte-identical to Python
-// v0.6.14 (cli.py:2425-2519):
+// Output strings on the staged path (cli.py:2425-2519):
 //
 //	not-a-git-repo:      "Not a git repository, skipping check."  (exit 0)
 //	decision written:    "✓ A decision log file is staged — changes are documented."
 //	under threshold:     "✓ N lines changed (below T-line threshold)."  (exit 0)
 //	over threshold:      multi-line warning, exit 1 unless --no-fail
+//
+// The first three are byte-identical to Python v0.6.14. The fourth is
+// DELIBERATELY not: Python named docs/decisions.md, and since §3.2 that
+// file is an install sentinel nothing writes, so the warning names the
+// branch file `logmind log` actually produces. Its other two lines are
+// unchanged.
 func newCheckDecisionsCmd() *cobra.Command {
 	var opts checkDecisionsOpts
 	cmd := &cobra.Command{
@@ -175,23 +181,30 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 
 	// SPEC §3.4: "A decision clears the gate by being written, not by
 	// existing. ... MUST NOT be satisfied by the decision file merely
-	// appearing in the diff." So we read what the change ADDED to each
-	// decision file and require a §3.1-shaped entry in it — a title, a
-	// timestamp, and non-empty reasoning. A touched-but-empty decision
-	// file falls through to the line count below, exactly as if it had
-	// not been touched.
-	for _, f := range names {
-		if !guardcommit.IsDecisionFile(f) {
-			continue
-		}
-		added, err := addedLines(repoRoot, f, opts)
-		if err != nil {
-			return err
-		}
-		if guardcommit.WellFormedDecisionAdded(added) {
-			fmt.Fprintln(stdout, "✓ A decision log file is staged — changes are documented.")
-			return nil
-		}
+	// appearing in the diff." guardcommit.DecisionRecorded is that
+	// judgement, and it is SHARED with the two local interception points
+	// for the same reason IsExcludedPath and SubstantiveLines are: this
+	// gate and `logmind guard-commit` must not grow two different answers
+	// to one question. They had two — the gate asked whether the diff
+	// added a well-formed entry, guard-commit asked only whether a
+	// decision-shaped PATH was staged, and the second question is cleared
+	// by staging the content-free §3.2 sentinel.
+	//
+	// A touched-but-empty decision file falls through to the line count
+	// below, exactly as if it had not been touched.
+	//
+	// The scope is this run's: the staged index, or the base...head range.
+	// addedLines carries that distinction, so the shared judgement never
+	// has to know which surface called it.
+	evidence, err := guardcommit.DecisionRecorded(names, func(path string) ([]string, error) {
+		return addedLines(repoRoot, path, opts)
+	})
+	if err != nil {
+		return err
+	}
+	if evidence.Recorded {
+		fmt.Fprintln(stdout, "✓ A decision log file is staged — changes are documented.")
+		return nil
 	}
 
 	// The exclusion table and the summing live in
@@ -206,11 +219,15 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 		// The final "git commit --no-verify" hint is part of the same
 		// stdout block; we replicate the linebreaks exactly.
 		// Name the file the branch-aware write path actually produces, not
-		// the legacy one. guardcommit.IsDecisionFile — the gate this message
-		// explains — accepts docs/decisions-branches/*.md, and telling the
-		// user to update docs/decisions.md sent them at a file that would not
-		// have cleared the check. The CI-shape twin
-		// (check-decisions.yml.template) already says it this way.
+		// the legacy one. Both clear the gate — an entry appended to
+		// docs/decisions.md is a well-formed entry in a decision file, and
+		// a repository that predates §3.2 clears the check exactly that way
+		// (measured). What changed is who writes it: since §3.2 nothing
+		// does, and the file logmind installs there says of itself that it
+		// holds no decisions. Naming it sent the reader to hand-edit a
+		// sentinel instead of running the command that writes the record.
+		// The CI-shape twin (check-decisions.yml.template) names the same
+		// file.
 		fmt.Fprintf(stdout, "⚠  %d lines changed without updating docs/decisions-branches/<branch>.md.\n", total)
 		fmt.Fprintln(stdout, "   Log this decision: logmind log \"Your decision here\"")
 		fmt.Fprintln(stdout, "   To skip this check: git commit --no-verify")

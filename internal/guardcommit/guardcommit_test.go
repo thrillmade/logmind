@@ -2,6 +2,7 @@ package guardcommit
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -214,10 +215,23 @@ func TestEvaluate_RevertInProgress(t *testing.T) {
 	}
 }
 
+// wellFormedEntry is what a change that RECORDED a decision writes: a
+// title, a timestamp, and a reasoning section that is not empty (SPEC
+// §3.1, as §3.4 requires the gate to check). Tests that mean "a decision
+// was recorded" stage this; tests that mean "a decision-shaped file was
+// staged" stage something else.
+const wellFormedEntry = "## 2026-08-07 14:30 - Share one evaluation\n\n" +
+	"**Reasoning:** Two callers of one path predicate gave two answers.\n\n" +
+	"---\n"
+
+// TestEvaluate_DecisionFileStaged — the legacy pre-§3.2 shape, and the
+// case the fix for the sentinel hole must NOT regress: a repository whose
+// docs/decisions.md is a real decision log clears the gate by appending a
+// real entry to it. Those repositories exist and their commits still pass.
 func TestEvaluate_DecisionFileStaged(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "big.go", linesOf(50))
-	writeFile(t, dir, "docs/decisions.md", "## decision\n")
+	writeFile(t, dir, "docs/decisions.md", wellFormedEntry)
 	run(t, dir, "add", "big.go", "docs/decisions.md")
 	for _, mode := range []DiffMode{StagedOnly, WorkingTreeUnion} {
 		d := Evaluate(dir, "subject", 20, mode)
@@ -230,12 +244,130 @@ func TestEvaluate_DecisionFileStaged(t *testing.T) {
 func TestEvaluate_BranchDecisionFileStaged(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "big.go", linesOf(50))
-	writeFile(t, dir, "docs/decisions-branches/feature.md", "## decision\n")
+	writeFile(t, dir, "docs/decisions-branches/feature.md", wellFormedEntry)
 	run(t, dir, "add", "big.go", "docs/decisions-branches/feature.md")
 	d := Evaluate(dir, "subject", 20, StagedOnly)
 	if !d.Allow || d.CarveOut != CarveOutDecisionFileStaged {
 		t.Fatalf("Decision = %+v; want Allow via CarveOutDecisionFileStaged", d)
 	}
+}
+
+// TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks is the regression
+// pin for the hole a round-14 panel found: carve-out 5 asked only whether
+// a decision-shaped PATH was staged, so `git add docs/decisions.md` — the
+// content-free v1.2.0 install sentinel `logmind init` itself writes, which
+// says in its own body that it holds no decisions — cleared the commit
+// gate for any amount of code.
+//
+// Measured on the PR head with the shipped binary: 302 lines of new Go,
+// sentinel staged, `guard-commit --layer git-hook` exit 0 "allowed
+// (decision-file-staged)"; with the same sentinel UNSTAGED, exit 65. The
+// gate's answer turned on whether a file logmind wrote was named in the
+// index.
+//
+// Both diff modes, because both hook layers are served by this one
+// function and only the line count differs between them.
+func TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks(t *testing.T) {
+	// Verbatim body shape of the shipped sentinel: prose, no `## <date>
+	// <time> - <title>` header anywhere in it.
+	const sentinel = "# Decision Log\n\nDecisions are not kept in this file. Since SPEC §3.2 every\n" +
+		"decision lands in `docs/decisions-branches/<branch>.md`.\n\n" +
+		"It is not written to, and it holds no decisions of its own.\n"
+
+	for _, tc := range []struct{ name, path, body string }{
+		{"the v1.2.0 install sentinel", "docs/decisions.md", sentinel},
+		{"a single meaningless line", "docs/decisions.md", ".\n"},
+		{"a branch file with a header but no reasoning", "docs/decisions-branches/feature.md",
+			"## 2026-08-07 14:30 - Untitled thought\n\n---\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, mode := range []DiffMode{StagedOnly, WorkingTreeUnion} {
+				dir := initRepo(t)
+				writeFile(t, dir, "big.go", linesOf(50))
+				writeFile(t, dir, tc.path, tc.body)
+				run(t, dir, "add", "big.go", tc.path)
+
+				d := Evaluate(dir, "subject", 20, mode)
+				if d.Allow {
+					t.Fatalf("mode=%v: Decision = %+v; want Block — staging %s records no decision, "+
+						"and %d lines of code would land undocumented", mode, d, tc.path, 50)
+				}
+				// The message the author actually reads has to say which
+				// file was staged in vain, or the block reads as spurious
+				// with the decision file sitting right there in the index.
+				if !strings.Contains(d.Reason, tc.path) {
+					t.Errorf("mode=%v: Reason does not name the staged-but-empty decision file %q; got %q",
+						mode, tc.path, d.Reason)
+				}
+				for _, hatch := range []string{"logmind log", "skip-logmind", "LOGMIND_ALLOW_GIT_COMMIT"} {
+					if !strings.Contains(d.Reason, hatch) {
+						t.Errorf("mode=%v: Reason drops the %q escape hatch (SPEC §3.4); got %q", mode, hatch, d.Reason)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestDecisionRecorded_IsTheOnlyQuestion covers the shared primitive
+// directly, including the two halves that must BOTH hold and the error
+// propagation the CI gate depends on (an unresolvable ref must not read as
+// an empty diff).
+func TestDecisionRecorded_IsTheOnlyQuestion(t *testing.T) {
+	entry := strings.Split(strings.TrimRight(wellFormedEntry, "\n"), "\n")
+
+	t.Run("a well-formed entry in a decision file records a decision", func(t *testing.T) {
+		ev, err := DecisionRecorded([]string{"src/main.go", "docs/decisions-branches/feature.md"},
+			func(path string) ([]string, error) { return entry, nil })
+		if err != nil || !ev.Recorded {
+			t.Fatalf("DecisionRecorded = %+v, %v; want Recorded", ev, err)
+		}
+		if len(ev.Touched) != 0 {
+			t.Errorf("Touched = %v; want empty when a decision was recorded", ev.Touched)
+		}
+	})
+
+	t.Run("the same entry in a NON-decision file records nothing", func(t *testing.T) {
+		ev, err := DecisionRecorded([]string{"README.md"},
+			func(path string) ([]string, error) { return entry, nil })
+		if err != nil || ev.Recorded {
+			t.Fatalf("DecisionRecorded = %+v, %v; want not Recorded", ev, err)
+		}
+	})
+
+	t.Run("a decision file with nothing well-formed added is Touched, not Recorded", func(t *testing.T) {
+		ev, err := DecisionRecorded([]string{"docs/decisions.md"},
+			func(path string) ([]string, error) { return []string{"# Decision Log", "no entries here"}, nil })
+		if err != nil || ev.Recorded {
+			t.Fatalf("DecisionRecorded = %+v, %v; want not Recorded", ev, err)
+		}
+		if len(ev.Touched) != 1 || ev.Touched[0] != "docs/decisions.md" {
+			t.Errorf("Touched = %v; want [docs/decisions.md]", ev.Touched)
+		}
+	})
+
+	t.Run("the reader's error is propagated, not swallowed", func(t *testing.T) {
+		want := errors.New("bad ref")
+		ev, err := DecisionRecorded([]string{"docs/decisions.md"},
+			func(path string) ([]string, error) { return nil, want })
+		if !errors.Is(err, want) {
+			t.Fatalf("err = %v; want %v — a diff git could not read must not report as 'no decision'", err, want)
+		}
+		if ev.Recorded {
+			t.Errorf("Recorded = true on an error; want false")
+		}
+	})
+
+	t.Run("only decision files are read at all", func(t *testing.T) {
+		var asked []string
+		if _, err := DecisionRecorded([]string{"src/main.go", "docs/plan.md", "docs/decisions.md"},
+			func(path string) ([]string, error) { asked = append(asked, path); return nil, nil }); err != nil {
+			t.Fatalf("DecisionRecorded: %v", err)
+		}
+		if len(asked) != 1 || asked[0] != "docs/decisions.md" {
+			t.Errorf("read %v; want only docs/decisions.md", asked)
+		}
+	})
 }
 
 func TestEvaluate_UnderThreshold_Allows(t *testing.T) {
@@ -369,7 +501,10 @@ func TestEvaluate_CarveOutPrecedence_EnvBeatsSkipMarkerCheck(t *testing.T) {
 
 func TestEvaluate_InProgressStateBeatsDecisionFileCheck(t *testing.T) {
 	dir := initRepo(t)
-	writeFile(t, dir, "docs/decisions.md", "## decision\n")
+	// A RECORDED decision, so both carve-outs genuinely apply and the
+	// assertion below is about their order rather than about only one of
+	// them being able to fire.
+	writeFile(t, dir, "docs/decisions.md", wellFormedEntry)
 	run(t, dir, "add", "docs/decisions.md")
 	gitDir, err := gitcli.GitDir(dir)
 	if err != nil {
@@ -386,8 +521,14 @@ func TestEvaluate_InProgressStateBeatsDecisionFileCheck(t *testing.T) {
 	}
 }
 
-// --- IsDecisionFile / SubstantiveLines (moved verbatim from
+// --- isDecisionFile / SubstantiveLines (moved verbatim from
 // check_decisions.go — behavior-preserving unit coverage lives here now) --
+//
+// isDecisionFile is HALF of the gate's question (see DecisionRecorded, and
+// TestEvaluate_StagedDecisionFileWithNoEntryStillBlocks for what shipping
+// the half alone cost). The path rules below are still worth pinning: a
+// path this predicate rejects can never record a decision no matter what
+// the change wrote into it.
 
 func TestIsDecisionFile(t *testing.T) {
 	cases := map[string]bool{
@@ -400,8 +541,8 @@ func TestIsDecisionFile(t *testing.T) {
 		"src/decisions.txt":                       false,
 	}
 	for path, want := range cases {
-		if got := IsDecisionFile(path); got != want {
-			t.Errorf("IsDecisionFile(%q) = %v; want %v", path, got, want)
+		if got := isDecisionFile(path); got != want {
+			t.Errorf("isDecisionFile(%q) = %v; want %v", path, got, want)
 		}
 	}
 }
