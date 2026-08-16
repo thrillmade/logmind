@@ -289,3 +289,47 @@ func reportAgentsBlockRefusal(stderr io.Writer, d *inserter.AgentsBlockRefusal) 
 			"ships %s); refusing to guess which template it is.\n",
 		d.Path, found, d.Bundled)
 }
+
+// reportRedirectRefusal writes the one stderr line for a per-tool redirect
+// file (SPEC §1.2) logmind declined to write — protocol#77's rows 2 and 3.
+// Same contract as the two reporters above: every surface that can hit the
+// refusal calls this, so none of them can swallow it.
+//
+// THE REPORT IS HALF THE FIX. `logmind init` already left AGENTS.md's user
+// prose alone and already refused a newer workflow template; what made #336 a
+// data-loss bug rather than a policy disagreement is that the redirect files
+// were rewritten with nothing said. The ruling spells the remedy out —
+// "leave it, and say so on stderr" — and SPEC §3.4's rule for the analogous
+// fail-open case gives the shape: name the file, what was looked for, and what
+// was found.
+//
+// Two messages, because the two states want different remedies: a file another
+// component owns is not a mistake to correct, and a file with no marker at all
+// is the user's to hand over if they want to.
+//
+// A no-op on nil so callers can call it unconditionally.
+func reportRedirectRefusal(stderr io.Writer, d *inserter.RedirectRefusal) {
+	if d == nil {
+		return
+	}
+	switch d.Ownership {
+	case inserter.MarkerForeign:
+		fmt.Fprintf(stderr,
+			"note: %s left unchanged — it carries %s's marker (line %d) and no logmind entry, so it is "+
+				"%s's file, not logmind's. Every component points %s at AGENTS.md, so there is nothing "+
+				"missing; if you want logmind's entry there too, delete %s and re-run `logmind init`.\n",
+			d.Path, d.Owner, d.Line, d.Owner, d.Display, d.Path)
+	default:
+		// SPEC:1101: "an artifact carrying no marker at all belongs to the
+		// user and MUST NOT be overwritten." The remedy is
+		// delete-and-regenerate rather than "paste the marker in yourself" —
+		// the same reason the workflow message gives, plus a simpler one here:
+		// the file logmind would write is three lines pointing at AGENTS.md,
+		// so a user who wants it gets it back in one command.
+		fmt.Fprintf(stderr,
+			"note: %s left unchanged — logmind looked for %s and found none, so it treats the file as "+
+				"yours (SPEC:1101) and will not overwrite it. %s reads this file; if you want logmind's "+
+				"pointer to AGENTS.md in it, delete %s and re-run `logmind init`.\n",
+			d.Path, d.Marker, d.Display, d.Path)
+	}
+}

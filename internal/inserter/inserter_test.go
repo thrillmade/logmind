@@ -399,7 +399,7 @@ func TestMigrateToAgentsMD_PreservesUserContent(t *testing.T) {
 	if err := os.WriteFile(claudePath, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	msgs, _, err := MigrateToAgentsMD(dir)
+	msgs, _, _, err := MigrateToAgentsMD(dir)
 	if err != nil {
 		t.Fatalf("MigrateToAgentsMD: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestMigrateToAgentsMD_Idempotent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(templates.Stub()), 0o644); err != nil {
 		t.Fatalf("write stub: %v", err)
 	}
-	msgs, _, err := MigrateToAgentsMD(dir)
+	msgs, _, _, err := MigrateToAgentsMD(dir)
 	if err != nil {
 		t.Fatalf("MigrateToAgentsMD: %v", err)
 	}
@@ -447,14 +447,17 @@ func TestMigrateToAgentsMD_Idempotent(t *testing.T) {
 // default markdown agent.
 func TestCreateAgentFile_Stub(t *testing.T) {
 	dir := t.TempDir()
-	path, err := CreateAgentFile("claude", dir)
+	written, _, err := CreateAgentFile("claude", dir)
 	if err != nil {
 		t.Fatalf("CreateAgentFile: %v", err)
 	}
-	if path != filepath.Join(dir, "CLAUDE.md") {
-		t.Errorf("path = %q; want CLAUDE.md", path)
+	if written.Path != filepath.Join(dir, "CLAUDE.md") {
+		t.Errorf("path = %q; want CLAUDE.md", written.Path)
 	}
-	body, err := os.ReadFile(path)
+	if !written.Created {
+		t.Error("Created = false for a file that did not exist")
+	}
+	body, err := os.ReadFile(written.Path)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -466,14 +469,14 @@ func TestCreateAgentFile_Stub(t *testing.T) {
 // TestCreateAgentFile_Codex creates AGENTS.md (slim).
 func TestCreateAgentFile_Codex(t *testing.T) {
 	dir := t.TempDir()
-	path, err := CreateAgentFile("codex", dir)
+	written, _, err := CreateAgentFile("codex", dir)
 	if err != nil {
 		t.Fatalf("CreateAgentFile: %v", err)
 	}
-	if path != filepath.Join(dir, "AGENTS.md") {
-		t.Errorf("path = %q; want AGENTS.md", path)
+	if written.Path != filepath.Join(dir, "AGENTS.md") {
+		t.Errorf("path = %q; want AGENTS.md", written.Path)
 	}
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(written.Path)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -486,12 +489,12 @@ func TestCreateAgentFile_Codex(t *testing.T) {
 // unknown agents — we return ("", nil).
 func TestCreateAgentFile_UnknownReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
-	path, err := CreateAgentFile("unknown", dir)
+	written, _, err := CreateAgentFile("unknown", dir)
 	if err != nil {
 		t.Fatalf("CreateAgentFile: %v", err)
 	}
-	if path != "" {
-		t.Errorf("path = %q; want empty for unknown agent", path)
+	if written.Path != "" {
+		t.Errorf("path = %q; want empty for unknown agent", written.Path)
 	}
 }
 

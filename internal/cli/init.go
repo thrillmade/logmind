@@ -236,17 +236,35 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 		reportAgentsBlockRefusal(cmd.ErrOrStderr(), agentsDeclined)
 	}
+	// refusedRedirects is what init WANTED to write and may not (#336,
+	// protocol#77): a per-tool file carrying another component's marker, or no
+	// marker at all. It is a legitimate repository state, not a failure — so
+	// it is reported on stderr and does NOT join `unwritten`, exactly like the
+	// workflow-template ownership refusals above.
+	refusedRedirects := map[string]bool{}
 	for _, agentName := range enabled {
-		filePath, err := inserter.CreateAgentFile(agentName, cwd)
+		written, refused, err := inserter.CreateAgentFile(agentName, cwd)
 		if err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Warning: create agent file:", agentName, err)
 			continue
 		}
-		if filePath == "" {
+		if refused != nil {
+			reportRedirectRefusal(cmd.ErrOrStderr(), refused)
+			refusedRedirects[refused.Path] = true
 			continue
 		}
-		if rel, err := filepath.Rel(cwd, filePath); err == nil {
-			fmt.Fprintln(out, "✓ Created", rel)
+		if written.Path == "" {
+			continue
+		}
+		if rel, err := filepath.Rel(cwd, written.Path); err == nil {
+			// Two verbs, because they are two events: a file this run brought
+			// into existence, and one that was already there and had logmind's
+			// entry — and only logmind's entry — rewritten inside it.
+			if written.Created {
+				fmt.Fprintln(out, "✓ Created", rel)
+			} else {
+				fmt.Fprintln(out, "↻ Refreshed the logmind entry in", rel)
+			}
 		}
 	}
 
@@ -388,9 +406,19 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 		for _, agent := range enabled {
 			if rel, ok := agents.FilePath(agent, cwd); ok && pathExists(rel) {
-				if relPath, err := filepath.Rel(cwd, rel); err == nil {
-					filesToCommit = append(filesToCommit, relPath)
+				relPath, err := filepath.Rel(cwd, rel)
+				if err != nil {
+					continue
 				}
+				// A file logmind declined to write is not a file logmind
+				// commits. It exists — that is WHY it was refused — so the
+				// pathExists test above cannot tell it apart from one this run
+				// created, and staging it would sweep the user's own
+				// (or another component's) file into logmind's initial commit.
+				if refusedRedirects[filepath.ToSlash(relPath)] {
+					continue
+				}
+				filesToCommit = append(filesToCommit, relPath)
 			}
 		}
 		if pathExists(filepath.Join(cwd, "AGENTS.md")) {
