@@ -147,3 +147,14 @@
 
 ---
 
+## 2026-08-16 07:59 - roadmap: defer the dogfood split to the note that owns it instead of asserting it wrongly
+
+**Reasoning:** The sentence said logmind's own rows appear as NEEDS HAND-REPLACEMENT. Three of its four do; logmind-self-update.yml comes back marked v10. The round-13 lens judged no reader was misled, because the dogfood note four paragraphs up already names that exception, and still returned MERGE. I fixed it anyway: 'no statement in this file is false' is the bar this PR has spent thirteen rounds meeting, and the sentence describing logmind's own repository is a poor place to make the first exception.
+
+**Alternatives considered:** Restate the count as three-of-four — rejected; a hand-written number here rots exactly like every other one this file has shed, and there are now two places it would have to stay true. Leave it on the lens's judgement that nobody is misled — rejected on the bar above.
+
+**Implications:**
+- The sentence now defers to the note rather than repeating it, so the two say it once between them and the claim stays true unless the note itself changes. Verified file by file against the command's real output rather than by reading: the three the note calls markerless each return NEEDS HAND-REPLACEMENT, the one it calls the exception returns marked v10, four of four. Render unchanged at 4 tables / 24 rows / 2 blockquotes.
+
+---
+

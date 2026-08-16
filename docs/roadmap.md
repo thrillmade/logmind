@@ -431,8 +431,8 @@ installs (`init.go` strips `.template` off the embedded filename, and every
 embedded template is `*.yml.template`). A hand-written `.yaml` variant is a
 separate user file that logmind will never touch.
 
-logmind's own rows appear as `NEEDS HAND-REPLACEMENT` and are expected — see the
-dogfood note above.
+logmind's own rows are expected, and split exactly as the dogfood note above
+describes.
 
 **skdd needs migrating, and reads as though it does not.** Its `main` has no
 `.github/workflows` at all (404), so its clean `check-derived-docs` history is
