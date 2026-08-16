@@ -48,3 +48,14 @@
 
 ---
 
+## 2026-08-15 20:05 - orchestrator-app: review IS required org-wide; the steward escapes it by bypassing the ruleset, not by its absence
+
+**Reasoning:** My previous revision claimed every pull-request rule in the organisation required zero approvals and no code-owner review. That was read from one repository's own ruleset and generalised, which is the identical mistake to the count in the paragraph above it, made twice in the same document within an hour. Measured properly through the aggregate endpoint on three repositories: the organisation default-protection ruleset requires one approval and code-owner review everywhere, while the baseline ruleset requires neither.
+
+**Alternatives considered:** Soften the sentence to say review is inconsistent across repositories. Rejected: it is perfectly consistent, and the inconsistency was in my sampling. The corrected paragraph is also a stronger statement of the risk rather than a weaker one, because the App escapes a requirement that exists rather than benefiting from one that was never set.
+
+**Implications:**
+- A human contributor does face review in every repository. The steward does not, because bypassing a ruleset bypasses its review requirement along with its push restriction, and it holds write access to pull requests, so it can open and merge one anywhere. Read with the finding that no ruleset in the organisation requires status checks, an App-authored merge passes no automated gate and no human one; the seven repositories that block its direct push change nothing about that.
+
+---
+

@@ -256,13 +256,33 @@ gh api repos/thrillmade/<repo>/branches/main/protection   # mechanism 2
 
 So seven are blocked and the remaining thirteen accept a direct push.
 
-**Blocked means a direct push is refused. It does NOT mean review.** Every
-`pull_request` rule in the org, and `arlyn-working`'s classic protection, sets
-`required_approving_review_count: 0`, with no code-owner requirement and no
-required status checks (see logmind#315). The steward holds
-`pull_requests: write`, so in every "blocked" repo it can open a pull request
-and merge it itself. The seven repos slow the App down; none of them puts a
-human in the path.
+**Blocked means a direct push is refused. For the steward it does not mean
+review either — but not because review is unrequired.**
+
+`16898453 org-default-protection` requires **1 approval and code-owner
+review**, in every repo:
+
+```sh
+gh api repos/thrillmade/<repo>/rules/branches/main \
+  --jq '.[]|select(.type=="pull_request")|"\(.ruleset_id) approvals=\(.parameters.required_approving_review_count) codeowners=\(.parameters.require_code_owner_review)"'
+```
+
+→ `18502737 approvals=0 codeowners=false` · `16898453 approvals=1
+codeowners=true`. Identical on `logmind`, `agent-skills` and `homebrew-tap`.
+An earlier revision of this paragraph claimed every rule required zero
+approvals; that came from reading `16434011`, one repo's own ruleset, and
+generalising — the same mistake as the count above, one ruleset standing in
+for all of them.
+
+So a human contributor does face review. **The steward does not**, because it
+bypasses `16898453` outright (`Integration:3951953`, `bypass_mode: always`) —
+and bypassing the ruleset bypasses its review requirement along with its push
+restriction. Holding `pull_requests: write`, it can open a pull request and
+merge it in any repo, blocked or not.
+
+The seven blocked repos therefore stop the App's *direct push* and nothing
+else. Combined with logmind#315 — no ruleset in the org requires status checks
+— an App-authored merge faces no automated gate and no human one.
 
 `logmind` is in the second group: it carries no repo-level ruleset, so
 `regen-on-main`'s push to its default branch is exempt. That is the fact the
