@@ -609,6 +609,287 @@ func TestInitRefresh_DoesNotClaimAllCurrentOverAFileItSkipped(t *testing.T) {
 	}
 }
 
+// TestInitRefresh_CreateWriteFailureDoesNotAbortTheRest pins the CREATE-arm
+// write failure at installWorkflowTemplatesMode's os.ReadFile ErrNotExist
+// branch (#306's create-write site, line ~694): a file that does not exist
+// yet, whose write to bring it into existence fails.
+//
+// Reached only via injection — there is no repository state that makes a
+// brand-new file's write fail on its own; a read-only target directory is
+// the same class of failure the two already-pinned write sites (RefuseSymlink,
+// force-write) use, and it is unavoidable for this site specifically because
+// the site exists only to handle "the write itself failed", which is
+// necessarily a filesystem condition rather than a content one.
+//
+// The directory is pre-created and chmod'd BEFORE `init` runs, so
+// installWorkflowTemplatesMode's own os.MkdirAll — which only needs to see
+// the directory already exists, not write into it — still succeeds, and
+// every template (the directory is empty) hits the CREATE branch rather than
+// a version-compare branch below it. A `return` at the write-failure site
+// would abandon every template after the first alphabetically before it was
+// ever attempted at all — the fresh-install analogue of
+// TestInitRefresh_EveryWriteFailureIsRecordedNotAborted.
+func TestInitRefresh_CreateWriteFailureDoesNotAbortTheRest(t *testing.T) {
+	dir := t.TempDir()
+	seedRepo(t, dir, "release")
+
+	wfDir := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(wfDir, 0o555); err != nil {
+		t.Skipf("cannot make the workflows directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(wfDir, 0o755) })
+	// Control: root ignores the mode bits, and CI sometimes runs as root.
+	if probe, err := os.CreateTemp(wfDir, "probe-*"); err == nil {
+		_ = probe.Close()
+		_ = os.Remove(probe.Name())
+		t.Skip("the read-only directory is still writable here (running as root?) — the probe cannot fail")
+	}
+
+	names := templates.ListWorkflowTemplates()
+	if len(names) < 2 {
+		t.Fatalf("setup: only %d workflow template(s) bundled — an abort at the first failure would be "+
+			"indistinguishable from a complete run", len(names))
+	}
+
+	out := runInitIn(t, dir, "--no-git")
+
+	var missing []string
+	for _, n := range names {
+		wf := strings.TrimSuffix(n, ".template")
+		if !strings.Contains(out, wf) {
+			missing = append(missing, wf)
+		}
+		if _, err := os.Stat(filepath.Join(wfDir, wf)); err == nil {
+			t.Errorf("%s exists despite its create-write having been made to fail", wf)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("%d of %d workflows that failed to be CREATED were never named: %v. The loop stopped "+
+			"at the first create failure instead of recording it and continuing:\n%s",
+			len(missing), len(names), missing, out)
+	}
+	if !strings.Contains(out, "could NOT be written") {
+		t.Errorf("`init` did not disclose that every workflow template failed to be created:\n%s", out)
+	}
+	if strings.Contains(out, "logmind initialized successfully!") {
+		t.Errorf("`init` claimed success while every workflow template failed to be created:\n%s", out)
+	}
+}
+
+// TestInitRefresh_ReadErrorDoesNotAbortTheRest pins the read-error branch at
+// installWorkflowTemplatesMode's ownership read (#306's read-error site,
+// line ~705): os.ReadFile fails with something other than ErrNotExist.
+//
+// A DIRECTORY in place of the target reaches this branch without touching
+// filesystem permissions at all: Lstat sees a non-symlink (RefuseSymlink
+// passes it through unchanged) and the subsequent os.ReadFile then fails
+// with "is a directory", which is not fs.ErrNotExist — landing on this arm
+// rather than the CREATE one. Portable (no root-skip needed) and reachable
+// without contrived permission bits, unlike the create-write and
+// refresh-write sites this PR also pins.
+func TestInitRefresh_ReadErrorDoesNotAbortTheRest(t *testing.T) {
+	dir := t.TempDir()
+	seedRepo(t, dir, "release")
+	runInitIn(t, dir, "--no-git")
+
+	names := templates.ListWorkflowTemplates()
+	if strings.TrimSuffix(names[0], ".template") != "check-decisions.yml" {
+		t.Fatalf("setup: expected check-decisions.yml to sort first, got %q — this test's ordering "+
+			"premise no longer holds", names[0])
+	}
+
+	// Force every OTHER workflow to need a rewrite, so "the rest were still
+	// processed" is a claim with something behind it.
+	if out, err := gitIn(dir, "branch", "-M", "release2"); err != nil {
+		t.Fatalf("rename the default branch: %v\n%s", err, out)
+	}
+
+	// The victim: a directory where a regular file belongs.
+	const victim = "check-decisions.yml"
+	victimPath := filepath.Join(dir, ".github", "workflows", victim)
+	if err := os.Remove(victimPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(victimPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// --refresh: a version-ordered refresh does not repair a stale
+	// scaffold-time trigger at all (see
+	// TestInitRefresh_RepairsAStaleScaffoldedTrigger) — only the
+	// force-render path does, so this is what actually gives the other
+	// three templates something to do.
+	out, execErr := tryInitIn(t, dir, "--no-git", "--refresh")
+
+	// 1. The failed read is named in the output.
+	if !strings.Contains(out, victim) {
+		t.Errorf("the workflow that could not be READ (%s) is not named in the output:\n%s", victim, out)
+	}
+	// 2. Every other workflow — all of which sort AFTER the victim — was
+	// still processed, not abandoned.
+	for _, n := range names[1:] {
+		wf := strings.TrimSuffix(n, ".template")
+		body := readWorkflow(t, dir, wf)
+		if strings.Contains(body, "branches: [release]\n") {
+			t.Errorf("%s still carries the stale trigger — the read error on %s (which sorts first) "+
+				"abandoned every template after it instead of recording the failure and continuing:\n%s",
+				wf, victim, out)
+		}
+	}
+	// 3. The directory planted as the victim was left exactly as found.
+	if fi, err := os.Stat(victimPath); err != nil || !fi.IsDir() {
+		t.Errorf("%s: the directory planted in place of the workflow was disturbed by the failed read (err %v)",
+			victim, err)
+	}
+	// 4. The shortfall is reported honestly: exit non-zero.
+	if execErr == nil {
+		t.Errorf("`init` exited 0 after failing to read %s:\n%s", victim, out)
+	}
+}
+
+// TestInitRefresh_DowngradeRefusalDoesNotAbortTheRest pins the downgrade
+// decline at installWorkflowTemplatesMode's version-order check (#306's
+// declineDowngrade site, line ~771) — the site the panel found matters most,
+// because it is not a failure-injection corner but the exact scenario the
+// code's own comment documents: a released binary bundling an OLDER
+// template than a repo it is scaffolding already carries (SPEC-documented,
+// #286).
+//
+// TestInitRefresh_DoesNotWidenOwnership already covers the DECISION (refuse,
+// don't downgrade) but not the LOOP: its "ahead" marker sits on
+// regen-timeline.yml, which sorts LAST among the four bundled templates, so
+// mutating that site's `continue` to `return` loses nothing in that test —
+// nothing comes after regen-timeline.yml. This test puts the ahead marker on
+// check-decisions.yml, which sorts FIRST, and forces every other template to
+// need re-creating, so a `return` at the decline site would abandon all
+// three of them — reproducing, end to end, the scenario the panel manually
+// verified against the built binary.
+func TestInitRefresh_DowngradeRefusalDoesNotAbortTheRest(t *testing.T) {
+	dir := t.TempDir()
+	seedRepo(t, dir, "release")
+	runInitIn(t, dir, "--no-git")
+
+	names := templates.ListWorkflowTemplates()
+	if strings.TrimSuffix(names[0], ".template") != "check-decisions.yml" {
+		t.Fatalf("setup: expected check-decisions.yml to sort first, got %q — this test's ordering "+
+			"premise no longer holds", names[0])
+	}
+
+	// The AHEAD marker — the scenario installWorkflowTemplatesMode's
+	// installedVer != bundledVer comment documents by name.
+	const ahead = "check-decisions.yml"
+	future := strings.Replace(readWorkflow(t, dir, ahead), "# logmind-template-version: v",
+		"# logmind-template-version: v99", 1)
+	if !strings.Contains(future, "# logmind-template-version: v99") {
+		t.Fatalf("setup: could not raise %s's marker", ahead)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".github", "workflows", ahead), []byte(future), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete the other three, so this run's only way to bring them back is
+	// the CREATE branch reached AFTER the downgrade decline for `ahead` —
+	// exactly what the panel's manual repro forced.
+	var others []string
+	for _, n := range names[1:] {
+		wf := strings.TrimSuffix(n, ".template")
+		others = append(others, wf)
+		if err := os.Remove(filepath.Join(dir, ".github", "workflows", wf)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := runInitIn(t, dir, "--no-git")
+
+	if got := readWorkflow(t, dir, ahead); got != future {
+		t.Errorf("`init` downgraded %s from a NEWER template marker", ahead)
+	}
+	if !strings.Contains(out, "refusing to downgrade") {
+		t.Errorf("the newer marker on %s was not reported as refused:\n%s", ahead, out)
+	}
+	for _, wf := range others {
+		path := filepath.Join(dir, ".github", "workflows", wf)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was never recreated — the downgrade refusal on %s (which sorts first) abandoned "+
+				"every template after it instead of recording the refusal and continuing:\n%s", wf, ahead, out)
+			continue
+		}
+		if !strings.Contains(out, "✓ Created .github/workflows/"+wf) {
+			t.Errorf("%s was recreated but not reported as created:\n%s", wf, out)
+		}
+	}
+}
+
+// TestInitRefresh_VersionOrderedWriteFailureDoesNotAbortTheRest pins the
+// version-ordered refresh write at installWorkflowTemplatesMode's
+// installedVer != bundledVer branch (#306's refresh-write site, line ~788)
+// — the ordinary "brew install bundles an older template than the repo
+// already has" shape, distinct from declineDowngrade's mirror image and
+// distinct from force-write (line ~814, already pinned), which only fires
+// under workflowForceRender.
+//
+// Two markers are rolled BACKWARDS — at both ends of the alphabetical list
+// — so a `return` at the write-failure site would abandon the second
+// (regen-timeline.yml) while only ever reporting the first
+// (check-decisions.yml).
+func TestInitRefresh_VersionOrderedWriteFailureDoesNotAbortTheRest(t *testing.T) {
+	dir := t.TempDir()
+	seedRepo(t, dir, "release")
+	runInitIn(t, dir, "--no-git")
+
+	rollBack := func(name string) string {
+		body := readWorkflow(t, dir, name)
+		marker := inserter.ExtractTemplateMarker(body)
+		if marker.Version == "" {
+			t.Fatalf("setup: %s carries no marker to roll back", name)
+		}
+		older := strings.Replace(body, "# logmind-template-version: "+marker.Version,
+			"# logmind-template-version: v1", 1)
+		if !strings.Contains(older, "# logmind-template-version: v1") {
+			t.Fatalf("setup: could not roll back %s's marker", name)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".github", "workflows", name), []byte(older), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return older
+	}
+	first := rollBack("check-decisions.yml") // sorts first
+	last := rollBack("regen-timeline.yml")   // sorts last
+
+	wfDir := filepath.Join(dir, ".github", "workflows")
+	if err := os.Chmod(wfDir, 0o555); err != nil {
+		t.Skipf("cannot make the workflows directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(wfDir, 0o755) })
+	// Control: root ignores the mode bits, and CI sometimes runs as root.
+	if probe, err := os.CreateTemp(wfDir, "probe-*"); err == nil {
+		_ = probe.Close()
+		_ = os.Remove(probe.Name())
+		t.Skip("the read-only directory is still writable here (running as root?) — the probe cannot fail")
+	}
+
+	out, execErr := tryInitIn(t, dir, "--no-git")
+
+	for _, name := range []string{"check-decisions.yml", "regen-timeline.yml"} {
+		if !strings.Contains(out, name) {
+			t.Errorf("%s's version-ordered refresh write failed but was never named in the output — "+
+				"the loop stopped at an earlier failure instead of recording it and continuing:\n%s", name, out)
+		}
+	}
+	if got := readWorkflow(t, dir, "check-decisions.yml"); got != first {
+		t.Errorf("check-decisions.yml changed despite its write failing")
+	}
+	if got := readWorkflow(t, dir, "regen-timeline.yml"); got != last {
+		t.Errorf("regen-timeline.yml changed despite its write failing")
+	}
+	if execErr == nil {
+		t.Errorf("`init` exited 0 after failing to refresh both rolled-back workflows:\n%s", out)
+	}
+}
+
 // TestShippedWorkflows_PrescribeCommandsThatExist is the CLASS guard behind
 // the flag above, and the one that would have caught this before it shipped.
 //

@@ -59,3 +59,14 @@
 
 ---
 
+## 2026-08-15 21:42 - init: pin the four failure sites whose abort would have gone unnoticed
+
+**Reasoning:** Behaviour was correct at all seven sites in the install loop, but only three were pinned: mutating the other four from continue to return compiled cleanly and left the suite green. That is the abort-the-loop defect this branch spent three rounds removing, able to return through most of its own surface. The downgrade refusal matters most because it is not a failure-injection corner at all, it is the case the code's own comment documents, where an installed template is newer than the one the binary bundles.
+
+**Alternatives considered:** Rely on the three existing pins, since they cover the same loop. Rejected on measurement: the ownership test places its newer marker on the template that sorts last, so an abort there abandons nothing and the test cannot see it. Sort order decided whether a guard worked, which is exactly the kind of accident a passing test hides.
+
+**Implications:**
+- The downgrade site is pinned by the reachable scenario rather than a forced error, with the newer marker on the template that sorts first so an abort has three others left to abandon. Two of the four need injection because there is no natural way to fail a brand-new file's write; one uses a directory in the file's place rather than permission bits, so it runs the same on every machine and needs no root check. All four mutations compiled and died, and the three earlier pins stayed green throughout, so the new coverage sits alongside the old rather than displacing it.
+
+---
+
