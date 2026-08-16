@@ -49,9 +49,10 @@ choice run:
 logmind log "Short summary" -r "why" -a "alt 1" -i "implication"
 ```
 
-Branch-aware: feature branches write to
-`docs/decisions-branches/<branch>.md`; the default branch writes to
-`docs/decisions.md`.
+Branch-aware, with one path rule and no exception to it: every entry writes
+to `docs/decisions-branches/<branch>.md` for the branch it was made on, the
+default branch included (`main.md`). `docs/decisions.md` is a legacy source —
+read where it exists, never written.
 
 ### Tests
 

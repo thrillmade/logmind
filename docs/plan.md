@@ -84,11 +84,15 @@ my-ai-project/
 
 `logmind log "<summary>" -r "<why>" -a "<alternative>" -i "<implication>"`
 writes the decision, stages it plus its companion derived docs, and
-commits — one command, no separate `git add` / `git commit`. Branch-aware:
-entries on the default branch go to `docs/decisions.md`; entries on a
-feature branch go to `docs/decisions-branches/<sanitized-branch>.md`. On
-PR merge, CI appends a one-line pointer from the branch file into
-`docs/decisions.md`.
+commits — one command, no separate `git add` / `git commit`. Branch-aware,
+with ONE path rule and no exception to it: an entry goes to
+`docs/decisions-branches/<sanitized-branch>.md` for the branch it was made
+on, and the default branch is a branch like any other (`main.md`). Nothing
+is ever appended to `docs/decisions.md` — where that file still exists it is
+a legacy source, read but never written. `resolveDecisionsPath` falls back to
+it in exactly three cases, all of them "there is no branch to route by":
+`decisions.branch_aware: false`, a non-git directory, and a detached or
+unborn HEAD.
 
 ### 2. The timeline — main-canonical, unconditionally
 

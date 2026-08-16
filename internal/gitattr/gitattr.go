@@ -2,10 +2,11 @@
 // and the per-clone git-config entries that define the matching
 // custom merge drivers.
 //
-// Mental model: this package ships the on-disk artifacts that let git
-// invoke `logmind timeline --write %A` and `logmind file-structure
-// --write %A` as merge drivers when parallel PRs both touch derived
-// docs. The gitattributes file is committed (so every clone gets the
+// Mental model: this package ships the on-disk artifacts that let git invoke
+// logmind itself (MergeDriverConfig's commands) as a merge driver when
+// parallel PRs both touch a derived doc — one driver per derived doc, so each
+// one renders exactly the file git handed it.
+// The gitattributes file is committed (so every clone gets the
 // driver registration); the actual driver definitions live in
 // `.git/config` per-clone (git refuses to use a driver that isn't
 // explicitly configured locally — security guard against arbitrary-
@@ -17,11 +18,14 @@
 // (true, nil). Mirrors the Python helpers in
 // src/logmind/core/gitattributes.py byte-for-byte.
 //
-// Block format — exactly matches the Python ensure_block output:
+// Block format — exactly matches the Python ensure_block output: the two
+// sentinels below, wrapping one `<path-pattern> merge=<driver-name>` line per
+// entry in DefaultLines, in that order. DefaultLines is the only list; this
+// comment deliberately does not restate it, because the copy that used to sit
+// here still named two patterns after a third had shipped.
 //
 //	# >>> logmind >>>
-//	docs/timeline.md          merge=logmind-timeline
-//	docs/file-structure.md    merge=logmind-file-structure
+//	<DefaultLines, one per line>
 //	# <<< logmind <<<
 //
 // Whitespace inside the block (the alignment of `merge=` columns) is
@@ -80,16 +84,46 @@ var DefaultLines = []string{
 // Order is preserved from the Python source so a `git config --list
 // --local` diff between a Python-installed repo and a Go-installed
 // repo shows the keys in the same sequence.
-// Both timeline drivers pass `--half`: %A is git's scratch file for ONE
-// conflicted path, so each driver must render exactly the half that belongs
-// in that path and write nothing else. Without it, `logmind timeline --write
-// %A` also drops a timeline-archive.md next to the scratch file — at the
-// worktree root, untracked, on every merge.
+//
+// A DRIVER'S COMMAND STRING IS FROZEN ONCE SHIPPED. The value is written into
+// `.git/config` by whichever binary ran `init`/`doctor --fix`, and executed
+// later by whichever `logmind` is on PATH at merge time — the two are
+// routinely different versions, and the fleet lags the tag. Adding a flag an
+// older release does not know is therefore not a compatible change:
+//
+//	v1.2.0, `logmind timeline --write %A`                → exit 0
+//	v1.2.0, `logmind timeline --write %A --half recent`  → exit 1, unknown flag
+//
+// Git reads a driver's nonzero exit as "could not resolve" and reports it as
+// an ordinary content conflict — measured on a real merge, the whole account
+// git gives is the driver's own unattributed stderr line followed by
+// `CONFLICT (content): Merge conflict in docs/timeline.md` and a `UU` index
+// entry, in a file whose own header says never to edit it by hand. Nothing
+// says "your merge driver is the wrong version", because git does not know
+// that is what happened.
+//
+// New behaviour goes on a NEW driver name instead, which is what
+// `logmind-timeline-archive` is. An UNDEFINED driver name is the benign case:
+// measured, git falls back to the ordinary text merge and says nothing, so a
+// repo an old binary configured merges that path as it always did. A
+// degradation, not a corruption, and confined to the file the new driver was
+// added for.
+//
+// The cost of holding `merge.logmind-timeline` at its shipped string: run by a
+// CURRENT binary, `logmind timeline --write %A` renders the pair, so the
+// archive half lands beside git's scratch file — an untracked
+// `timeline-archive.md` at the worktree root on every timeline merge. That is
+// litter in an untracked path, and it is the deliberate trade against conflict
+// markers in docs/timeline.md under version skew. Closing it needs a change
+// that is inert on old binaries (a shell-level `LOGMIND_…=` prefix — git runs
+// the driver through `sh -c` — or a `--half` default flipped in a release that
+// then waits for the fleet before the string moves); tracked as its own item,
+// not smuggled in here.
 var MergeDriverConfig = []struct {
 	Key   string
 	Value string
 }{
-	{"merge.logmind-timeline.driver", "logmind timeline --write %A --half recent"},
+	{"merge.logmind-timeline.driver", "logmind timeline --write %A"},
 	{"merge.logmind-timeline.name", "Regenerate logmind timeline"},
 	{"merge.logmind-timeline-archive.driver", "logmind timeline --write %A --half archive"},
 	{"merge.logmind-timeline-archive.name", "Regenerate logmind timeline archive"},

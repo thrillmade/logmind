@@ -111,3 +111,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-15 23:05 - gitattr: a shipped driver's command string is frozen — new behaviour gets a new driver name
+
+**Reasoning:** This branch had edited the existing timeline driver's command in place to add a flag, and the released binary cannot run it. Measured against the actual cask: the shipped form exits zero, the edited form exits one with unknown flag. Git swallows a driver failure into an ordinary content conflict, so a repository whose configured driver outran its binary would get conflict markers inside a file the documentation tells people never to hand-edit, with nothing naming the cause. Reproduced end to end on a two-branch merge with the released binary on the path: the edited form produced a conflicted state, the restored form auto-merged cleanly.
+
+**Alternatives considered:** Keep the flag and require everyone to upgrade first. Rejected: the configuration is written by whichever binary last ran the fix and read by whichever is on the path at merge time, so the two can differ on one machine, and the failure is silent. The flag was never needed for correctness anyway; it suppressed an untracked file appearing beside git's scratch file, which is litter rather than damage.
+
+**Implications:**
+- The archive gets its own driver name carrying the flag, and an undefined driver name was measured to fall back to an ordinary text merge, so a repository configured by an older binary is degraded rather than broken. A test now freezes every shipped driver command, because the rule that makes this safe is not that the current string is right but that changing one is how the skew happens. The registration this branch added is also installed in this repository's own attributes file, with a test that fails when the defaults and the committed file disagree — shipping a merge driver the project does not itself use is the dogfooding failure it exists to avoid.
+
+---
+

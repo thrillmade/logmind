@@ -240,8 +240,15 @@ the JSX, and by byte-comparing the page's `AREAS` against `version.go`.
 One fleet move, per standing constraint. #265 collapses the decision layout —
 main is a branch like any other, no cap, no archive, `rotateDecisions` deleted
 rather than ported — and adds `docs/timeline-archive.md` as a **third** derived
-file that every restore path and `check-derived-docs` must learn. All of them
-name two today.
+file that every restore path and `check-derived-docs` must learn.
+
+**In this repo they now name three** — `derivedDocPaths`, the pre-commit
+restore, warp, `.gitattributes` (own driver, `logmind-timeline-archive`) and
+`regen-timeline.yml`, whose template goes `v12` → `v13` for it. The fleet is
+what is left, and "The fleet, measured" below has it on `regen-timeline` `v4`:
+a repo that takes the new binary before the new template gets a derived file
+its CI does not regenerate and no merge driver merges. That is the #257
+payload.
 
 **#277 rides here too.** It reports `check-derived-docs` enforcing the opposite
 of §3.3 — regenerating from the branch's own sources and failing on the diff, so

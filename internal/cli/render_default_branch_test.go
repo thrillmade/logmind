@@ -13,10 +13,15 @@ import (
 )
 
 // gitTry runs a git command in dir and hands back its combined output and
-// error for the caller to judge. It is the package's ONE git-exec site for
-// tests: gitIn (search_clone_shapes_test.go) is the must-succeed wrapper
-// over it, so the two contracts — "inspect the failure" and "fail the test"
-// — are two call shapes rather than two copies of exec.Command.
+// error for the caller to judge. gitIn (search_clone_shapes_test.go) is the
+// must-succeed wrapper over it, so the two contracts — "inspect the failure"
+// and "fail the test" — are two call shapes rather than two copies of
+// exec.Command.
+//
+// It is NOT the package's only git-exec site: `grep -c 'exec.Command("git"'
+// internal/cli/*_test.go` counts 31 across 14 files. An earlier revision of
+// this comment claimed it was the one, which was a claim about a sweep nobody
+// had run.
 //
 // It was called gitIn until #301 merged #314, at which point two files each
 // held a different `gitIn` and the package stopped compiling. The comment
