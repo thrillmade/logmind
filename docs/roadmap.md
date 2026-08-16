@@ -104,11 +104,10 @@ the default branch. That is expected, not drift.
 
 ## Blocked on a person
 
-### #288 — the bypass is granted; it has never been exercised
+### #288 — granted on `logmind`, still missing across the fleet
 
-**Not a blocker on the tag.** An earlier revision of this file said the steward
-App was on no bypass list and called that "the tightest constraint on the tag."
-**That was wrong**, and the correction matters more than the original claim.
+**Not a blocker on the tag for this repository.** The steward App may push to
+`logmind`'s `main`:
 
 ```
 $ gh api repos/thrillmade/logmind/rulesets --jq '.[]|"\(.id) \(.name)"'
@@ -123,10 +122,28 @@ $ gh api /apps/skdd-steward --jq .id
 3951953
 ```
 
-Two active rulesets, not three — `reporulez-default` (18292242) returns **404**
-here and no longer covers this repository. Both survivors carry
-`Integration:3951953`, which is `skdd-steward`. Their `updated_at` is
-**2026-08-07T17:1x**.
+Two active rulesets on `logmind`, both carrying `Integration:3951953`, which is
+`skdd-steward`.
+
+**`reporulez-default` is the trap in that reading.** It 404s on `logmind`, so
+it is invisible from here — but it is active on other repositories with **no
+bypass actors at all**, and rulesets aggregate: one ruleset that refuses the
+steward overrides two that allow it. Wherever it applies, `regen-on-main` fails
+with GH013 exactly as it used to here. The grant is per repository, so measure
+it per repository:
+
+```sh
+for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
+  gh api "repos/thrillmade/$r/rulesets" --jq '.[].id' 2>/dev/null | while read -r id; do
+    printf '%s %s\n' "$r" "$(gh api "repos/thrillmade/$r/rulesets/$id" --jq \
+      '"\(.name) \(if any(.bypass_actors[]?; .actor_id == 3951953) then "ok" else "REFUSES STEWARD" end)"')"
+  done
+done
+```
+
+It prints every ruleset in every repository, refusals and grants together —
+so the `ok` rows are the control that a `REFUSES STEWARD` row is a real
+refusal and not a probe returning nothing.
 
 ### What is actually unresolved
 
@@ -164,9 +181,10 @@ pull request` refusal: `fcf7268` (**2026-07-25**) and `0aa9049`
 (**2026-08-07**). So the original diagnosis was correct when filed and the
 remedy has since been applied.
 
-**The bypass is therefore untested, not missing.** It gets exercised the first
-time `main` receives a merge that leaves a derived doc stale — which is the
-`dev` → `main` merge at the tag, not something to manufacture beforehand.
+**On `logmind`, the bypass is untested rather than missing.** It gets exercised
+the first time `main` receives a merge that leaves a derived doc stale — which
+is the `dev` → `main` merge at the tag, not something to manufacture
+beforehand. Elsewhere it is genuinely missing, which is what keeps #288 open.
 
 > **A caution this file has already earned.** An earlier revision reported
 > "seven `success` runs, and the single `push` event failed." The real figures
@@ -213,10 +231,13 @@ the released v1.2.0 answers `logmind check-decisions --base` with
 take the new gate template until v2.0.0 exists, so the fleet move cannot start
 until the tag does.
 
-Numbering in this list is dependency order, not calendar order. Two of the
-three rows below are already answered — template v12 is on `dev`, and the
-bypass #288 reported missing has been granted (see #288 above). Only "a release
-carrying the verb" is still waiting, and what it waits for is the tag.
+Numbering in this list is dependency order, not calendar order. One of the
+three rows below is answered: template v12 is on `dev`. **#288 is not.** The
+bypass exists on `logmind` and is missing on three of the repositories in the
+fleet table — `agent-skills`, `clud-bug` and `clud-bug-app` — and this row is
+about the fleet, so a grant on one repository does not clear it. #288 above
+carries the command that finds every repository it is missing on, inside the
+org and out of the table. "A release carrying the verb" waits on the tag.
 
 | | why it blocks |
 |---|---|
@@ -245,12 +266,16 @@ resolution someone is part-way through, and the restore paths run automatically.
 that some keys are humans-only; an agent that can lower `commit_line_threshold`
 to unblock itself has bought exactly what §3.4's gate exists to prevent.
 
-**#244** — branch→issue binding plus comment-back on merge. Pre-tag by **Ruling
-12**, not by defect: nothing in current behaviour is wrong, the feature simply
-does not exist. Recorded here rather than in §5 so the ruling stays visible.
-Its body no longer contradicts the ruling: its `## Sequencing` section was
-corrected 2026-08-01 and now reads "Pre-tag — in v2.0.0 scope by Ruling 12."
-Nothing to do.
+**#244** — bind a branch to the issue it is working, and comment back on that
+issue when the work merges. Pre-tag by **Ruling 12**, and **unbuilt**: this is
+a feature still to write. Half of it is not new scope at all — SPEC §5.3
+already requires that "a merged change leaves a trace on the issue it belongs
+to", and logmind leaves none. The design is settled in the issue thread;
+building it waits on two open items. **#301** is editing the same
+`internal/guardcommit/guardcommit.go` that #244 extends. **#330** must land
+first because `git.require_issue` is exactly the kind of blocking setting §1.6
+says an agent must not be able to write — shipping the gate before the refusal
+gives an agent a supported command for switching it off.
 
 **#241** — `logmind auto <profile>`: one command sets a repository up to be
 handed over and run unattended. Pre-tag by Ruling 12. **Built and on `dev`**
@@ -370,21 +395,24 @@ and is deliberately not a row — but the loop still prints one, reading
 its own copies of `check-decisions.yml`, `regen-timeline.yml` and
 `check-doc-links.yml` — markerless on purpose, so refresh leaves them alone.
 The exception is `logmind-self-update.yml`: it carries the marker, is refreshed
-like any consumer's, and is byte-identical to the template listed above.
+like any consumer's, and is byte-identical to the template it ships.
 
 **logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9` (`v10` once #301 lands), `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
 
 Two corrections to #257's original inventory:
 
-- **reporulez is unreachable by refresh, and always will be.** A workflow file
-  is logmind's to overwrite only when the `# logmind-template-version` marker is
-  on line 1 — that is what `TemplateMarker.Writable()` means, and
-  `installWorkflowTemplatesMode` refuses everything else, a displaced marker
-  included. reporulez's two files carry no marker at all, so no refresh will
-  ever touch them. The refusal is reported on stderr rather than skipped
-  quietly, but a reported refusal still leaves the stale file in place. It needs
-  hand-replacement.
+- **reporulez's two gate workflows are unreachable by refresh, and always will
+  be.** A workflow file is logmind's to overwrite only when the
+  `# logmind-template-version` marker is on line 1 — that is what
+  `TemplateMarker.Writable()` means, and `installWorkflowTemplatesMode` refuses
+  everything else, a displaced marker included. reporulez's `check-decisions`
+  and `regen-timeline` carry no marker at all, so no refresh reaches them and
+  they need hand-replacement. The refusal is reported on stderr rather than
+  skipped quietly, but a reported refusal still leaves the stale file in place.
+  Its `logmind-self-update.yml` is the opposite case — marker-owned at `v8`, so
+  refresh does reach that one. "reporulez is markerless" is true per file, not
+  per repository.
 - **skdd was misread, and the misreading mixed two branches.** Its `main` has no
   `.github/workflows` at all (404); its `dev` carries `check-decisions` at **v4**,
   added 2026-08-01. An earlier revision of this file said "already on v11, so

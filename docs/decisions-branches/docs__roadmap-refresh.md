@@ -114,3 +114,14 @@
 
 ---
 
+## 2026-08-16 06:59 - roadmap: scope the #288 bypass to the repository it was granted on, and stop reading per-file facts as per-repository ones
+
+**Reasoning:** I gave the lane a logmind-scoped fact — the steward bypass is granted — and it cleared a fleet-scoped row with it. Measured across every org repo: Integration:3951953 is on org-baseline and org-default-protection everywhere, but a third ruleset, reporulez-default, is active with an EMPTY bypass list on six repos including agent-skills, clud-bug and clud-bug-app. Rulesets aggregate, so one refusing ruleset overrides two that allow. Control: logmind's own two rulesets carry 2 and 3 bypass actors, so the probe distinguishes granted from refused. An operator reading the cleared row would migrate at tag time and put those repos permanently red on every merge to main touching a derived doc — the exact outcome that row exists to prevent, and something #288's own thread and docs/orchestrator-app.md both already said.
+
+**Alternatives considered:** Restate the bypass as simply missing — rejected; it is granted on logmind, and flattening that loses the fact that the mechanism works and only the grants are outstanding. Count the repositories in the prose — rejected; the count rots, so the section carries the per-repo command instead and prints refusals and grants together, which makes the output its own control.
+
+**Implications:**
+- The class is now named and swept: a true statement about a narrow thing presented as a conclusion about a wider one. It has produced a finding in three consecutive rounds, twice inside a fix from the round before. The lane's own sweep found a fourth instance — reporulez has seven workflows and its logmind-self-update.yml carries marker v8, so 'reporulez is unreachable by refresh' was true per file and false per repository. Also corrected: #244's entry said 'Nothing to do' while the feature is unbuilt (git grep for LOGMIND_ISSUE on dev returns nothing; control, newAutoCmd resolves for #241, which the same section marks built), and a byte-identity pointer aimed at a template listed below it rather than above.
+
+---
+
