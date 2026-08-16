@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/version"
 )
@@ -389,13 +390,41 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io
 	}
 
 	// Apply path: rewrite each file in place.
+	//
+	// atomicio.WriteFile, not os.WriteFile: these paths come from a scan
+	// of a repository logmind did not necessarily write, and os.WriteFile
+	// follows symlinks. A symlinked AGENTS.md / workflow file would have
+	// its logmind block rewritten through the link, outside the repo.
+	// The rename lands on the NAME instead. (Also makes the rewrite
+	// crash-safe — the user's AGENTS.md is never a truncated stub.)
+	//
+	// UNDISCLOSED UNTIL NOW, NOW DISCLOSED: atomicio's rule 3 (see its
+	// package doc) means the rename gives the destination a NEW inode. A
+	// HARDLINKED AGENTS.md — a twin path pointing at the same inode, set up
+	// by hand or by a dotfile manager — is silently detached: the twin keeps
+	// the OLD content, this command still exits 0, and nothing here warns
+	// that the two files just diverged. install_hook.go's force-append
+	// branch faces the identical fact and chooses the opposite behaviour
+	// (raw os.WriteFile, deliberately, to write THROUGH the link) — but that
+	// is not an inconsistency to resolve by matching it: a shared git hook
+	// via a hardlinked/symlinked .git/hooks/pre-commit is a common,
+	// documented setup (husky, chezmoi, dotfile managers), where write-
+	// through is the intent, while a hardlinked AGENTS.md twin is not a
+	// setup this command supports or has ever advertised — there is no
+	// call-site reasoning that write-through is wanted here, only the
+	// absence of a check. Detecting it (an Lstat + link-count check before
+	// every rewrite in this loop) is a real fix that belongs to whoever
+	// next touches this path; until then, the accepted behaviour is
+	// atomicio's documented one: a hardlinked destination is detached
+	// silently, same as any other atomicio.WriteFile call site that hasn't
+	// opted out for a stated reason.
 	for _, e := range outdated {
 		data, err := os.ReadFile(e.Path)
 		if err != nil {
 			return err
 		}
 		refreshed := inserter.ReplaceMarkerBlock(string(data), e.NewBody)
-		if err := os.WriteFile(e.Path, []byte(refreshed), 0o644); err != nil {
+		if err := atomicio.WriteFile(e.Path, []byte(refreshed), 0o644); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, e.Path)
@@ -407,7 +436,7 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io
 			return err
 		}
 		rewritten, _ := inserter.UpdateWorkflowPin(string(data), p.NewVersion)
-		if err := os.WriteFile(p.Path, []byte(rewritten), 0o644); err != nil {
+		if err := atomicio.WriteFile(p.Path, []byte(rewritten), 0o644); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, p.Path)

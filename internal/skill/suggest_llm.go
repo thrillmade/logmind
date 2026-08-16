@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/thrillmade/logmind/internal/atomicio"
 )
 
 // LLMSuggester is the network-isolatable adapter we call from the
@@ -447,7 +449,11 @@ func WriteDrafts(outDir string, suggestions []Suggestion) error {
 	}
 	for _, s := range suggestions {
 		path := filepath.Join(outDir, fmt.Sprintf("skill-proposal-%s.md", s.Slug))
-		if err := os.WriteFile(path, []byte(FormatIssueDraft(s)), 0o644); err != nil {
+		// atomicio.WriteFile, not os.WriteFile: "overwrites existing files"
+		// means overwrite the FILE, not follow whatever a symlink at that
+		// name points at. Draft names are fully derived from the slug, so a
+		// hostile repo can predict them and pre-plant links.
+		if err := atomicio.WriteFile(path, []byte(FormatIssueDraft(s)), 0o644); err != nil {
 			return err
 		}
 	}
