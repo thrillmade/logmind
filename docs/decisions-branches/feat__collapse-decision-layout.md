@@ -155,3 +155,14 @@ For the panel's separately-noted inconsistency — an unreadable-or-dangling-sym
 
 ---
 
+## 2026-08-16 01:28 - show: rename the legacy JSON source from main to legacy, and correct what the previous entry left out
+
+**Reasoning:** The previous entry described only the cap rendering, while the commit it recorded also renamed a value in a normative schema and reworded three surfaces shipped to consumers. A record that says less than its commit did is the failure this project exists to prevent, so this entry covers the remainder rather than leaving it to be rediscovered from a diff. Before this change the bare source token meant a decision made on the default branch; afterwards that is a branch-prefixed token and the bare one means the legacy file, so a consumer keying on it silently reads the wrong set. The schema is normative but unreleased, so the ambiguity is free to remove now and expensive later.
+
+**Alternatives considered:** Keep the token and document the change of meaning. Rejected: a normative schema whose value quietly changes what it denotes is worse than one that changes shape loudly, because nothing on the consumer's side fails. The label has one owner and the rename propagates from it.
+
+**Implications:**
+- A correction to the previous entry: the mutation setting the cap to three does turn the package red, but through the guard that cross-checks the hand-maintained documents against the constant, not through the header. The header now renders from the constant and therefore stays green under that mutation, which is the correct behaviour and was the point of the change; the entry implied the wrong guard was doing the work. The existing tests never caught the source collision because they ran without a repository, so the branch case could not arise; the new test builds a real one with a default branch and a legacy file side by side.
+
+---
+
