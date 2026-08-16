@@ -103,3 +103,14 @@
 
 ---
 
+## 2026-08-16 06:34 - roadmap: correct the marker claim this file introduced last round, and stop asserting the tag boundary in three voices
+
+**Reasoning:** Round 8's own fix stated a falsehood: it said logmind's workflows are all hand-maintained copies carrying no template marker. logmind-self-update.yml carries v11, is byte-identical to its shipped template, and doctor reports it current — so it IS refreshed like any consumer's. Control: check-decisions.yml differs from its template, so the diff distinguishes. A doc correcting a false claim by writing another one is the failure this file exists to prevent, which is why the round that introduced it had to be the round that found it. Two further contradictions: §2 claimed to run after §3 while two of its own three rows are already answered, and it called #257 'the single item' waiting on the tag while §4 named #277 as a second.
+
+**Alternatives considered:** Say 'most workflows are markerless' — rejected; a hedge that avoids naming the exception is how the exception stays invisible. Reconcile the two sequencing sentences so they agree — rejected again; agreeing copies are still copies, and §4's duplicate clause is now deleted rather than corrected.
+
+**Implications:**
+- Ruling recorded: #277 is a payload of the fleet migration rather than a second waiter — it closes when #257 does, not on a schedule of its own. §2 owns the sequencing and §4 owns the defect. The lane also chose 'answered' over 'run' for §2's rows, because what was measured is a bypass granted on this repository, not one per consumer — a distinction the earlier wording lost. Method note now carried by both lanes: blanking a middle table row is a USELESS control, since GFM accepts pipeless rows and the counts stay identical; inserting a blank line before a middle row is the working one, dropping table 4 from 9 rows to 4.
+
+---
+

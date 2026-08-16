@@ -202,17 +202,21 @@ repo and must then be fixed twice.
 Each is a hard gate on #257, not a parallel cleanup.
 
 **This paragraph is the only place the tag boundary is decided, and it decides
-one thing: the fleet move, #257, is the single item in the run to the tag that
-waits for the tag.** Everything in §3 lands before it; §5 is the backlog that
-follows it. The reason is mechanical: `setup-logmind` installs from
-`/releases/latest`, and the released v1.2.0 answers `logmind check-decisions
---base` with
+one thing: the fleet move, #257, is the only work in the run to the tag that
+waits for the tag.** #277 closes with it rather than on a schedule of its own —
+it is a payload of the migration, not a second waiter. Everything in §3 lands
+before the tag; §5 is the backlog that follows it.
+
+The reason is mechanical: `setup-logmind` installs from `/releases/latest`, and
+the released v1.2.0 answers `logmind check-decisions --base` with
 `Error: unknown flag: --base` (ruling recorded in #243). No consumer repo can
 take the new gate template until v2.0.0 exists, so the fleet move cannot start
 until the tag does.
 
-Numbering in this list is dependency order, not calendar order — which is why
-§2 sits ahead of "§3 — Remaining pre-tag work" while running after it.
+Numbering in this list is dependency order, not calendar order. Two of the
+three rows below are already answered — template v12 is on `dev`, and the
+bypass #288 reported missing has been granted (see #288 above). Only "a release
+carrying the verb" is still waiting, and what it waits for is the tag.
 
 | | why it blocks |
 |---|---|
@@ -314,8 +318,8 @@ after the tag exists to install from.
 of §3.3 — regenerating from the branch's own sources and failing on the diff, so
 it demands the branch commit exactly what §3.3 forbids. logmind's own copy and
 its shipped `v12` template are **already correct**; the defect is a stale
-installed copy in the consumer repos. So it is a #257 payload, not code to write
-here, and it closes when the fleet takes the current template.
+installed copy in the consumer repos. So it is a #257 payload, not code to
+write here.
 
 ### 5 — After the tag
 
@@ -340,10 +344,8 @@ ships.
 | reporulez | *unversioned* | *unmarked* | no |
 | skdd | *absent* on `main`, **`v4`** on `dev` | *absent* on `main`, **`v11`** on `dev` | no |
 
-`rezgen` and `tokenomics` were missing from an earlier revision of this table
-while the search two sections above named them — §4 sizes "one fleet move" off
-this table, so an undercount here understates the migration. Regenerate it,
-rather than trusting it:
+§4 sizes "one fleet move" off this table, so an undercount here understates the
+migration. Regenerate it rather than trusting it:
 
 ```sh
 for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
@@ -364,9 +366,11 @@ files present and unmarked; `skdd`'s are absent from its default branch and
 carry markers on `dev`). The loop reads **default branches only**, so `skdd`'s
 row was measured separately. `logmind` is the producer rather than a consumer
 and is deliberately not a row — but the loop still prints one, reading
-`present, unmarked`. That is not the reporulez defect: logmind's own workflows
-are hand-maintained dogfood copies that carry no template marker because
-nothing is meant to refresh them.
+`present, unmarked`. That is not the reporulez defect. logmind hand-maintains
+its own copies of `check-decisions.yml`, `regen-timeline.yml` and
+`check-doc-links.yml` — markerless on purpose, so refresh leaves them alone.
+The exception is `logmind-self-update.yml`: it carries the marker, is refreshed
+like any consumer's, and is byte-identical to the template listed above.
 
 **logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9` (`v10` once #301 lands), `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
