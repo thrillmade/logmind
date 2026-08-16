@@ -145,9 +145,9 @@ It prints every ruleset in every repository, refusals and grants together —
 so the `ok` rows are the control that a `REFUSES STEWARD` row is a real
 refusal and not a probe returning nothing.
 
-### What is actually unresolved
+### Why it has never fired on `logmind`
 
-The push has still never landed a commit, and the reason is *not* a refusal.
+The push has never landed a commit, and the reason is *not* a refusal.
 **Measured 2026-08-15** against `logmind / check-derived-docs`
 (`.github/workflows/regen-timeline.yml`, workflow id `277546816`):
 
@@ -177,22 +177,12 @@ Thirteen green push runs and zero commits means the job runs, finds the derived
 docs already current, and exits 0 on that path — it never reaches the push at
 all. **Both** `push` failures carry the GH013 `Changes must be made through a
 pull request` refusal: `fcf7268` (**2026-07-25**) and `0aa9049`
-(**2026-08-01**), each dated *before* the bypass was added
-(**2026-08-07**). So the original diagnosis was correct when filed and the
-remedy has since been applied.
+(**2026-08-01**), both dated *before* the bypass was added (**2026-08-07**).
 
 **On `logmind`, the bypass is untested rather than missing.** It gets exercised
 the first time `main` receives a merge that leaves a derived doc stale — which
 is the `dev` → `main` merge at the tag, not something to manufacture
 beforehand. Elsewhere it is genuinely missing, which is what keeps #288 open.
-
-> **A caution this file has already earned.** An earlier revision reported
-> "seven `success` runs, and the single `push` event failed." The real figures
-> are 15 push runs and 13 successes. The conclusion — that the green column
-> never described `regen-on-main` — survived, but the evidence for it did not,
-> and an auditor who finds thirteen greens discounts the section that is right.
-> Every count in this file names the command that produced it for exactly this
-> reason.
 
 ### Awaiting protocol rulings
 
@@ -400,26 +390,41 @@ like any consumer's, and is byte-identical to the template it ships.
 **logmind ships** `check-decisions` at **`v6`** and `regen-timeline` at **`v12`** (`v13` once #301 lands), `check-doc-links` at `v9` (`v10` once #301 lands), `logmind-self-update` at `v11` — measured 2026-08-16 with `head -1 internal/templates/github/*.template`. Template versions are **per file** — "the fleet is on
 v4" is not one number.
 
-Two corrections to #257's original inventory:
+**A markerless workflow is unreachable by refresh, permanently.** A file is
+logmind's to overwrite only when the `# logmind-template-version` marker sits on
+line 1 — that is what `TemplateMarker.Writable()` means, and
+`installWorkflowTemplatesMode` refuses everything else, a displaced marker
+included. The refusal is reported on stderr rather than skipped quietly, but a
+reported refusal still leaves the stale file in place, so **every markerless
+file needs hand-replacement at #257**.
 
-- **reporulez's two gate workflows are unreachable by refresh, and always will
-  be.** A workflow file is logmind's to overwrite only when the
-  `# logmind-template-version` marker is on line 1 — that is what
-  `TemplateMarker.Writable()` means, and `installWorkflowTemplatesMode` refuses
-  everything else, a displaced marker included. reporulez's `check-decisions`
-  and `regen-timeline` carry no marker at all, so no refresh reaches them and
-  they need hand-replacement. The refusal is reported on stderr rather than
-  skipped quietly, but a reported refusal still leaves the stale file in place.
-  Its `logmind-self-update.yml` is the opposite case — marker-owned at `v8`, so
-  refresh does reach that one. "reporulez is markerless" is true per file, not
-  per repository.
-- **skdd was misread, and the misreading mixed two branches.** Its `main` has no
-  `.github/workflows` at all (404); its `dev` carries `check-decisions` at **v4**,
-  added 2026-08-01. An earlier revision of this file said "already on v11, so
-  migrating it is a no-op" — that was wrong in both halves, and it would have
-  removed a repository from the migration list that genuinely needs migrating.
-  Its clean `check-derived-docs` history is still no validation: green because
-  neither derived doc exists on any skdd branch.
+Markerlessness is **per file, not per repository** — one repository can carry
+three files that need hands and a fourth that refreshes itself. So do not work
+from a list written here. Produce it:
+
+```sh
+for r in $(gh repo list thrillmade --limit 200 --json name --jq '.[].name'); do
+  for w in check-decisions regen-timeline check-doc-links logmind-self-update; do
+    m=$(gh api "repos/thrillmade/$r/contents/.github/workflows/$w.yml" \
+          --jq .content 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null | head -1)
+    case "$m" in
+      '# logmind-template-version:'*) ;;   # ours; refresh reaches it
+      '') ;;                               # no such file
+      *) printf '%s %s NEEDS HAND-REPLACEMENT\n' "$r" "$w" ;;
+    esac
+  done
+done
+```
+
+Print all three states instead of filtering and the marked rows become the
+control: a repository that comes back entirely marked proves the probe
+recognises a marker, so a `NEEDS HAND-REPLACEMENT` row is a real one. logmind's
+own rows appear and are expected — see the dogfood note above.
+
+**skdd needs migrating, and reads as though it does not.** Its `main` has no
+`.github/workflows` at all (404), so its clean `check-derived-docs` history is
+green because neither derived doc exists on any skdd branch — not because
+anything passed. Its `dev` carries `check-decisions` at **v4**.
 
 ### The cost of not migrating
 

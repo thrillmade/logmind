@@ -125,3 +125,14 @@
 
 ---
 
+## 2026-08-16 07:21 - roadmap: stop hand-writing the markerless inventory and emit it, then trim #288's archaeology
+
+**Reasoning:** Round 10 narrowed a per-repository claim to per-file and then shipped an incomplete per-file inventory as the resolution — reporulez has three markerless workflows, not two; check-doc-links was missed, and it is a genuine refresh target (ListWorkflowTemplates enumerates all four *.yml.template with no filter, and init.go loops that list). Every other fleet repo has check-doc-links marker-owned — protocol v5, agent-skills v5, clud-bug v4, clud-bug-app v4, rezgen v4, tokenomics v4 — so reporulez is the sole outlier and an operator working a hand-written list at #257 would leave that file stale and permanently unreachable by refresh. That is the third consecutive round where the correction carried the next defect, which is what settled the shape: the file no longer states the inventory at all, it emits it.
+
+**Alternatives considered:** Write the corrected three-file list — rejected; a hand-kept list of a thing the forge owns has now been wrong twice in two rounds. Add the homebrew-tap bypass fact I measured — rejected on the reviewer's argument and the file's own rule: the checklist already carries it command-shaped, and writing the answer would be a fourth recurrence of the defect the header warns about.
+
+**Implications:**
+- The emitted list prints all three states rather than filtering, so the marked rows are the command's own control: a repository that comes back entirely marked proves the probe recognises a marker, which makes a NEEDS HAND-REPLACEMENT row a real one. Verified by running the block verbatim out of the file — rc=0, and it returns reporulez's three plus logmind's three dogfood copies, which the paragraph above already accounts for. The #288 section also lost nine lines of archaeology about its own superseded revisions; the command transcript and the labelled probe table both stay, because the transcript is what the file's rule demands and the table is the only place the control row is named.
+
+---
+
