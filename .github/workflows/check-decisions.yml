@@ -4,9 +4,36 @@ name: logmind / check-decisions
 # updating docs/decisions.md or a docs/decisions-branches/<branch>.md file.
 # Mirrors the local `logmind check-decisions` pre-commit hook but against
 # the PR diff. Installed by `logmind init`.
+#
+# NOT the shipped template. This repository runs a variant that predates the
+# template's v5 rewrite (which deleted the `[skip-logmind]` title override,
+# the wholesale `*.md` exclusion, the path-match decision test and the
+# hardcoded threshold, and moved the evaluation into `logmind
+# check-decisions --base/--head`). Bringing this copy onto the verb is
+# logmind#260/#278, and it is deliberately NOT what logmind#261 did here:
+# #261 moved WHERE this file is read from and changed nothing about what it
+# decides, so the two can be reviewed one at a time. Every byte of the
+# `Compute diff vs base` and `Enforce` steps below is what it was.
+#
+# logmind#261 / SPEC §6.3: the trigger is `pull_request_target`, so the forge
+# reads THIS FILE from the base branch. Under `pull_request` it read the
+# pull request's own merge commit, which meant a branch could delete the
+# `Enforce` step — or add `[skip-logmind]` handling of its own invention —
+# in the very diff being judged, and pass. Reading the base ref from inside
+# the job does not help: what the pull request replaced is the job, not the
+# job's inputs.
+#
+# The two costs of the trigger, so nobody rediscovers them as bugs. This
+# gate is one merge behind its own source: a pull request editing this file
+# is judged by the base branch's copy, which is the property, not a defect
+# (§6.6's bypass is what that case exists for). And on the one pull request
+# that MIGRATES this file off `pull_request`, neither trigger fires —
+# `pull_request` reads the PR's copy, which no longer subscribes, and
+# `pull_request_target` reads the base's, which does not yet. The check is
+# absent from that pull request rather than green on it.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -17,9 +44,35 @@ jobs:
   check-decisions:
     runs-on: ubuntu-latest
     steps:
+      # The WORKSPACE is the base ref, never the pull request's content —
+      # §6.3's other half, and the condition on which §6.3 permits the
+      # `pull_request_target` route at all: "a gate taking the second route
+      # MUST NOT check out the pull request's content, which is the hazard
+      # that trigger is otherwise known for." `ref:` is explicit rather than
+      # left to the trigger's default (the base BRANCH TIP, which moves under
+      # a long-lived pull request) so that deleting these lines is a visible
+      # change, not a silent fall-through. Nothing below reads a file out of
+      # this workspace; it exists so the two SHAs in the range resolve.
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+
+      # The base checkout carries the base branch's history; the range below
+      # also needs the pull request's head commit, which for a fork PR sits
+      # on no branch of this repository. `refs/pull/N/head` reaches it either
+      # way. Under the old `pull_request` trigger the merge-ref checkout
+      # happened to contain the head commit already, so this step is what
+      # keeps the range resolvable now — not a change to what is compared.
+      # If it fails the range is unresolvable and the job goes red, which is
+      # §6.5: a gate that cannot run says so rather than exiting green.
+      - name: Fetch the PR head commit
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/pull/${PR_NUMBER}/head:refs/remotes/pull/${PR_NUMBER}/head"
 
       - name: Compute diff vs base
         id: diff
@@ -64,8 +117,8 @@ jobs:
           # effect (issue #212). Fetch the LIVE title instead. PR_NUMBER
           # comes from the event too, but it IS stable across reruns (a PR
           # keeps its number for life; only the title payload goes stale).
-          # This workflow only triggers on `pull_request`, so there's no
-          # non-PR event to guard against. Fail OPEN to the event payload
+          # This workflow only triggers on `pull_request_target`, so there's
+          # no non-PR event to guard against. Fail OPEN to the event payload
           # title if the API call errors (rate limit, transient outage,
           # etc.) — a `gh` hiccup must never crash this check.
           live_title="$(gh pr view "$PR_NUMBER" --json title -q .title 2>/dev/null)" || live_title=""

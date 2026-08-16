@@ -1,4 +1,4 @@
-# logmind-template-version: v6
+# logmind-template-version: v7
 name: logmind / check-decisions
 
 # SPEC §6.2's `check-decisions` gate — the third interception point of
@@ -34,9 +34,63 @@ name: logmind / check-decisions
 # the action's current release and what every repo already running these
 # workflows resolves to via Dependabot; shipping v1.0.0 meant a freshly
 # scaffolded repo installed a pin older than the fleet's on day one.
+#
+# v7 (logmind#261): the trigger moves `pull_request` → `pull_request_target`,
+# and that one word is the whole change. Everything v5 did to make this job's
+# INPUTS trustworthy — base-ref workspace, released binary, no self-service
+# escape — left its DEFINITION untouched, and the definition was the PR's
+# copy. §6.3: "On a pull-request trigger the forge reads the workflow file
+# ITSELF from the pull request's own merge commit, so a change that edits the
+# gate's own definition has already replaced the job — whatever that job then
+# goes on to read. Being careful inside the body cannot fix it." A pull
+# request that rewrote the `Enforce` step below to `exit 0` passed its own
+# gate; nothing here read a single byte of the PR to let that happen.
+# `pull_request_target` is the forge's one lever on WHERE the file is read
+# from: the workflow that runs is the base branch's, so an edit to this file
+# takes effect only once it has merged — which needs the gate, and a review.
 
 on:
-  pull_request:
+  # The trigger §6.3 names as the second of two permitted shapes: "it runs on
+  # a trigger that reads the workflow from the base branch — and a gate
+  # taking the second route MUST NOT check out the pull request's content,
+  # which is the hazard that trigger is otherwise known for." That second
+  # half is not a caveat bolted on here; it is what the whole job below was
+  # already built to do, which is why this route and not the other one.
+  #
+  # The first shape — a reusable workflow or composite action pinned to an
+  # immutable ref — was rejected for two reasons. It does not, on its own,
+  # answer the defect: the CALLER stays in this file, so on a `pull_request`
+  # trigger a pull request rewrites `uses:`, `with:` or the job's `if:` as
+  # easily as it rewrites a `run:`. Making it safe means putting the caller
+  # on a base-read trigger — this line — at which point the indirection has
+  # bought nothing it did not already have. And it must live somewhere: a
+  # `./`-local callee is read from the pull request's ref like everything
+  # else, so it would have to be a logmind-owned repository, which every
+  # consumer's gate would then depend on existing and staying reachable.
+  # logmind must work standalone. (`setup-logmind`, further down, is a
+  # different kind of dependency: it installs a binary and its absence
+  # fails the job loudly rather than passing it.)
+  #
+  # TWO CONSEQUENCES, both intended, both surprising the first time:
+  #
+  #   1. This workflow does not run on the pull request that ADDS it, or on
+  #      any pull request that edits it, because the base branch's copy is
+  #      what runs and the base branch does not have the change yet. The
+  #      gate is one merge behind its own source, permanently. That is the
+  #      property, not a defect — and it is exactly the case §6.6's ruleset
+  #      bypass exists for.
+  #   2. The one-time migration gap: on the pull request that moves an
+  #      installed copy of this file from `pull_request` to
+  #      `pull_request_target`, NEITHER trigger fires — `pull_request` reads
+  #      the PR's copy, which no longer subscribes to it, and
+  #      `pull_request_target` reads the base's copy, which does not yet.
+  #      The check is absent from that one pull request rather than green on
+  #      it, so it fails a required-checks rule instead of satisfying it.
+  #      Every trigger migration costs this once; carrying both triggers
+  #      through the transition would cost more, because the two runs post
+  #      the same check name and the forge takes the most recent — the
+  #      PR's own copy would be the one that counted.
+  pull_request_target:
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -44,6 +98,12 @@ permissions:
   # `contents: read` and nothing else. v4 also took `pull-requests: read`,
   # solely for the `gh pr view` title fetch behind the removed override;
   # with that gone, no step here touches pull-request data through the API.
+  #
+  # v7 makes this block load-bearing rather than tidy. Under `pull_request`
+  # the forge forced a fork's token read-only whatever this said; under
+  # `pull_request_target` what is written here is what the job gets, on a
+  # fork pull request too. Read is all this gate has ever needed, and it is
+  # now all it can have.
 
 jobs:
   check-decisions:
@@ -56,10 +116,19 @@ jobs:
       # workflow's own logic — MUST be read from the pull request's base
       # ref. Never from the head ref, and never from a workspace populated
       # with the pull request's content." The threshold this gate enforces
-      # is `git.commit_line_threshold` in .logmind/config.yml, so a default
-      # (merge-ref) checkout would let a PR raise its own threshold in the
+      # is `git.commit_line_threshold` in .logmind/config.yml, so a
+      # PR-content checkout would let a PR raise its own threshold in the
       # very diff being judged. The PR's content is read only as git
       # objects, through the range passed to the verb below.
+      #
+      # `ref:` stays EXPLICIT under `pull_request_target` even though the
+      # trigger's default checkout is already the base branch. Two reasons,
+      # and the second is the one that matters: the default is the base
+      # BRANCH TIP, which moves under a long-lived pull request, while the
+      # range below is judged against `base.sha`; and an explicit ref is
+      # what makes deleting these two lines a visible change rather than a
+      # silent fall-through to whatever the trigger's default happens to be
+      # — which, one trigger ago, was the pull request's own merge ref.
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
