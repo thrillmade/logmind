@@ -89,8 +89,14 @@ var LogmindWorkflows = []string{
 }
 
 // Marker regexes match Python's compiled patterns at the source.
+// The `# logmind-template-version:` extractor deliberately does NOT live
+// here. doctor READS that marker and internal/cli WRITES against it, and two
+// copies of the rule meant a file could be markerless to the reader and
+// versioned to the writer at the same time (#299) — so `doctor --fix`
+// overwrote a file `doctor` had just called the user's. Both sides now call
+// inserter.ExtractTemplateMarker, the same way both already order generations
+// through inserter.ParseMarkerGeneration (#294).
 var (
-	logmindMarkerRe       = regexp.MustCompile(`^# logmind-template-version:\s*(\S+)`)
 	logmindBlockVersionRe = regexp.MustCompile(`<!--\s*logmind-block-version:\s*(\S+)\s*-->`)
 	// logmindVersionLineRe parses the version out of a PATH binary's
 	// `--version` output. It anchors on the REAL versionLine format emitted
@@ -116,6 +122,22 @@ type WorkflowStatus struct {
 	Marker        *string `json:"marker"`
 	BundledMarker *string `json:"bundled_marker"`
 	Drift         string  `json:"drift"`
+
+	// Displaced is true when a marker IS present but not on line 1 (#299).
+	// The VERDICT for that file is "markerless" — the writer refuses to touch
+	// it — but the REASON is not the one a bare markerless file has, and SPEC
+	// §5.2 grants user ownership only to "an artifact carrying no marker at
+	// all". Without this, `doctor --fix` printed both "its marker is on line 2,
+	// not line 1, so logmind cannot tell whether the file is yours or its own"
+	// and "it carries no logmind marker … so SPEC §5.2 treats it as yours" for
+	// the same file in the same run.
+	//
+	// Deliberately NOT serialized: the JSON field names here are a cross-repo
+	// contract (clud-bug, agent-skills parse this shape), and this is an
+	// explanation for a stderr note, not a verdict a consumer branches on.
+	// One owner for the fact — probeWorkflow computes it, callers read it,
+	// nobody re-derives it by sniffing the prose in Marker.
+	Displaced bool `json:"-"`
 }
 
 // ToolStatus aggregates per-tool fields (currently just `logmind`;
@@ -549,20 +571,15 @@ func classifyLogmindDrift(workflows []WorkflowStatus) string {
 
 func bundledLogmindMarker(workflowName string) *string {
 	body := templates.Workflow(workflowName + ".template")
-	first := firstLine(body)
-	m := logmindMarkerRe.FindStringSubmatch(first)
-	if len(m) < 2 {
+	marker := inserter.ExtractTemplateMarker(body)
+	if !marker.Writable() {
+		// A template WE ship whose marker isn't on line 1 is a build defect,
+		// not a repo state — report "no bundled marker" rather than compare
+		// against a token the writer would refuse to act on.
 		return nil
 	}
-	v := m[1]
+	v := marker.Version
 	return &v
-}
-
-func firstLine(s string) string {
-	if idx := strings.Index(s, "\n"); idx >= 0 {
-		return s[:idx]
-	}
-	return s
 }
 
 func readWorkflow(projectRoot, name string) (string, bool) {
@@ -609,16 +626,36 @@ func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 	if !ok {
 		return WorkflowStatus{Name: name, Installed: false, Marker: nil, BundledMarker: bundled, Drift: "missing"}
 	}
-	first := firstLine(content)
-	m := logmindMarkerRe.FindStringSubmatch(first)
-	var marker *string
-	if len(m) >= 2 {
-		v := m[1]
-		marker = &v
+	found := inserter.ExtractTemplateMarker(content)
+
+	// `owned` is what the DRIFT VERDICT is computed from, and it is non-nil
+	// only when the file is ours to refresh. classifyMarker's nil case is the
+	// SPEC §5.2 "belongs to the user" verdict, so routing anything the writer
+	// would refuse through nil is what keeps the reader's answer identical to
+	// the writer's — the disagreement between them WAS #299.
+	var owned *string
+	if found.Writable() {
+		v := found.Version
+		owned = &v
 	}
+
+	// `display` may say more than the verdict does. A displaced marker is
+	// "markerless" as a verdict, but reporting only that would hide the fact
+	// that a marker IS present — the one thing the user needs in order to
+	// move the file deliberately into either camp. Prose in the marker column
+	// matches the existing "markerless (pre-v0.6.10)" / "foreign … left
+	// alone" rows rather than inventing a drift value consumers don't parse.
+	display := owned
+	displaced := found.Ownership == inserter.MarkerDisplaced
+	if displaced {
+		v := fmt.Sprintf("%s on line %d, not line 1", found.Version, found.Line)
+		display = &v
+	}
+
 	return WorkflowStatus{
-		Name: name, Installed: true, Marker: marker,
-		BundledMarker: bundled, Drift: classifyMarker(marker, bundled),
+		Name: name, Installed: true, Marker: display,
+		BundledMarker: bundled, Drift: classifyMarker(owned, bundled),
+		Displaced: displaced,
 	}
 }
 
@@ -889,8 +926,18 @@ func probeClaudePreToolUseHook(projectRoot string) WorkflowStatus {
 //     can act on it without invoking `which -a`.
 //   - drift="missing"   when no logmind found on PATH (merge driver
 //     shell-outs will fail).
-//   - drift="markerless" when the PATH binary exists but its
-//     --version is unreadable / unparseable.
+//   - drift="unreadable" when the PATH binary exists but its
+//     --version cannot be executed or cannot be parsed.
+//
+// "unreadable" is deliberately NOT "markerless" (#306). Everywhere else in
+// this file "markerless" carries SPEC §5.2's OWNERSHIP verdict — "an artifact
+// carrying no marker at all belongs to the user and MUST NOT be overwritten"
+// — and callers act on it as such: `doctor --fix` refuses to write the path,
+// and the residual note tells the user logmind is leaving their file alone. A
+// binary on PATH is not a user-owned markerless artifact and has no marker
+// concept at all; what happened is that logmind could not read its version.
+// Reusing the ownership token for it made --fix report a true fact ("still
+// drifted") with a false cause.
 //
 // Errors are best-effort: every failure path produces a status row
 // (no panics). This is the v0.6.16 carry-forward that bubbles up
@@ -923,7 +970,7 @@ func probePathResolution() WorkflowStatus {
 		marker := fmt.Sprintf("%s (cannot exec --version)", pathBin)
 		return WorkflowStatus{
 			Name: "logmind on PATH", Installed: true,
-			Marker: &marker, BundledMarker: &running, Drift: "markerless",
+			Marker: &marker, BundledMarker: &running, Drift: "unreadable",
 		}
 	}
 	text := strings.TrimSpace(string(out))
@@ -932,7 +979,7 @@ func probePathResolution() WorkflowStatus {
 		marker := fmt.Sprintf("%s (no version parsed from %q)", pathBin, text)
 		return WorkflowStatus{
 			Name: "logmind on PATH", Installed: true,
-			Marker: &marker, BundledMarker: &running, Drift: "markerless",
+			Marker: &marker, BundledMarker: &running, Drift: "unreadable",
 		}
 	}
 	pathVer := strings.TrimRight(m[1], ",")
@@ -974,6 +1021,8 @@ func formatDrift(drift string) string {
 		return "current"
 	case "markerless":
 		return "markerless"
+	case "unreadable":
+		return "version unreadable"
 	case "missing":
 		return "—"
 	case "foreign":

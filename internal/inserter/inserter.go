@@ -162,24 +162,77 @@ func ExtractMarkerBlock(content string) (string, bool) {
 	return content[blockStart:end], true
 }
 
-// ReplaceMarkerBlock swaps the body between the existing markers,
+// ErrNoMarkerBlock is returned by RefreshMarkerBlockFile when the file on
+// disk carries no well-formed logmind marker block. It is a REFUSAL, not a
+// failure to write: a file with no block is not logmind's to rewrite (SPEC
+// §5.2 — "An artifact carrying no marker at all belongs to the user and MUST
+// NOT be overwritten"), so the bytes are left exactly as found.
+var ErrNoMarkerBlock = errors.New("no logmind marker block")
+
+// RefreshMarkerBlockFile is THE write primitive for the marker block: the
+// only exported way to move an installed block forward. It reads the file,
+// refuses unless the file itself carries a well-formed block, and writes back
+// the surgically-rewritten WHOLE file.
+//
+// It exists because the two-string signature it replaces could not be called
+// wrong in a way the compiler or the runtime would notice. `ReplaceMarkerBlock(
+// content, newBody)` took a whole file and a fragment as the same type, and
+// returned its first argument unchanged when the markers were missing — so
+// handing it a block body where a file belonged produced a fragment, silently,
+// which `self-update` then wrote over the user's entire AGENTS.md (#297).
+// Owning the read and the write here means a caller never holds a string that
+// it could pass to the wrong parameter: there is no parameter to get wrong.
+//
+// The refusal is the second half of the same guarantee. `replaceMarkerBlock`
+// returns its input when the markers are absent, which is the correct pure
+// behaviour and a catastrophic write behaviour — "unchanged" is only safe if
+// nobody writes it. This function turns that case into ErrNoMarkerBlock and
+// writes nothing at all.
+//
+// Routed through atomicio.WriteFile rather than a bare os.WriteFile: this
+// was the one write in the package that still used the truncate+write
+// two-syscall form, on the file SPEC §1.1 names as the artifact a repo
+// reads project instructions from. (An earlier version of this comment
+// claimed SPEC §1.1 required preserving a symlink here; it does not — the
+// symlink-preservation rule is §5.2's, scoped to catalog-subscribed items,
+// not to AGENTS.md.) atomicio.WriteFile also refuses to write through a
+// symlink at path (atomicio.RefuseSymlink, #300) — a bare os.WriteFile
+// FOLLOWS a symlink, which for a dangling one at agentsPath means creating
+// a file wherever it points, possibly outside the repo.
+func RefreshMarkerBlockFile(path, newBlockBody string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	if _, ok := ExtractMarkerBlock(content); !ok {
+		return fmt.Errorf("%s: %w", path, ErrNoMarkerBlock)
+	}
+	return atomicio.WriteFile(path, []byte(replaceMarkerBlock(content, newBlockBody)), 0o644)
+}
+
+// replaceMarkerBlock swaps the body between the existing markers,
 // preserving everything else byte-for-byte. Returns content unchanged
 // when either marker is absent OR when the markers are out of order
 // (end appears before start — malformed input, never a legitimate state).
 // Mirrors ExtractMarkerBlock's `end < start` guard so the two primitives
 // share the same well-formedness contract.
 //
+// UNEXPORTED on purpose (#297). "Returns its input unchanged" is a safe
+// contract for a pure function and a data-loss contract for anything that
+// writes the result, so the function that can produce a fragment is not
+// reachable from outside this package; RefreshMarkerBlockFile is, and it
+// checks first. Callers outside the package have no way to express the
+// mistake because they have no way to name this function.
+//
 // This is the SURGICAL REWRITE primitive. Marker-block round-trip
 // invariant (proved in the package test):
 //
 //	old, _ := ExtractMarkerBlock(c0)
-//	c1 := ReplaceMarkerBlock(c0, "FOO")
-//	c2 := ReplaceMarkerBlock(c1, old)
+//	c1 := replaceMarkerBlock(c0, "FOO")
+//	c2 := replaceMarkerBlock(c1, old)
 //	c0 == c2 byte-for-byte
-//
-// Used by both `agents update --apply` (rewriting stale blocks) and
-// the `ensure_agents_md` silent-refresh path.
-func ReplaceMarkerBlock(content, newBlockBody string) string {
+func replaceMarkerBlock(content, newBlockBody string) string {
 	start := strings.Index(content, startMarker)
 	end := strings.Index(content, endMarker)
 	if start == -1 || end == -1 || end < start {
@@ -276,11 +329,14 @@ func CreateAgentFile(agentName, repoRoot string) (string, error) {
 		return "", nil
 	}
 	filePath := filepath.Join(repoRoot, filepath.FromSlash(a.FilePattern))
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-		return "", err
-	}
 	body := agentTemplate(agentName)
-	if err := os.WriteFile(filePath, []byte(body), 0o644); err != nil {
+	// atomicio.WriteFile makes its own parent directory, and — unlike the
+	// bare os.WriteFile this replaced — refuses (atomicio.RefuseSymlink,
+	// #300) rather than silently writing through a symlink at filePath (a
+	// per-agent path like CLAUDE.md or .cursorrules); no ReadFile precedes
+	// this call, so a dangling symlink here was never even caught by an
+	// ErrNotExist check.
+	if err := atomicio.WriteFile(filePath, []byte(body), 0o644); err != nil {
 		return "", err
 	}
 	return filePath, nil
@@ -364,7 +420,14 @@ func EnsureAgentsMD(repoRoot string) (string, *AgentsBlockRefusal, error) {
 
 	data, err := os.ReadFile(agentsPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		if err := os.WriteFile(agentsPath, []byte(agentsMDTemplate()), 0o644); err != nil {
+		// os.ReadFile follows a symlink, so a DANGLING symlink at agentsPath
+		// (pointing at a target that doesn't exist) also returns
+		// fs.ErrNotExist here — the file looks "absent" when it is really a
+		// link somewhere outside the repo. A bare os.WriteFile would then
+		// follow that same link and create the write target wherever it
+		// points. atomicio.WriteFile refuses instead (atomicio.RefuseSymlink,
+		// #300), the same as every other AGENTS.md write in this file.
+		if err := atomicio.WriteFile(agentsPath, []byte(agentsMDTemplate()), 0o644); err != nil {
 			return "", nil, err
 		}
 		return "Created AGENTS.md (canonical agent instructions)", nil, nil
@@ -398,8 +461,12 @@ func EnsureAgentsMD(repoRoot string) (string, *AgentsBlockRefusal, error) {
 	}
 	templateBlock, tok := ExtractMarkerBlock(plan.Template)
 	if tok && strings.TrimSpace(installedBlock) != strings.TrimSpace(templateBlock) {
-		refreshed := ReplaceMarkerBlock(content, templateBlock)
-		if err := os.WriteFile(agentsPath, []byte(refreshed), 0o644); err != nil {
+		// Routed through the one write primitive rather than doing its own
+		// read/replace/write — EnsureAgentsMD is the SINGLE refresher of this
+		// path (SPEC §5.2: "Exactly one automation owns any generated or
+		// copied path. Two refreshers MUST NOT write the same path"), and it
+		// gets the markers-required refusal for free.
+		if err := RefreshMarkerBlockFile(agentsPath, templateBlock); err != nil {
 			return "", nil, err
 		}
 		return "Refreshed AGENTS.md logmind block to current template", nil, nil
@@ -433,14 +500,22 @@ func agentsMDTemplate() string {
 // OutdatedMarkerEntry records one stale AGENTS.md block:
 //
 //	Path = absolute path to AGENTS.md
-//	OldBody = body currently in the file
 //	NewBody = body the template wants installed
 //
 // Returned by FindOutdatedMarkerBlocks; consumed by
-// `agents update [--apply]`.
+// `agents update [--apply]`, which feeds Path+NewBody straight into
+// RefreshMarkerBlockFile.
+//
+// There is deliberately NO OldBody field (#297). It carried the block body
+// currently on disk, had no consumer but one — `self-update` passed it as the
+// WHOLE-FILE argument of ReplaceMarkerBlock and wrote the fragment that came
+// back over the user's entire AGENTS.md — and its presence is what made that
+// call look plausible: a struct that hands you a path and a body next to each
+// other invites writing the body to the path. Detection needs only "which file
+// is stale, and what should be in it"; anything that needs the current bytes
+// reads the file.
 type OutdatedMarkerEntry struct {
 	Path    string
-	OldBody string
 	NewBody string
 }
 
@@ -496,7 +571,7 @@ func FindOutdatedMarkerBlocks(repoRoot string) ([]OutdatedMarkerEntry, *AgentsBl
 		return nil, nil, nil
 	}
 	return []OutdatedMarkerEntry{{
-		Path: agentsPath, OldBody: installed, NewBody: fresh,
+		Path: agentsPath, NewBody: fresh,
 	}}, nil, nil
 }
 
@@ -679,6 +754,89 @@ func parseBlockMarker(marker string) (int, string, bool) {
 	return n, suffix, true
 }
 
+// templateMarkerRE matches the `# logmind-template-version: vN` line an
+// installed workflow template carries. Anchored at `^` and applied to LINE 1
+// ONLY — see ExtractTemplateMarker for why that anchor is the ownership test
+// rather than an implementation detail.
+var templateMarkerRE = regexp.MustCompile(`^# logmind-template-version:\s*(\S+)`)
+
+// MarkerOwnership answers the only question a write path may ask about an
+// installed artifact: is this file logmind's to overwrite?
+type MarkerOwnership int
+
+const (
+	// MarkerOwned — the logmind marker is on line 1. logmind installed this
+	// file and MAY refresh it (subject to the ordering guard, #286).
+	MarkerOwned MarkerOwnership = iota
+	// MarkerAbsent — no logmind marker anywhere. SPEC §5.2: "An artifact
+	// carrying no marker at all belongs to the user and MUST NOT be
+	// overwritten."
+	MarkerAbsent
+	// MarkerDisplaced — a marker exists, but not on line 1. Neither clearly
+	// ours nor clearly the user's, so it is refused and reported rather than
+	// guessed at — the same "unknown means refuse, never guess" rule #267 and
+	// #286 landed on.
+	MarkerDisplaced
+)
+
+// TemplateMarker is the result of reading an installed artifact's
+// template-version marker.
+type TemplateMarker struct {
+	Ownership MarkerOwnership
+	Version   string // the marker token, e.g. "v5"; "" when MarkerAbsent
+	Line      int    // 1-based line the marker was found on; 0 when MarkerAbsent
+}
+
+// Writable reports whether a refresh path may overwrite this artifact.
+// Only MarkerOwned qualifies.
+func (m TemplateMarker) Writable() bool { return m.Ownership == MarkerOwned }
+
+// ExtractTemplateMarker is the SINGLE OWNER of "does this file carry a
+// logmind template-version marker, and is it ours". Every reader and every
+// writer routes through it.
+//
+// It replaces two extractors that disagreed (#299): doctor matched an
+// anchored regex against LINE 1 ONLY, while init's extractTemplateVersion
+// prefix-matched EVERY line. A file whose marker sat on line 2 was therefore
+// "markerless" to the component that REPORTED and versioned-and-stale to the
+// component that WROTE — so `doctor --fix` overwrote a file it had just told
+// the user was theirs. Which extractor was right did not matter to that bug;
+// that there were two of them did.
+//
+// FIRST LINE ONLY is the surviving semantics, and not merely because it is
+// the stricter of the two:
+//
+//   - It matches what logmind WRITES. Every bundled template in
+//     internal/templates/github carries the marker as its first byte, so
+//     "marker on line 1" is exactly the set of files logmind produced. An
+//     ownership test should recognise our own output, not a superset of it.
+//   - Any-line makes ownership a substring search, and a substring search
+//     over a user's file CLAIMS it. A workflow that quotes the marker in a
+//     heredoc, a comment, or an echoed setup step would be adopted — and
+//     then overwritten — because it mentioned us. Permissiveness on the read
+//     side is not neutral when the write side is destructive.
+//   - It leaves the user a deliberate way to take a file back: move the
+//     marker, or drop it. Under any-line, disowning a file requires finding
+//     and deleting every occurrence.
+//
+// The cost is that a marker displaced by a hand-added header stops being
+// recognised. That cost is paid explicitly rather than silently: displacement
+// is its own state (MarkerDisplaced), every write path refuses it, and the
+// refusal is reported — never collapsed into "markerless" and acted on.
+func ExtractTemplateMarker(text string) TemplateMarker {
+	for i, line := range strings.Split(text, "\n") {
+		m := templateMarkerRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if i == 0 {
+			return TemplateMarker{Ownership: MarkerOwned, Version: m[1], Line: 1}
+		}
+		return TemplateMarker{Ownership: MarkerDisplaced, Version: m[1], Line: i + 1}
+	}
+	return TemplateMarker{Ownership: MarkerAbsent}
+}
+
 // OutdatedPinEntry records one stale workflow pin:
 //
 //	Path = absolute path to .github/workflows/<name>.yml
@@ -809,7 +967,13 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 					a.Display, filepath.Base(filePath)))
 		}
 
-		if err := os.WriteFile(filePath, []byte(templates.Stub()), 0o644); err != nil {
+		// filePath resolved and read successfully above (fileExists +
+		// os.ReadFile both followed it), so this is a per-agent artifact the
+		// user owns, potentially reached through a symlink — atomicio.WriteFile
+		// over the bare os.WriteFile this replaced so a symlinked CLAUDE.md /
+		// .cursorrules / etc. is refused (atomicio.RefuseSymlink, #300) instead
+		// of silently written through.
+		if err := atomicio.WriteFile(filePath, []byte(templates.Stub()), 0o644); err != nil {
 			return messages, declined, err
 		}
 		messages = append(messages,
@@ -824,7 +988,7 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, error) {
 		// Match Python: existing.rstrip() + "\n\n" + "\n".join(appended).
 		body := strings.TrimRight(string(existing), " \t\n\r") +
 			"\n\n" + strings.Join(appendedBlocks, "\n")
-		if err := os.WriteFile(agentsPath, []byte(body), 0o644); err != nil {
+		if err := atomicio.WriteFile(agentsPath, []byte(body), 0o644); err != nil {
 			return messages, declined, err
 		}
 	}

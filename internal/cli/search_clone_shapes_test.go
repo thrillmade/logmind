@@ -48,12 +48,13 @@ func withCwd(t *testing.T, dir string, fn func()) {
 	fn()
 }
 
-// gitIn runs one git command in dir, failing the test on error.
+// gitIn runs one git command in dir, failing the test on error. It is the
+// must-succeed wrapper over gitTry (render_default_branch_test.go), which is
+// the package's one git-exec site for tests — the difference between the two
+// is what a caller does about a failure, not how the command is run.
 func gitIn(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := gitTry(dir, args...); err != nil {
 		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
 	}
 }

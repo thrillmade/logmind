@@ -19,6 +19,39 @@ name: logmind / check-derived-docs
 # success is how a regenerator stays broken for weeks while every run is
 # green.
 #
+# v12: the push credential is a CHAIN, not one hardcoded secret. v11 shipped
+# a raw `LOGMIND_AUTO_REGEN_PAT` as the only rung — the credential path this
+# repo itself had already moved off — so a repo with a GitHub App configured
+# could not use it and a repo with neither warned and did nothing. The chain
+# now degrades: a GitHub App installation token if App credentials are
+# configured, else a PAT if one is, else the workflow's own GITHUB_TOKEN,
+# which always exists. The App rung is an OPTIMIZATION, never a dependency:
+# logmind must work in a repo with no App, no PAT, and no organization
+# behind it. A push that was attempted and refused still fails the job
+# (::error + exit 1), exactly as v11 established.
+#
+# What v11's OTHER outcome — "no credential: warn and exit 0" — means does
+# change, and the change is the point rather than a side effect. v11 reached
+# it whenever no PAT was configured, which was most repos; adding rung 3
+# means "configured nothing" now ATTEMPTS the push, so on GitHub-hosted
+# Actions, where `github.token` is always populated, the warn-and-exit-0
+# branch is UNREACHABLE. It is kept, not preserved-in-name: a runner that
+# injects no token at all (`act`, a self-hosted harness) still lands there,
+# and it is what stops `set -u` from aborting on an unbound $TOKEN with a
+# message that names nothing. The branch is documented at its own site.
+#
+# v12 also stops assuming the default branch is called `main`. It was
+# hardcoded in four operative places — the push refspec (`HEAD:main`), the
+# `on: push:` filter, the PR gate's remediation command, and the ruleset
+# error message — so a repo on `master` or `trunk` either regenerated onto
+# a branch it does not have or never regenerated at all. Everything
+# evaluated at RUNTIME now reads `github.event.repository.default_branch`;
+# the one thing that cannot (an `on:` filter takes no expression) is
+# substituted at scaffold time by `logmind init`, and the PR gate warns
+# when the two have drifted apart. Same principle as the credential chain:
+# logmind must work standalone, which means assuming nothing about how a
+# repository is set up.
+#
 # v13: docs/timeline-archive.md joins the gate (SPEC §3.3, logmind#265). The
 # history is now rendered in two halves — docs/timeline.md carries the 50 most
 # recent entries and the archive the remainder — and §3.3 governs all three
@@ -31,16 +64,41 @@ name: logmind / check-derived-docs
 # branches independently bumped v11 to v12 with unrelated content, and nothing
 # compared the two beyond the marker string matching. This archive change
 # moves to v13 so the two numbers stay one-to-one with one piece of content
-# each.
+# each. v13's body is v12's body plus the archive: the credential chain and
+# the resolved default branch below are #314's and are NOT reverted here.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
   push:
-    branches: [main]
+    # NOT hardcoded to `main`. A workflow's `on:` filter cannot take an
+    # expression — GitHub evaluates no context under `on:` — so `logmind
+    # init` substitutes this repository's actual default branch here at
+    # scaffold time, the same way it substitutes __LOGMIND_VERSION__
+    # elsewhere. A repo on `master`, `trunk`, or anything else gets its own
+    # name written in.
+    #
+    # Broadening this to `branches: ['**']` and gating the job instead is
+    # NOT an option here: this file also carries `check-derived-docs`, and a
+    # job skipped by its own `if:` reports SUCCESS rather than skipped. Every
+    # push to a PR branch would then add a second `check-derived-docs` run on
+    # the same head SHA that passed without evaluating anything — and where
+    # the check has been made a required status check, that green run is what
+    # the branch rule reads.
+    #
+    # Required is the repo owner's call, not this file's: logmind's own
+    # `main` ruleset configures no required status checks at all, so here
+    # `check-derived-docs` blocks by failing the run and by nothing else.
+    # A misleading green is the cost in this repo and a bypassed gate is the
+    # cost in one that made it required; neither is acceptable.
+    #
+    # If the default branch is renamed later, this line goes stale and the
+    # regen simply stops firing — so the PR gate below compares it against
+    # the live default branch and warns. `logmind init --refresh` rewrites it.
+    branches: [__LOGMIND_DEFAULT_BRANCH__]
 
 permissions:
-  contents: write        # regen-on-main commits + pushes the regen to main
+  contents: write        # regen-on-main commits + pushes the regen to the default branch
   pull-requests: read    # the PR gate reads the PR file list via `gh pr diff`
   # NOTE: specifying ANY permission zeroes all others (GitHub default), so
   # pull-requests MUST be listed explicitly — without it `gh pr diff` 403s and
@@ -61,25 +119,53 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          # The live default branch, and the one baked into `on: push:` when
+          # this workflow was scaffolded. They are compared below: a rename
+          # of the default branch leaves the regen trigger pointing at a
+          # branch that no longer exists, and nothing else would ever say so.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SCAFFOLDED_BRANCH: __LOGMIND_DEFAULT_BRANCH__
         run: |
           set -euo pipefail
+          if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then
+            echo "::warning title=Derived-doc regen is wired to the wrong branch::This workflow's 'on: push:' filter was scaffolded for '$SCAFFOLDED_BRANCH', but this repository's default branch is now '$DEFAULT_BRANCH'. The regen job therefore never fires, and the derived docs on '$DEFAULT_BRANCH' will drift stale — silently, because nothing else reports it. Fix: run 'logmind init --refresh' to rewrite the trigger."
+          fi
           changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
           if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|timeline-archive|file-structure)\.md'; then
-            echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md, docs/timeline-archive.md and/or docs/file-structure.md. These are DERIVED, main-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to main's version — run 'logmind warp', or 'git checkout origin/main -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md' — then commit. Their real content regenerates on main after merge."
+            echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md, docs/timeline-archive.md and/or docs/file-structure.md. These are DERIVED, default-branch-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to the default branch's version — run 'logmind warp', or 'git checkout origin/$DEFAULT_BRANCH -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md' — then commit. Their real content regenerates on '$DEFAULT_BRANCH' after merge."
             exit 1
           fi
           echo "Branch did not edit the derived docs — the merge cannot conflict on them."
 
   regen-on-main:
     name: regen-on-main
-    if: github.event_name == 'push'
+    # The trigger above already narrows this to one branch, but the trigger
+    # is a scaffold-time literal and this is the live value: if the two ever
+    # disagree, the regen must NOT run and push to a non-default branch.
+    # (The job id/name keep saying "main" because the decision log and the
+    # ruleset history refer to them by that name; what the job DOES is
+    # resolved, not assumed.)
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
+    # CREDENTIAL CHAIN, rung 1 — OPTIONAL. The two lines below are the only
+    # thing a repository customises to enable the GitHub App rung; every
+    # other line of the credential mechanism is identical in every repo that
+    # installs this workflow, which is what keeps this file and logmind's own
+    # copy of it from drifting apart. Leave them pointing at secrets you have
+    # not configured and nothing breaks: the chain falls through to rung 2 (a
+    # PAT) and then rung 3 (the workflow's own GITHUB_TOKEN). The App is an
+    # OPTIMIZATION — it is the only identity that can be granted a ruleset
+    # bypass, so it is what makes this work on a protected default branch —
+    # never a dependency.
+    env:
+      APP_ID: ${{ secrets.LOGMIND_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.LOGMIND_APP_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: thrillmade/setup-logmind@v1.0.0
+      - uses: thrillmade/setup-logmind@v1.0.1
         with:
           token: ${{ github.token }}
       - name: Regenerate derived docs
@@ -87,36 +173,91 @@ jobs:
           set -euo pipefail
           logmind timeline --write docs/timeline.md
           logmind file-structure --write docs/file-structure.md
+      # Rung 1: mint a short-lived (1 hour) App installation token, but only
+      # when App credentials are actually configured. The `if:` reads the job
+      # `env` above rather than `secrets` directly because the `secrets`
+      # context is NOT available to a step-level `if:`. `continue-on-error`
+      # covers the other half: a misconfigured or expired App must degrade to
+      # rung 2, not fail the job. `owner`/`repositories` are deliberately
+      # omitted — the action defaults both to the current repository, which
+      # is what a shipped template must do.
+      - name: Mint GitHub App installation token (optional)
+        id: app_token
+        if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ env.APP_ID }}
+          private-key: ${{ env.APP_PRIVATE_KEY }}
+
       - name: Commit + push if changed
         env:
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
           PAT: ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}
+          DEFAULT_TOKEN: ${{ github.token }}
+          # Resolved from the event, never assumed to be `main`. Passed
+          # through env rather than interpolated into the script: a branch
+          # name is attacker-influenceable text, and `${{ }}` inside a
+          # `run:` block is a script-injection site.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md)" ]; then
-            echo "Derived docs already current on main."
+            echo "Derived docs already current on '$DEFAULT_BRANCH'."
             exit 0
           fi
-          if [ -z "${PAT:-}" ]; then
-            echo "::warning title=Derived docs stale on main::No LOGMIND_AUTO_REGEN_PAT configured; cannot push the regen. This will keep failing on every run until the secret is configured — it will NOT self-heal on the next merge. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
+          # The chain, in order. Rung 3 always exists, so "configured
+          # nothing" now ATTEMPTS the push instead of warning and doing
+          # nothing — a regenerator that reports success while never pushing
+          # is how one stays broken for weeks with every run green.
+          if [ -n "${APP_TOKEN:-}" ]; then
+            TOKEN="$APP_TOKEN"
+            RUNG="a GitHub App installation token"
+          elif [ -n "${PAT:-}" ]; then
+            TOKEN="$PAT"
+            RUNG="LOGMIND_AUTO_REGEN_PAT"
+          elif [ -n "${DEFAULT_TOKEN:-}" ]; then
+            TOKEN="$DEFAULT_TOKEN"
+            RUNG="the workflow's own GITHUB_TOKEN"
+          else
+            # UNREACHABLE on GitHub-hosted Actions: `github.token` is
+            # populated for every workflow run, so rung 3 above always fires
+            # and nothing reaches this. Kept anyway, for two reasons that are
+            # not "it might come back": a runner that injects no token (`act`,
+            # a self-hosted harness) does land here, and without it the
+            # `set -u` in effect would abort on the unbound $TOKEN below with
+            # a message naming neither the job nor the cause. Do NOT read this
+            # branch as v11's live "no credential" degradation — since rung 3
+            # exists, "configured nothing" attempts the push instead.
+            echo "::warning title=Derived docs stale on the default branch::No credential of any kind is available to push the regen — no GitHub App token, no LOGMIND_AUTO_REGEN_PAT, and not even the workflow's own GITHUB_TOKEN. This will keep failing on every run until one is configured — it will NOT self-heal on the next merge. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
             exit 0
           fi
+          echo "Pushing the derived-doc regen with $RUNG."
+          # The commit author is github-actions[bot] on every rung. What a
+          # protected branch evaluates is the identity of the PUSHING token,
+          # not the commit author, so keying the author to the rung would buy
+          # nothing and cost a line the two copies of this file could drift on.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/timeline.md docs/timeline-archive.md docs/file-structure.md
           git commit -m "[skip-logmind] chore: regen derived docs"
           # SPEC-2 §3.3: "Three outcomes, and they MUST NOT look alike."
-          # No credential (above) degrades — a warning and a successful
-          # exit, because a merge that was otherwise fine should not fail
-          # over it. A push that was attempted and refused is different:
-          # "a refused write is the job not doing its job", so unlike the
-          # no-credential case this one MUST fail the job, loudly. If your
-          # default branch is protected by a "changes must be made through
-          # a pull request" rule, a plain credentialed push is rejected
-          # (GH013) no matter how much scope the token has — the pushing
-          # identity must be on the ruleset BYPASS list. That's a policy
-          # refusal, NOT transient: every future push hits the same
-          # refusal until a human adds the identity to the bypass list.
-          if ! git push "https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"; then
-            echo "::error title=Derived-doc regen push refused::The push was rejected — most likely GH013: the PAT's identity is missing from the 'main' ruleset's bypass list for 'changes must be made through a pull request'. This is a POLICY refusal, not a token-scope problem, so it will NOT self-heal on the next merge — every future push hits the same refusal until the identity is added to the bypass list. No conflict risk — branches never modify the derived docs, so nothing can conflict on them — but main's derived docs are now stale and this run failed to fix that."
+          # Nothing-to-push exits 0 quietly. No credential at all (above)
+          # degrades — a warning and a successful exit, because a merge that
+          # was otherwise fine should not fail over it — though on a
+          # GitHub-hosted runner rung 3 makes that outcome unreachable, so
+          # the two outcomes actually observable here are this one and the
+          # next. A push that was attempted and refused is different: "a refused write is the job
+          # not doing its job", so unlike the no-credential case this one
+          # MUST fail the job, loudly. If your default branch is protected by
+          # a "changes must be made through a pull request" rule, a plain
+          # credentialed push is rejected (GH013) no matter how much scope
+          # the token has — the pushing identity must be on the ruleset
+          # BYPASS list, and only a GitHub App (rung 1) can be added to one.
+          # That's a policy refusal, NOT transient: every future push hits
+          # the same refusal until a human adds the identity to the bypass
+          # list.
+          if ! git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${DEFAULT_BRANCH}"; then
+            echo "::error title=Derived-doc regen push refused::The push was rejected while authenticating with $RUNG — most likely GH013: that identity is missing from the '$DEFAULT_BRANCH' ruleset's bypass list for 'changes must be made through a pull request'. This is a POLICY refusal, not a token-scope problem, so it will NOT self-heal on the next merge — every future push hits the same refusal until the identity is added to the bypass list. Only a GitHub App can be a bypass actor, so a repo pushing with a PAT or GITHUB_TOKEN must configure LOGMIND_APP_ID / LOGMIND_APP_PRIVATE_KEY to get past a rule like this. No conflict risk — branches never modify the derived docs, so nothing can conflict on them — but '$DEFAULT_BRANCH' derived docs are now stale and this run failed to fix that."
             exit 1
           fi
