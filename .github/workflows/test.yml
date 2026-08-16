@@ -63,6 +63,23 @@ jobs:
     name: lint (gofmt + vet)
     runs-on: ubuntu-latest
     steps:
+      # Same drift sentinel every logmind workflow with a hardcoded branch
+      # filter carries. `on: push: branches: [main]` above is a literal, so
+      # renaming this repository's default branch would stop the push-side
+      # matrix forever with no symptom — a check that stops running reports
+      # nothing at all. Runs on the `pull_request` trigger, which is exactly
+      # why it still fires when the stale `push` filter never would.
+      # Advisory: this is repository configuration drift, not a defect in
+      # the pull request being tested.
+      - name: Warn if the trigger no longer matches the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SCAFFOLDED_BRANCH: main
+        run: |
+          set -euo pipefail
+          if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then
+            echo "::warning title=The test workflow is wired to the wrong branch::This workflow's 'on: push:' filter says '$SCAFFOLDED_BRANCH', but this repository's default branch is now '$DEFAULT_BRANCH'. Pushes to '$DEFAULT_BRANCH' therefore no longer run the test matrix. Fix: edit the 'branches:' filter in .github/workflows/test.yml."
+          fi
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
