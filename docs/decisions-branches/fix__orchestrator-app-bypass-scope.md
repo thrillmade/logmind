@@ -59,3 +59,14 @@
 
 ---
 
+## 2026-08-15 21:26 - orchestrator-app: say six and list six, and stop asserting a review gate the same file spends a paragraph refuting
+
+**Reasoning:** Two defects, both mine, both introduced while correcting the previous pair. One sentence said seven repositories add their own ruleset and then listed six, so a reader adding the classic-protection case reached eight blocked and twelve accepting, which is the exact wrong split of the previous round re-encoded as a word instead of a numeral. The other left a clause asserting the App is gated by human review, three lines above the paragraph this change added to explain that it is not; the sentence containing it was rewritten in the same edit and the contradicting half survived.
+
+**Alternatives considered:** Restate the totals in each section so every reader meets them. Rejected: this file has now been wrong five times and four of those were a second copy of a fact disagreeing with the first. The arithmetic is stated once, at the point where the two mechanisms combine, and every other mention refers to it rather than recomputing.
+
+**Implications:**
+- The exposure sentence now says the App can merge, not merely open, because bypassing a ruleset bypasses its review requirement along with its push restriction, and the bypass is unconditional rather than scoped to pull requests. What limits the blast radius is the token's lifetime and the App's permission set; neither installation scope nor review is doing that work, and the paragraph no longer implies otherwise.
+
+---
+

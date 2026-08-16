@@ -161,9 +161,13 @@ token's 1-hour lifetime. **Thirteen of the org's twenty repos are exposed to
 a direct, unreviewed push under compromise** — not one. The org-level
 bypass, not `homebrew-tap`'s own entry, is what grants it; only the seven repos carrying either their own
 PR-requiring ruleset or classic branch protection stop a direct push — and
-stopping a direct push is NOT the same as requiring review; see below on merge — real exposure (an
-attacker could open PRs, comment, file issues, read contents across the
-org), but gated by human review rather than by installation scope.
+stopping a direct push is NOT the same as requiring review; see below.
+
+Real exposure: an attacker could open pull requests, comment, file issues and
+read contents across the org — **and merge**, because the steward bypasses the
+ruleset that requires review, not merely the one that restricts pushes. The
+limit is the token's one-hour lifetime and the App's permission set, not
+installation scope and not human review.
 
 Expansion or contraction of the installed-repo list happens via the App's
 Installation settings page on the org — never re-register the App.
@@ -238,9 +242,11 @@ first three hold zero entries — so the empty result is a real zero, not a
 missing field.
 
 **Rulesets aggregate.** A push must satisfy every ruleset matching the ref, so
-bypassing the org pair is not sufficient where a repo adds its own. Seven
+bypassing the org pair is not sufficient where a repo adds its own. **Six**
 repos do — `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
 `homebrew-logmind`, `setup-logmind` — and the steward is blocked in those.
+With `arlyn-working` below, that is **seven blocked and thirteen accepting**;
+the six here plus one is the only arithmetic in this section.
 
 **Rulesets are not the only mechanism, and checking only them is how this
 section was wrong twice.** `arlyn-working` carries no ruleset but is protected
