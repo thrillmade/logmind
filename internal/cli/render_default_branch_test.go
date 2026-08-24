@@ -103,9 +103,9 @@ func TestRenderWorkflowTemplate_SubstitutesDefaultBranch(t *testing.T) {
 // non-`main` one, and checks the trigger that comes out the other end.
 //
 // Deliberately NOT tested here: the "git can tell us nothing" case. It is
-// not environment-independent — gitcli.DefaultBranch's step 4 reads
+// not environment-independent — gitcli.DefaultBranch's step 5 reads
 // ambient `init.defaultBranch`, and macOS's Command Line Tools ships a
-// gitconfig that sets it to `main`, so on a developer machine step 4
+// gitconfig that sets it to `main`, so on a developer machine step 5
 // answers for ANY directory and the hard fallback below it is unreachable.
 // A test asserting a value there would be asserting the toolchain's
 // configuration, and making it deterministic would mean overriding ambient

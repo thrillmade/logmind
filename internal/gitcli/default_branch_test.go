@@ -294,6 +294,45 @@ func TestDefaultBranch_UnbornHEADIsEvidence(t *testing.T) {
 	}
 }
 
+// TestDefaultBranch_OrphanCheckoutDoesNotWinInAnEstablishedRepo is the
+// regression for a false premise step 4's own doc comment used to state:
+// "Unborn is the one state where HEAD is ... the only branch this
+// repository has." That is only true when refs/heads/ is EMPTY. A repo
+// that already has branches and then runs `git checkout --orphan` also
+// leaves HEAD unborn — on a name that is NOT the repository's only
+// branch, just a new one nobody has committed to yet, sitting alongside
+// branches that already exist. Pre-gate, step 4 answered with the orphan
+// name anyway, so `git checkout --orphan gh-pages` in a repo with commits
+// on `develop` and `feature` (no origin) silently retargeted the
+// scaffolded workflow trigger at `gh-pages`.
+func TestDefaultBranch_OrphanCheckoutDoesNotWinInAnEstablishedRepo(t *testing.T) {
+	repo := initRepo(t)
+	runGit(t, repo, "branch", "-M", "develop")
+	runGit(t, repo, "branch", "feature")
+
+	// Non-vacuity (part 1): HEAD is born, on develop, before the orphan
+	// checkout — the repo is genuinely established, not already unborn.
+	if got := unbornHEAD(repo); got != "" {
+		t.Fatalf("setup: want HEAD born before the orphan checkout, got unborn %q", got)
+	}
+
+	runGit(t, repo, "checkout", "-q", "--orphan", "gh-pages")
+
+	// Non-vacuity (part 2): the checkout actually left HEAD unborn on
+	// gh-pages — the exact shape the gate has to tell apart from a
+	// genuinely branchless repo, or this test asserts nothing about step 4.
+	if got := unbornHEAD(repo); got != "gh-pages" {
+		t.Fatalf("setup: want an unborn local HEAD at gh-pages after the orphan checkout, got %q — "+
+			"step 4 would not be in play here", got)
+	}
+
+	if got := DefaultBranch(repo); got == "gh-pages" {
+		t.Errorf("DefaultBranch = %q; an orphan checkout inside an established repo "+
+			"(develop, feature already exist, no origin) must not become the default\n"+
+			"branches: %s", got, branchList(t, repo))
+	}
+}
+
 // unbornRepo creates a repo whose HEAD points at branch and that has no
 // commits — the state `git init -b <branch>` leaves behind, and the one
 // every `logmind init` in the README's Quick Start runs against.

@@ -760,8 +760,14 @@ func LastCommitTime(repoRoot, relPath string) (time.Time, bool) {
 // would make every feature branch its own default and collapse
 // onNonDefaultBranch (internal/cli/derived.go) to false everywhere; step
 // 2's tiebreak (b) consults HEAD for exactly that reason, and only as a
-// tiebreak. Unborn is the one state where HEAD is not "the branch I happen
-// to be on" but "the only branch this repository has".
+// tiebreak. Unborn is NOT the one state where HEAD is "the only branch
+// this repository has" — that was the premise here until a repo with
+// commits on `develop` and `feature` (no origin), then `git checkout
+// --orphan gh-pages`, disproved it: HEAD was unborn on gh-pages, and step
+// 4 answered `gh-pages` anyway, though the repository plainly has other
+// branches. Unborn is only evidence of that when refs/heads/ is EMPTY —
+// no born branch exists yet at all — so the step is gated on that,
+// reusing step 3's ref listing rather than re-querying it.
 //
 // Its PLACE in the order is the other half of the answer:
 //
@@ -789,16 +795,24 @@ func DefaultBranch(repoRoot string) string {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &bytes.Buffer{}
+	var branches []string
 	if cmd.Run() == nil {
-		branches := strings.Fields(out.String())
+		branches = strings.Fields(out.String())
 		if len(branches) == 1 {
 			return branches[0]
 		}
 	}
 
-	// 4. Unborn HEAD — the branch the first commit will create.
-	if name := unbornHEAD(repoRoot); name != "" {
-		return name
+	// 4. Unborn HEAD — the branch the first commit will create. Gated on
+	// refs/heads/ being EMPTY (see the doc comment above): reuses the
+	// listing step 3 already fetched rather than querying it twice. An
+	// established repo — branches already exist — that runs `git checkout
+	// --orphan` also leaves HEAD unborn, on a name that is not the
+	// repository's default, just a new branch nobody has committed to yet.
+	if len(branches) == 0 {
+		if name := unbornHEAD(repoRoot); name != "" {
+			return name
+		}
 	}
 
 	// 5. init.defaultBranch
@@ -874,7 +888,7 @@ var conventionalDefaultBranches = []string{"main", "master"}
 //	   returning it unconditionally would make every feature branch its own
 //	   "default" and collapse onNonDefaultBranch to false everywhere.
 //	c. init.defaultBranch, when it names one of the two. Scoped to the tie
-//	   deliberately — DefaultBranch step 4 already reads this key, but as a
+//	   deliberately — DefaultBranch step 5 already reads this key, but as a
 //	   free-form answer; here it only gets to pick between two branches
 //	   that both exist.
 //	d. the conventional order. A repo with both names, no origin, no
