@@ -239,8 +239,9 @@ auto-fix in the `check-doc-links` workflow).
   `systemMessage`. Both layers share one skew decision (`engineSkewNotice`).
   **§3.4 requires the local hatches and forbids them at the CI gate** —
   "the gate has no self-service escape, and MUST NOT be given one". The
-  shipped `check-decisions` template violates this today and the gate is
-  defeated four independent ways; see *Known gaps* below.
+  shipped `check-decisions` template satisfies this as of v7, which
+  delegates the judgement to `logmind check-decisions --base/--head`; what
+  remains is propagation to the fleet — see *Known gaps* below.
 - **Canonical spec-file contract (SPEC §1.5):** an optional,
   forward-looking spec document that leads the cold-start payload,
   defined SkDD-wide (shared across logmind, clud-bug, and agent-skills)
@@ -400,17 +401,20 @@ auto-fix in the `check-doc-links` workflow).
 Verified against current source and against each consumer repository's
 *installed* copy, not against these templates.
 
-- **The `check-decisions` gate is defeated four independent ways**
-  ([#260](https://github.com/thrillmade/logmind/issues/260),
-  [#278](https://github.com/thrillmade/logmind/issues/278)): `*.md` sits in
-  the line-count exclusion list, so the threshold is never reached in a
-  markdown-heavy repo; the gate reads the live PR title for
-  `[skip-logmind]`, which SPEC §3.4 forbids outright; the decision test is a
-  path match (`git diff --name-only | grep`) rather than the §3.1 shape
-  check §3.4 requires, so one empty line clears it; and
-  `logmind-self-update.yml.template` titles its own pull requests with the
-  skip marker — the exact case §3.4 calls out. These must close together,
-  or the gate stays decorative.
+- **The `check-decisions` gate's four defeats are closed in this repo; the
+  remainder is propagation** ([#260](https://github.com/thrillmade/logmind/issues/260),
+  [#278](https://github.com/thrillmade/logmind/issues/278)). Measured against
+  `internal/templates/github/check-decisions.yml.template` on `dev`: the `*.md`
+  exclusion and the live-PR-title `[skip-logmind]` read survive only as
+  past-tense comments recording the former defects, and the path-match test is
+  gone — the gate now shells to `logmind check-decisions --base "$BASE_SHA"
+  --head "$HEAD_SHA"` (`:183`), which applies the §3.1 shape check in Go.
+  `logmind-self-update.yml.template` still prefixes its own commits with
+  `[skip-logmind]` (`:237`), and that is deliberate rather than the §3.4 case:
+  the marker is matched against the **commit subject**
+  (`internal/guardcommit/guardcommit.go:155`), not the mutable PR title §3.4
+  forbids reading. The gate is decorative only in repos still running an older
+  copy — see the next bullet.
 - **The fleet is running much older copies than this repo ships.** protocol,
   clud-bug, clud-bug-app and agent-skills all run an older
   `check-decisions.yml`; reporulez runs an unversioned copy predating the
@@ -439,9 +443,12 @@ Verified against current source and against each consumer repository's
   propagation problem carried by #257, not new code here.
 - **Hooks resolve their engine by bare name**
   ([#270](https://github.com/thrillmade/logmind/issues/270)), so any PATH
-  skew silently disables the local gate. §3.4 requires fail-open, and that
-  is correct; §3.4 also requires that failing open **not be silent**, and
-  today it is.
+  skew disables the local gate. §3.4 requires fail-open, and that is
+  correct; §3.4 also requires that failing open **not be silent**, and that
+  half is now satisfied — both fail-open arms print `logmind: commit gate NOT
+  RUN` to stderr with the reason and the installing version
+  (`internal/hooks/hooks.go:411`, `:426`). The open remainder is the bare-name
+  resolution itself.
 - **`file_structure.auto_update`** is still declared, defaulted, and written
   into every generated config while being read by nothing
   ([#251](https://github.com/thrillmade/logmind/issues/251)) — including
