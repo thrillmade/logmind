@@ -26,12 +26,19 @@ var derivedDocPaths = []string{"docs/timeline.md", "docs/timeline-archive.md", "
 //
 // An unborn repo is NOT its own case, despite reading like one at a glance:
 // CurrentBranch resolves HEAD's ref before the first commit (see
-// decisions.NonBranchSources), so `git init -b main` returns false only
-// because cur == def (both "main"), and `git init -b feature` returns true —
-// exactly as either would after a commit. Round 9 removed this same false
-// "no branch name" premise from decisions.go, AGENTS.md.template and
-// docs/plan.md; this comment was the ninth copy round 10's panel found still
-// standing.
+// decisions.NonBranchSources), so `git init -b main` returns false because
+// cur == def (both "main") — exactly as it would after a commit. Round 9
+// removed this same false "no branch name" premise from decisions.go,
+// AGENTS.md.template and docs/plan.md; this comment was the ninth copy
+// round 10's panel found still standing.
+//
+// It took until gitcli.DefaultBranch step 4 for the OTHER half to hold. The
+// line above used to add that `git init -b trunk` returns true, "exactly as
+// it would after a commit" — and that was the one illustration in it that
+// was false both ways round: DefaultBranch answered "main" for an unborn
+// `trunk` repo (so: true), while after a single commit the single-branch
+// step answers "trunk" (so: false). Now both sides read the same evidence
+// and an unborn repo genuinely does behave as it will once committed.
 func onNonDefaultBranch(cwd string) bool {
 	if !gitcli.IsRepo(cwd) {
 		return false

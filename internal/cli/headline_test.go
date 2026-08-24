@@ -8,6 +8,36 @@ import (
 	"testing"
 )
 
+// bornDefaultBranch gives the repo a default branch that actually EXISTS,
+// as a ref, before a feature branch is cut from it.
+//
+// initLogTestGitRepo does `git init --initial-branch=main` and never
+// commits, so `checkoutBranch` on top of it leaves a repo with NO REFS AT
+// ALL: HEAD names the feature branch, `main` was never created, and the
+// repo's one and only branch is the feature branch. gitcli.DefaultBranch
+// answers with it (step 4, the unborn-HEAD rung) — correctly, because that
+// is the branch the first commit lands on and what the forge will call the
+// default — so onNonDefaultBranch is false and the branch-summary nudge
+// does not fire. That is not a quirk of the resolver to work around: it is
+// the same answer the single-branch rung gives the moment such a repo
+// commits, and no user is ever in that state anyway (`logmind init`
+// commits before anyone branches).
+//
+// So every test whose SUBJECT is branch-vs-default behaviour calls this
+// first. `git commit --allow-empty` deliberately: it creates the ref and
+// touches neither the index nor the working tree, so the scaffolded docs
+// stay exactly as untracked as the tests already expect. This mirrors what
+// TestOnNonDefaultBranch (derived_test.go) — the guard that owns this
+// function's contract — has always done.
+func bornDefaultBranch(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", "commit", "--allow-empty", "-q", "-m", "root")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("root commit: %v\n%s", err, out)
+	}
+}
+
 // checkoutBranch creates + switches to a feature branch in dir.
 func checkoutBranch(t *testing.T, dir, name string) {
 	t.Helper()
@@ -163,6 +193,7 @@ func TestLog_NudgeAdvisoryOnNonTTY(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
+		bornDefaultBranch(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() {
 			root := NewRootCmd()
@@ -214,6 +245,7 @@ func TestLog_NudgeInteractiveEditOnTTY(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
+		bornDefaultBranch(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, true, func() { // pretend stdin is a TTY
 			root := NewRootCmd()

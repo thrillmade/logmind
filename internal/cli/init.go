@@ -1070,7 +1070,7 @@ func renderWorkflowTemplate(text, defaultBranch string) string {
 }
 
 // NOTE on the branch value: gitcli.DefaultBranch owns this fact and its
-// documented 5-step resolution ends in a hard "main" fallback, so it never
+// documented resolution ends in a hard "main" fallback, so it never
 // returns "". This file deliberately does NOT wrap it in a second
 // empty-check — a duplicated fallback is a second copy of the same rule
 // that reads as a safety net while being unreachable, and the invariant

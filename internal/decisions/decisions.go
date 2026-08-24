@@ -122,10 +122,10 @@ type Source struct {
 // That is the whole point, and it is a regression fence. `search` used to
 // discover the default branch's file by RESOLVING a branch name
 // (gitcli.DefaultBranch) and joining it into a path. That resolver's fallback
-// chain ends "…→ single-branch repo → that branch IS the default → 'main'", so
-// wherever origin/HEAD is unset — a `git clone --single-branch`, an
-// `actions/checkout` working copy, and EVERY locally-created repo (`git init -b
-// trunk` + `git remote add origin`) — the resolved name collapsed onto the
+// chain ends "…→ single-branch repo → that branch IS the default → unborn
+// HEAD → 'main'", so wherever origin/HEAD is unset — a `git clone
+// --single-branch`, an `actions/checkout` working copy, and EVERY
+// locally-created repo — the resolved name collapsed onto the
 // current branch or onto a "main" that does not exist, and the default
 // branch's decision file was silently dropped from the search even though it
 // was sitting on disk. `show --all` and `timeline` never had the bug, because
