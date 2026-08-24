@@ -15,3 +15,14 @@
 
 ---
 
+## 2026-08-24 14:45 - docs/plan.md: correct my own A4 claim — the self-update skip marker is a live defect, not a legitimate carve-out, and the four defeats are closed only in the template source
+
+**Reasoning:** The #356 verifier refuted the claim I had told it to attack hardest, and it was right. I had reclassified logmind-self-update's [skip-logmind] commit-subject prefix as legitimate. It is not: guardcommit.Evaluate is reached only from 'logmind guard-commit', never from check_decisions.go, and SPEC 3.4 says a commit-subject marker is invisible to the gate and MUST NOT be honoured there. A synthetic self-update-shaped commit exits 1 through 'logmind check-decisions --base/--head'. Separately, 'closed in this repo' was overstated: logmind's own installed check-decisions.yml is an unversioned pre-v5 variant on both main and dev carrying the *.md exclusion, the live-title override and a hardcoded THRESHOLD 20.
+
+**Alternatives considered:** Leave A4 and narrow only the 'in this repo' phrase. Rejected: the two are the same error. Our own gate honours the PR title, which is exactly why the self-update defect has never surfaced — reporting one without the other would leave the plan explaining why we are safe using the mechanism that hides the bug.
+
+**Implications:**
+- This is the house defect appearing in my own prose for the second time today: a true statement about a narrow thing presented as a conclusion about a wider one. The template source IS fixed; I wrote that as 'this repo'. Filed the two live consequences as #364 (our own gate is pre-v5 and defeatable by retitling, pre-tag) and #365 (self-update PRs fail their own gate on any repo running v7; the fix is a design call at protocol, not a patch).
+
+---
+
