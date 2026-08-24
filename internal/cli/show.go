@@ -443,14 +443,15 @@ func writeBriefEntries(stdout io.Writer, entries []showJSONEntry, grouped bool) 
 // runShow implements `logmind show`.
 func runShow(cwd string, all, brief, jsonOut, quiet bool, stdout, stderr io.Writer) error {
 	q := newQout(quiet, stdout, stderr)
-	docsPath := filepath.Join(cwd, "docs")
+	layout := decisions.ResolveLayout(cwd)
+	docsPath := layout.Dir()
 	if !pathExists(docsPath) {
 		q.fail("Error: docs/ directory not found. Run 'logmind init' first.\n")
 		return ErrSilent
 	}
 
 	cfg, _ := config.Load(cwd)
-	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
+	target, isBranchFile := resolveDecisionsPath(cwd, layout, cfg)
 	rel := relForOk(cwd, target)
 
 	baseLabel := "legacy"

@@ -68,6 +68,37 @@ func TestInstallHook_FreshInstall(t *testing.T) {
 	}
 }
 
+// TestInstallHook_HonoursHooksPath — `logmind install-hook` is the third
+// writer of a git hook (after `logmind init` and `doctor --fix`), and all
+// three now resolve the directory git READS through hooks.Path. A hook
+// written under .git/hooks in a repository whose core.hooksPath points
+// elsewhere is installed as far as this command is concerned and dead as
+// far as git is concerned — the command reports success over a hook that
+// will never run.
+func TestInstallHook_HonoursHooksPath(t *testing.T) {
+	repo := initRepo(t)
+	relocated := filepath.Join(repo, ".githooks")
+	if err := os.MkdirAll(relocated, 0o755); err != nil {
+		t.Fatalf("mkdir .githooks: %v", err)
+	}
+	cmd := exec.Command("git", "config", "core.hooksPath", ".githooks")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git config core.hooksPath: %v\n%s", err, out)
+	}
+
+	var stdout bytes.Buffer
+	if err := runInstallHook(repo, false, &stdout); err != nil {
+		t.Fatalf("runInstallHook: %v\n%s", err, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(relocated, "pre-commit")); err != nil {
+		t.Errorf("no hook at %s, the directory git reads: %v", relocated, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git", "hooks", "pre-commit")); err == nil {
+		t.Errorf("a hook was written to .git/hooks/pre-commit, which this repository never reads")
+	}
+}
+
 // TestInstallHook_AlreadyInstalled exercises the idempotency path —
 // running install-hook twice in a row must produce the "already
 // installed" message on the second run.

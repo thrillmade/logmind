@@ -249,10 +249,7 @@ func TestCommitMsgHook_NoEngineOnPath_FailsOpenLoudly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX sh hook body; not applicable on Windows")
 	}
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	dir := initRealGitRepo(t)
 	if _, err := InstallCommitMsg(dir); err != nil {
 		t.Fatalf("InstallCommitMsg: %v", err)
 	}

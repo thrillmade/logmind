@@ -11,6 +11,7 @@ package doctor
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/templates"
+	"github.com/thrillmade/logmind/internal/testgit"
 	"github.com/thrillmade/logmind/internal/version"
 )
 
@@ -50,11 +52,27 @@ func freshRepo(t *testing.T) string {
 // <ver>)` line the old pattern couldn't) is what unmasked this latent
 // non-hermeticity: before it, every host binary silently classified
 // markerless and never perturbed Overall.
+//
+// GIT IS LINKED IN, and only git. The hook probes resolve their directory
+// with `git rev-parse --git-path hooks` (hooks.Dir) now, so an isolated
+// PATH with nothing on it makes every hook row report "missing" — the test
+// would then be measuring an empty PATH rather than the repository. A
+// symlink to the one binary is what keeps the property this function exists
+// for: the isolated directory still resolves NO `logmind`, which is the
+// thing that must not leak in from the host (and which often lives in the
+// same directory as git, so putting git's whole directory on PATH would
+// undo it).
 func isolatePathHermetic(t *testing.T) {
 	t.Helper()
+	binDir := t.TempDir()
+	if git, err := exec.LookPath("git"); err == nil {
+		if err := os.Symlink(git, filepath.Join(binDir, "git")); err != nil {
+			t.Fatalf("symlink git into the isolated PATH: %v", err)
+		}
+	}
 	origPath := os.Getenv("PATH")
 	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
-	_ = os.Setenv("PATH", t.TempDir())
+	_ = os.Setenv("PATH", binDir)
 }
 
 func mustWrite(t *testing.T, path, content string) {
@@ -687,12 +705,11 @@ func revertClaudeHookMarker(t *testing.T, dir string) {
 // byte of hand-editing is STALE.
 
 func TestProbeCommitMsgHook_CurrentAfterInstall(t *testing.T) {
-	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	dir := gatedRepo(t)
 	if _, err := hooks.InstallCommitMsg(dir); err != nil {
 		t.Fatalf("InstallCommitMsg: %v", err)
 	}
-	row := probeCommitMsgHook(dir)
+	row := probeCommitMsgHook(hooksDirOf(t, dir))
 	if row.Drift != "current" {
 		t.Errorf("Drift = %q; want current — a correctly-installed hook must not be reported as drifted", row.Drift)
 	}
@@ -711,12 +728,11 @@ func TestProbeCommitMsgHook_CurrentAfterInstall(t *testing.T) {
 // gate would reach for — leaving the version marker untouched, so only the
 // byte-compare can catch it.
 func TestProbeCommitMsgHook_ContentDriftOnHandEdit(t *testing.T) {
-	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	dir := gatedRepo(t)
 	if _, err := hooks.InstallCommitMsg(dir); err != nil {
 		t.Fatalf("InstallCommitMsg: %v", err)
 	}
-	path := filepath.Join(dir, ".git", "hooks", "commit-msg")
+	path := filepath.Join(hooksDirOf(t, dir), "commit-msg")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read commit-msg: %v", err)
@@ -727,7 +743,7 @@ func TestProbeCommitMsgHook_ContentDriftOnHandEdit(t *testing.T) {
 	}
 	mustWrite(t, path, edited)
 
-	row := probeCommitMsgHook(dir)
+	row := probeCommitMsgHook(hooksDirOf(t, dir))
 	if row.Drift != "stale" {
 		t.Errorf("Drift = %q; want stale — a hand-edited hook body must be detected", row.Drift)
 	}
@@ -743,21 +759,41 @@ func TestProbeCommitMsgHook_ContentDriftOnHandEdit(t *testing.T) {
 
 // --- probePreCommitHook (L2a / v2.0.0 derived-docs pin-preservation) -----
 
-// fakeGitDir plants a bare `.git/hooks/` directory under dir — enough for
-// probePreCommitHook's (and probeHook's) `.git`-presence check, without
-// needing a real `git init`. File-read-only probes only ever stat/read
-// paths, so this is a faithful, hermetic fixture.
-func fakeGitDir(t *testing.T, dir string) {
+// realGitDir turns dir into an actual git repository, which the hook probes
+// now REQUIRE: they read the directory git reports for `rev-parse
+// --git-path hooks` (hooks.Dir) rather than joining `.git/hooks`, and a
+// hand-made `.git` directory is not something git will answer about. The
+// hand-made shell this replaces was hermetic and wrong in the same way the
+// probe was — it could only ever have measured the join.
+//
+// Enough for a PROBE-ROW assertion, but NOT for an Overall one. An
+// initialised repo with a .git and no enforcement surfaces installed is
+// DRIFT now, and correctly so (collectGateAbsences) — so a test that says
+// "this row must not flip Overall" has to start from a repo whose gates
+// are actually there, or it asserts nothing about the row it names. The
+// four tests here that assert Overall use gatedRepo (gate_absence_test.go)
+// for that reason; the ones that assert only a row keep this fixture.
+func realGitDir(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
-		t.Fatalf("mkdir .git/hooks: %v", err)
+	testgit.InitRepo(t, dir, "-q", "--initial-branch=main")
+}
+
+// hooksDirOf is the directory git reads hooks from for dir — what the hook
+// probes take now, resolved exactly as production resolves it rather than
+// rebuilt in the test.
+func hooksDirOf(t *testing.T, dir string) string {
+	t.Helper()
+	path, ok := hooks.Dir(dir)
+	if !ok {
+		t.Fatalf("hooks.Dir(%s): git could not resolve a hooks directory — the fixture is not a repository", dir)
 	}
+	return path
 }
 
 func TestProbePreCommitHook_MissingOnFreshRepo(t *testing.T) {
 	dir := freshRepo(t)
-	fakeGitDir(t, dir)
-	row := probePreCommitHook(dir)
+	realGitDir(t, dir)
+	row := probePreCommitHook(hooksDirOf(t, dir))
 	if row.Drift != "missing" {
 		t.Errorf("Drift = %q; want missing", row.Drift)
 	}
@@ -773,12 +809,11 @@ func TestProbePreCommitHook_MissingOnFreshRepo(t *testing.T) {
 // classifyLogmindDrift treats it exactly like a missing hook (benign, never
 // flips Overall to DRIFT) instead of "stale" (which WOULD flip it).
 func TestProbePreCommitHook_ForeignHookLeftAlone(t *testing.T) {
-	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	dir := gatedRepo(t)
 	foreign := "#!/bin/sh\n# logmind check-decisions — hang-guarded (issue #213)\nlogmind check-decisions\n"
-	mustWrite(t, filepath.Join(dir, ".git", "hooks", "pre-commit"), foreign)
+	mustWrite(t, filepath.Join(hooksDirOf(t, dir), "pre-commit"), foreign)
 
-	row := probePreCommitHook(dir)
+	row := probePreCommitHook(hooksDirOf(t, dir))
 	if row.Drift != "foreign" {
 		t.Errorf("Drift = %q; want foreign", row.Drift)
 	}
@@ -794,11 +829,11 @@ func TestProbePreCommitHook_ForeignHookLeftAlone(t *testing.T) {
 
 func TestProbePreCommitHook_CurrentAfterInstall(t *testing.T) {
 	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	realGitDir(t, dir)
 	if _, err := hooks.InstallPreCommit(dir); err != nil {
 		t.Fatalf("InstallPreCommit: %v", err)
 	}
-	row := probePreCommitHook(dir)
+	row := probePreCommitHook(hooksDirOf(t, dir))
 	if row.Drift != "current" {
 		t.Errorf("Drift = %q; want current", row.Drift)
 	}
@@ -809,7 +844,7 @@ func TestProbePreCommitHook_CurrentAfterInstall(t *testing.T) {
 
 func TestProbePreCommitHook_StaleOnRevertedMarker(t *testing.T) {
 	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	realGitDir(t, dir)
 	if _, err := hooks.InstallPreCommit(dir); err != nil {
 		t.Fatalf("InstallPreCommit: %v", err)
 	}
@@ -823,7 +858,7 @@ func TestProbePreCommitHook_StaleOnRevertedMarker(t *testing.T) {
 		t.Fatalf("write reverted pre-commit: %v", err)
 	}
 
-	row := probePreCommitHook(dir)
+	row := probePreCommitHook(hooksDirOf(t, dir))
 	if row.Drift != "stale" {
 		t.Errorf("Drift = %q; want stale", row.Drift)
 	}

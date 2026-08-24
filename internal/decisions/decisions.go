@@ -29,6 +29,40 @@ import (
 	"time"
 )
 
+// The decision record's on-disk layout (SPEC §3.2), owned here.
+//
+// These are the NAMES. Layout (layout.go) is what resolves them into a
+// directory and into the predicate that tests a staged path against it —
+// read its doc comment for why a shared constant was not enough on its own,
+// and for the two configurations where the writer and the gate disagreed
+// about a file logmind had just written.
+//
+// None of the three is configurable. .logmind/config.yml has no key that
+// renames the docs directory or either file below (grep: no docs_dir /
+// docs_path key exists); what the FILESYSTEM may spell differently is the
+// docs directory, and Layout resolves that.
+//
+// Deliberately NOT swept through this file's own literals (NonBranchSources,
+// ListSources) or the other `filepath.Join(cwd, "docs")` call sites. That
+// sweep is the obvious tidy-up and it is a SEPARATE change: the
+// substitutions are string-identical so they buy nothing today, and a rename
+// would break the build at every one of them anyway. What must not drift is
+// the WRITER and the GATE, and those two route through Layout.
+const (
+	// DocsDirName is the repo-relative directory logmind scaffolds.
+	DocsDirName = "docs"
+	// LegacyFileName is the docs-relative branchless log — the file
+	// resolveDecisionsPath routes to in exactly the three states where it
+	// cannot resolve a branch name to route by, and the pre-§3.2 main log
+	// a repository that predates the collapse still carries.
+	LegacyFileName = "decisions.md"
+	// BranchDirName is the docs-relative directory holding one
+	// `<sanitized-branch>.md` per branch. Flat: ListBranchFiles skips
+	// subdirectories, so a decision written under one is invisible to
+	// every read path.
+	BranchDirName = "decisions-branches"
+)
+
 // Entry is one parsed decision header.
 type Entry struct {
 	Date        time.Time

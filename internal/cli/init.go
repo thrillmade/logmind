@@ -64,6 +64,7 @@ import (
 	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/hooks"
@@ -114,7 +115,12 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	if err != nil {
 		return err
 	}
-	docsPath := filepath.Join(cwd, "docs")
+	// Resolved rather than joined, for the same reason `logmind log` does it
+	// (decisions.Layout): on a case-folding volume a repository that already
+	// has a `Docs/` directory takes every write below into it, and the name
+	// git then reports is the one the commit gate has to recognise.
+	layout := decisions.ResolveLayout(cwd)
+	docsPath := layout.Dir()
 	logmindDir := filepath.Join(cwd, ".logmind")
 	configPath := filepath.Join(logmindDir, "config.yml")
 
@@ -351,7 +357,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 
 	// First decision log entry — into the file `logmind log` would write on
 	// this branch (docs/decisions-branches/main.md in a fresh repo).
-	firstDecisionPath, err := logFirstDecision(cwd, docsPath)
+	firstDecisionPath, err := logFirstDecision(cwd, layout)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: first decision log failed:", err)
 	} else {
@@ -1211,9 +1217,9 @@ func ensureGitignoreBlock(path string) (bool, error) {
 // Byte-format note: the entry is appended immediately after whatever preamble
 // is already present, no intervening blank line, so the output matches
 // Python's logger.log line-for-line.
-func logFirstDecision(cwd, docsPath string) (string, error) {
+func logFirstDecision(cwd string, layout decisions.Layout) (string, error) {
 	cfg, _ := config.Load(cwd)
-	path, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
+	path, isBranchFile := resolveDecisionsPath(cwd, layout, cfg)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}

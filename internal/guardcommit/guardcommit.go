@@ -186,7 +186,11 @@ func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
 	// staged. The index is the right scope in both modes: this asks what
 	// the commit about to be made will carry, and a decision file sitting
 	// unstaged carries nothing into it.
-	evidence, _ := DecisionRecorded(gitcli.DiffCachedNames(repoRoot), func(path string) ([]gitcli.AddedHunk, error) {
+	// Resolved against repoRoot, because that is the root git reports
+	// staged paths against — the same resolution `logmind log` makes from
+	// its working directory. See decisions.Layout.
+	layout := decisions.ResolveLayout(repoRoot)
+	evidence, _ := DecisionRecorded(layout, gitcli.DiffCachedNames(repoRoot), func(path string) ([]gitcli.AddedHunk, error) {
 		// DiffCachedAddedHunks is best-effort by contract (nil on any git
 		// failure), so there is no error to propagate here — a git that
 		// cannot answer yields no added lines, which fails CLOSED into the
@@ -303,7 +307,10 @@ type DecisionEvidence struct {
 //
 // Two halves, and BOTH are required:
 //
-//   - the path is a decision file (isDecisionFile), and
+//   - the path is one logmind itself writes decisions to — asked of
+//     decisions.Layout, which is also what `logmind log` builds its target
+//     from, so the gate cannot answer differently from the writer about a
+//     file the writer just produced; and
 //   - the lines the change ADDED to it carry an entry that is well-formed
 //     under §3.1 (WellFormedDecisionAdded).
 //
@@ -326,10 +333,10 @@ type DecisionEvidence struct {
 // The error is addedHunks' own and is returned unwrapped, so the gate's
 // loud-on-failure contract (an unresolvable ref must not read as an empty
 // diff) survives the trip through here.
-func DecisionRecorded(names []string, addedHunks AddedHunksFunc) (DecisionEvidence, error) {
+func DecisionRecorded(layout decisions.Layout, names []string, addedHunks AddedHunksFunc) (DecisionEvidence, error) {
 	var ev DecisionEvidence
 	for _, path := range names {
-		if !isDecisionFile(path) {
+		if !layout.IsDecisionRel(path) {
 			continue
 		}
 		hunks, err := addedHunks(path)
@@ -344,35 +351,51 @@ func DecisionRecorded(names []string, addedHunks AddedHunksFunc) (DecisionEviden
 	return ev, nil
 }
 
-// isDecisionFile reports whether path is a decision-log file:
+// STILL OPEN, and the layout predicate does not close it: a staged RENAME or
+// COPY of an existing decision file clears the gate (#335, plus the copy
+// half a panel raised). Measured on this head, both with 302 lines of new
+// Go alongside:
 //
-//   - exact path "docs/decisions.md"
-//   - suffix "/decisions.md" (covers nested decisions.md)
-//   - prefix "docs/decisions-branches/" (per-branch decision files)
+//	git mv docs/decisions-branches/main.md docs/decisions-branches/feat__x.md
+//	  → guard-commit --layer git-hook exit 0 "allowed (decision-recorded)"
+//	cp   docs/decisions-branches/main.md docs/decisions-branches/feat__x.md
+//	  → exit 0, same carve-out
 //
-// UNEXPORTED on purpose. It answers "is this the kind of file a decision
-// lives in", which is only ever half of "did this change record a
-// decision" — and the half that a content-free file passes. It was
-// exported once, one caller asked it alone, and that caller was the
-// commit gate. DecisionRecorded is the exported question; this is an
-// implementation detail of it.
+// decisions.Layout closes the SHAPE where the destination is not a
+// decision path (`git mv docs/decisions-branches/main.md
+// internal/x/decisions.md` went from exit 0 to exit 65), but a
+// rename/copy WITHIN docs/decisions-branches/ lands on a path logmind
+// genuinely writes, so no path rule can reach it.
 //
-// docs/decisions.md stays on the list even though nothing writes it since
-// §3.2: a repository that predates the collapse carries a real decision
-// log at that path, and a change that appends an entry there has recorded
-// a decision by any reading of §3.4.
-func isDecisionFile(path string) bool {
-	if path == "docs/decisions.md" {
-		return true
-	}
-	if strings.HasSuffix(path, "/decisions.md") {
-		return true
-	}
-	if strings.HasPrefix(path, "docs/decisions-branches/") {
-		return true
-	}
-	return false
-}
+// The cause is one level down, in the diff READER, and it is not a rename
+// heuristic being wrong — it is one never being asked. Measured:
+//
+//	git diff --cached --name-status                 → R100 old new
+//	git diff --cached -U0 -- <new>                  → "new file mode", every
+//	                                                  line rendered as added
+//
+// A pathspec limits the tree walk BEFORE rename detection runs, so
+// restricting the diff to the destination hides the source and the file
+// reads as freshly written; a copy is worse still, since git does not look
+// for copies at all without -C --find-copies-harder. Either way
+// WellFormedDecisionAdded sees a real §3.1 entry among the "added" lines
+// and answers yes to a change that wrote nothing.
+//
+// Two mechanisms would close it and the choice between them is a real
+// fork, so it is named here rather than guessed at:
+//
+//   - Ask git. `--name-status` already reports R for a rename at no cost,
+//     and DecisionRecorded could skip a path that arrived by one. Copy
+//     needs `-C --find-copies-harder`, which is O(added × tree) and, past
+//     diff.renameLimit, git silently turns detection OFF — a gate that
+//     stops detecting when the diff gets big is failing open silently,
+//     which is the thing §3.4 forbids.
+//   - Ask the record. An added entry clears the gate only if it is not
+//     already in the decision record at the base of the comparison (HEAD
+//     for an index, `base` for a range). Heuristic-free, closes rename,
+//     copy and cross-file paste together, and costs one read of the
+//     decision files at a ref — but it needs a new reader and a second
+//     scope-carrying parameter on DecisionRecorded.
 
 // reasoningMarker opens SPEC §3.1's reasoning section. §3.1 lets a
 // producer omit an empty section's header entirely, so a marker present

@@ -443,6 +443,33 @@ func DefaultMap() *OrderedMap {
 	return root
 }
 
+// ClaudeAgentEnabled resolves whether this repository wants Layer 1 of
+// commit enforcement — the Claude Code harness's PreToolUse guard (see
+// internal/claudehook). Mirrors agents.DefaultEnabled's "claude" default
+// (enabled): a repo with no `agents.claude` key at all, or an unparseable
+// config, gets true. Only an EXPLICIT `agents.claude: false` opts out.
+//
+// It lives here rather than beside either caller because BOTH the WRITER
+// (`logmind init` / `doctor --fix`, via internal/cli) and the READER
+// (`logmind doctor`'s enforcement-gate absence check, internal/doctor) ask
+// it, and the two answering differently about one file is the #299 class:
+// doctor would report a gate absent that init deliberately never installs.
+func ClaudeAgentEnabled(repoRoot string) bool {
+	m, err := LoadAsMap(repoRoot)
+	if err != nil {
+		return true
+	}
+	v, ok := GetPath(m, "agents.claude")
+	if !ok {
+		return true
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return true
+	}
+	return b
+}
+
 // LoadAsMap loads .logmind/config.yml under repoRoot into an
 // OrderedMap shape with defaults merged in (user values override
 // defaults leafwise). Falls back to defaults on missing file or
