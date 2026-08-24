@@ -1,4 +1,4 @@
-# logmind-template-version: v14
+# logmind-template-version: v15
 name: logmind / check-derived-docs
 
 # v2.0.0 derived-docs-on-main. The derived docs are regenerated ONLY here on
@@ -98,6 +98,61 @@ name: logmind / check-derived-docs
 # job actually gets, on a fork pull request too. The gate needs no write and
 # now cannot have one.
 #
+# v15 (logmind#345): the pull-request gate compares CONTENT, and it accepts
+# the REPAIR as well as the untouched state. Two changes; the second is the
+# one that unsticks a branch that has already drifted.
+#
+# What v14 asked was whether the pull request's DIFF mentions a derived
+# doc. That is very nearly the right question — `gh pr diff` is the forge's
+# three-dot diff, so a file appears in it only when its bytes at the head
+# differ from its bytes at the merge base — and "very nearly" is doing real
+# work in that sentence. The question is now asked outright: the gate reads
+# a blob id at each ref and compares those. A blob id IS a content hash, so
+# the check cannot be re-read as a file-list test by the next person, it
+# does not rest on an undocumented property of `gh pr diff`, and it does
+# not flag a file whose MODE changed while its content did not.
+#
+# The second change is the fix. v14 accepted exactly ONE state — "unchanged
+# since the merge-base with the branch you are merging into" — and a
+# repository with an integration branch can reach a state no commit
+# satisfies. Once `dev` itself carries a divergent timeline, the promotion
+# pull request `dev` -> `main` is red, and every pull request opened to
+# REPAIR `dev` changes a derived doc relative to `dev`, so it is red too.
+# The rule forbids the only remedy for the state it is reporting.
+# (thrillmade/protocol#102, and #106 which did nothing but the revert the
+# error message named and failed on it.)
+#
+# So a SECOND state is accepted, and it is the one SPEC §3.3 actually
+# names: the file holds its merge-base-with-the-DEFAULT-branch content.
+# That is the pin the specification defines the invariant against, it is
+# what `logmind warp` restores to, and it is conflict-free for the same
+# reason the first state is — only one side of the merge has changed the
+# file, so git takes that side and there is nothing to resolve. It is not a
+# self-service escape (§6.3): the accepted bytes are a blob from the BASE
+# repository's own history, at a commit the forge computes, so a pull
+# request cannot author the content that would let it pass.
+#
+# v14's remedy also named the wrong ref, which is why protocol#106 failed
+# even by v14's own rule: `git checkout origin/<default> -- …` restores the
+# default branch's TIP, and the default branch REGENERATES these files on
+# every merge, so its tip is not the merge-base and stops being it the
+# moment anything merges. The message now names the merge-base — `logmind
+# warp`, or the `git merge-base` form by hand — and says outright that a
+# tip-restore lands straight back here.
+#
+# Fail-closed, stated because the obvious one-liner is not: a blob read
+# that fails with any status other than 404 aborts the job. Two empty
+# strings compare EQUAL, so `|| echo ""` over a rate-limit or a 500 is a
+# gate that reports PASS exactly when it could not evaluate. A 404 is a
+# real answer — the repository does not carry that doc at that ref — and
+# absent on both sides is agreement.
+#
+# v15 also drops `pull-requests: read`. It was granted for `gh pr diff`,
+# and nothing reads a pull-request endpoint now: the head SHA and the base
+# ref come from the event payload, and every blob id comes from
+# `repos/…/contents` and `repos/…/compare`, which are `contents: read`. A
+# grant whose stated reason is gone is a grant nobody re-reads.
+#
 # NOTE on the version number: this was v12 until logmind#301 round 5 caught
 # it colliding with a DIFFERENT, already in-flight v12 (logmind#314) — two
 # branches independently bumped v11 to v12 with unrelated content, and nothing
@@ -141,10 +196,16 @@ on:
 
 permissions:
   contents: read         # every job reads; only regen-on-main writes, and it asks for that itself
-  pull-requests: read    # the PR gate reads the PR file list via `gh pr diff`
   # NOTE: specifying ANY permission zeroes all others (GitHub default), so
-  # pull-requests MUST be listed explicitly — without it `gh pr diff` 403s and
-  # the gate fails-closed on EVERY PR, not just violators.
+  # every scope a job needs MUST be listed here explicitly — a missing one is
+  # a 403, and a 403 in the gate is a fail-closed red on EVERY pull request,
+  # not just on violators.
+  #
+  # `pull-requests: read` used to sit here, for `gh pr diff`. v15's gate
+  # reads no pull-request endpoint at all: the head SHA and the base ref
+  # arrive in the event payload, and every blob id it compares comes from
+  # `repos/…/contents` and `repos/…/compare`, both of which `contents: read`
+  # covers. Putting the grant back would be granting it for nothing.
   #
   # `contents: write` used to live here, at workflow level, where it reached
   # both jobs. Under `pull_request` that cost nothing — the forge forced a
@@ -161,22 +222,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # NO checkout, deliberately — and that is a statement about the
-      # WORKSPACE only. This job needs the PR's file list and nothing else,
-      # and `gh pr diff` gets it from the API. Under `pull_request_target`
-      # §6.3 additionally REQUIRES the absence: "a gate taking the second
-      # route MUST NOT check out the pull request's content." Adding a
-      # checkout here is not a convenience, it is the hazard the trigger is
-      # known for.
+      # WORKSPACE only. This job needs a handful of blob ids and nothing
+      # else, and `repos/…/contents` and `repos/…/compare` hand them over at
+      # an explicit ref. Under `pull_request_target` §6.3 additionally
+      # REQUIRES the absence: "a gate taking the second route MUST NOT check
+      # out the pull request's content." Adding a checkout here is not a
+      # convenience, it is the hazard the trigger is known for.
+      #
+      # Reading a blob ID is not checking the pull request's content out:
+      # nothing is written into a workspace and nothing is executed — the
+      # value compared is a hash the forge computed. That distinction is
+      # exactly what lets v15 compare CONTENT while staying checkout-free.
       #
       # What being checkout-free does NOT buy — this used to claim otherwise,
       # and the claim is why nobody looked again — is immunity for the gate
       # ITSELF. That is bought one line up, by the trigger: `pull_request`
       # would have the forge read this whole file from the branch's own merge
       # commit, workspace or no workspace.
-      - name: Assert the branch did not edit the derived docs
+      - name: Assert the derived docs hold their merge-base content
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
+          # The pull request's head commit, taken from the event rather than
+          # from a workspace. It is reachable through the BASE repository's
+          # API even when it lives in a fork — the forge keeps it as
+          # refs/pull/N/head — so a fork pull request needs no special case
+          # anywhere below.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The branch this pull request MERGES INTO, which is not always the
+          # default branch: a repository with a `dev` integration branch
+          # opens most of its pull requests against `dev`.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           # The live default branch, and the one baked into `on: push:` when
           # this workflow was scaffolded. They are compared below: a rename
           # of the default branch leaves the regen trigger pointing at a
@@ -188,12 +263,84 @@ jobs:
           if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then
             echo "::warning title=Derived-doc regen is wired to the wrong branch::This workflow's 'on: push:' filter was scaffolded for '$SCAFFOLDED_BRANCH', but this repository's default branch is now '$DEFAULT_BRANCH'. The regen job therefore never fires, and the derived docs on '$DEFAULT_BRANCH' will drift stale — silently, because nothing else reports it. Fix: run 'logmind init --refresh' to rewrite the trigger."
           fi
-          changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
-          if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|timeline-archive|file-structure)\.md'; then
-            echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md, docs/timeline-archive.md and/or docs/file-structure.md. These are DERIVED, default-branch-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to the default branch's version — run 'logmind warp', or 'git checkout origin/$DEFAULT_BRANCH -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md' — then commit. Their real content regenerates on '$DEFAULT_BRANCH' after merge."
+
+          err="$(mktemp)"
+
+          # blob <ref> <path> — the git blob id of <path> at <ref>, or the
+          # empty string when <path> does not exist there. A blob id IS a
+          # content hash, which is what makes every comparison below a
+          # comparison of CONTENT rather than of a file list.
+          #
+          # It is a function, not a `|| echo ""` on one line, for one
+          # reason: two empty strings compare EQUAL. Swallowing a rate-limit
+          # or a 500 the way that one-liner does turns "the gate could not
+          # evaluate" into "the gate passed", so anything that is not a 404
+          # fails the job here. A 404 is a real answer — this repository
+          # does not carry that doc at that ref — and absent on both sides
+          # is agreement.
+          blob() {
+            local out
+            if out="$(gh api "repos/$GITHUB_REPOSITORY/contents/$2?ref=$1" --jq .sha 2>"$err")"; then
+              printf '%s' "$out"
+              return 0
+            fi
+            if grep -q '(HTTP 404)' "$err"; then
+              return 0
+            fi
+            cat "$err" >&2
+            # >&2, and that is not a style choice: every caller reads this
+            # function through `$(...)`, which captures STDOUT. An annotation
+            # echoed to stdout would be swallowed into a variable and never
+            # reach the log, so the job would fail closed — correctly — with
+            # nothing on the run saying why.
+            echo "::error title=Derived-doc gate could not evaluate::Reading '$2' at ref '$1' failed with a status other than 404 (the response is in the log above). The gate is failing CLOSED: an unreadable ref must not be mistaken for agreement." >&2
+            return 1
+          }
+
+          # merge_base <ref> — the commit where <ref> and this pull request's
+          # head last agreed, computed by the forge from the BASE
+          # repository's history. Nothing inside the pull request can move
+          # it, which is what keeps §6.3 satisfied while the gate reads
+          # content.
+          merge_base() {
+            gh api "repos/$GITHUB_REPOSITORY/compare/$1...$HEAD_SHA" --jq .merge_base_commit.sha
+          }
+
+          base_mb="$(merge_base "$BASE_REF")"
+          # SPEC §3.3 pins each derived file to its merge-base with the
+          # DEFAULT branch, and that is the ref 'logmind warp' restores to.
+          # When the pull request already targets the default branch the two
+          # bases are the same commit, so the second round-trip is skipped
+          # rather than paid on every run.
+          pin_mb="$base_mb"
+          if [ "$BASE_REF" != "$DEFAULT_BRANCH" ]; then
+            pin_mb="$(merge_base "$DEFAULT_BRANCH")"
+          fi
+          echo "merge-base with '$BASE_REF' (the merge this PR will perform): $base_mb"
+          echo "merge-base with '$DEFAULT_BRANCH' (the SPEC §3.3 pin): $pin_mb"
+
+          diverged=""
+          for f in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do
+            head_blob="$(blob "$HEAD_SHA" "$f")"
+            base_blob="$(blob "$base_mb" "$f")"
+            pin_blob="$base_blob"
+            if [ "$pin_mb" != "$base_mb" ]; then
+              pin_blob="$(blob "$pin_mb" "$f")"
+            fi
+            if [ "$head_blob" = "$base_blob" ]; then
+              echo "$f: byte-identical to the merge-base with '$BASE_REF' — this merge cannot touch it."
+            elif [ "$head_blob" = "$pin_blob" ]; then
+              echo "$f: restored to its merge-base-with-'$DEFAULT_BRANCH' content — the SPEC §3.3 repair, accepted. Only one side of this merge changes it, so it still cannot conflict."
+            else
+              diverged="$diverged $f"
+            fi
+          done
+
+          if [ -n "$diverged" ]; then
+            echo "::error title=Derived docs diverge from their merge-base content::This PR's copy of$diverged matches NEITHER the merge-base with '$BASE_REF' ($base_mb) NOR the merge-base with '$DEFAULT_BRANCH' ($pin_mb). These are DERIVED, default-branch-only artifacts; a branch that carries its own version of them is what causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: restore them to their MERGE-BASE content — 'logmind warp' does exactly that — or by hand: 'git fetch origin $DEFAULT_BRANCH && git checkout \"\$(git merge-base origin/$DEFAULT_BRANCH HEAD)\" -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md' — then commit. Do NOT restore to 'origin/$DEFAULT_BRANCH' itself: '$DEFAULT_BRANCH' REGENERATES these files on every merge, so its tip is not the merge-base and a tip-restore lands straight back here (logmind#345). Their real content regenerates on '$DEFAULT_BRANCH' after merge."
             exit 1
           fi
-          echo "Branch did not edit the derived docs — the merge cannot conflict on them."
+          echo "Every derived doc holds its merge-base content — the merge cannot conflict on them."
 
   regen-on-main:
     name: regen-on-main

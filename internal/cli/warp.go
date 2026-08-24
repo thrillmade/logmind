@@ -48,6 +48,16 @@ UNRESOLVED gap (see BuildPreCommitBody's doc comment, internal/hooks/
 hooks.go); a raw 'git commit' instead of 'logmind log' hits the exact same
 hook and has the same exposure.
 
+warp's output has TWO layers holding DIFFERENT content, and which one you
+commit is up to you. The read-refresh leaves origin/<default>'s TIP content
+in the working tree, unstaged; the repair leaves MERGE-BASE content in the
+index. 'logmind log' and a plain 'git commit' both do the right thing — the
+first reverts the unstaged copies to HEAD, the second takes only the index —
+but 'git commit -a' (or 'git add -A') sweeps the refreshed tip copies in as
+well, and on any branch that forked before the default branch's last regen
+the tip is NOT the merge-base, so CI's check-derived-docs rejects the
+result. Commit what warp STAGED, not what it refreshed.
+
 logmind log's own restore (and the harness guard) target HEAD rather than
 the merge-base on their OWN hot path — cheap and offline, but unable to
 repair a divergence that already happened — precisely because warp is the

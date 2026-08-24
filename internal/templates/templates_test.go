@@ -276,10 +276,13 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	// the v12 tests below assert are still there, and are asserted there.
 	// v13 → v14: the PR gate's trigger moves to `pull_request_target` and
 	// `contents: write` narrows to the job that pushes (logmind#261). What
-	// the gate DECIDES is untouched — every assertion in this function is
-	// v13's, unchanged, which is the evidence for that claim.
-	if !strings.Contains(body, "# logmind-template-version: v14") {
-		t.Errorf("regen-timeline template missing v14 marker")
+	// the gate DECIDED was untouched by that bump — every assertion in this
+	// function was v13's, unchanged, which was the evidence for the claim.
+	// v14 → v15 (logmind#345) is the opposite kind of bump: what the gate
+	// decides is exactly what changed, so the two assertions that named the
+	// old mechanism moved with it and are called out where they sit.
+	if !strings.Contains(body, "# logmind-template-version: v15") {
+		t.Errorf("regen-timeline template missing v15 marker")
 	}
 	// The required-check name MUST stay check-derived-docs (ruleset matching),
 	// and the main regen is a distinct job.
@@ -294,17 +297,92 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	if !strings.Contains(body, "exit 1") {
 		t.Errorf("regen-timeline v10 PR gate must `exit 1` on a derived-doc edit (blocking)")
 	}
-	// The gate detects the edit via the PR's own file list (GitHub's 3-dot
-	// diff = branch-vs-merge-base, fork-correct) and matches ONLY the two
-	// derived docs as whole lines.
-	if !strings.Contains(body, "gh pr diff") || !strings.Contains(body, "--name-only") {
-		t.Errorf("regen-timeline v10 PR gate must use `gh pr diff --name-only`")
+	// v15: the gate compares CONTENT, at explicit refs, via blob ids.
+	//
+	// v14 read the PR's file list (`gh pr diff --name-only`). That was not
+	// as wrong as it looks — `gh pr diff` is the forge's three-dot diff, so
+	// a file appears in it only when its bytes at the head differ from its
+	// bytes at the merge base — but it left the gate's actual question
+	// unstated, resting on an undocumented property of a CLI, and it flags a
+	// file whose mode changed while its content did not. The blob id is a
+	// content hash; comparing two of them says what the gate means.
+	if !strings.Contains(body, "gh api \"repos/$GITHUB_REPOSITORY/contents/$2?ref=$1\" --jq .sha") {
+		t.Errorf("regen-timeline v15 PR gate must read a BLOB ID at an explicit ref — that is what " +
+			"makes it a content comparison rather than a file-list test (logmind#345)")
+	}
+	// Read the EXECUTABLE content for the two bans below: the v15 header
+	// note and the permissions block both name what they removed, and
+	// naming it is the point. stripYAMLComments (not stripCommentLines) is
+	// the right knife here — it keeps `#` lines inside a `run:` block,
+	// which are shell text rather than YAML comments, so the ban still
+	// reaches every byte the runner is handed.
+	active := stripYAMLComments(body)
+	if strings.Contains(active, "gh pr diff") {
+		t.Errorf("regen-timeline v15 PR gate must not decide on the PR's file list — the file list " +
+			"cannot distinguish a branch that EDITED a derived doc from one that RESTORED it, " +
+			"which is the state protocol#106 could not get out of")
+	}
+	// The merge base is computed by the FORGE from the base repository's
+	// history (`compare`'s merge_base_commit), never handed in by the pull
+	// request — §6.3, a gate's input comes from the base ref.
+	if !strings.Contains(body, "--jq .merge_base_commit.sha") {
+		t.Errorf("regen-timeline v15 must resolve the merge base from the compare API's " +
+			"merge_base_commit — the tip of the default branch is NOT the merge base, and " +
+			"restoring to it is what left protocol#106 permanently red")
+	}
+	// …and both refs the gate COMPARES AGAINST must be that merge base,
+	// which is a separate assertion from "the function exists". Swapping
+	// `base_mb` to the branch NAME leaves `merge_base` defined and called
+	// (for the pin), so the check above stays green while the gate starts
+	// comparing against a tip — a mutation that fails a healthy branch and
+	// passes a tip-restore, i.e. exactly logmind#345 inverted.
+	for _, ref := range []string{
+		`base_mb="$(merge_base "$BASE_REF")"`,
+		`pin_mb="$(merge_base "$DEFAULT_BRANCH")"`,
+	} {
+		if !strings.Contains(body, ref) {
+			t.Errorf("regen-timeline v15 must compare against a MERGE BASE, not a branch tip: "+
+				"expected the gate to resolve %s. The default branch regenerates these files on "+
+				"every merge, so its tip differs from the merge-base for any branch that forked "+
+				"before the last regen — comparing against it fails every healthy branch and "+
+				"accepts every tip-restore.", ref)
+		}
 	}
 	// All THREE derived docs of SPEC §3.3 — "the history, its archive, or
-	// the map" — as whole lines. A gate that names only two leaves the
-	// omitted one editable on a branch, undetected.
-	if !strings.Contains(body, `grep -qxE 'docs/(timeline|timeline-archive|file-structure)\.md'`) {
-		t.Errorf("regen-timeline PR gate must match exactly the three derived docs as whole lines")
+	// the map". A gate that names only two leaves the omitted one editable
+	// on a branch, undetected.
+	if !strings.Contains(body, "for f in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do") {
+		t.Errorf("regen-timeline PR gate must check exactly the three derived docs of SPEC §3.3")
+	}
+	// The SECOND accepted state, and the whole of logmind#345: a file
+	// restored to its merge-base-with-the-default-branch content passes.
+	// Without it a repository whose integration branch has drifted has no
+	// commit that reaches a passing state — the repair edits a derived doc
+	// relative to that branch, so the rule forbids its own remedy.
+	if !strings.Contains(body, `elif [ "$head_blob" = "$pin_blob" ]; then`) {
+		t.Errorf("regen-timeline v15 must ACCEPT a derived doc restored to its " +
+			"merge-base-with-the-default-branch content (the SPEC §3.3 pin, and what " +
+			"`logmind warp` writes) — otherwise a drifted branch is permanently red")
+	}
+	// Fail-closed. Two empty strings compare equal, so a blob read that
+	// failed for any reason other than "this ref does not carry the file"
+	// must abort rather than silently agree with itself.
+	if !strings.Contains(body, `if grep -q '(HTTP 404)' "$err"; then`) {
+		t.Errorf("regen-timeline v15 must distinguish a 404 (a real answer) from every other " +
+			"API failure — swallowing a 500 or a rate-limit makes the gate report PASS " +
+			"exactly when it could not evaluate")
+	}
+	// The remedy must be one that WORKS. v14's named `origin/<default>` —
+	// the TIP — while the check was against the merge base, so following
+	// it landed the author back on the same red gate (protocol#106).
+	if !strings.Contains(body, "git merge-base origin/$DEFAULT_BRANCH HEAD") {
+		t.Errorf("regen-timeline v15's remediation must name the MERGE-BASE, not the default " +
+			"branch's tip — the default branch regenerates these files on every merge, so a " +
+			"tip-restore is itself a divergence (logmind#345)")
+	}
+	if !strings.Contains(body, "logmind warp") {
+		t.Errorf("regen-timeline PR gate must name `logmind warp` — it is the one surface that " +
+			"fetches and restores to the merge base, i.e. the state this gate accepts")
 	}
 	// Event-gated jobs: gate runs only on the pull-request event, regen only
 	// on push. v14 moved the gate's event to `pull_request_target` (§6.3),
@@ -328,11 +406,24 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	if !strings.Contains(body, "persist-credentials: false") {
 		t.Errorf("regen-timeline v10 must set persist-credentials: false on regen-on-main's checkout")
 	}
-	// The PR gate reads the PR file list via `gh pr diff`, which needs
-	// pull-requests:read. Because specifying ANY permission zeroes the rest,
-	// this MUST be explicit or the gate 403s and fails-closed on every PR.
-	if !strings.Contains(body, "pull-requests: read") {
-		t.Errorf("regen-timeline v10 must grant pull-requests: read (else gh pr diff 403s and blocks every PR)")
+	// v15 removes `pull-requests: read`. It was granted for `gh pr diff`,
+	// which is gone: the head SHA and the base ref arrive in the event
+	// payload, and every blob id comes from `repos/…/contents` and
+	// `repos/…/compare`, which `contents: read` covers. Asserting its
+	// ABSENCE rather than deleting the assertion is the point — a grant
+	// whose stated reason has gone is how an over-broad token survives a
+	// review, and under `pull_request_target` these grants are real on a
+	// fork pull request.
+	if strings.Contains(active, "pull-requests:") {
+		t.Errorf("regen-timeline v15 must not grant pull-requests: — nothing reads a " +
+			"pull-request endpoint any more (logmind#345)")
+	}
+	// …and `contents: read` MUST still be explicit, because specifying ANY
+	// permission zeroes the rest: without it every `gh api` call 403s and
+	// the gate fails-closed on every PR, not just on violators.
+	if !strings.Contains(body, "contents: read") {
+		t.Errorf("regen-timeline must grant contents: read (else the contents/compare reads 403 " +
+			"and block every PR)")
 	}
 	// v14: `contents: write` is the PUSHING job's, not the file's. Under
 	// `pull_request` the distinction cost nothing — the forge forced a
@@ -423,6 +514,12 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	if strings.Contains(body, "has not adopted") {
 		t.Errorf("regen-timeline v10 PR gate must not have a not-adopted pass-through message")
 	}
+	// What v10 removed was an ADOPTION SIGNAL read from the base ref, and
+	// this is the pin against its return. It is not a ban on reading the
+	// base ref at all: v15 reads `pull_request.base.ref` to ask the forge
+	// for a merge base, which is a gate INPUT taken from the base side
+	// exactly as §6.3 requires. The narrower thing still banned is the
+	// PINNED base COMMIT the adoption gate resolved config out of.
 	if strings.Contains(body, "pull_request.base.sha") || strings.Contains(body, "BASE_SHA") {
 		t.Errorf("regen-timeline v10 must not read a base-ref adoption signal — there is nothing left to read")
 	}
@@ -430,8 +527,9 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 	// SECURITY — even with the adoption signal gone, this job must still
 	// never check out the PR: a checkout on a pull_request event lands
 	// refs/pull/N/merge (the PR's own content), and this job has no business
-	// trusting anything from the PR beyond its file list (`gh pr diff`,
-	// which talks to the API, not the workspace).
+	// trusting anything the PR authored. v15 compares blob IDS at explicit
+	// refs, which is a read of hashes over the API and not a checkout — the
+	// bytes never reach a workspace and nothing from the PR is executed.
 	prJob, _, found := strings.Cut(body, "  regen-on-main:")
 	if !found {
 		t.Fatalf("regen-timeline v10: could not locate the regen-on-main job boundary")
@@ -518,7 +616,12 @@ var templateMarkerPins = map[string]struct {
 	// merge-base already carries on `dev`, so an installed v13 is reachable
 	// and a content change under it would be a change no repository could
 	// ever be told about.
-	"regen-timeline.yml.template": {"v14", "8be4b55b27379c92433c1b4b0a3fb82a9287730b50fcde868b378f6d7ea49902"},
+	// Moved v14 → v15 by logmind#345: the PR gate compares blob ids instead
+	// of the PR's file list, and accepts a derived doc restored to its
+	// merge-base-with-the-default-branch content. A bump, not a repin, for
+	// the same reason — v14 is on `dev` and every repo holding it is running
+	// a gate that its own error message cannot get them out of.
+	"regen-timeline.yml.template": {"v15", "ac26c6a4dffd3e5fdff9fc7b57caa5f9bb3484bf2ff5bace5f96c2474996e8c9"},
 }
 
 func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
@@ -1130,8 +1233,16 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 // `regen-on-main` its own `permissions: contents: write`. D and F did not
 // move at all: the checkout stanza and the whole credential chain are
 // untouched.
+//
+// v15 (logmind#345) moved A and ONLY A, and that is this change's evidence
+// in the same shape. The gate's `run:` block was rewritten — blob ids at
+// explicit refs instead of the PR's file list, the SPEC §3.3 repair
+// accepted, the remedy re-aimed at the merge base — and `pull-requests:
+// read` left the workflow-level permissions block with it. B, D and F are
+// byte-for-byte v14's: nothing about how the regen job builds, checks out,
+// authenticates or pushes was touched.
 const (
-	digestRegionA = "a01ac1d4b02eedcf277961b1678da8ee2eb11876ddc50463a89c161d7609cb17"
+	digestRegionA = "b592e6f89dd32204783103f4ed47da8dd8d2091bc9f7e7a8e953c8620e58e272"
 	digestRegionB = "a3c158cdc04d4dc533c0c59bb13bf245e41798fd1c20ef2afa5793aab69d99fc"
 	digestRegionD = "7e2d788d136cdff688f698527cd505c1d70633f4134d4df2951fbff59b7fc612"
 	digestRegionF = "bbe3a145536916b0c0ae850ae84e5e5e0662554d9d7059f79d9c7cd1844e117a"
@@ -1772,7 +1883,13 @@ var bundledTemplateFingerprints = map[string]string{
 	// SHIPPED to `dev` by now, so this is the ordinary case this map is for:
 	// the marker moves with the content, and every repo holding v13 is
 	// refreshed onto v14 because — and only because — the strings differ.
-	"regen-timeline.yml.template": "v14:8be4b55b27379c92433c1b4b0a3fb82a9287730b50fcde868b378f6d7ea49902",
+	//
+	// v15 = v14's body with the gate comparing blob ids at explicit refs and
+	// accepting the SPEC §3.3 repair (logmind#345). Same ordinary case, and
+	// the bump matters more than usual: a repo left on v14 keeps a gate that
+	// goes red on a drifted integration branch and rejects the only commit
+	// that could fix it.
+	"regen-timeline.yml.template": "v15:ac26c6a4dffd3e5fdff9fc7b57caa5f9bb3484bf2ff5bace5f96c2474996e8c9",
 }
 
 // TestWorkflowTemplateMarkers_MoveWithContent enforces the binding above.
@@ -2196,9 +2313,13 @@ func TestRegenTimelineTemplate_V12_DefaultBranchIsResolvedNotHardcoded(t *testin
 		t.Errorf("regen-timeline v12 PR gate must compare the scaffolded trigger against the live " +
 			"default branch — a renamed default branch otherwise silently stops the regen forever")
 	}
-	driftBlock, _, found := strings.Cut(body, "changed=$(gh pr diff")
+	// Everything from the drift comparison up to the gate's first API call
+	// is the drift block. v15 renamed that call — the gate resolves a merge
+	// base now rather than pulling the PR's file list — so the anchor moved
+	// with it; what the block must contain is unchanged.
+	driftBlock, _, found := strings.Cut(body, `err="$(mktemp)"`)
 	if !found {
-		t.Fatalf("regen-timeline v12: could not locate the PR gate's diff call")
+		t.Fatalf("regen-timeline v15: could not locate the end of the PR gate's preamble")
 	}
 	_, driftBlock, _ = strings.Cut(driftBlock, `if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then`)
 	if !strings.Contains(driftBlock, "::warning") {
