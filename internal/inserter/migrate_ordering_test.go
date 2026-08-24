@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/templates"
 )
 
 // errInjected stands in for the failures no pre-check can predict: a full
@@ -264,6 +266,90 @@ func TestMigrateToAgentsMD_SymlinkedSourceLeavesEarlierSourcesIntact(t *testing.
 	if got := readAgentFile(t, dir, "AGENTS.md"); got != before["AGENTS.md"] {
 		t.Errorf("AGENTS.md was written by an aborted migration:\n got: %q\nwant: %q",
 			got, before["AGENTS.md"])
+	}
+}
+
+// TestMigrateToAgentsMD_SymlinkedAlreadyStubbedSourceDoesNotAbort is
+// logmind#351's first regression. #350 hoisted the per-tool symlink refusal
+// into phase 1, correctly, but ahead of the IsStub classification a few
+// lines below it — so a source this run was never going to write (a symlink
+// to a file that already carries logmind's own stub marker) was refused
+// anyway, turning a soft "nothing to do here" into a hard abort of the
+// WHOLE migration. .clinerules here is a symlink; that must not matter,
+// because logmind never intended to touch it.
+func TestMigrateToAgentsMD_SymlinkedAlreadyStubbedSourceDoesNotAbort(t *testing.T) {
+	skipSymlinkTestsOnWindows(t)
+
+	dir, _ := seedMigrateRepo(t)
+	stubTarget := filepath.Join(t.TempDir(), "already-a-stub.md")
+	writeAgentFile(t, filepath.Dir(stubTarget), filepath.Base(stubTarget), templates.Stub())
+	clinePath := filepath.Join(dir, ".clinerules")
+	if err := os.Symlink(stubTarget, clinePath); err != nil {
+		t.Fatalf("plant symlink to an already-stubbed file: %v", err)
+	}
+
+	_, _, refused, err := MigrateToAgentsMD(dir)
+
+	if err != nil {
+		t.Fatalf("MigrateToAgentsMD errored on a symlink to an already-migrated stub: %v", err)
+	}
+	if len(refused) != 0 {
+		t.Errorf("refused = %+v; a stub was never going to be written, so there is nothing to refuse", refused)
+	}
+	// The rest of the run must still have happened — this is not "migrate
+	// stopped doing anything", it is "one file was rightly left alone".
+	assertMigrated(t, dir)
+	// The symlink itself, and what it points at, are untouched: nothing
+	// here decided to write there, so nothing should have moved it.
+	if fi, lerr := os.Lstat(clinePath); lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf(".clinerules is no longer the planted symlink: %v (mode %v)", lerr, fi.Mode())
+	}
+	if got := readAgentFile(t, filepath.Dir(stubTarget), filepath.Base(stubTarget)); got != templates.Stub() {
+		t.Errorf("the symlink's target changed: %q", got)
+	}
+}
+
+// TestMigrateToAgentsMD_SymlinkedForeignMarkerSourceDoesNotAbort is
+// logmind#351's second regression, same root cause as the test above:
+// .clinerules is a symlink to a file carrying ANOTHER component's marker
+// (protocol#77 row 2, #336's soft decline). Before #350's reordering this
+// noted the file was left alone and migrated everything else, exit 0. The
+// hoisted refusal ran before that classification ever got a chance to say
+// "this isn't ours to write", so it turned the soft decline into a hard
+// abort — the panel's second confirmed failure.
+func TestMigrateToAgentsMD_SymlinkedForeignMarkerSourceDoesNotAbort(t *testing.T) {
+	skipSymlinkTestsOnWindows(t)
+
+	dir, _ := seedMigrateRepo(t)
+	const foreign = "<!-- skdd-stub: instructions live in AGENTS.md -->\nFOREIGN_SENTINEL\n"
+	foreignTarget := filepath.Join(t.TempDir(), "foreign-marker.md")
+	writeAgentFile(t, filepath.Dir(foreignTarget), filepath.Base(foreignTarget), foreign)
+	clinePath := filepath.Join(dir, ".clinerules")
+	if err := os.Symlink(foreignTarget, clinePath); err != nil {
+		t.Fatalf("plant symlink to a foreign-marked file: %v", err)
+	}
+
+	_, _, refused, err := MigrateToAgentsMD(dir)
+
+	if err != nil {
+		t.Fatalf("MigrateToAgentsMD errored on a symlink to another component's file: %v", err)
+	}
+	if len(refused) != 1 || refused[0].Path != ".clinerules" || refused[0].Ownership != MarkerForeign {
+		t.Fatalf("refused = %+v; want exactly one MarkerForeign refusal for .clinerules", refused)
+	}
+	// The rest of the run must still have happened.
+	assertMigrated(t, dir)
+	agentsBody := readAgentFile(t, dir, "AGENTS.md")
+	if strings.Contains(agentsBody, "FOREIGN_SENTINEL") {
+		t.Error("another component's entry, reached only through the symlink, was folded into AGENTS.md")
+	}
+	// The symlink and its target are untouched — this run declined to claim
+	// the file, and a decline must not stub over the link.
+	if fi, lerr := os.Lstat(clinePath); lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf(".clinerules is no longer the planted symlink: %v (mode %v)", lerr, fi.Mode())
+	}
+	if got := readAgentFile(t, filepath.Dir(foreignTarget), filepath.Base(foreignTarget)); got != foreign {
+		t.Errorf("the symlink's target changed: %q", got)
 	}
 }
 

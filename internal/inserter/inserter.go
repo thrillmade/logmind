@@ -1442,7 +1442,7 @@ func UpdateWorkflowPin(content, newVersion string) (string, string) {
 //
 // The three phases below are separate, and MUST stay in this order:
 //
-//  1. PLAN     — read, refuse and classify every source. Writes nothing.
+//  1. PLAN     — read, classify and refuse every source. Writes nothing.
 //  2. PRESERVE — write AGENTS.md. Every source still holds its own bytes.
 //  3. STUB     — only now replace the sources.
 //
@@ -1450,8 +1450,12 @@ func UpdateWorkflowPin(content, newVersion string) (string, string) {
 // old shape got wrong — not the refusals themselves, whose messages are
 // good. A per-tool file's symlink refusal moved up into phase 1 (it used to
 // live in that file's own stub write, so a link on the fourth file was found
-// after three had been consolidated); AGENTS.md's symlink refusal and its
-// read both sit in phase 2, ahead of all of phase 3.
+// after three had been consolidated) — but only after this run has decided,
+// via the classification right above it, that the file is one phase 3 will
+// actually replace: a symlink to an already-migrated stub, or to a file
+// carrying another component's marker, was never going to be written and so
+// is never refused (#351). AGENTS.md's symlink refusal and its read both sit
+// in phase 2, ahead of all of phase 3.
 //
 // But the invariant is carried by the ORDER, not by any of those checks. A
 // check that a path is writable is stale the moment it returns, and nothing
@@ -1503,17 +1507,6 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, []Redire
 		if !fileExists(filePath) {
 			continue
 		}
-		// Refuse a symlink BEFORE the read, for the reason CreateAgentFile
-		// gives at its own copy of this line: the ownership verdict below is
-		// made from the file's bytes, os.ReadFile resolves the final
-		// component, and a link pointing outside the repository has some
-		// other file answering "whose content is .cursorrules?". It stays
-		// AFTER fileExists, which os.Stat's its way through the link: a
-		// DANGLING link has nothing to consolidate and nothing to stub, so
-		// this run intends no write there and has nothing to refuse.
-		if err := atomicio.RefuseSymlink(filePath); err != nil {
-			return nil, declined, refusals, err
-		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			// ALL OR NOTHING — see the doc comment. fileExists just said this
@@ -1550,6 +1543,23 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, []Redire
 			messages = append(messages,
 				fmt.Sprintf("✓ Migrated %s (%s) content into AGENTS.md",
 					a.Display, filepath.Base(filePath)))
+		}
+		// Refuse a symlink HERE, not ahead of the classification above: this
+		// run has now decided the file is neither an already-migrated stub
+		// nor another component's marked file, so it is one of the sources
+		// phase 3 is actually going to replace. Checking any earlier — the
+		// shape this replaced — asked "is this a symlink" before asking "was
+		// this run ever going to write here", and refused a link the two
+		// classifications above would themselves have skipped or left alone
+		// (a stub with nothing left to consolidate, a foreign file this
+		// command declines on purpose). The reason for refusing at all is
+		// still CreateAgentFile's: the ownership verdict just above is made
+		// from the file's bytes, os.ReadFile resolves the final component,
+		// and a link pointing outside the repository has some other file
+		// answering "whose content is .cursorrules?" — but that question
+		// only needs answering for a path this run is actually about to stub.
+		if err := atomicio.RefuseSymlink(filePath); err != nil {
+			return nil, declined, refusals, err
 		}
 		planned = append(planned, plannedStub{path: filePath})
 		messages = append(messages,
