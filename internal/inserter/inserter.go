@@ -1429,13 +1429,60 @@ func UpdateWorkflowPin(content, newVersion string) (string, string) {
 //
 // Mirrors migrate_to_agents_md(root_path).
 //
+// # ORDER IS THE SAFETY PROPERTY (#350)
+//
+// This is the one command whose job is to MOVE the user's own words rather
+// than to add logmind's, so the single unrecoverable outcome is a source
+// stubbed while its content exists nowhere else. That used to be reachable:
+// the stub write ran inside the loop and the AGENTS.md write ran after it,
+// with the collected content living only in a slice the error return
+// discarded. A symlinked AGENTS.md — where the guard fires, correctly, at
+// the append write — left two per-tool files holding the stub and the user's
+// paragraphs in neither place.
+//
+// The three phases below are separate, and MUST stay in this order:
+//
+//  1. PLAN     — read, refuse and classify every source. Writes nothing.
+//  2. PRESERVE — write AGENTS.md. Every source still holds its own bytes.
+//  3. STUB     — only now replace the sources.
+//
+// EVERY REFUSAL RUNS BEFORE THE FIRST SOURCE IS TOUCHED, which is what the
+// old shape got wrong — not the refusals themselves, whose messages are
+// good. A per-tool file's symlink refusal moved up into phase 1 (it used to
+// live in that file's own stub write, so a link on the fourth file was found
+// after three had been consolidated); AGENTS.md's symlink refusal and its
+// read both sit in phase 2, ahead of all of phase 3.
+//
+// But the invariant is carried by the ORDER, not by any of those checks. A
+// check that a path is writable is stale the moment it returns, and nothing
+// here can predict a full disk, a mode change, or a link planted in the
+// window between the check and the write — none of it has to. Every phase-2
+// failure, predicted or not, happens while the sources are intact, and every
+// phase-3 failure happens after AGENTS.md already holds the content. The
+// user's words exist in at least one place at every instant. The checks buy
+// a better error, not the invariant.
+//
+// ALL OR NOTHING. A source that cannot be read aborts the whole migration
+// (phase 1) rather than being skipped. It costs nothing — nothing has been
+// written yet — and half a consolidation, with no record of which half
+// moved, is a worse thing to hand back than "fix .cursorrules and re-run".
+// The skip-and-carry-on this replaced was never a policy; it was the only
+// move available once the loop had already started destroying things.
+//
+// What phase 3 can still leave behind is DUPLICATION, never loss: content in
+// AGENTS.md AND in a source that failed to stub. That is legible from the
+// error and fixable by hand; what it replaces is not.
+//
 // Returns a list of human-readable status messages — the caller
 // prints them to stdout. Returning a slice (rather than a stream)
 // matches Python's accumulator pattern; the migrate command renders
-// the slice line-by-line. The second return is EnsureAgentsMD's refusal
-// (#267): migrate still consolidates the per-agent files, but the caller
-// must say that AGENTS.md's own block was left alone. The third is the set of
-// files this run declined to claim (#336) — see the loop for which.
+// the slice line-by-line. They are composed in phase 1, so they are
+// INTENTIONS until every phase has run: on any error the slice comes back
+// nil rather than describing writes that may not have happened. The second
+// return is EnsureAgentsMD's refusal (#267): migrate still consolidates the
+// per-agent files, but the caller must say that AGENTS.md's own block was
+// left alone. The third is the set of files this run declined to claim
+// (#336) — see the plan loop for which.
 func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, []RedirectRefusal, error) {
 	var messages []string
 	var refusals []RedirectRefusal
@@ -1445,7 +1492,9 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, []Redire
 	}
 	agentsPath := filepath.Join(repoRoot, agentsMDName)
 	var appendedBlocks []string
+	var planned []plannedStub
 
+	// ---- PHASE 1: PLAN. Reads and refusals only; nothing is written. ----
 	for _, a := range agents.All() {
 		if a.Name == "codex" || a.IsJSON {
 			continue
@@ -1454,9 +1503,26 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, []Redire
 		if !fileExists(filePath) {
 			continue
 		}
+		// Refuse a symlink BEFORE the read, for the reason CreateAgentFile
+		// gives at its own copy of this line: the ownership verdict below is
+		// made from the file's bytes, os.ReadFile resolves the final
+		// component, and a link pointing outside the repository has some
+		// other file answering "whose content is .cursorrules?". It stays
+		// AFTER fileExists, which os.Stat's its way through the link: a
+		// DANGLING link has nothing to consolidate and nothing to stub, so
+		// this run intends no write there and has nothing to refuse.
+		if err := atomicio.RefuseSymlink(filePath); err != nil {
+			return nil, declined, refusals, err
+		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			continue
+			// ALL OR NOTHING — see the doc comment. fileExists just said this
+			// path is there, so a read failure is a real fault (mode, I/O, a
+			// concurrent unlink), not an absence, and consolidating the other
+			// files around it would silently migrate some of the user's
+			// instructions and leave the rest.
+			return nil, declined, refusals, fmt.Errorf("cannot migrate %s: %w",
+				filepath.Base(filePath), err)
 		}
 		content := string(data)
 		if IsStub(content) {
@@ -1485,34 +1551,68 @@ func MigrateToAgentsMD(repoRoot string) ([]string, *AgentsBlockRefusal, []Redire
 				fmt.Sprintf("✓ Migrated %s (%s) content into AGENTS.md",
 					a.Display, filepath.Base(filePath)))
 		}
-
-		// filePath resolved and read successfully above (fileExists +
-		// os.ReadFile both followed it), so this is a per-agent artifact the
-		// user owns, potentially reached through a symlink — atomicio.WriteFile
-		// over the bare os.WriteFile this replaced so a symlinked CLAUDE.md /
-		// .cursorrules / etc. is refused (atomicio.RefuseSymlink, #300) instead
-		// of silently written through.
-		if err := atomicio.WriteFile(filePath, []byte(templates.Stub()), 0o644); err != nil {
-			return messages, declined, refusals, err
-		}
+		planned = append(planned, plannedStub{path: filePath})
 		messages = append(messages,
 			fmt.Sprintf("✓ %s replaced with stub", filepath.Base(filePath)))
 	}
 
+	// ---- PHASE 2: PRESERVE. The sources are all still intact here. ----
+	//
+	// AGENTS.md's own refusals are NOT hoisted above this block, and there is
+	// no pre-flight atomicio.RefuseSymlink(agentsPath) here on purpose: the
+	// refusal inside migrateWrite already runs before the first source is
+	// touched, because this phase does, and a second copy of the check a few
+	// lines earlier would be unobservable — same error, same untouched tree —
+	// while reading as though the invariant rested on it. It rests on the
+	// order. Note also that this whole phase is skipped when there is nothing
+	// to consolidate, so a repo that is already migrated stays a no-op rather
+	// than acquiring a new reason to fail.
 	if len(appendedBlocks) > 0 {
 		existing, err := os.ReadFile(agentsPath)
 		if err != nil {
-			return messages, declined, refusals, err
+			return nil, declined, refusals, err
 		}
 		// Match Python: existing.rstrip() + "\n\n" + "\n".join(appended).
 		body := strings.TrimRight(string(existing), " \t\n\r") +
 			"\n\n" + strings.Join(appendedBlocks, "\n")
-		if err := atomicio.WriteFile(agentsPath, []byte(body), 0o644); err != nil {
-			return messages, declined, refusals, err
+		if err := migrateWrite(agentsPath, []byte(body), 0o644); err != nil {
+			return nil, declined, refusals, err
+		}
+	}
+
+	// ---- PHASE 3: STUB. Destructive, and reached only once AGENTS.md
+	// holds every byte phase 1 collected. ----
+	for _, p := range planned {
+		// The path resolved and read cleanly in phase 1, which also refused a
+		// symlink at it, so this is a per-agent artifact the user owns —
+		// written through atomicio (over the bare os.WriteFile this replaced)
+		// so a link planted in the window since is refused, #300, rather than
+		// silently written through.
+		if err := migrateWrite(p.path, []byte(templates.Stub()), 0o644); err != nil {
+			return nil, declined, refusals, err
 		}
 	}
 	return messages, declined, refusals, nil
 }
+
+// plannedStub is one per-agent file phase 1 decided to replace with the
+// stub. A named type rather than a bare []string because the plan is the
+// thing phase 3 is not allowed to re-derive: re-walking agents.All() there
+// would re-read the sources and could act on a set phase 1 never approved.
+type plannedStub struct {
+	path string
+}
+
+// migrateWrite is atomicio.WriteFile, held as a package-level var so
+// MigrateToAgentsMD's ordering invariant can be tested against the failures
+// no pre-check can predict — a full disk, a mode change since the plan
+// phase read the file. Those are exactly the cases where the invariant has to come from
+// the ORDER rather than from the refusal, and the symlink case (which a
+// pre-check CAN see) cannot stand in for them. Same seam, and the same
+// reason, as internal/skill/sync.go's atomicWriteFile and atomicio's own
+// syncFile. Other write sites in this package call atomicio.WriteFile
+// directly; only migrate needs the injectable failure.
+var migrateWrite func(path string, data []byte, perm os.FileMode) error = atomicio.WriteFile
 
 // fileExists returns true when path refers to an existing regular
 // file or symlink target. Errors other than ErrNotExist are treated

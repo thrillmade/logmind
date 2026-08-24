@@ -233,6 +233,14 @@ func TestRefreshMarkerBlockFile_RefusesSymlinkedTarget(t *testing.T) {
 // EnsureAgentsMD(repoRoot) call no-ops (no diff to refresh) rather than
 // erroring for an unrelated reason — the append write further down is what
 // this test exercises.
+//
+// SCOPE, because this test was green throughout #350: it asserts the link's
+// TARGET was not written through, and that is all it ever asserted. The
+// .cursorrules it seeds was being stubbed on the way to this refusal, and
+// nothing here looked. What happens to the SOURCES when this write refuses
+// is owned by TestMigrateToAgentsMD_SymlinkedAGENTSMD_LeavesSourcesIntact in
+// migrate_ordering_test.go — do not re-assert it here, but do not read this
+// test as covering it either.
 func TestMigrateToAgentsMD_RefusesSymlinkedAGENTSMD(t *testing.T) {
 	skipSymlinkTestsOnWindows(t)
 
