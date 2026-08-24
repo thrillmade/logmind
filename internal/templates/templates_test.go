@@ -364,6 +364,49 @@ func TestRegenTimelineTemplate_V10_UnconditionalBlockingGate(t *testing.T) {
 			"merge-base-with-the-default-branch content (the SPEC §3.3 pin, and what " +
 			"`logmind warp` writes) — otherwise a drifted branch is permanently red")
 	}
+	// …and rule B's conflict-freedom is CONDITIONAL, which v15 asserted and
+	// never checked (logmind#361). Rule A above is genuinely unconditional:
+	// it leaves the HEAD side of the merge unchanged, so git takes the base's
+	// side and no state of the base branch can make it conflict. Rule B
+	// CHANGES the head side, so it is one-sided only while the base branch
+	// still holds its merge-base content — and neither merge-base moves when
+	// the base branch commits, so the arm cannot see that happen without
+	// reading the base branch's TIP.
+	//
+	// Dropping this read is not a stale-green: it is a permanent one. A
+	// `synchronize` re-run after the base branch moves recomputes the same
+	// two merge-bases and the same three blob ids, so the run stays green
+	// while `git merge` stops on a conflict marker — and two such PRs merged
+	// in sequence give one clean merge and one conflict.
+	if !strings.Contains(body, `base_tip_blob="$(blob "$BASE_REF" "$f")"`) {
+		t.Errorf("regen-timeline v15 must read the BASE BRANCH'S TIP before accepting the " +
+			"SPEC §3.3 repair — the two merge-bases are both unmoved by a commit on the base " +
+			"branch, so without this read the gate reports `the merge cannot conflict` about a " +
+			"merge that does (logmind#361)")
+	}
+	// The two states in which rule B is one-sided, and an `||` rather than an
+	// `&&`: the base has not touched the file since the merge base (only the
+	// head side changes it), OR the base has already arrived at the same
+	// content (neither side changes it). An `&&` here demands both at once,
+	// which is the strictly narrower reading — it turns the drifted
+	// integration branch of protocol#106 red again, i.e. re-opens #345.
+	if !strings.Contains(body, `if [ "$base_tip_blob" = "$base_blob" ] || [ "$base_tip_blob" = "$head_blob" ]; then`) {
+		t.Errorf("regen-timeline v15 must accept the SPEC §3.3 repair in EITHER of the two " +
+			"states that keep it one-sided (base unmoved since the merge base, or base already " +
+			"at the head's content) — an `&&` here is the narrower rule that made #345's " +
+			"drifted branch permanently red")
+	}
+	// A raced repair and a divergence are different failures with different
+	// remedies, so they get different messages. Folding the raced case into
+	// `diverged` would print a sentence that is FALSE of it — the content IS
+	// the merge-base-with-the-default-branch pin — and send the author to
+	// restore a file that is already correct.
+	if !strings.Contains(body, `raced="$raced $f"`) ||
+		!strings.Contains(body, "::error title=The base branch moved a derived doc this PR also changes::") {
+		t.Errorf("regen-timeline v15 must report a raced SPEC §3.3 repair SEPARATELY from a " +
+			"divergence — the divergence message's claim (matches neither merge base) is untrue " +
+			"of it, and its remedy (restore to the merge base) is a no-op on a file already there")
+	}
 	// Fail-closed. Two empty strings compare equal, so a blob read that
 	// failed for any reason other than "this ref does not carry the file"
 	// must abort rather than silently agree with itself.
@@ -621,7 +664,13 @@ var templateMarkerPins = map[string]struct {
 	// merge-base-with-the-default-branch content. A bump, not a repin, for
 	// the same reason — v14 is on `dev` and every repo holding it is running
 	// a gate that its own error message cannot get them out of.
-	"regen-timeline.yml.template": {"v15", "ac26c6a4dffd3e5fdff9fc7b57caa5f9bb3484bf2ff5bace5f96c2474996e8c9"},
+	// RE-PINNED, not bumped, by logmind#361: v15's gate accepted its second
+	// rule without checking the one condition that rule needs (the base
+	// branch's tip). v15 has not shipped — `dev` still carries v14 — so no
+	// repository holds the bytes this pin used to name, and minting a v16 for
+	// an edit to v15's own unreleased body would leave a v15 that existed
+	// nowhere. Same ruling as the three v13 re-pins above.
+	"regen-timeline.yml.template": {"v15", "38ebf4d4645a4b3589988c0637778082a288923d0240ec5afd28b8d4707db27b"},
 }
 
 func TestWorkflowTemplateMarkers_PinnedToContent(t *testing.T) {
@@ -1241,8 +1290,15 @@ func TestRegenTimelineWorkflow_LockstepWithTemplate(t *testing.T) {
 // read` left the workflow-level permissions block with it. B, D and F are
 // byte-for-byte v14's: nothing about how the regen job builds, checks out,
 // authenticates or pushes was touched.
+//
+// logmind#361 moved A a second time, still ONLY A. Rule B now reads the base
+// branch's TIP before accepting a repair, and a raced repair is reported
+// separately from a divergence — both inside the gate's `run:` block. B, D
+// and F did not move: the three constants below are unchanged, which is the
+// evidence that a conflict-freedom fix stayed inside the thing that decides
+// conflict-freedom.
 const (
-	digestRegionA = "b592e6f89dd32204783103f4ed47da8dd8d2091bc9f7e7a8e953c8620e58e272"
+	digestRegionA = "d263c9c4b6761e63857df19f51b88c80c5ad8167346f0c3863c241ac4d102573"
 	digestRegionB = "a3c158cdc04d4dc533c0c59bb13bf245e41798fd1c20ef2afa5793aab69d99fc"
 	digestRegionD = "7e2d788d136cdff688f698527cd505c1d70633f4134d4df2951fbff59b7fc612"
 	digestRegionF = "bbe3a145536916b0c0ae850ae84e5e5e0662554d9d7059f79d9c7cd1844e117a"
@@ -1888,8 +1944,11 @@ var bundledTemplateFingerprints = map[string]string{
 	// accepting the SPEC §3.3 repair (logmind#345). Same ordinary case, and
 	// the bump matters more than usual: a repo left on v14 keeps a gate that
 	// goes red on a drifted integration branch and rejects the only commit
-	// that could fix it.
-	"regen-timeline.yml.template": "v15:ac26c6a4dffd3e5fdff9fc7b57caa5f9bb3484bf2ff5bace5f96c2474996e8c9",
+	// that could fix it. Re-pinned WITHOUT a marker move by logmind#361 —
+	// v15's rule B now reads the base branch's tip before accepting a repair.
+	// v15 is still unshipped (`dev` carries v14), so this is the same repin
+	// case as v13's, not a skipped bump.
+	"regen-timeline.yml.template": "v15:38ebf4d4645a4b3589988c0637778082a288923d0240ec5afd28b8d4707db27b",
 }
 
 // TestWorkflowTemplateMarkers_MoveWithContent enforces the binding above.

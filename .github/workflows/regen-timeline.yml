@@ -123,13 +123,35 @@ name: logmind / check-derived-docs
 #
 # So a SECOND state is accepted, and it is the one SPEC §3.3 actually
 # names: the file holds its merge-base-with-the-DEFAULT-branch content.
-# That is the pin the specification defines the invariant against, it is
-# what `logmind warp` restores to, and it is conflict-free for the same
-# reason the first state is — only one side of the merge has changed the
-# file, so git takes that side and there is nothing to resolve. It is not a
-# self-service escape (§6.3): the accepted bytes are a blob from the BASE
-# repository's own history, at a commit the forge computes, so a pull
-# request cannot author the content that would let it pass.
+# That is the pin the specification defines the invariant against, and it
+# is what `logmind warp` restores to. It is not a self-service escape
+# (§6.3): the accepted bytes are a blob from the BASE repository's own
+# history, at a commit the forge computes, so a pull request cannot author
+# the content that would let it pass.
+#
+# The two rules are NOT conflict-free for the same reason, and v15 first
+# shipped saying they were (logmind#361 — the sentence claimed "only one
+# side of the merge has changed the file" of BOTH). Rule A is genuinely
+# unconditional: the head side is unchanged, so git takes the base's side
+# whatever the base branch has done since, and no state of it can produce a
+# conflict. Rule B CHANGES the head side. It is one-sided only while the
+# base branch still holds its merge-base content — and neither merge-base
+# the gate computes moves when the base branch commits, so the rule cannot
+# see that happen. The condition therefore has to be READ: rule B accepts
+# only when the base branch's TIP blob is still the merge-base blob (the
+# base has not touched the file) or is already the head blob (the base has
+# arrived at the same content).
+#
+# The hole that closes is not a stale green, it is a permanent one. Once a
+# repair PR has gone green and the base branch then edits the same derived
+# doc, a `synchronize` re-run recomputes the identical two merge-bases and
+# the identical three blob ids, so it stays green while `git merge` stops on
+# a conflict marker — and two such pull requests merged in sequence give one
+# clean merge and one conflict. What the gate cannot do is decide the case
+# where BOTH sides changed the file: it reports that (`raced`) and hands it
+# back, with the one remedy that works — merge the base branch in, redo the
+# repair, which moves the merge base up and makes the repair one-sided
+# again.
 #
 # v14's remedy also named the wrong ref, which is why protocol#106 failed
 # even by v14's own rule: `git checkout origin/<default> -- …` restores the
@@ -138,6 +160,16 @@ name: logmind / check-derived-docs
 # moment anything merges. The message now names the merge-base — `logmind
 # warp`, or the `git merge-base` form by hand — and says outright that a
 # tip-restore lands straight back here.
+#
+# And the remedy has to be one that RUNS. `git checkout <merge-base> -- <all
+# three paths>` does not, whenever a branch carries a derived doc the merge
+# base does not: pathspec checkout is all-or-nothing, so it exits 1 on the
+# missing path and restores NONE of the others. `logmind warp` does not
+# close that case either — it restores per path, so it fixes every doc that
+# exists at the merge base, but it cannot DELETE one the branch added
+# (logmind#362). The message now names a per-path loop that checks out what
+# exists there and `git rm`s what does not, says which of the two `logmind
+# warp` covers, and no longer claims warp "does exactly that".
 #
 # Fail-closed, stated because the obvious one-liner is not: a blob read
 # that fails with any status other than 404 aborts the job. Two empty
@@ -318,7 +350,19 @@ jobs:
           echo "merge-base with '$BASE_REF' (the merge this PR will perform): $base_mb"
           echo "merge-base with '$DEFAULT_BRANCH' (the SPEC §3.3 pin): $pin_mb"
 
+          # Rule A below (head equals the merge-base with '$BASE_REF') is
+          # unconditional and needs no further input: it leaves the HEAD side
+          # of the merge unchanged, so git takes the base's side whatever
+          # '$BASE_REF' has done since, and no state of the base branch can
+          # make it conflict.
+          #
+          # Rule B is not that, and v15 shipped asserting it was (logmind#361).
+          # Rule B CHANGES the head side, so it is conflict-free only while
+          # the BASE side is still the one at the merge base — and neither
+          # merge-base above moves when '$BASE_REF' commits, so on its own
+          # the rule cannot see the base branch move. It has to be read.
           diverged=""
+          raced=""
           for f in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do
             head_blob="$(blob "$HEAD_SHA" "$f")"
             base_blob="$(blob "$base_mb" "$f")"
@@ -329,17 +373,37 @@ jobs:
             if [ "$head_blob" = "$base_blob" ]; then
               echo "$f: byte-identical to the merge-base with '$BASE_REF' — this merge cannot touch it."
             elif [ "$head_blob" = "$pin_blob" ]; then
-              echo "$f: restored to its merge-base-with-'$DEFAULT_BRANCH' content — the SPEC §3.3 repair, accepted. Only one side of this merge changes it, so it still cannot conflict."
+              # The base branch's TIP — the one input the two merge-bases
+              # cannot supply. Rule B is one-sided, and therefore safe, in
+              # exactly two states: the base has not touched this file since
+              # the merge base (so only the head side changed it), or the base
+              # has already arrived at the same content (so neither side
+              # changes it). Anything else and BOTH sides changed the file.
+              base_tip_blob="$(blob "$BASE_REF" "$f")"
+              if [ "$base_tip_blob" = "$base_blob" ] || [ "$base_tip_blob" = "$head_blob" ]; then
+                echo "$f: restored to its merge-base-with-'$DEFAULT_BRANCH' content — the SPEC §3.3 repair, accepted. '$BASE_REF' still holds either the merge-base content or this same content, so at most one side of this merge changes it and it cannot conflict."
+              else
+                raced="$raced $f"
+              fi
             else
               diverged="$diverged $f"
             fi
           done
 
+          # Two failures, two different remedies, so two messages. Reporting a
+          # raced repair as a divergence would print an untrue sentence — the
+          # content IS the pin — and send the author to restore a file that is
+          # already correct.
+          if [ -n "$raced" ]; then
+            echo "::error title=The base branch moved a derived doc this PR also changes::This PR's copy of$raced holds its merge-base-with-'$DEFAULT_BRANCH' content — the SPEC §3.3 repair, which this gate accepts — but '$BASE_REF' has ITSELF changed that file since the merge base with this pull request ($base_mb). Both sides of the merge now change it, so merging would stop on a conflict marker. The repair is right; its merge base is stale. Fix: bring '$BASE_REF' in and redo the repair — 'git fetch origin $BASE_REF && git merge origin/$BASE_REF' (resolve any derived-doc conflict whichever way you like), then 'logmind warp', then commit. That moves this pull request's merge base up to the tip of '$BASE_REF', which is what makes the repair one-sided again."
+          fi
           if [ -n "$diverged" ]; then
-            echo "::error title=Derived docs diverge from their merge-base content::This PR's copy of$diverged matches NEITHER the merge-base with '$BASE_REF' ($base_mb) NOR the merge-base with '$DEFAULT_BRANCH' ($pin_mb). These are DERIVED, default-branch-only artifacts; a branch that carries its own version of them is what causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: restore them to their MERGE-BASE content — 'logmind warp' does exactly that — or by hand: 'git fetch origin $DEFAULT_BRANCH && git checkout \"\$(git merge-base origin/$DEFAULT_BRANCH HEAD)\" -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md' — then commit. Do NOT restore to 'origin/$DEFAULT_BRANCH' itself: '$DEFAULT_BRANCH' REGENERATES these files on every merge, so its tip is not the merge-base and a tip-restore lands straight back here (logmind#345). Their real content regenerates on '$DEFAULT_BRANCH' after merge."
+            echo "::error title=Derived docs diverge from their merge-base content::This PR's copy of$diverged matches NEITHER the merge-base with '$BASE_REF' ($base_mb) NOR the merge-base with '$DEFAULT_BRANCH' ($pin_mb). These are DERIVED, default-branch-only artifacts; a branch that carries its own version of them is what causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: restore them to their MERGE-BASE content. 'logmind warp' does that for every one of them that EXISTS at the merge base; it cannot DELETE a derived doc this branch ADDED, so a doc that is new on this branch has to go by hand (logmind#362). By hand, covering both: 'git fetch origin $DEFAULT_BRANCH && mb=\"\$(git merge-base origin/$DEFAULT_BRANCH HEAD)\" && for f in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do if git cat-file -e \"\$mb:\$f\" 2>/dev/null; then git checkout \"\$mb\" -- \"\$f\"; else git rm -q --ignore-unmatch -- \"\$f\"; fi; done' — then commit. One 'git checkout <merge-base> -- <all three paths>' is NOT the same command and is why this message used to name a remedy that did nothing: pathspec checkout is all-or-nothing, so it exits 1 and restores NONE of them when any one path is absent at the merge base. Do NOT restore to 'origin/$DEFAULT_BRANCH' itself: '$DEFAULT_BRANCH' REGENERATES these files on every merge, so its tip is not the merge-base and a tip-restore lands straight back here (logmind#345). Their real content regenerates on '$DEFAULT_BRANCH' after merge."
+          fi
+          if [ -n "$raced$diverged" ]; then
             exit 1
           fi
-          echo "Every derived doc holds its merge-base content — the merge cannot conflict on them."
+          echo "Every derived doc is changed by at most one side of this merge — it cannot conflict on them."
 
   regen-on-main:
     name: regen-on-main
