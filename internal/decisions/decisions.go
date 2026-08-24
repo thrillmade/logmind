@@ -29,6 +29,52 @@ import (
 	"time"
 )
 
+// The decision record's on-disk layout (SPEC §3.2), owned here.
+//
+// One owner, because THREE different questions are asked of the same fact
+// and they must not answer differently:
+//
+//   - `logmind log` BUILDS a path from it (resolveDecisionsPath in
+//     internal/cli/log.go, which owns the routing RULE);
+//   - every read path ENUMERATES against it (ListSources below);
+//   - the commit gate TESTS a staged path against it (isDecisionFile in
+//     internal/guardcommit).
+//
+// The gate used to approximate the third question with a `/decisions.md`
+// filename suffix, which matched a decisions.md in ANY directory. Measured
+// on the release candidate: a well-formed entry at internal/x/decisions.md
+// plus 302 lines of new Go cleared `guard-commit --layer git-hook` (exit 0,
+// "allowed (decision-recorded)") where the identical tree without that file
+// was refused (exit 65). Three lines in a file no read path enumerates
+// defeated all three enforcement surfaces. A predicate written against
+// these constants cannot drift from the writer that way.
+//
+// None of the three is configurable. `docs` is joined onto the repo root as
+// a literal by every caller; .logmind/config.yml has no key that renames it
+// or either file below (grep: no docs_dir / docs_path key exists).
+//
+// Deliberately NOT swept through this file's own literals (NonBranchSources,
+// ListSources) or the seven other `filepath.Join(cwd, "docs")` call sites.
+// That sweep is the obvious tidy-up and it is a SEPARATE change: those lines
+// are under concurrent edit, the substitutions are string-identical so they
+// buy nothing today, and a rename would break the build at every one of them
+// anyway. What must not drift is the WRITER (resolveDecisionsPath) and the
+// GATE (isDecisionFile), and those two are the ones routed here.
+const (
+	// DocsDirName is the repo-relative directory logmind scaffolds.
+	DocsDirName = "docs"
+	// LegacyFileName is the docs-relative branchless log — the file
+	// resolveDecisionsPath routes to in exactly the three states where it
+	// cannot resolve a branch name to route by, and the pre-§3.2 main log
+	// a repository that predates the collapse still carries.
+	LegacyFileName = "decisions.md"
+	// BranchDirName is the docs-relative directory holding one
+	// `<sanitized-branch>.md` per branch. Flat: ListBranchFiles skips
+	// subdirectories, so a decision written under one is invisible to
+	// every read path.
+	BranchDirName = "decisions-branches"
+)
+
 // Entry is one parsed decision header.
 type Entry struct {
 	Date        time.Time

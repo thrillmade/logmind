@@ -27,6 +27,7 @@ package guardcommit
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -303,7 +304,9 @@ type DecisionEvidence struct {
 //
 // Two halves, and BOTH are required:
 //
-//   - the path is a decision file (isDecisionFile), and
+//   - the path is one logmind itself writes decisions to
+//     (isDecisionFile — the image of resolveDecisionsPath, not a filename
+//     suffix), and
 //   - the lines the change ADDED to it carry an entry that is well-formed
 //     under §3.1 (WellFormedDecisionAdded).
 //
@@ -344,35 +347,106 @@ func DecisionRecorded(names []string, addedHunks AddedHunksFunc) (DecisionEviden
 	return ev, nil
 }
 
-// isDecisionFile reports whether path is a decision-log file:
+// legacyDecisionPath and branchDecisionDir are the two shapes
+// resolveDecisionsPath (internal/cli/log.go) can produce, spelled from the
+// layout constants that function itself builds from — so the gate AGREES
+// with the writer rather than approximating it.
+var (
+	legacyDecisionPath = decisions.DocsDirName + "/" + decisions.LegacyFileName
+	branchDecisionDir  = decisions.DocsDirName + "/" + decisions.BranchDirName + "/"
+)
+
+// isDecisionFile reports whether rel — a repo-relative path exactly as git
+// reports it, forward-slashed on every platform — is a file logmind itself
+// writes decisions to. That is the whole rule, and it is the IMAGE of
+// resolveDecisionsPath, which owns where a decision lands:
 //
-//   - exact path "docs/decisions.md"
-//   - suffix "/decisions.md" (covers nested decisions.md)
-//   - prefix "docs/decisions-branches/" (per-branch decision files)
+//   - docs/decisions.md — the branchless log. Still reachable (branch_aware
+//     off, non-git, detached HEAD) and still the real main log in a
+//     repository that predates §3.2, so an entry appended there has
+//     recorded a decision by any reading of §3.4.
+//   - docs/decisions-branches/<name>.md — one branch's log. Any <name>,
+//     because the gate cannot know which branch it is judging; but a single
+//     path component ending .md, because ListBranchFiles skips
+//     subdirectories and a file under one is invisible to every read path.
 //
-// UNEXPORTED on purpose. It answers "is this the kind of file a decision
-// lives in", which is only ever half of "did this change record a
-// decision" — and the half that a content-free file passes. It was
-// exported once, one caller asked it alone, and that caller was the
-// commit gate. DecisionRecorded is the exported question; this is an
-// implementation detail of it.
+// SCOPED, not suffixed, and the difference was a live gate hole. This
+// predicate used to accept a `/decisions.md` suffix in ANY directory:
+// measured on the release candidate, a well-formed §3.1 entry at
+// internal/x/decisions.md plus 302 lines of new Go cleared
+// `guard-commit --layer git-hook` (exit 0, "allowed (decision-recorded)")
+// where the identical index without that file was refused (exit 65). Three
+// lines in a file no read path enumerates cleared all three enforcement
+// surfaces — a cheaper bypass than the content-free pointer this release
+// exists to close, because the decoy does not even have to look like
+// logmind's own file.
 //
-// docs/decisions.md stays on the list even though nothing writes it since
-// §3.2: a repository that predates the collapse carries a real decision
-// log at that path, and a change that appends an entry there has recorded
-// a decision by any reading of §3.4.
-func isDecisionFile(path string) bool {
-	if path == "docs/decisions.md" {
+// docs/decisions-archive.md is deliberately NOT here. Nothing writes it in
+// any state (decisions.NonBranchSources) — the read paths surface it where
+// it lies, and a gate that honours a path logmind will never write is the
+// same approximation, one filename narrower.
+//
+// UNEXPORTED on purpose, and the constants above are the only thing shared
+// with the writer. It answers "is this the kind of file a decision lives
+// in", which is only ever half of "did this change record a decision" — and
+// the half that a content-free file passes. It was exported once, one
+// caller asked it alone, and that caller was the commit gate.
+// DecisionRecorded is the exported question; this is an implementation
+// detail of it, and there is still no exported way to ask the path half.
+func isDecisionFile(rel string) bool {
+	rel = path.Clean(rel)
+	if rel == legacyDecisionPath {
 		return true
 	}
-	if strings.HasSuffix(path, "/decisions.md") {
-		return true
-	}
-	if strings.HasPrefix(path, "docs/decisions-branches/") {
-		return true
-	}
-	return false
+	dir, file := path.Split(rel)
+	return dir == branchDecisionDir && strings.HasSuffix(file, ".md")
 }
+
+// STILL OPEN, and this predicate does not close it: a staged RENAME or
+// COPY of an existing decision file clears the gate (#335, plus the copy
+// half a panel raised). Measured on this head, both with 302 lines of new
+// Go alongside:
+//
+//	git mv docs/decisions-branches/main.md docs/decisions-branches/feat__x.md
+//	  → guard-commit --layer git-hook exit 0 "allowed (decision-recorded)"
+//	cp   docs/decisions-branches/main.md docs/decisions-branches/feat__x.md
+//	  → exit 0, same carve-out
+//
+// The scoping above closes the SHAPE where the destination is not a
+// decision path (`git mv docs/decisions-branches/main.md
+// internal/x/decisions.md` went from exit 0 to exit 65), but a
+// rename/copy WITHIN docs/decisions-branches/ lands on a path logmind
+// genuinely writes, so no path rule can reach it.
+//
+// The cause is one level down, in the diff READER, and it is not a rename
+// heuristic being wrong — it is one never being asked. Measured:
+//
+//	git diff --cached --name-status                 → R100 old new
+//	git diff --cached -U0 -- <new>                  → "new file mode", every
+//	                                                  line rendered as added
+//
+// A pathspec limits the tree walk BEFORE rename detection runs, so
+// restricting the diff to the destination hides the source and the file
+// reads as freshly written; a copy is worse still, since git does not look
+// for copies at all without -C --find-copies-harder. Either way
+// WellFormedDecisionAdded sees a real §3.1 entry among the "added" lines
+// and answers yes to a change that wrote nothing.
+//
+// Two mechanisms would close it and the choice between them is a real
+// fork, so it is named here rather than guessed at:
+//
+//   - Ask git. `--name-status` already reports R for a rename at no cost,
+//     and DecisionRecorded could skip a path that arrived by one. Copy
+//     needs `-C --find-copies-harder`, which is O(added × tree) and, past
+//     diff.renameLimit, git silently turns detection OFF — a gate that
+//     stops detecting when the diff gets big is failing open silently,
+//     which is the thing §3.4 forbids.
+//   - Ask the record. An added entry clears the gate only if it is not
+//     already in the decision record at the base of the comparison (HEAD
+//     for an index, `base` for a range). Heuristic-free, closes rename,
+//     copy and cross-file paste together, and costs one read of the
+//     decision files at a ref — but it needs a new reader and a second
+//     scope-carrying parameter on DecisionRecorded.
 
 // reasoningMarker opens SPEC §3.1's reasoning section. §3.1 lets a
 // producer omit an empty section's header entirely, so a marker present

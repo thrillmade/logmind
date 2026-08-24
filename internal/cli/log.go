@@ -90,6 +90,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/linkcheck"
 	"github.com/thrillmade/logmind/internal/templates"
@@ -619,7 +620,7 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 // exits non-zero there because HEAD holds a raw SHA, not a ref.
 // Both halves are pinned by TestResolveDecisionsPathUnbornVsDetached.
 func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target string, isBranchFile bool) {
-	branchlessPath := filepath.Join(docsPath, "decisions.md")
+	branchlessPath := filepath.Join(docsPath, decisions.LegacyFileName)
 	if !cfg.Decisions.BranchAware {
 		return branchlessPath, false
 	}
@@ -632,7 +633,7 @@ func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target strin
 		// there; see this function's doc comment.
 		return branchlessPath, false
 	}
-	branchFile := filepath.Join(docsPath, "decisions-branches",
+	branchFile := filepath.Join(docsPath, decisions.BranchDirName,
 		sanitizeBranchName(branch)+".md")
 	return branchFile, true
 }

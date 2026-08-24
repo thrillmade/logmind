@@ -215,13 +215,19 @@ func residualCause(wf doctor.WorkflowStatus) string {
 	}
 }
 
-// driftCount counts probe rows that are "stale" — the drift signal that flips
-// Overall to DRIFT (see doctor.CollectStatus). "missing" (benign in a fresh
-// repo) and "markerless" (a main-canonical migration advisory, not a hard
-// drift) are excluded so the QUIET `ok doctor …` receipt stays consistent
-// with `overall` (e.g. overall=OK never pairs with drift>0).
+// driftCount counts what flips Overall to DRIFT (see doctor.CollectStatus):
+// probe rows that are "stale", PLUS each absent §3.4/§6.2 enforcement gate.
+// A generic "missing" (benign in a fresh repo) and "markerless" (a
+// main-canonical migration advisory, not a hard drift) stay excluded.
+//
+// The gate absences are counted here for the invariant this comment already
+// claimed and would otherwise have lost: the QUIET `ok doctor …` receipt
+// stays consistent with `overall`. A repo whose three enforcement surfaces
+// were deleted has no stale row at all, so counting only "stale" would emit
+// `overall=DRIFT drift=0` — a receipt that reports the failure and its own
+// count as contradicting each other.
 func driftCount(r doctor.StatusReport) int {
-	n := 0
+	n := len(r.GateAbsences)
 	for _, t := range r.Tools {
 		for _, wf := range t.Workflows {
 			if wf.Drift == "stale" {
@@ -254,24 +260,14 @@ func residualProbes(r doctor.StatusReport) []doctor.WorkflowStatus {
 // claudeAgentEnabledFromConfig resolves whether Layer 1 of commit
 // enforcement (the Claude Code harness's PreToolUse guard; see
 // internal/claudehook) should be installed/refreshed for this repo.
-// Mirrors agents.DefaultEnabled's "claude" default (enabled) — a repo
-// with no `agents.claude` key at all, or an unparseable config, gets the
-// same default-true behavior config.LoadAsMap already applies. Only an
-// EXPLICIT `agents.claude: false` opts a repo out.
+//
+// The RULE moved to config.ClaudeAgentEnabled — `logmind doctor` now reads
+// it too, to decide whether a missing PreToolUse guard is a gate this repo
+// lost or one it never asked for, and the writer and the reader disagreeing
+// about that is the #299 class. This name stays as the cli-local spelling
+// its two callers already use.
 func claudeAgentEnabledFromConfig(cwd string) bool {
-	m, err := config.LoadAsMap(cwd)
-	if err != nil {
-		return true
-	}
-	v, ok := config.GetPath(m, "agents.claude")
-	if !ok {
-		return true
-	}
-	b, ok := v.(bool)
-	if !ok {
-		return true
-	}
-	return b
+	return config.ClaudeAgentEnabled(cwd)
 }
 
 // formatDoctorFixOK renders the single quiet `ok` summary line.

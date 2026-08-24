@@ -687,8 +687,7 @@ func revertClaudeHookMarker(t *testing.T, dir string) {
 // byte of hand-editing is STALE.
 
 func TestProbeCommitMsgHook_CurrentAfterInstall(t *testing.T) {
-	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	dir := gatedRepo(t)
 	if _, err := hooks.InstallCommitMsg(dir); err != nil {
 		t.Fatalf("InstallCommitMsg: %v", err)
 	}
@@ -711,8 +710,7 @@ func TestProbeCommitMsgHook_CurrentAfterInstall(t *testing.T) {
 // gate would reach for — leaving the version marker untouched, so only the
 // byte-compare can catch it.
 func TestProbeCommitMsgHook_ContentDriftOnHandEdit(t *testing.T) {
-	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	dir := gatedRepo(t)
 	if _, err := hooks.InstallCommitMsg(dir); err != nil {
 		t.Fatalf("InstallCommitMsg: %v", err)
 	}
@@ -747,6 +745,14 @@ func TestProbeCommitMsgHook_ContentDriftOnHandEdit(t *testing.T) {
 // probePreCommitHook's (and probeHook's) `.git`-presence check, without
 // needing a real `git init`. File-read-only probes only ever stat/read
 // paths, so this is a faithful, hermetic fixture.
+//
+// Enough for a PROBE-ROW assertion, but NOT for an Overall one. An
+// initialised repo with a .git and no enforcement surfaces installed is
+// DRIFT now, and correctly so (collectGateAbsences) — so a test that says
+// "this row must not flip Overall" has to start from a repo whose gates
+// are actually there, or it asserts nothing about the row it names. The
+// four tests here that assert Overall use gatedRepo (gate_absence_test.go)
+// for that reason; the ones that assert only a row keep this fixture.
 func fakeGitDir(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
@@ -773,8 +779,7 @@ func TestProbePreCommitHook_MissingOnFreshRepo(t *testing.T) {
 // classifyLogmindDrift treats it exactly like a missing hook (benign, never
 // flips Overall to DRIFT) instead of "stale" (which WOULD flip it).
 func TestProbePreCommitHook_ForeignHookLeftAlone(t *testing.T) {
-	dir := freshRepo(t)
-	fakeGitDir(t, dir)
+	dir := gatedRepo(t)
 	foreign := "#!/bin/sh\n# logmind check-decisions — hang-guarded (issue #213)\nlogmind check-decisions\n"
 	mustWrite(t, filepath.Join(dir, ".git", "hooks", "pre-commit"), foreign)
 

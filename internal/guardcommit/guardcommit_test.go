@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/testgit"
@@ -533,21 +534,112 @@ func TestEvaluate_InProgressStateBeatsDecisionFileCheck(t *testing.T) {
 // the half alone cost). The path rules below are still worth pinning: a
 // path this predicate rejects can never record a decision no matter what
 // the change wrote into it.
+//
+// The two `true` rows are the ONLY two shapes resolveDecisionsPath
+// produces. Every `false` row below except README.md / src/decisions.txt
+// used to be `true`: the predicate accepted a `/decisions.md` suffix in any
+// directory and any depth under docs/decisions-branches/, which is the hole
+// TestEvaluate_DecoyDecisionFileElsewhereStillBlocks measures end to end.
 
 func TestIsDecisionFile(t *testing.T) {
 	cases := map[string]bool{
-		"docs/decisions.md":                       true,
-		"nested/path/decisions.md":                true,
-		"docs/decisions-branches/feature.md":      true,
-		"docs/decisions-branches/nested/other.md": true,
-		"docs/decisions-archive.md":               false,
-		"README.md":                               false,
-		"src/decisions.txt":                       false,
+		"docs/decisions.md":                  true,
+		"docs/decisions-branches/feature.md": true,
+		// Named for a branch with a slash in it — sanitizeBranchName turns
+		// `fix/gate` into `fix__gate`, so this is a real write target.
+		"docs/decisions-branches/fix__gate.md": true,
+
+		// The reproduced bypass: a decision-shaped file anywhere else.
+		"internal/x/decisions.md":  false,
+		"nested/path/decisions.md": false,
+		"decisions.md":             false,
+		"vendor/docs/decisions.md": false,
+		// Under the branch dir but not a file any read path enumerates —
+		// ListBranchFiles skips subdirectories.
+		"docs/decisions-branches/nested/other.md": false,
+		// Under the branch dir but not markdown.
+		"docs/decisions-branches/notes.txt": false,
+
+		"docs/decisions-archive.md": false,
+		"README.md":                 false,
+		"src/decisions.txt":         false,
 	}
 	for path, want := range cases {
 		if got := isDecisionFile(path); got != want {
 			t.Errorf("isDecisionFile(%q) = %v; want %v", path, got, want)
 		}
+	}
+}
+
+// TestIsDecisionFile_AgreesWithResolveDecisionsPath is the fence that keeps
+// the gate and the writer from drifting apart again. It cannot import
+// internal/cli (that would be an import cycle), so it asserts the two
+// shapes against the LAYOUT CONSTANTS resolveDecisionsPath builds from — if
+// a future edit renames docs/, decisions.md or decisions-branches/ in one
+// place only, this fails.
+func TestIsDecisionFile_AgreesWithResolveDecisionsPath(t *testing.T) {
+	// resolveDecisionsPath's branchlessPath: filepath.Join(docsPath, LegacyFileName).
+	branchless := decisions.DocsDirName + "/" + decisions.LegacyFileName
+	// resolveDecisionsPath's branchFile: filepath.Join(docsPath, BranchDirName, sanitized+".md").
+	branchFile := decisions.DocsDirName + "/" + decisions.BranchDirName + "/main.md"
+	for _, p := range []string{branchless, branchFile} {
+		if !isDecisionFile(p) {
+			t.Errorf("isDecisionFile(%q) = false; resolveDecisionsPath writes there", p)
+		}
+	}
+}
+
+// TestEvaluate_DecoyDecisionFileElsewhereStillBlocks is the regression pin
+// for the reproduced bypass, and it pins the OUTPUT the operator saw rather
+// than the helper underneath it: a well-formed §3.1 entry written to
+// internal/x/decisions.md — a path no read path enumerates and `logmind
+// log` will never write — alongside 302 lines of new Go cleared
+// `guard-commit --layer git-hook` with exit 0 "allowed (decision-recorded)"
+// while the identical index without the decoy was refused with exit 65.
+//
+// The CONTROL is in the same test on purpose. "Blocked" is only evidence
+// if the same tree minus the decoy is also blocked for the same reason and
+// the same tree with a REAL entry passes — otherwise a predicate that
+// rejects everything scores identically.
+func TestEvaluate_DecoyDecisionFileElsewhereStillBlocks(t *testing.T) {
+	decoys := []string{
+		"internal/x/decisions.md",
+		"decisions.md",
+		"docs/decisions-branches/nested/other.md",
+	}
+	for _, decoy := range decoys {
+		t.Run(decoy, func(t *testing.T) {
+			for _, mode := range []DiffMode{StagedOnly, WorkingTreeUnion} {
+				dir := initRepo(t)
+				writeFile(t, dir, "big.go", linesOf(302))
+				writeFile(t, dir, decoy, wellFormedEntry)
+				run(t, dir, "add", "big.go", decoy)
+
+				if d := Evaluate(dir, "subject", 20, mode); d.Allow {
+					t.Fatalf("mode=%v: Decision = %+v; want Block — %s is not a file logmind "+
+						"records decisions in, so 302 lines of Go would land undocumented",
+						mode, d, decoy)
+				}
+			}
+		})
+	}
+
+	// CONTROL: the same 302 lines with the same entry written where
+	// `logmind log` actually writes it still passes. Without this, the test
+	// above is also passed by a predicate that answers false to everything.
+	for _, real := range []string{"docs/decisions.md", "docs/decisions-branches/feature.md"} {
+		t.Run("control "+real, func(t *testing.T) {
+			dir := initRepo(t)
+			writeFile(t, dir, "big.go", linesOf(302))
+			writeFile(t, dir, real, wellFormedEntry)
+			run(t, dir, "add", "big.go", real)
+
+			d := Evaluate(dir, "subject", 20, StagedOnly)
+			if !d.Allow || d.CarveOut != CarveOutDecisionRecorded {
+				t.Fatalf("Decision = %+v; want Allow via CarveOutDecisionRecorded — an entry "+
+					"appended to %s IS a recorded decision", d, real)
+			}
+		})
 	}
 }
 

@@ -79,13 +79,24 @@ import (
 	"github.com/thrillmade/logmind/internal/version"
 )
 
+// Probe-row names for the three SPEC §3.4 / §6.2 ENFORCEMENT surfaces.
+// Named constants, not literals, because collectGateAbsences finds these
+// rows BY NAME: a rename at the probe alone would silently unhook the
+// absence check and put doctor straight back to reporting OK over a
+// missing gate.
+const (
+	rowCheckDecisionsWorkflow = "check-decisions.yml"
+	rowCommitMsgHook          = "commit-msg hook"
+	rowClaudeGuard            = "Claude Code PreToolUse guard"
+)
+
 // Workflow filename constants — matches src/logmind/core/doctor.py
 // LOGMIND_WORKFLOWS / CLUD_BUG_WORKFLOWS.
 var LogmindWorkflows = []string{
 	"regen-timeline.yml",
 	"check-doc-links.yml",
 	"logmind-self-update.yml",
-	"check-decisions.yml",
+	rowCheckDecisionsWorkflow,
 }
 
 // Marker regexes match Python's compiled patterns at the source.
@@ -175,6 +186,26 @@ type StatusReport struct {
 	// the spec fold-in is a nice-to-have, not a gate.
 	SpecAdvisories []string `json:"spec_advisories"`
 
+	// GateAbsences names the SPEC §3.4 / §6.2 enforcement surfaces this
+	// repository INSTALLED and no longer has: the commit-msg hook, the
+	// Claude Code PreToolUse guard, the check-decisions workflow.
+	//
+	// NOT an advisory, and it is the only list on this struct that isn't.
+	// SummariesNeeded / SpecAdvisories / AutoAdvisories are nudges about
+	// things that would be nice to have; a removed gate is an enforcement
+	// point failing open, permanently, and SPEC §3.4 is explicit that
+	// "Failing open MUST NOT be silent." So a non-empty list here flips
+	// Overall to DRIFT and `logmind doctor` exits 1 — which is the whole
+	// point: before this, deleting all three left `Stack status: OK` and
+	// exit 0 (measured), while a single stale template marker correctly
+	// reported DRIFT. doctor was not blind; it simply never counted gone.
+	//
+	// Scoped to those three surfaces and no others. Every other probe's
+	// "missing" stays benign — a repo that never wanted the merge driver,
+	// or dependabot, is not drifted, and turning each optional template
+	// into DRIFT is how doctor becomes noise people stop reading.
+	GateAbsences []string `json:"gate_absences"`
+
 	// AutoAdvisories is an ADVISORY list (#241) about `.logmind/auto.yml`,
 	// the standing directive `logmind auto <profile>` writes: a directive
 	// that predates the current bundled policy, one written for a profile
@@ -234,12 +265,23 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 	}
 	tools := []ToolStatus{collectLogmindStatus(projectRoot)}
 
+	// Computed from the probe rows collectLogmindStatus just produced, not
+	// from a second stat of the same files: one probe per surface means the
+	// row and the verdict can never disagree about whether it is there.
+	gateAbsences := collectGateAbsences(projectRoot, tools[0].Workflows)
+
 	overall := "OK"
 	for _, t := range tools {
 		if t.Drift == "stale" {
 			overall = "DRIFT"
 			break
 		}
+	}
+	// A gate that was installed and is gone is drift by itself, with no
+	// stale row anywhere — that combination is exactly the state doctor
+	// used to report OK over. See StatusReport.GateAbsences.
+	if len(gateAbsences) > 0 {
+		overall = "DRIFT"
 	}
 	if overall == "OK" {
 		for _, t := range tools {
@@ -281,6 +323,7 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 		SpecAdvisories:  collectSpecAdvisories(projectRoot),
 		AutoAdvisories:  collectAutoAdvisories(projectRoot),
 		GateAdvisories:  collectGateAdvisories(projectRoot),
+		GateAbsences:    gateAbsences,
 	}
 }
 
@@ -374,6 +417,171 @@ func readCludBugReview(path string) (map[string]any, bool) {
 		return nil, false
 	}
 	return doc.Review, doc.Review != nil
+}
+
+// gateSurfaces are the SPEC §3.4 / §6.2 enforcement surfaces — the three
+// places a substantive commit is actually stopped — paired with the file
+// whose absence means the surface is gone. §3.4 names the two local
+// interception points; §6.2 names "the one that actually blocks a merge."
+// Nothing else on the probe list is an enforcement surface, and nothing
+// else belongs here: the post-merge / post-rewrite / pre-commit hooks keep
+// derived docs in step, the merge driver resolves conflicts, and a repo
+// missing any of them has lost convenience, not a gate.
+// hookBacked marks a surface whose probe reads <repoRoot>/.git/hooks/…
+// directly. That join is wrong in a linked WORKTREE, where `.git` is a
+// file pointing at the common directory and the hooks live there — see
+// collectGateAbsences for why such a surface is skipped rather than
+// reported.
+//
+// siblings names rows installed in the SAME pass as this surface, used as
+// the recoverable evidence that the pass ever ran here. Only the workflow
+// carries them, and only because its opt-out is not recorded anywhere else:
+// `logmind init --github-actions=false` installs no workflows at all and
+// writes nothing to config.yml saying so, so a repository that is simply
+// not on GitHub Actions would otherwise be told forever that its merge gate
+// is missing, with `git.enforce_commits: false` — which also silences the
+// two LOCAL gates it presumably still wants — as its only escape.
+//
+// The two hooks-and-settings surfaces deliberately have none. Their absence
+// after a clone is the NORMAL state (git hooks are not cloned) and it is
+// exactly the thing worth saying; and the Claude guard's opt-out IS
+// recorded, as `agents.claude`.
+var gateSurfaces = []struct {
+	row, path, role string
+	hookBacked      bool
+	siblings        []string
+}{
+	{row: rowClaudeGuard, path: ".claude/settings.json",
+		role: "SPEC §3.4's harness interception point (PreToolUse)"},
+	{row: rowCommitMsgHook, path: ".git/hooks/commit-msg",
+		role: "SPEC §3.4's commit-msg interception point", hookBacked: true},
+	{row: rowCheckDecisionsWorkflow, path: ".github/workflows/check-decisions.yml",
+		role: "SPEC §6.2's merge gate",
+		siblings: []string{
+			"regen-timeline.yml", "check-doc-links.yml", "logmind-self-update.yml",
+		}},
+}
+
+// collectGateAbsences reports which enforcement surfaces this repository
+// installed and no longer has. It reads the probe rows CollectStatus
+// already produced rather than re-statting the same files.
+//
+// "INSTALLED AND NOW MISSING" vs "NEVER INSTALLED" is the whole question,
+// and the repo state does answer it — but only at repository granularity,
+// not per surface. `.logmind/config.yml` is what `logmind init` writes, and
+// init installs all three surfaces in the same pass, so its presence means
+// "this repo ran init" and therefore "these three were installed." A
+// directory that never ran init has no config.yml and is never nagged.
+//
+// TWO CASES THAT COST, both deliberate and both erring toward reporting:
+//
+//   - A repo initialised by a logmind that PREDATES one of these surfaces
+//     (the commit-msg hook and the PreToolUse guard are v2.0) has a
+//     config.yml and never had the file. It is reported. That is the right
+//     side to be wrong on: the repository genuinely has no gate there
+//     today, the remediation is the same single command, and the row
+//     clears permanently once it runs.
+//   - A FRESH CLONE of an initialised repo reports the commit-msg hook,
+//     because git hooks are not cloned. That is not noise — it is the most
+//     valuable thing here. Every fresh clone of a logmind repo is a working
+//     copy with no local enforcement at all, and §3.4's "failing open MUST
+//     NOT be silent" is precisely about not letting that pass quietly.
+//     `.claude/settings.json` and the workflow ARE committed, so a clean
+//     clone reports exactly one row, and `logmind doctor --fix` clears it.
+//
+// THE DELIBERATE OPT-OUT is `git.enforce_commits: false` — the key that
+// already means "logmind does not gate commits in this repository" to
+// guard-commit (internal/cli/guard_commit.go), to config.yml.template's own
+// comment, and to AGENTS.md. Set it and all three rows go quiet. It is one
+// key rather than a new doctor-specific one on purpose: a second key for
+// the same intent is a second owner for one fact, and the state it would
+// describe — "I want the gates enforced but I don't want them installed" —
+// is not a position anybody holds. The cost is real and worth naming: a
+// repo that wants local enforcement off but the CI gate on cannot say so
+// with this key, and silences the §6.2 row too.
+//
+// `agents.claude: false` silences the PreToolUse row on its own, because
+// init deliberately never installs that guard for such a repo — the reader
+// and the writer answer from config.ClaudeAgentEnabled, one rule, so
+// doctor cannot report a gate absent that init would refuse to create.
+func collectGateAbsences(projectRoot string, workflows []WorkflowStatus) []string {
+	// Never ran `logmind init` here → nothing was installed to lose.
+	if _, err := os.Stat(filepath.Join(projectRoot, ".logmind", "config.yml")); err != nil {
+		return nil
+	}
+	// Not a git repository → no commit can be made from it, so no gate is
+	// failing open. probeHook reports "missing" for this and for a deleted
+	// hook identically, so the distinction has to be made here.
+	gitPath, err := os.Stat(filepath.Join(projectRoot, ".git"))
+	if err != nil {
+		return nil
+	}
+	// A linked worktree: `.git` is a FILE naming the common directory, and
+	// the hooks live there and fire normally. probeHook joins
+	// <repoRoot>/.git/hooks/<name> literally, so it cannot see them and
+	// reports "missing" for a hook that is installed and running —
+	// measured in this repository's own agent worktrees, where
+	// `git rev-parse --git-path hooks` resolves to the main checkout's
+	// .git/hooks and commit-msg is sitting in it.
+	//
+	// Skipped, not reported. An absence check that fires where the probe
+	// cannot establish absence is worse than one that stays quiet: it is
+	// wrong, it flips a whole class of working repositories to DRIFT, and
+	// `doctor --fix` could not clear it anyway — hooks.Install* joins the
+	// same wrong path and no-ops there. The honest fix is to resolve the
+	// hooks directory the way git does, in the WRITER and the READER
+	// together; until then a worktree gets no hook-absence report, and the
+	// two file-backed surfaces below still report normally.
+	hooksProbeReliable := gitPath.IsDir()
+	cfg, _ := config.Load(projectRoot)
+	if !cfg.Git.EnforceCommits {
+		return nil
+	}
+	claudeWanted := config.ClaudeAgentEnabled(projectRoot)
+
+	byRow := make(map[string]WorkflowStatus, len(workflows))
+	for _, wf := range workflows {
+		byRow[wf.Name] = wf
+	}
+
+	var out []string
+	for _, surface := range gateSurfaces {
+		if surface.row == rowClaudeGuard && !claudeWanted {
+			continue
+		}
+		if surface.hookBacked && !hooksProbeReliable {
+			continue
+		}
+		if len(surface.siblings) > 0 && !anyInstalled(byRow, surface.siblings) {
+			continue
+		}
+		wf, ok := byRow[surface.row]
+		// Absent from the probe set at all is a wiring bug, not a repo
+		// state; say so rather than passing over it silently.
+		if !ok {
+			out = append(out, fmt.Sprintf(
+				"%s — %s: no probe reported on it, so logmind cannot tell whether it is installed",
+				surface.path, surface.role))
+			continue
+		}
+		if wf.Drift != "missing" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s — %s is not installed", surface.path, surface.role))
+	}
+	return out
+}
+
+// anyInstalled reports whether at least one of rows is present on disk —
+// the evidence that the install pass which writes them ran in this
+// repository at all. See gateSurfaces.siblings.
+func anyInstalled(byRow map[string]WorkflowStatus, rows []string) bool {
+	for _, name := range rows {
+		if wf, ok := byRow[name]; ok && wf.Installed {
+			return true
+		}
+	}
+	return false
 }
 
 // collectAutoAdvisories returns the ADVISORY list for `.logmind/auto.yml`
@@ -589,6 +797,13 @@ func collectLogmindStatus(projectRoot string) ToolStatus {
 // package (see classifyLogmindDrift), so a caller that only cares about
 // "does this repo need `doctor --fix`" should only count the same signal
 // doctor itself gates on.
+//
+// That exclusion is about the VERSION-drift count, and it is not the whole
+// story about "missing" any more. A missing §3.4/§6.2 ENFORCEMENT surface
+// in a repository that ran `logmind init` is drift, and CollectStatus flips
+// Overall to DRIFT for it — see collectGateAbsences. It is counted there
+// and not here because this function answers "how many components are stale
+// against this binary", which a deleted gate is not.
 //
 // This is the FULL probe set — including probePathResolution (a PATH lookup
 // + a live subprocess) and probeMergeDriverConfig (a `git config` shell-out)
@@ -973,7 +1188,7 @@ func probePostRewriteHook(projectRoot string) WorkflowStatus {
 // the natural state — the next `logmind init` or `logmind self-update`
 // will install it.
 func probeCommitMsgHook(projectRoot string) WorkflowStatus {
-	return probeHook(projectRoot, "commit-msg hook", "commit-msg", hooks.BuildCommitMsgBody())
+	return probeHook(projectRoot, rowCommitMsgHook, "commit-msg", hooks.BuildCommitMsgBody())
 }
 
 // probePreCommitHook reports drift for L2a of the v2.0.0 derived-docs
@@ -1055,7 +1270,7 @@ func probePreCommitHook(projectRoot string) WorkflowStatus {
 // `doctor --fix` / `logmind init` remain the remediation either way.
 func probeClaudePreToolUseHook(projectRoot string) WorkflowStatus {
 	current := version.Version
-	const displayName = "Claude Code PreToolUse guard"
+	const displayName = rowClaudeGuard
 	state := claudehook.Inspect(projectRoot)
 	if !state.SettingsPresent || !state.EntryPresent {
 		return WorkflowStatus{
@@ -1264,6 +1479,18 @@ func RenderStatus(r StatusReport) string {
 	}
 
 	lines = append(lines, fmt.Sprintf("Stack status: %s", r.Overall))
+	// Printed directly under the verdict it CAUSED, ahead of the advisory
+	// sections below, because unlike those it is the reason the run exits 1.
+	if len(r.GateAbsences) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf(
+			"Enforcement gates absent (%d) — SPEC §3.4: \"Failing open MUST NOT be silent.\"", len(r.GateAbsences)))
+		for _, g := range r.GateAbsences {
+			lines = append(lines, fmt.Sprintf("  • %s", g))
+		}
+		lines = append(lines, "  Reinstall with `logmind doctor --fix` — or set git.enforce_commits: false")
+		lines = append(lines, "  in .logmind/config.yml to run this repository without them deliberately.")
+	}
 	if len(r.Suggestions) > 0 {
 		lines = append(lines, "Suggested:")
 		for _, s := range r.Suggestions {
