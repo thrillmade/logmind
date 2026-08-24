@@ -401,7 +401,7 @@ auto-fix in the `check-doc-links` workflow).
 Verified against current source and against each consumer repository's
 *installed* copy, not against these templates.
 
-- **The `check-decisions` gate's four defeats are closed in the TEMPLATE
+- **The `check-decisions` gate's five defeats are closed in the TEMPLATE
   SOURCE — not in the gate that judges this repo**
   ([#260](https://github.com/thrillmade/logmind/issues/260),
   [#278](https://github.com/thrillmade/logmind/issues/278),
@@ -413,13 +413,18 @@ Verified against current source and against each consumer repository's
   --head "$HEAD_SHA"` (`:183`), which applies the §3.1 shape check in Go.
 
   **But logmind's own installed `.github/workflows/check-decisions.yml` is an
-  unversioned pre-v5 variant, on both `main` and `dev`, and carries four of
-  those five defeats**: the `*.md` exclusion (2 hits), the live-title override
-  (`skip_logmind=true` at `:130`), and a hardcoded `THRESHOLD: "20"` (2 hits,
-  with `commit_line_threshold` read 0 times). Only the Go verb shell-out is
-  modernised. So the gate judging every logmind PR is still defeatable by
-  retitling, and we do not run the gate we ship. That is #364, and it is
-  pre-tag.
+  unversioned pre-v5 variant, on both `main` and `dev`, and carries ALL FIVE**:
+  the `*.md` exclusion (2 hits), the live-title override (`skip_logmind=true`,
+  `dev:130` / `main:77` — the two files differ, 156 vs 103 lines), the
+  path-match decision test, a hardcoded `THRESHOLD: "20"` (2 hits, with
+  `commit_line_threshold` read 0 times), and its own copy of the exclusion
+  list. **Nothing is modernised** — `grep -cE '^[^#]*logmind check-decisions'`
+  returns **0** on both branches; the single non-anchored hit is a comment
+  saying the file does not yet do this. (Control: the same anchored grep
+  returns 2 against the template.) So the gate judging every logmind PR is
+  defeatable by retitling — no actor or maintainer check gates `skip_logmind`,
+  so any PR author can do it — and we do not run the gate we ship. That is
+  #364, and it is pre-tag.
 
 - **`logmind-self-update`'s `[skip-logmind]` marker does not work, and is not
   a legitimate carve-out** ([#365](https://github.com/thrillmade/logmind/issues/365)).

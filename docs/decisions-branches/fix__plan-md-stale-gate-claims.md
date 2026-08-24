@@ -26,3 +26,14 @@
 
 ---
 
+## 2026-08-24 14:56 - docs/plan.md: our own gate carries all FIVE defeats, not four — my count came from an unanchored grep that matched a comment
+
+**Reasoning:** The re-verifier refuted my correction. I reported 'shells to logmind check-decisions (1 hit)' and concluded four of five with the verb modernised. The hit was a COMMENT. Anchored to non-comment lines, 'grep -cE ^[^#]*logmind check-decisions' returns 0 on both main and dev; the control, the same anchored grep against the template, returns 2. So all five defeats are present and nothing is modernised, cross-checked against the template's own five-item enumeration at check-decisions.yml.template:12-27.
+
+**Alternatives considered:** Leave the count and footnote the probe. Rejected: the count IS the finding — 'four of five with the verb modernised' reads as a gate half-migrated, while 'five of five, nothing modernised' reads as a gate that was never migrated at all. Those imply different amounts of work and different risk before the tag.
+
+**Implications:**
+- Also corrected: skip_logmind=true is at dev:130 and main:77 — the two installed files differ, 156 vs 103 lines, so a single line number cannot describe both, and I had asserted :130 for both. And 'defeatable by retitling' is confirmed rather than overstated: no actor or maintainer check gates skip_logmind, so any PR author can do it. Issue #364's title and table carried the same wrong count and are corrected. Second false-positive grep of the day against several false-zero traps I had already catalogued — the anchored form belongs in the sweep protocol.
+
+---
+
