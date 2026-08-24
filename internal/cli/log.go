@@ -224,7 +224,11 @@ Example:
 // printed to stdout, or a regular error for plumbing failures.
 func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdout, stderr io.Writer) error {
 	q := newQout(quiet, stdout, stderr)
-	docsPath := filepath.Join(cwd, "docs")
+	// Resolved, not joined: the docs directory is the one component of the
+	// layout a repository may already have spelled differently, and the
+	// commit gate has to agree about it. See decisions.Layout.
+	layout := decisions.ResolveLayout(cwd)
+	docsPath := layout.Dir()
 	if !pathExists(docsPath) {
 		q.fail("Error: docs/ directory not found. Run 'logmind init' first.\n")
 		return ErrSilent
@@ -308,7 +312,7 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 	}
 
 	// Resolve target file based on git state + config.branch_aware.
-	target, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
+	target, isBranchFile := resolveDecisionsPath(cwd, layout, cfg)
 
 	// Serialize concurrent `logmind log` invocations against this repo.
 	// Without this, two concurrent logs both read the pre-write content
@@ -619,8 +623,13 @@ func runLog(cwd, summary string, f *logFlags, quiet bool, stdin io.Reader, stdou
 // docs/decisions.md. Detached HEAD is the case that yields "" — symbolic-ref
 // exits non-zero there because HEAD holds a raw SHA, not a ref.
 // Both halves are pinned by TestResolveDecisionsPathUnbornVsDetached.
-func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target string, isBranchFile bool) {
-	branchlessPath := filepath.Join(docsPath, decisions.LegacyFileName)
+// The PATHS themselves come from the layout, not from a join spelled here:
+// this function owns the routing RULE (which of the two files), and
+// decisions.Layout owns where either one is — see its doc comment for the
+// two configurations in which a local join disagreed with the commit gate
+// about a file logmind had just written.
+func resolveDecisionsPath(cwd string, layout decisions.Layout, cfg config.Config) (target string, isBranchFile bool) {
+	branchlessPath := layout.LegacyFile()
 	if !cfg.Decisions.BranchAware {
 		return branchlessPath, false
 	}
@@ -633,9 +642,7 @@ func resolveDecisionsPath(cwd, docsPath string, cfg config.Config) (target strin
 		// there; see this function's doc comment.
 		return branchlessPath, false
 	}
-	branchFile := filepath.Join(docsPath, decisions.BranchDirName,
-		sanitizeBranchName(branch)+".md")
-	return branchFile, true
+	return layout.BranchFile(sanitizeBranchName(branch)), true
 }
 
 // DELIBERATELY ABSENT: a defaultBranchDecisionsPath helper.

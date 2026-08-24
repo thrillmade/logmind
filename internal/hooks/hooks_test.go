@@ -948,15 +948,93 @@ func TestExtractVersion_PreV0610Hook(t *testing.T) {
 	}
 }
 
+// TestCommitMsgBodyCarriesItsOwnInvocation is the fence behind
+// CommitMsgInvocation: `logmind doctor` reports a commit-msg hook that does
+// not contain that string as INERT, so a change to the body that renames or
+// re-shapes the delegation would make doctor call every correctly-installed
+// hook in the fleet a failing gate. The two move together or this fails.
+//
+// Also pinned: the string appears ONCE. The body's prose names `logmind
+// guard-commit --layer git-hook` on its own, so a needle that matched a
+// comment would be satisfied by exactly the gutted hook the check exists to
+// catch — and a second occurrence would mean the needle had drifted back
+// into prose.
+func TestCommitMsgBodyCarriesItsOwnInvocation(t *testing.T) {
+	body := BuildCommitMsgBody()
+	if n := strings.Count(body, CommitMsgInvocation); n != 1 {
+		t.Fatalf("BuildCommitMsgBody() contains CommitMsgInvocation %d times; want exactly 1 "+
+			"(the run line, never a comment)", n)
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(line, CommitMsgInvocation) {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			t.Fatalf("the only occurrence of CommitMsgInvocation is a COMMENT, so an emptied "+
+				"hook that kept its prose would still read as enforcing: %q", line)
+		}
+	}
+}
+
+// TestInstallCommitMsg_RestoresAClearedExecuteBit — the loop `logmind
+// doctor` closes on itself. doctor reports a non-executable commit-msg hook
+// as an absent enforcement gate (git skips such a hook silently, with a
+// hint nobody reads) and points the operator at `doctor --fix`; the
+// installer used to see byte-identical content and return "already
+// current", so the tool named a fault in its OWN file and then declined to
+// repair it.
+//
+// The CONTROL is the second half: a byte-identical hook that IS executable
+// must still be a no-op, or "fixed" would just mean "rewritten every run".
+func TestInstallCommitMsg_RestoresAClearedExecuteBit(t *testing.T) {
+	repo := tempRepoWithHooks(t)
+	if _, err := InstallCommitMsg(repo); err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	path := filepath.Join(repo, ".git", "hooks", "commit-msg")
+
+	// CONTROL: nothing to do on a healthy hook.
+	changed, err := InstallCommitMsg(repo)
+	if err != nil || changed {
+		t.Fatalf("InstallCommitMsg = %v, %v on an unchanged hook; want (false, nil)", changed, err)
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	changed, err = InstallCommitMsg(repo)
+	if err != nil || !changed {
+		t.Fatalf("InstallCommitMsg = %v, %v over a non-executable hook; want (true, nil)", changed, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("hook mode = %v; git never runs a hook without the execute bit", info.Mode())
+	}
+	// The body is untouched: this restores a MODE, it does not rewrite a
+	// file the repository may have hardlinked or shared.
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(body) != BuildCommitMsgBody() {
+		t.Errorf("the body changed while only the mode should have")
+	}
+}
+
 // --- helpers -------------------------------------------------------------
 
+// tempRepoWithHooks is a REAL git repository, and it has to be: the
+// installers resolve their target with `git rev-parse --git-path hooks`
+// (hooks.Dir) rather than joining `.git/hooks`, so a hand-made `.git`
+// directory is not a repository git will answer about and every Install*
+// no-ops against it. It used to be exactly that hand-made shell, which
+// meant these tests measured the join and never the resolution.
 func tempRepoWithHooks(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
-		t.Fatalf("mkdir .git/hooks: %v", err)
-	}
-	return dir
+	return initRealGitRepo(t)
 }
 
 // initRealGitRepo creates a fresh, REAL git working repo (not just the

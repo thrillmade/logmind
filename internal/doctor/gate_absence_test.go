@@ -17,6 +17,7 @@ package doctor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/hooks"
 	"github.com/thrillmade/logmind/internal/templates"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // gatedRepo is freshRepo plus the state `logmind init` leaves behind: a
@@ -34,9 +36,11 @@ import (
 func gatedRepo(t *testing.T) string {
 	t.Helper()
 	dir := freshRepo(t)
-	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
-		t.Fatalf("mkdir .git/hooks: %v", err)
-	}
+	// A REAL repository, because the hook installers and the hook probes
+	// both resolve their directory through git now (hooks.Dir) — against a
+	// hand-made `.git` every Install* below no-ops and every probe reports
+	// missing, which is the fixture measuring the bug rather than the code.
+	realGitDir(t, dir)
 	if _, err := hooks.InstallCommitMsg(dir); err != nil {
 		t.Fatalf("InstallCommitMsg: %v", err)
 	}
@@ -194,7 +198,7 @@ func TestGateAbsences_ClaudeAgentDisabled(t *testing.T) {
 	}
 
 	// The flag covers the guard and nothing else.
-	if err := os.Remove(filepath.Join(dir, ".git", "hooks", "commit-msg")); err != nil {
+	if err := os.Remove(filepath.Join(hooksDirOf(t, dir), "commit-msg")); err != nil {
 		t.Fatalf("remove commit-msg: %v", err)
 	}
 	r = CollectStatus(dir, true)
@@ -211,9 +215,7 @@ func TestGateAbsences_ClaudeAgentDisabled(t *testing.T) {
 func TestGateAbsences_NeverInitialised_IsSilent(t *testing.T) {
 	dir := t.TempDir()
 	isolatePathHermetic(t)
-	if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
-		t.Fatalf("mkdir .git/hooks: %v", err)
-	}
+	realGitDir(t, dir)
 	r := CollectStatus(dir, true)
 	if len(r.GateAbsences) != 0 {
 		t.Errorf("GateAbsences = %v; want none — this directory never ran `logmind init`", r.GateAbsences)
@@ -269,35 +271,85 @@ func TestGateAbsences_NonEnforcementMissingIsStillBenign(t *testing.T) {
 	}
 }
 
-// TestGateAbsences_LinkedWorktreeDoesNotReportHooks — the false positive
-// that nearly shipped with this feature, and the reason `logmind doctor`
-// must not treat every "missing" hook row as evidence.
+// TestGateAbsences_LinkedWorktreeSeesTheHooksGitReads — the false positive
+// that shipped with this feature's first draft, now fixed at the cause
+// rather than suppressed.
 //
 // In a linked git worktree `.git` is a FILE naming the common directory,
-// the hooks live there, and they fire normally. probeHook joins
-// <repoRoot>/.git/hooks/<name> literally, so it reports "missing" for a
-// hook that is installed and running — measured in this repository's own
-// agent worktrees. Escalating that row to DRIFT would flip every worktree
-// of every logmind repo to exit 1 over a gate that is not absent, and
-// `doctor --fix` could not clear it (hooks.Install* joins the same wrong
-// path and no-ops there).
-//
-// The two FILE-backed surfaces are unaffected and must still report, or
-// this guard would silence more than the unreliable probe.
-func TestGateAbsences_LinkedWorktreeDoesNotReportHooks(t *testing.T) {
-	dir := gatedRepo(t)
+// the hooks live THERE, and they fire normally. The probe used to join
+// <repoRoot>/.git/hooks/<name>, so it reported "missing" for a hook that
+// was installed and running — measured in this repository's own agent
+// worktrees. The first fix was to say nothing in a worktree at all, which
+// bought silence at the price of never reporting a genuinely absent hook
+// there. The probe now resolves the directory the way git does
+// (hooks.Dir), so both halves are answerable, and both are asserted here:
+// an installed hook is FOUND from the worktree, and a deleted one is
+// REPORTED from the worktree.
+func TestGateAbsences_LinkedWorktreeSeesTheHooksGitReads(t *testing.T) {
+	main := gatedRepo(t)
+	mustWrite(t, filepath.Join(main, "seed.txt"), "seed\n")
+	gitInRepo(t, main, "config", "user.email", "test@example.com")
+	gitInRepo(t, main, "config", "user.name", "Test")
+	gitInRepo(t, main, "config", "commit.gpgsign", "false")
+	gitInRepo(t, main, "add", "seed.txt")
+	gitInRepo(t, main, "commit", "-q", "-m", "seed", "--no-verify")
 
-	// CONTROL: as a normal checkout, the deleted hook IS reported.
-	if err := os.Remove(filepath.Join(dir, ".git", "hooks", "commit-msg")); err != nil {
+	linked := filepath.Join(t.TempDir(), "wt")
+	gitInRepo(t, main, "worktree", "add", "-q", "-b", "wt", linked)
+	testgit.DisableMaintenance(t, linked)
+
+	// The worktree is a checkout, not a logmind project — give it the same
+	// surfaces gatedRepo gave the main checkout, minus the hook, which is
+	// SHARED and is exactly what this test is about.
+	mustWrite(t, filepath.Join(linked, ".logmind", "config.yml"), "git:\n  auto_commit: true\n")
+	mustWrite(t, filepath.Join(linked, "docs", "decisions.md"), "# Decisions\n")
+	if _, err := claudehook.EnsurePreToolUseGuard(linked); err != nil {
+		t.Fatalf("EnsurePreToolUseGuard: %v", err)
+	}
+	for _, name := range LogmindWorkflows {
+		mustWrite(t, filepath.Join(linked, ".github", "workflows", name),
+			templates.Workflow(name+".template"))
+	}
+
+	// Precondition: `.git` really is a FILE here, or this test is a second
+	// copy of the normal-checkout case.
+	info, err := os.Lstat(filepath.Join(linked, ".git"))
+	if err != nil || info.IsDir() {
+		t.Fatalf("precondition: %s/.git is not a worktree pointer file (err=%v)", linked, err)
+	}
+
+	if r := CollectStatus(linked, true); len(r.GateAbsences) != 0 {
+		t.Fatalf("GateAbsences = %v; want none — the commit-msg hook is installed in the "+
+			"common directory and fires for commits made from this worktree", r.GateAbsences)
+	}
+
+	// …and the absence IS reported from here, which the previous
+	// worktree-wide silence could never have said.
+	hooksDir, ok := hooks.Dir(linked)
+	if !ok {
+		t.Fatal("hooks.Dir could not resolve the worktree's hooks directory")
+	}
+	if err := os.Remove(filepath.Join(hooksDir, "commit-msg")); err != nil {
 		t.Fatalf("remove commit-msg: %v", err)
 	}
-	if r := CollectStatus(dir, true); len(r.GateAbsences) != 1 {
-		t.Fatalf("control: GateAbsences = %v; want the commit-msg hook reported "+
-			"while .git is a directory", r.GateAbsences)
+	r := CollectStatus(linked, true)
+	if len(r.GateAbsences) != 1 || !strings.Contains(r.GateAbsences[0], "commit-msg") {
+		t.Fatalf("GateAbsences = %v; want the commit-msg hook reported — it is genuinely "+
+			"gone from the directory git reads for this worktree", r.GateAbsences)
 	}
+}
 
-	// Now make it a worktree: `.git` becomes a file (the hooks it names are
-	// elsewhere and outside this probe's reach).
+// TestGateAbsences_UnresolvableGitDirIsSilent — the other side of the same
+// rule. When git cannot say where the hooks live (a `.git` pointer at a
+// common directory that is not there), logmind cannot establish that a hook
+// is absent, and "cannot establish" must not be reported as "absent":
+// `doctor --fix` would not clear it either, because the installer resolves
+// the same way and no-ops for the same reason.
+//
+// The FILE-backed surfaces still report, or this guard would silence more
+// than the unanswerable probe.
+func TestGateAbsences_UnresolvableGitDirIsSilent(t *testing.T) {
+	dir := gatedRepo(t)
 	if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
 		t.Fatalf("rm .git: %v", err)
 	}
@@ -306,19 +358,28 @@ func TestGateAbsences_LinkedWorktreeDoesNotReportHooks(t *testing.T) {
 	r := CollectStatus(dir, true)
 	for _, g := range r.GateAbsences {
 		if strings.Contains(g, "commit-msg") {
-			t.Errorf("GateAbsences = %v; a linked worktree's hooks are not visible to "+
-				"this probe, so their absence must not be claimed", r.GateAbsences)
+			t.Errorf("GateAbsences = %v; git cannot resolve a hooks directory here, so "+
+				"the hook's absence is not established and must not be claimed", r.GateAbsences)
 		}
 	}
 
-	// …but the file-backed surfaces still report there.
 	if err := os.Remove(filepath.Join(dir, ".github", "workflows", "check-decisions.yml")); err != nil {
 		t.Fatalf("remove check-decisions.yml: %v", err)
 	}
 	r = CollectStatus(dir, true)
 	if len(r.GateAbsences) != 1 || !strings.Contains(r.GateAbsences[0], "check-decisions.yml") {
-		t.Fatalf("GateAbsences = %v; want the merge gate reported — a worktree hides "+
-			"the hooks, not the workflow", r.GateAbsences)
+		t.Fatalf("GateAbsences = %v; want the merge gate reported — an unanswerable git "+
+			"hides the hooks, not the workflow", r.GateAbsences)
+	}
+}
+
+// gitInRepo runs `git <args>` in dir, failing the test on a non-zero exit.
+func gitInRepo(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
 	}
 }
 
@@ -361,7 +422,7 @@ func TestGateAbsences_NoWorkflowsAtAll_IsSilent(t *testing.T) {
 
 	// …and the LOCAL gates are unaffected by that: they are per-clone and
 	// their absence still counts.
-	if err := os.Remove(filepath.Join(dir, ".git", "hooks", "commit-msg")); err != nil {
+	if err := os.Remove(filepath.Join(hooksDirOf(t, dir), "commit-msg")); err != nil {
 		t.Fatalf("remove commit-msg: %v", err)
 	}
 	r = CollectStatus(dir, true)

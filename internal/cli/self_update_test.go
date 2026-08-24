@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 func TestSelfUpdate_FreshRepoNoChanges(t *testing.T) {
@@ -35,10 +37,12 @@ func TestSelfUpdate_FreshRepoNoChanges(t *testing.T) {
 
 func TestSelfUpdate_RefreshesStaleHook(t *testing.T) {
 	dir := withTempCwd(t, func(_ string) {
-		// Simulate an existing .git/hooks/ dir with a stale logmind hook.
-		if err := os.MkdirAll(filepath.Join(".git", "hooks"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		// A REAL repository with a stale logmind hook in it. `git init`
+		// rather than a hand-made `.git/hooks`: the installers resolve
+		// their target with `git rev-parse --git-path hooks` (hooks.Dir)
+		// now, so a directory git will not answer about gets no hook
+		// written to it at all.
+		testgit.InitRepo(t, "", "-q", "--initial-branch=main")
 		stale := "#!/bin/sh\n# logmind post-merge hook\n# logmind-hook-version: 0.1.0\necho stale\n"
 		if err := os.WriteFile(filepath.Join(".git", "hooks", "post-merge"), []byte(stale), 0o755); err != nil {
 			t.Fatal(err)
@@ -107,9 +111,7 @@ func TestSelfUpdate_PinVersionSet_NoOps(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(".logmind", "config.yml"), []byte("pinVersion: \"1.2.3\"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(".git", "hooks"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		testgit.InitRepo(t, "", "-q", "--initial-branch=main")
 		stale := "#!/bin/sh\n# logmind post-merge hook\n# logmind-hook-version: 0.1.0\necho stale\n"
 		if err := os.WriteFile(filepath.Join(".git", "hooks", "post-merge"), []byte(stale), 0o755); err != nil {
 			t.Fatal(err)
@@ -152,9 +154,7 @@ func TestSelfUpdate_PinVersionSet_NoOps(t *testing.T) {
 // — the fix must not accidentally gate the unset case.
 func TestSelfUpdate_PinVersionUnset_RunsNormally(t *testing.T) {
 	dir := withTempCwd(t, func(_ string) {
-		if err := os.MkdirAll(filepath.Join(".git", "hooks"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		testgit.InitRepo(t, "", "-q", "--initial-branch=main")
 		stale := "#!/bin/sh\n# logmind post-merge hook\n# logmind-hook-version: 0.1.0\necho stale\n"
 		if err := os.WriteFile(filepath.Join(".git", "hooks", "post-merge"), []byte(stale), 0o755); err != nil {
 			t.Fatal(err)

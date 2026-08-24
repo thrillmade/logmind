@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitcli"
 	"github.com/thrillmade/logmind/internal/guardcommit"
 )
@@ -203,7 +204,7 @@ func runCheckDecisions(opts checkDecisionsOpts, stdout io.Writer) error {
 	// The scope is this run's: the staged index, or the base...head range.
 	// addedHunks carries that distinction, so the shared judgement never
 	// has to know which surface called it.
-	evidence, err := guardcommit.DecisionRecorded(names, func(path string) ([]gitcli.AddedHunk, error) {
+	evidence, err := guardcommit.DecisionRecorded(decisions.ResolveLayout(repoRoot), names, func(path string) ([]gitcli.AddedHunk, error) {
 		return addedHunks(repoRoot, path, opts)
 	})
 	if err != nil {

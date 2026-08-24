@@ -149,6 +149,37 @@ type WorkflowStatus struct {
 	// One owner for the fact — probeWorkflow computes it, callers read it,
 	// nobody re-derives it by sniffing the prose in Marker.
 	Displaced bool `json:"-"`
+
+	// Inert says WHY an artifact that IS installed cannot enforce anything
+	// — empty when it can, a reason phrased for the reader when it cannot.
+	//
+	// Drift and Inert answer different questions and both answers are true
+	// at once: a commit-msg hook carrying the current marker with its
+	// execute bit cleared is `drift: current` (it IS the version this
+	// binary writes) and inert (git never runs it). Reporting only the
+	// first is how a repository with an emptied hook and a repository with
+	// a working one looked identical — `overall: OK`, `gate_absences: []`,
+	// and a 30-line raw commit through both.
+	//
+	// EXISTENCE was the whole check before, which is the #298 class exactly:
+	// the artifact is there, so the feature is on. Only the enforcement
+	// surfaces compute it (see gateSurfaces); a post-merge hook that lost
+	// its execute bit has lost convenience, not a gate, and saying so on
+	// every row is how doctor becomes noise.
+	//
+	// Not serialized, for Displaced's reason: the JSON field names are a
+	// cross-repo contract, and this is an explanation carried into
+	// StatusReport.GateAbsences rather than a verdict a consumer branches
+	// on.
+	Inert string `json:"-"`
+
+	// Path is the file the probe actually READ, repo-relative where it
+	// sits inside the repository. A hook's path is not knowable from its
+	// name — `core.hooksPath` moves it — so the row carries where it
+	// looked, and the absence report names that rather than a
+	// `.git/hooks/<name>` the repository may never read. Empty for probes
+	// with no single file behind them. Not serialized (see Displaced).
+	Path string `json:"-"`
 }
 
 // ToolStatus aggregates per-tool fields (currently just `logmind`;
@@ -204,6 +235,17 @@ type StatusReport struct {
 	// "missing" stays benign — a repo that never wanted the merge driver,
 	// or dependabot, is not drifted, and turning each optional template
 	// into DRIFT is how doctor becomes noise people stop reading.
+	//
+	// ABSENT AND INERT ARE ONE VERDICT here. A gate is reported when the
+	// file is gone AND when it is present and cannot enforce: an emptied or
+	// non-executable commit-msg hook, a check-decisions.yml whose job was
+	// deleted under an intact marker. Checking EXISTENCE was the whole
+	// check once, and a repository with each of those reported OK with a
+	// raw 30-line commit going through it. See WorkflowStatus.Inert.
+	//
+	// Serialized as `[]` rather than `null` when empty — the only list here
+	// that is, because it is the only one whose emptiness a reader branches
+	// on. See collectGateAbsences.
 	GateAbsences []string `json:"gate_absences"`
 
 	// AutoAdvisories is an ADVISORY list (#241) about `.logmind/auto.yml`,
@@ -427,12 +469,6 @@ func readCludBugReview(path string) (map[string]any, bool) {
 // else belongs here: the post-merge / post-rewrite / pre-commit hooks keep
 // derived docs in step, the merge driver resolves conflicts, and a repo
 // missing any of them has lost convenience, not a gate.
-// hookBacked marks a surface whose probe reads <repoRoot>/.git/hooks/…
-// directly. That join is wrong in a linked WORKTREE, where `.git` is a
-// file pointing at the common directory and the hooks live there — see
-// collectGateAbsences for why such a surface is skipped rather than
-// reported.
-//
 // siblings names rows installed in the SAME pass as this surface, used as
 // the recoverable evidence that the pass ever ran here. Only the workflow
 // carries them, and only because its opt-out is not recorded anywhere else:
@@ -446,15 +482,19 @@ func readCludBugReview(path string) (map[string]any, bool) {
 // after a clone is the NORMAL state (git hooks are not cloned) and it is
 // exactly the thing worth saying; and the Claude guard's opt-out IS
 // recorded, as `agents.claude`.
+// `path` is what the report NAMES when the probe row carries no path of its
+// own. The commit-msg row always does — core.hooksPath and linked worktrees
+// both move the file, so the row reports where it actually looked and the
+// spelling here is only the fallback for a repository git could not answer
+// about.
 var gateSurfaces = []struct {
 	row, path, role string
-	hookBacked      bool
 	siblings        []string
 }{
 	{row: rowClaudeGuard, path: ".claude/settings.json",
 		role: "SPEC §3.4's harness interception point (PreToolUse)"},
 	{row: rowCommitMsgHook, path: ".git/hooks/commit-msg",
-		role: "SPEC §3.4's commit-msg interception point", hookBacked: true},
+		role: "SPEC §3.4's commit-msg interception point"},
 	{row: rowCheckDecisionsWorkflow, path: ".github/workflows/check-decisions.yml",
 		role: "SPEC §6.2's merge gate",
 		siblings: []string{
@@ -505,37 +545,31 @@ var gateSurfaces = []struct {
 // and the writer answer from config.ClaudeAgentEnabled, one rule, so
 // doctor cannot report a gate absent that init would refuse to create.
 func collectGateAbsences(projectRoot string, workflows []WorkflowStatus) []string {
+	// EMPTY, not nil, on every path out of here — `gate_absences` is the
+	// one list on StatusReport a consumer branches on (it is the only one
+	// that moves `overall` and therefore the exit code), so `null` and `[]`
+	// meaning the same thing is a distinction the reader has to know about
+	// to get right. Its four neighbours still serialize `null` when empty;
+	// that is the pre-existing shape of a cross-repo contract and changing
+	// it belongs to whoever changes what those lists mean.
+	none := []string{}
 	// Never ran `logmind init` here → nothing was installed to lose.
 	if _, err := os.Stat(filepath.Join(projectRoot, ".logmind", "config.yml")); err != nil {
-		return nil
+		return none
 	}
 	// Not a git repository → no commit can be made from it, so no gate is
 	// failing open. probeHook reports "missing" for this and for a deleted
-	// hook identically, so the distinction has to be made here.
-	gitPath, err := os.Stat(filepath.Join(projectRoot, ".git"))
-	if err != nil {
-		return nil
+	// hook identically, so the distinction has to be made here. `.git` as a
+	// FILE counts: that is a linked worktree, which commits like any other
+	// checkout and whose hooks probeHook now finds, because the probe and
+	// hooks.Install* resolve the directory the way git does rather than
+	// joining `.git/hooks`.
+	if _, err := os.Stat(filepath.Join(projectRoot, ".git")); err != nil {
+		return none
 	}
-	// A linked worktree: `.git` is a FILE naming the common directory, and
-	// the hooks live there and fire normally. probeHook joins
-	// <repoRoot>/.git/hooks/<name> literally, so it cannot see them and
-	// reports "missing" for a hook that is installed and running —
-	// measured in this repository's own agent worktrees, where
-	// `git rev-parse --git-path hooks` resolves to the main checkout's
-	// .git/hooks and commit-msg is sitting in it.
-	//
-	// Skipped, not reported. An absence check that fires where the probe
-	// cannot establish absence is worse than one that stays quiet: it is
-	// wrong, it flips a whole class of working repositories to DRIFT, and
-	// `doctor --fix` could not clear it anyway — hooks.Install* joins the
-	// same wrong path and no-ops there. The honest fix is to resolve the
-	// hooks directory the way git does, in the WRITER and the READER
-	// together; until then a worktree gets no hook-absence report, and the
-	// two file-backed surfaces below still report normally.
-	hooksProbeReliable := gitPath.IsDir()
 	cfg, _ := config.Load(projectRoot)
 	if !cfg.Git.EnforceCommits {
-		return nil
+		return none
 	}
 	claudeWanted := config.ClaudeAgentEnabled(projectRoot)
 
@@ -544,12 +578,9 @@ func collectGateAbsences(projectRoot string, workflows []WorkflowStatus) []strin
 		byRow[wf.Name] = wf
 	}
 
-	var out []string
+	out := none
 	for _, surface := range gateSurfaces {
 		if surface.row == rowClaudeGuard && !claudeWanted {
-			continue
-		}
-		if surface.hookBacked && !hooksProbeReliable {
 			continue
 		}
 		if len(surface.siblings) > 0 && !anyInstalled(byRow, surface.siblings) {
@@ -564,12 +595,49 @@ func collectGateAbsences(projectRoot string, workflows []WorkflowStatus) []strin
 				surface.path, surface.role))
 			continue
 		}
-		if wf.Drift != "missing" {
+		// A "missing" row with no Path is a probe that could not work out
+		// WHERE the artifact would be — git declining to resolve a hooks
+		// directory, because there is no git binary or `.git` names a
+		// common directory that is not there. That is "cannot establish",
+		// not "absent", and an absence check that fires where it cannot
+		// establish absence is worse than one that stays quiet: it is
+		// wrong, and `doctor --fix` cannot clear it either, because the
+		// installer resolves the same way and no-ops for the same reason.
+		if wf.Drift == "missing" && wf.Path == "" {
 			continue
 		}
-		out = append(out, fmt.Sprintf("%s — %s is not installed", surface.path, surface.role))
+		where := surface.path
+		if wf.Path != "" {
+			where = relativeToRoot(projectRoot, wf.Path)
+		}
+		// GONE and PRESENT-BUT-INERT are one verdict here, because they are
+		// one outcome: the surface stops nothing — a commit for the two
+		// local gates, a merge for §6.2's. Splitting them would let the
+		// second keep passing as OK, which is what it did: an emptied
+		// commit-msg hook and one with its execute bit cleared both landed
+		// on a drift value this filter used to let through, with a 30-line
+		// raw commit going in behind each, and a check-decisions.yml whose
+		// job had been deleted reported `drift: current`.
+		switch {
+		case wf.Drift == "missing":
+			out = append(out, fmt.Sprintf("%s — %s is not installed", where, surface.role))
+		case wf.Inert != "":
+			out = append(out, fmt.Sprintf("%s — %s: %s", where, surface.role, wf.Inert))
+		}
 	}
 	return out
+}
+
+// relativeToRoot renders a probe's path the way a person would type it,
+// falling back to the absolute path when it lies outside the repository —
+// which a hooks directory legitimately can, in a linked worktree or under
+// an absolute core.hooksPath.
+func relativeToRoot(projectRoot, path string) string {
+	rel, err := filepath.Rel(projectRoot, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // anyInstalled reports whether at least one of rows is present on disk —
@@ -762,14 +830,21 @@ func collectLogmindStatus(projectRoot string) ToolStatus {
 	workflows = append(workflows, probeAgentsMD(projectRoot))
 	workflows = append(workflows, probeMergeDriverAttrs(projectRoot))
 	workflows = append(workflows, probeMergeDriverConfig(projectRoot))
-	workflows = append(workflows, probePostMergeHook(projectRoot))
-	workflows = append(workflows, probePostRewriteHook(projectRoot))
-	workflows = append(workflows, probeCommitMsgHook(projectRoot))
+	// ONE resolution for the four hook probes, and it is git's own answer
+	// rather than a `<projectRoot>/.git/hooks` join: core.hooksPath and a
+	// linked worktree both move the directory, and a probe that looks in
+	// the wrong place reports a working hook missing — after which the
+	// tool's own `doctor --fix` writes a replacement somewhere git never
+	// reads and the next run says OK. See hooks.Dir.
+	hooksDir, _ := hooks.Dir(projectRoot)
+	workflows = append(workflows, probePostMergeHook(hooksDir))
+	workflows = append(workflows, probePostRewriteHook(hooksDir))
+	workflows = append(workflows, probeCommitMsgHook(hooksDir))
 	// v2.0.0 L2a probe — the pin-preservation pre-commit hook. Sits right
 	// after commit-msg (the other commit-time git hook) and right before
 	// the Claude Code harness guard (L2b uses the same restore, different
 	// layer) since all three are part of the same enforcement/pin story.
-	workflows = append(workflows, probePreCommitHook(projectRoot))
+	workflows = append(workflows, probePreCommitHook(hooksDir))
 	// v2.0.0 Layer 1 probe — the Claude Code harness's PreToolUse guard
 	// entry in .claude/settings.json. Sits right after the commit-msg row
 	// (Layer 2) since the two are the enforcement feature's matched pair.
@@ -828,6 +903,19 @@ func StaleCount(projectRoot string) int {
 // handful of stat/read syscalls: single-digit milliseconds, safe to run on
 // EVERY `logmind log` invocation.
 //
+// ONE EXCEPTION, and it is deliberate: hooks.Dir runs `git rev-parse
+// --git-path hooks` once per call. The alternative was for the reader to
+// keep joining `<projectRoot>/.git/hooks` while the writer resolved
+// properly, and a doctor that disagrees with the installer about where a
+// hook lives is the defect this budget was protecting nothing from — it
+// reported a working hook missing under core.hooksPath, and `--fix` then
+// wrote one where git does not read. `rev-parse --git-path` touches no
+// objects and no index; `logmind log`, which is what pays for this path,
+// already forks git several times on the same invocation. Measured on a
+// darwin/arm64 laptop, where a process spawn is the whole cost: 31 ms for
+// the rev-parse, against a `logmind log --no-commit` that went 403 ms →
+// 442 ms. One spawn, on a verb that already pays for several.
+//
 // EXCLUDED, and why:
 //
 //   - probePathResolution: does `exec.LookPath("logmind")` followed by a
@@ -853,10 +941,11 @@ func collectLogmindStatusFast(projectRoot string) []WorkflowStatus {
 	}
 	workflows = append(workflows, probeAgentsMD(projectRoot))
 	workflows = append(workflows, probeMergeDriverAttrs(projectRoot)) // file read only (.gitattributes) — safe
-	workflows = append(workflows, probePostMergeHook(projectRoot))
-	workflows = append(workflows, probePostRewriteHook(projectRoot))
-	workflows = append(workflows, probeCommitMsgHook(projectRoot))
-	workflows = append(workflows, probePreCommitHook(projectRoot))
+	hooksDir, _ := hooks.Dir(projectRoot)
+	workflows = append(workflows, probePostMergeHook(hooksDir))
+	workflows = append(workflows, probePostRewriteHook(hooksDir))
+	workflows = append(workflows, probeCommitMsgHook(hooksDir))
+	workflows = append(workflows, probePreCommitHook(hooksDir))
 	workflows = append(workflows, probeClaudePreToolUseHook(projectRoot))
 	return workflows
 }
@@ -911,11 +1000,114 @@ func bundledLogmindMarker(workflowName string) *string {
 }
 
 func readWorkflow(projectRoot, name string) (string, bool) {
-	data, err := os.ReadFile(filepath.Join(projectRoot, ".github", "workflows", name))
+	data, err := os.ReadFile(workflowPath(projectRoot, name))
 	if err != nil {
 		return "", false
 	}
 	return string(data), true
+}
+
+func workflowPath(projectRoot, name string) string {
+	return filepath.Join(projectRoot, ".github", "workflows", name)
+}
+
+// pullRequestTrigger and the step markers below are what make
+// check-decisions.yml a GATE rather than a file in the right directory with
+// the right marker on line 1.
+//
+// probeWorkflow's verdict comes from inserter.ExtractTemplateMarker alone —
+// unlike probeHook it has no content-diff fast-path, because a workflow is
+// RENDERED (the default branch is substituted in) and a repository is
+// entitled to have edited one. Measured: deleting the whole `jobs:` block
+// while leaving line 1 intact reported `drift: current` and
+// `gate_absences: []`. The §6.2 merge gate was gone and doctor called the
+// stack fine.
+const pullRequestTrigger = "pull_request"
+
+// workflowTriggerPrefixes are the shapes an `on:` subscription to a pull
+// request takes — the mapping key, the list item, and the two inline forms.
+//
+// Matched at the START of a trimmed line, never as a substring of it. The
+// job body is full of `github.event.pull_request.base.sha`, so a `Contains`
+// over the file answers "subscribed" for a workflow whose trigger has been
+// replaced outright — which is the case this is for.
+var workflowTriggerPrefixes = []string{
+	pullRequestTrigger + ":",
+	pullRequestTrigger + "_target:",
+	"- " + pullRequestTrigger,
+	"on:",
+}
+
+// workflowStepPrefixes are the two ways a GitHub Actions step does
+// anything. A `jobs:` block containing neither runs nothing.
+var workflowStepPrefixes = []string{"run:", "uses:", "- run:", "- uses:"}
+
+// workflowInertReason answers "this workflow is installed — CAN it stop a
+// merge?", and only for the one workflow that is supposed to.
+//
+// TWO CONDITIONS, and they are exactly the two a reader can settle from the
+// file: does it subscribe to a pull-request event, and does it define a
+// step that runs anything. A workflow failing either cannot judge a pull
+// request under any circumstances.
+//
+// WHAT IT DELIBERATELY DOES NOT ASK is whether the job ENFORCES. An earlier
+// draft required the job to invoke `logmind check-decisions` and reported
+// anything else as "no pull request is judged by it" — which is false, and
+// logmind's own repository is the counter-example: its installed copy is
+// the pre-v5 bash gate, which does not call the verb and does trip. That
+// copy IS a §3.4 problem (the SPEC's "Both interception points and the gate
+// MUST use this one list") and it is a DIFFERENT problem from the gate
+// being absent. Reporting the second as the first is a true statement about
+// a narrow thing dressed as a conclusion about a wider one, and there is no
+// way to tell an enforcing job from an `exit 0` one by reading it.
+//
+// Read from NON-COMMENT lines, which is the whole reliability of it: the
+// template's own prose names `pull_request` a dozen times, so a substring
+// search over the file is satisfied by exactly the gutted copy it is meant
+// to catch.
+//
+// The other three workflows (regen-timeline, check-doc-links, self-update)
+// keep derived docs in step; a repository that edited one has customised a
+// convenience, and reporting that as a failing gate is how doctor becomes
+// noise people stop reading.
+func workflowInertReason(name, content string) string {
+	if name != rowCheckDecisionsWorkflow {
+		return ""
+	}
+	var trigger, step bool
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		for _, prefix := range workflowTriggerPrefixes {
+			if !strings.HasPrefix(trimmed, prefix) {
+				continue
+			}
+			// `on:` only counts when the subscription is on the same line
+			// (`on: pull_request`, `on: [push, pull_request]`); the block
+			// form's keys are matched by the prefixes above instead.
+			if prefix == "on:" && !strings.Contains(trimmed, pullRequestTrigger) {
+				continue
+			}
+			trigger = true
+			break
+		}
+		for _, prefix := range workflowStepPrefixes {
+			if strings.HasPrefix(trimmed, prefix) {
+				step = true
+				break
+			}
+		}
+	}
+	switch {
+	case !trigger:
+		return "it is present but subscribes to no `" + pullRequestTrigger +
+			"` event, so it never runs on a pull request"
+	case !step:
+		return "it is present but defines no step that runs anything, so a pull request passes it unjudged"
+	}
+	return ""
 }
 
 // classifyMarker compares an installed workflow's template marker against
@@ -952,7 +1144,10 @@ func classifyMarker(marker, bundled *string) string {
 func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 	content, ok := readWorkflow(projectRoot, name)
 	if !ok {
-		return WorkflowStatus{Name: name, Installed: false, Marker: nil, BundledMarker: bundled, Drift: "missing"}
+		return WorkflowStatus{
+			Name: name, Installed: false, Marker: nil, BundledMarker: bundled,
+			Drift: "missing", Path: workflowPath(projectRoot, name),
+		}
 	}
 	found := inserter.ExtractTemplateMarker(content)
 
@@ -984,6 +1179,8 @@ func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 		Name: name, Installed: true, Marker: display,
 		BundledMarker: bundled, Drift: classifyMarker(owned, bundled),
 		Displaced: displaced,
+		Inert:     workflowInertReason(name, content),
+		Path:      workflowPath(projectRoot, name),
 	}
 }
 
@@ -1129,66 +1326,118 @@ func probeMergeDriverConfig(projectRoot string) WorkflowStatus {
 }
 
 // probeHook is the shared helper behind post-merge / post-rewrite /
-// commit-msg probes. `installedBody` is the canonical body the current
-// Go binary would write; content drift means installed bytes != bundled.
-func probeHook(projectRoot, displayName, hookFile string, bundledBody string) WorkflowStatus {
+// commit-msg probes. `bundledBody` is the canonical body the current Go
+// binary would write; content drift means installed bytes != bundled.
+//
+// hooksDir is where git actually reads hooks from, resolved ONCE per probe
+// set by hooks.Dir — never joined here. "" means there is no hooks
+// directory to read (not a repository, or git could not answer), which is
+// the state the `<projectRoot>/.git` stat used to stand in for.
+//
+// `enforces`, when non-empty, is the invocation that makes this hook an
+// enforcement surface. A hook missing it, or one git will not execute, is
+// reported INERT: present, current, and enforcing nothing.
+func probeHook(hooksDir, displayName, hookFile, bundledBody, enforces string) WorkflowStatus {
 	current := version.Version
-	if _, err := os.Stat(filepath.Join(projectRoot, ".git")); err != nil {
+	if hooksDir == "" {
 		return WorkflowStatus{
 			Name: displayName, Installed: false,
 			Marker: nil, BundledMarker: nil, Drift: "missing",
 		}
 	}
-	path := filepath.Join(projectRoot, ".git", "hooks", hookFile)
-	if _, err := os.Stat(path); err != nil {
+	path := filepath.Join(hooksDir, hookFile)
+	info, err := os.Stat(path)
+	if err != nil {
 		return WorkflowStatus{
 			Name: displayName, Installed: false,
-			Marker: nil, BundledMarker: &current, Drift: "missing",
+			Marker: nil, BundledMarker: &current, Drift: "missing", Path: path,
 		}
 	}
+	installedBody, readErr := os.ReadFile(path)
+	inert := hookInertReason(info, string(installedBody), readErr, enforces)
+
 	hookVer, ok := hooks.ExtractVersion(path)
 	if !ok {
 		marker := "markerless (pre-v0.6.10)"
 		return WorkflowStatus{
 			Name: displayName, Installed: true,
 			Marker: &marker, BundledMarker: &current, Drift: "markerless",
+			Inert: inert, Path: path,
 		}
 	}
 	if hookVer != current {
 		return WorkflowStatus{
 			Name: displayName, Installed: true,
 			Marker: &hookVer, BundledMarker: &current, Drift: "stale",
+			Inert: inert, Path: path,
 		}
 	}
 	// Content-diff fast-path (v0.6.14).
-	installedBody, err := os.ReadFile(path)
-	if err == nil && string(installedBody) != bundledBody {
+	if readErr == nil && string(installedBody) != bundledBody {
 		marker := hookVer + " (content drift)"
 		return WorkflowStatus{
 			Name: displayName, Installed: true,
 			Marker: &marker, BundledMarker: &current, Drift: "stale",
+			Inert: inert, Path: path,
 		}
 	}
 	return WorkflowStatus{
 		Name: displayName, Installed: true,
 		Marker: &hookVer, BundledMarker: &current, Drift: "current",
+		Inert: inert, Path: path,
 	}
 }
 
-func probePostMergeHook(projectRoot string) WorkflowStatus {
-	return probeHook(projectRoot, "post-merge hook", "post-merge", hooks.BuildPostMergeBody())
+// hookInertReason answers "this file is here — will it stop anything?" for
+// a hook that is an enforcement surface, and "" for one that is not.
+//
+// Two ways to be present and useless, both measured on a repository doctor
+// called OK:
+//
+//   - NOT EXECUTABLE. git runs a hook as a program; without the bit it is
+//     skipped, silently, with no message anywhere. `chmod -x` on a
+//     byte-perfect commit-msg hook left `drift: current` and let a 30-line
+//     raw commit through.
+//   - NOT DELEGATING. `: > .git/hooks/commit-msg` leaves a file that IS
+//     the hook by every existence test and runs nothing. So does replacing
+//     the body with `exit 0`, or gutting it and keeping the comment that
+//     names the command.
+//
+// An unreadable hook is reported inert too — not as an accusation but
+// because doctor cannot establish that it enforces, and §3.4's "failing
+// open MUST NOT be silent" is about exactly the case where the tool does
+// not know.
+func hookInertReason(info os.FileInfo, body string, readErr error, enforces string) string {
+	if enforces == "" {
+		return ""
+	}
+	if info.Mode()&0o111 == 0 {
+		return "it is present but not executable, so git never runs it"
+	}
+	if readErr != nil {
+		return "it is present but could not be read, so logmind cannot tell whether it still enforces anything"
+	}
+	if !strings.Contains(body, enforces) {
+		return "it is present but no longer runs `logmind " + enforces + "`, so it enforces nothing"
+	}
+	return ""
 }
 
-func probePostRewriteHook(projectRoot string) WorkflowStatus {
-	return probeHook(projectRoot, "post-rewrite hook", "post-rewrite", hooks.BuildPostRewriteBody())
+func probePostMergeHook(hooksDir string) WorkflowStatus {
+	return probeHook(hooksDir, "post-merge hook", "post-merge", hooks.BuildPostMergeBody(), "")
+}
+
+func probePostRewriteHook(hooksDir string) WorkflowStatus {
+	return probeHook(hooksDir, "post-rewrite hook", "post-rewrite", hooks.BuildPostRewriteBody(), "")
 }
 
 // probeCommitMsgHook reports the v0.6.16 commit-msg hook state. When
 // the hook isn't yet installed (older logmind installs), `missing` is
 // the natural state — the next `logmind init` or `logmind self-update`
 // will install it.
-func probeCommitMsgHook(projectRoot string) WorkflowStatus {
-	return probeHook(projectRoot, rowCommitMsgHook, "commit-msg", hooks.BuildCommitMsgBody())
+func probeCommitMsgHook(hooksDir string) WorkflowStatus {
+	return probeHook(hooksDir, rowCommitMsgHook, "commit-msg", hooks.BuildCommitMsgBody(),
+		hooks.CommitMsgInvocation)
 }
 
 // probePreCommitHook reports drift for L2a of the v2.0.0 derived-docs
@@ -1206,16 +1455,16 @@ func probeCommitMsgHook(projectRoot string) WorkflowStatus {
 //
 // File-read only (stat + read, no subprocess) — safe for the fast path;
 // see StaleCountFast's doc comment for why that matters.
-func probePreCommitHook(projectRoot string) WorkflowStatus {
+func probePreCommitHook(hooksDir string) WorkflowStatus {
 	const displayName = "pre-commit hook (derived-docs pin)"
 	current := version.Version
-	if _, err := os.Stat(filepath.Join(projectRoot, ".git")); err != nil {
+	if hooksDir == "" {
 		return WorkflowStatus{
 			Name: displayName, Installed: false,
 			Marker: nil, BundledMarker: nil, Drift: "missing",
 		}
 	}
-	path := filepath.Join(projectRoot, ".git", "hooks", "pre-commit")
+	path := filepath.Join(hooksDir, "pre-commit")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return WorkflowStatus{
@@ -1271,30 +1520,35 @@ func probePreCommitHook(projectRoot string) WorkflowStatus {
 func probeClaudePreToolUseHook(projectRoot string) WorkflowStatus {
 	current := version.Version
 	const displayName = rowClaudeGuard
+	// The file this row is about, always — see WorkflowStatus.Path: an
+	// empty Path on a "missing" row means the probe could not work out
+	// where to look, which is a different thing from the artifact being
+	// absent, and collectGateAbsences distinguishes them by exactly this.
+	settingsPath := filepath.Join(projectRoot, ".claude", "settings.json")
 	state := claudehook.Inspect(projectRoot)
 	if !state.SettingsPresent || !state.EntryPresent {
 		return WorkflowStatus{
 			Name: displayName, Installed: false,
-			Marker: nil, BundledMarker: &current, Drift: "missing",
+			Marker: nil, BundledMarker: &current, Drift: "missing", Path: settingsPath,
 		}
 	}
 	if !state.HasMarker {
 		marker := "markerless (pre-v2.0.0)"
 		return WorkflowStatus{
 			Name: displayName, Installed: true,
-			Marker: &marker, BundledMarker: &current, Drift: "markerless",
+			Marker: &marker, BundledMarker: &current, Drift: "markerless", Path: settingsPath,
 		}
 	}
 	installed := state.Version
 	if installed != current {
 		return WorkflowStatus{
 			Name: displayName, Installed: true,
-			Marker: &installed, BundledMarker: &current, Drift: "stale",
+			Marker: &installed, BundledMarker: &current, Drift: "stale", Path: settingsPath,
 		}
 	}
 	return WorkflowStatus{
 		Name: displayName, Installed: true,
-		Marker: &installed, BundledMarker: &current, Drift: "current",
+		Marker: &installed, BundledMarker: &current, Drift: "current", Path: settingsPath,
 	}
 }
 
@@ -1488,7 +1742,10 @@ func RenderStatus(r StatusReport) string {
 		for _, g := range r.GateAbsences {
 			lines = append(lines, fmt.Sprintf("  • %s", g))
 		}
-		lines = append(lines, "  Reinstall with `logmind doctor --fix` — or set git.enforce_commits: false")
+		lines = append(lines, "  `logmind doctor --fix` reinstalls a gate that is missing, and restores the")
+		lines = append(lines, "  execute bit on one of its own hooks. A file it does not recognise as its own")
+		lines = append(lines, "  it leaves alone (SPEC §5.2), so an emptied or replaced hook, and an edited")
+		lines = append(lines, "  workflow, are yours to restore or delete. Or set git.enforce_commits: false")
 		lines = append(lines, "  in .logmind/config.yml to run this repository without them deliberately.")
 	}
 	if len(r.Suggestions) > 0 {

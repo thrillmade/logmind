@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/config"
+	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/timeline"
 )
 
@@ -67,6 +68,7 @@ func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr i
 		return ErrSilent
 	}
 	cfg, _ := config.Load(cwd)
+	layout := decisions.ResolveLayout(cwd)
 
 	var target string
 	if fileOverride != "" {
@@ -78,7 +80,7 @@ func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr i
 		target = filepath.Clean(target)
 		// Only branch detail files carry timeline markers — refuse to splice a
 		// marker into decisions.md/archive or anything outside the branches dir.
-		if filepath.Dir(target) != filepath.Join(cwd, "docs", "decisions-branches") {
+		if filepath.Dir(target) != filepath.Join(layout.Dir(), decisions.BranchDirName) {
 			q.fail("--file must target a file under docs/decisions-branches/ (got %s).\n", fileOverride)
 			return ErrSilent
 		}
@@ -87,8 +89,7 @@ func runHeadline(cwd, summary, fileOverride string, quiet bool, stdout, stderr i
 			return ErrSilent
 		}
 	} else {
-		docsPath := filepath.Join(cwd, "docs")
-		t, isBranchFile := resolveDecisionsPath(cwd, docsPath, cfg)
+		t, isBranchFile := resolveDecisionsPath(cwd, layout, cfg)
 		if !branchSummaryApplies(isBranchFile) {
 			// Not a default-branch refusal — the default branch gets a summary
 			// like every other branch. This is the case where `logmind log`

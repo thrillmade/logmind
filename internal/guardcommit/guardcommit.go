@@ -27,7 +27,6 @@ package guardcommit
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -187,7 +186,11 @@ func Evaluate(repoRoot, subject string, threshold int, mode DiffMode) Decision {
 	// staged. The index is the right scope in both modes: this asks what
 	// the commit about to be made will carry, and a decision file sitting
 	// unstaged carries nothing into it.
-	evidence, _ := DecisionRecorded(gitcli.DiffCachedNames(repoRoot), func(path string) ([]gitcli.AddedHunk, error) {
+	// Resolved against repoRoot, because that is the root git reports
+	// staged paths against — the same resolution `logmind log` makes from
+	// its working directory. See decisions.Layout.
+	layout := decisions.ResolveLayout(repoRoot)
+	evidence, _ := DecisionRecorded(layout, gitcli.DiffCachedNames(repoRoot), func(path string) ([]gitcli.AddedHunk, error) {
 		// DiffCachedAddedHunks is best-effort by contract (nil on any git
 		// failure), so there is no error to propagate here — a git that
 		// cannot answer yields no added lines, which fails CLOSED into the
@@ -304,9 +307,10 @@ type DecisionEvidence struct {
 //
 // Two halves, and BOTH are required:
 //
-//   - the path is one logmind itself writes decisions to
-//     (isDecisionFile — the image of resolveDecisionsPath, not a filename
-//     suffix), and
+//   - the path is one logmind itself writes decisions to — asked of
+//     decisions.Layout, which is also what `logmind log` builds its target
+//     from, so the gate cannot answer differently from the writer about a
+//     file the writer just produced; and
 //   - the lines the change ADDED to it carry an entry that is well-formed
 //     under §3.1 (WellFormedDecisionAdded).
 //
@@ -329,10 +333,10 @@ type DecisionEvidence struct {
 // The error is addedHunks' own and is returned unwrapped, so the gate's
 // loud-on-failure contract (an unresolvable ref must not read as an empty
 // diff) survives the trip through here.
-func DecisionRecorded(names []string, addedHunks AddedHunksFunc) (DecisionEvidence, error) {
+func DecisionRecorded(layout decisions.Layout, names []string, addedHunks AddedHunksFunc) (DecisionEvidence, error) {
 	var ev DecisionEvidence
 	for _, path := range names {
-		if !isDecisionFile(path) {
+		if !layout.IsDecisionRel(path) {
 			continue
 		}
 		hunks, err := addedHunks(path)
@@ -347,62 +351,7 @@ func DecisionRecorded(names []string, addedHunks AddedHunksFunc) (DecisionEviden
 	return ev, nil
 }
 
-// legacyDecisionPath and branchDecisionDir are the two shapes
-// resolveDecisionsPath (internal/cli/log.go) can produce, spelled from the
-// layout constants that function itself builds from — so the gate AGREES
-// with the writer rather than approximating it.
-var (
-	legacyDecisionPath = decisions.DocsDirName + "/" + decisions.LegacyFileName
-	branchDecisionDir  = decisions.DocsDirName + "/" + decisions.BranchDirName + "/"
-)
-
-// isDecisionFile reports whether rel — a repo-relative path exactly as git
-// reports it, forward-slashed on every platform — is a file logmind itself
-// writes decisions to. That is the whole rule, and it is the IMAGE of
-// resolveDecisionsPath, which owns where a decision lands:
-//
-//   - docs/decisions.md — the branchless log. Still reachable (branch_aware
-//     off, non-git, detached HEAD) and still the real main log in a
-//     repository that predates §3.2, so an entry appended there has
-//     recorded a decision by any reading of §3.4.
-//   - docs/decisions-branches/<name>.md — one branch's log. Any <name>,
-//     because the gate cannot know which branch it is judging; but a single
-//     path component ending .md, because ListBranchFiles skips
-//     subdirectories and a file under one is invisible to every read path.
-//
-// SCOPED, not suffixed, and the difference was a live gate hole. This
-// predicate used to accept a `/decisions.md` suffix in ANY directory:
-// measured on the release candidate, a well-formed §3.1 entry at
-// internal/x/decisions.md plus 302 lines of new Go cleared
-// `guard-commit --layer git-hook` (exit 0, "allowed (decision-recorded)")
-// where the identical index without that file was refused (exit 65). Three
-// lines in a file no read path enumerates cleared all three enforcement
-// surfaces — a cheaper bypass than the content-free pointer this release
-// exists to close, because the decoy does not even have to look like
-// logmind's own file.
-//
-// docs/decisions-archive.md is deliberately NOT here. Nothing writes it in
-// any state (decisions.NonBranchSources) — the read paths surface it where
-// it lies, and a gate that honours a path logmind will never write is the
-// same approximation, one filename narrower.
-//
-// UNEXPORTED on purpose, and the constants above are the only thing shared
-// with the writer. It answers "is this the kind of file a decision lives
-// in", which is only ever half of "did this change record a decision" — and
-// the half that a content-free file passes. It was exported once, one
-// caller asked it alone, and that caller was the commit gate.
-// DecisionRecorded is the exported question; this is an implementation
-// detail of it, and there is still no exported way to ask the path half.
-func isDecisionFile(rel string) bool {
-	rel = path.Clean(rel)
-	if rel == legacyDecisionPath {
-		return true
-	}
-	dir, file := path.Split(rel)
-	return dir == branchDecisionDir && strings.HasSuffix(file, ".md")
-}
-
-// STILL OPEN, and this predicate does not close it: a staged RENAME or
+// STILL OPEN, and the layout predicate does not close it: a staged RENAME or
 // COPY of an existing decision file clears the gate (#335, plus the copy
 // half a panel raised). Measured on this head, both with 302 lines of new
 // Go alongside:
@@ -412,7 +361,7 @@ func isDecisionFile(rel string) bool {
 //	cp   docs/decisions-branches/main.md docs/decisions-branches/feat__x.md
 //	  → exit 0, same carve-out
 //
-// The scoping above closes the SHAPE where the destination is not a
+// decisions.Layout closes the SHAPE where the destination is not a
 // decision path (`git mv docs/decisions-branches/main.md
 // internal/x/decisions.md` went from exit 0 to exit 65), but a
 // rename/copy WITHIN docs/decisions-branches/ lands on a path logmind

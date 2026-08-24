@@ -1,5 +1,7 @@
 // Package hooks builds the canonical bodies for logmind's git hooks
-// (`post-merge`, `post-rewrite`) and installs them under `.git/hooks/`.
+// (`post-merge`, `post-rewrite`) and installs them in the directory git
+// actually reads them from — see Dir, which is `git rev-parse --git-path
+// hooks` and not the `.git/hooks` join it replaced.
 //
 // The hook BODIES are kept byte-identical to the Python v0.6.14 output
 // of src/logmind/core/gitattributes._build_post_merge_hook_body and
@@ -37,6 +39,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/thrillmade/logmind/internal/gitcli"
 
 	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/version"
@@ -588,51 +593,141 @@ func BuildPreCommitBody() string {
 		"exit 0\n"
 }
 
-// InstallPostMerge writes `.git/hooks/post-merge` to the current
-// binary's canonical body. Returns (true, nil) if the file was
-// created or rewritten, (false, nil) if a logmind-marked hook was
-// already present at the exact byte content (idempotent no-op).
+// CommitMsgInvocation is the line the commit-msg body delegates the
+// enforce/allow decision on — the one thing that makes the file a §3.4
+// interception point rather than a shell script sitting in the right place.
+//
+// Exported for the READER: `logmind doctor` asks whether an installed hook
+// still carries it, because a hook that has been emptied, or replaced with
+// `exit 0`, is present and enforcing nothing. Matched against the RUN line
+// and not a substring of the body's prose — the comment above it names
+// `logmind guard-commit --layer git-hook` too, and a check satisfied by a
+// surviving comment is satisfied by exactly the gutting it exists to catch.
+// TestCommitMsgBodyCarriesItsOwnInvocation pins that the body this package
+// writes actually contains it.
+const CommitMsgInvocation = "guard-commit --layer git-hook --msg-file"
+
+// Dir resolves the directory git will actually READ hooks from for
+// repoRoot, and it is the ONE owner of that path: every Install* below
+// writes into it, `logmind install-hook` appends into it, and `logmind
+// doctor` probes it. (What is NOT routed here is the PROSE — `logmind
+// init`, `self-update` and `install-hook --help` still print the literal
+// `.git/hooks/<name>` in their receipts, so under core.hooksPath the hook
+// lands in the right place and the message names the wrong one.)
+//
+// `git rev-parse --git-path hooks` rather than `<repoRoot>/.git/hooks`,
+// because the naive join is wrong in two states that both ship today:
+//
+//   - core.hooksPath. A repository that relocates its hooks — `.githooks`
+//     is the common spelling — has NOTHING at .git/hooks. Measured before
+//     this: `logmind doctor` reported the commit-msg hook missing while a
+//     working one sat in .githooks, and `doctor --fix` then wrote a fresh
+//     hook to .git/hooks, a path git never reads. doctor reported OK
+//     afterwards and a 30-line raw commit went through at exit 0. A --fix
+//     that manufactures a false OK is worse than no --fix at all.
+//   - a linked WORKTREE, where `.git` is a FILE naming the common
+//     directory and the hooks live there.
+//
+// Returns ("", false) when git cannot answer — not a repository, or no git
+// binary. Callers treat that as "there is no hooks directory", which is the
+// same thing the `.git` stat used to say.
+//
+// ONE subprocess, and a cheap one: no object access, no index read, so on
+// a warm repository it is process-spawn cost and nothing else. It is on
+// `logmind log`'s pulse path
+// (doctor.StaleCountFast), which is documented as subprocess-free — see
+// collectLogmindStatusFast for why that budget moved rather than this
+// resolution being skipped there.
+func Dir(repoRoot string) (string, bool) {
+	out, _, err := gitcli.RunCaptured(repoRoot, "rev-parse", "--git-path", "hooks")
+	if err != nil {
+		return "", false
+	}
+	path := strings.TrimSpace(out)
+	if path == "" {
+		return "", false
+	}
+	// `--git-path` answers relative to the working directory it ran in
+	// unless the repository was found by an absolute path.
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoRoot, path)
+	}
+	return path, true
+}
+
+// Path is Dir joined with one hook's filename — the full path git will run,
+// and the path doctor reports so a person is sent to the file that matters
+// rather than to .git/hooks/<name> on a repository that reads elsewhere.
+func Path(repoRoot, hookFile string) (string, bool) {
+	dir, ok := Dir(repoRoot)
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(dir, hookFile), true
+}
+
+// InstallPostMerge writes the `post-merge` hook to the current binary's
+// canonical body, into the directory git reads (see Dir). Returns
+// (true, nil) if the file was created or rewritten, (false, nil) if a
+// logmind-marked hook was already present at the exact byte content
+// (idempotent no-op).
 //
 // Refuses to overwrite a foreign hook — returns (false, nil) and
 // lets logmind doctor flag the state instead. Mirrors the Python
 // install_post_merge_hook semantics line-for-line.
 func InstallPostMerge(repoRoot string) (bool, error) {
+	path, ok := Path(repoRoot, "post-merge")
+	if !ok {
+		return false, nil
+	}
 	return installHook(
-		filepath.Join(repoRoot, ".git", "hooks", "post-merge"),
+		path,
 		BuildPostMergeBody(),
 		PostMergeMarker,
 	)
 }
 
-// InstallPostRewrite writes `.git/hooks/post-rewrite`. See
+// InstallPostRewrite writes the `post-rewrite` hook. See
 // InstallPostMerge for the contract.
 func InstallPostRewrite(repoRoot string) (bool, error) {
+	path, ok := Path(repoRoot, "post-rewrite")
+	if !ok {
+		return false, nil
+	}
 	return installHook(
-		filepath.Join(repoRoot, ".git", "hooks", "post-rewrite"),
+		path,
 		BuildPostRewriteBody(),
 		PostRewriteMarker,
 	)
 }
 
-// InstallCommitMsg writes `.git/hooks/commit-msg`. See InstallPostMerge
+// InstallCommitMsg writes the `commit-msg` hook. See InstallPostMerge
 // for the contract. v0.6.16+.
 func InstallCommitMsg(repoRoot string) (bool, error) {
+	path, ok := Path(repoRoot, "commit-msg")
+	if !ok {
+		return false, nil
+	}
 	return installHook(
-		filepath.Join(repoRoot, ".git", "hooks", "commit-msg"),
+		path,
 		BuildCommitMsgBody(),
 		CommitMsgMarker,
 	)
 }
 
-// InstallPreCommit writes `.git/hooks/pre-commit`. See InstallPostMerge for
+// InstallPreCommit writes the `pre-commit` hook. See InstallPostMerge for
 // the shared contract — including the conservative-interop behavior that
 // matters most here: a pre-commit hook that already exists WITHOUT
 // PreCommitMarker (a hand-written hook, OR the separate, opt-in
 // `logmind check-decisions` body `logmind install-hook` writes — see
 // PreCommitMarker's doc comment) is left completely alone. v2.0.0+.
 func InstallPreCommit(repoRoot string) (bool, error) {
+	path, ok := Path(repoRoot, "pre-commit")
+	if !ok {
+		return false, nil
+	}
 	return installHook(
-		filepath.Join(repoRoot, ".git", "hooks", "pre-commit"),
+		path,
 		BuildPreCommitBody(),
 		PreCommitMarker,
 	)
@@ -646,7 +741,9 @@ func InstallPreCommit(repoRoot string) (bool, error) {
 //	hooks dir missing  → (false, nil) — caller is not in a git repo
 //	                                    or the hooks dir was nuked
 //	hook absent        → write body + chmod 0755, return (true, nil)
-//	hook present, ours, body matches  → (false, nil) — no-op
+//	hook present, ours, body matches  → (false, nil) — no-op, EXCEPT when
+//	                                    the execute bit is clear: chmod
+//	                                    0755 + (true, nil)
 //	hook present, ours, body differs  → overwrite + chmod, (true, nil)
 //	hook present, foreign             → (false, nil) — leave alone
 //
@@ -673,6 +770,18 @@ func installHook(hookPath, body, marker string) (bool, error) {
 			return false, nil // foreign hook; don't trample
 		}
 		if string(existing) == body {
+			// Byte-identical, but a hook without the execute bit is
+			// SILENTLY never run — git skips it with a hint nobody reads.
+			// `doctor` reports that as an absent gate, so `doctor --fix`
+			// has to be able to clear it; returning "already current" here
+			// meant the tool named a fault and then declined to fix its
+			// own file. Re-assert the mode and say the file changed.
+			if info, statErr := os.Stat(hookPath); statErr == nil && info.Mode()&0o111 == 0 {
+				if chmodErr := os.Chmod(hookPath, 0o755); chmodErr != nil {
+					return false, chmodErr
+				}
+				return true, nil
+			}
 			return false, nil // already current
 		}
 	}

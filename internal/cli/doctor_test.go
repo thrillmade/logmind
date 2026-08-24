@@ -9,11 +9,13 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thrillmade/logmind/internal/templates"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 func TestDoctor_OfflineRendersTextByDefault(t *testing.T) {
@@ -169,19 +171,30 @@ func TestDoctor_SpecAdvisory_HumanTableAndJSON(t *testing.T) {
 func TestDoctor_AbsentEnforcementGatesExitNonZero(t *testing.T) {
 	// Isolate PATH so probePathResolution cannot supply the DRIFT verdict
 	// from a stale host binary — the assertion below has to be about the
-	// gates and nothing else.
+	// gates and nothing else. GIT is linked in, and only git: the hook
+	// probes resolve their directory through `git rev-parse --git-path
+	// hooks` now, so an empty PATH would make every hook row report
+	// "missing" for the wrong reason.
+	binDir := t.TempDir()
+	if git, err := exec.LookPath("git"); err == nil {
+		if err := os.Symlink(git, filepath.Join(binDir, "git")); err != nil {
+			t.Fatalf("symlink git into the isolated PATH: %v", err)
+		}
+	}
 	origPath := os.Getenv("PATH")
 	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
-	_ = os.Setenv("PATH", t.TempDir())
+	_ = os.Setenv("PATH", binDir)
 
 	plant := func(t *testing.T, d string) {
 		t.Helper()
 		// `logmind init`'s sentinel: this repository was initialised.
 		mustWriteUnder(t, d, ".logmind/config.yml", "git:\n  enforce_commits: true\n")
-		// A git repository, so a commit can actually be made from it.
-		if err := os.MkdirAll(filepath.Join(d, ".git", "hooks"), 0o755); err != nil {
-			t.Fatalf("mkdir .git/hooks: %v", err)
-		}
+		// A REAL git repository, so a commit can actually be made from it
+		// AND git can answer where its hooks live. A hand-made `.git`
+		// directory is not a repository git will answer about, and the
+		// commit-msg row would then say "logmind cannot tell" rather than
+		// "the gate is gone" — which is a different verdict, correctly.
+		testgit.InitRepo(t, d, "-q", "--initial-branch=main")
 		// check-decisions.yml's SIBLING workflows, which is what says this
 		// repository is on GitHub Actions at all — `logmind init
 		// --github-actions=false` installs none of them and records that

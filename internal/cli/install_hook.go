@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,6 +12,7 @@ import (
 	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/clierr"
 	"github.com/thrillmade/logmind/internal/gitcli"
+	"github.com/thrillmade/logmind/internal/hooks"
 )
 
 // newInstallHookCmd wires the `logmind install-hook` subcommand.
@@ -94,7 +94,16 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		top = cwd
 	}
 
-	hookPath := filepath.Join(top, ".git", "hooks", "pre-commit")
+	// The directory git READS hooks from, never a `.git/hooks` join —
+	// `core.hooksPath` moves it, and a hook written where git does not look
+	// is installed as far as this command is concerned and dead as far as
+	// git is concerned. hooks.Path is the one owner of that resolution;
+	// `logmind init` and `doctor --fix` write through the same answer.
+	hookPath, ok := hooks.Path(top, "pre-commit")
+	if !ok {
+		fmt.Fprintln(stdout, "Error: git could not resolve this repository's hooks directory.")
+		return ErrSilent
+	}
 
 	data, readErr := os.ReadFile(hookPath)
 	switch {
