@@ -103,9 +103,9 @@ func TestRenderWorkflowTemplate_SubstitutesDefaultBranch(t *testing.T) {
 // non-`main` one, and checks the trigger that comes out the other end.
 //
 // Deliberately NOT tested here: the "git can tell us nothing" case. It is
-// not environment-independent — gitcli.DefaultBranch's step 4 reads
+// not environment-independent — gitcli.DefaultBranch's step 5 reads
 // ambient `init.defaultBranch`, and macOS's Command Line Tools ships a
-// gitconfig that sets it to `main`, so on a developer machine step 4
+// gitconfig that sets it to `main`, so on a developer machine step 5
 // answers for ANY directory and the hard fallback below it is unreachable.
 // A test asserting a value there would be asserting the toolchain's
 // configuration, and making it deterministic would mean overriding ambient
@@ -271,4 +271,94 @@ func triggerRegion(body string) string {
 		}
 	}
 	return "(no `branches:` line found)"
+}
+
+// TestInstallWorkflowTemplates_RendersUnbornRepoDefaultBranch is the
+// regression for the README's own Quick Start — `mkdir proj && cd proj &&
+// git init && logmind init` — on a repo whose default branch is not `main`.
+//
+// The end-to-end test above seeds a repo by COMMITTING and then renaming, so
+// gitcli.DefaultBranch answers off the single-born-branch rung. That left the
+// case the Quick Start actually produces untested: `git init -b trunk` and
+// nothing else. An unborn repo has no refs at all, so every rung that reads
+// one declined and the scaffold fell through to the hard "main" — writing
+// `branches: [main]` into a repo that has never had a branch by that name.
+// Byte-identical to what a repo really on `main` gets, at exit 0, with
+// `doctor` calling the repo healthy: both workflows install DEAD, and a check
+// that never runs reports nothing at all.
+//
+// The assertion walks BY LINE rather than checking the `on:` trigger alone.
+// Each template carries the placeholder twice — the trigger and the
+// SCAFFOLDED_BRANCH env the drift warning compares against the live default
+// branch — and a substitution that reached only the first would leave the
+// warning permanently firing on a correctly-wired repo. Line indices survive
+// the render because every substitution is in-line, so this covers a third
+// occurrence added later without being told about it.
+func TestInstallWorkflowTemplates_RendersUnbornRepoDefaultBranch(t *testing.T) {
+	const placeholder = "__LOGMIND_DEFAULT_BRANCH__"
+	for _, tc := range []struct {
+		label  string
+		branch string
+	}{
+		// THE DEFECT, and THE CONTROL: the `main` repo's scaffold was
+		// already right and must stay right, or the fix has only moved
+		// which repos get a dead workflow.
+		{"the defect: unborn trunk repo", "trunk"},
+		{"control: unborn main repo", "main"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			repo := t.TempDir()
+			// `git init -b <branch>` and NOTHING else — no config, no
+			// commit. Through testgit for the maintenance-spawn reason
+			// seedRepo documents above.
+			testgit.InitRepo(t, repo, "-q", "-b", tc.branch)
+			// Errorf, deliberately NOT Fatalf: this reports the CAUSE, and
+			// the assertions below report the SYMPTOM the user actually saw
+			// in the scaffolded file. Stopping here would leave the symptom
+			// unpinned and this test unable to show it ever caught anything.
+			if got := gitcli.DefaultBranch(repo); got != tc.branch {
+				t.Errorf("gitcli.DefaultBranch = %q, want %q", got, tc.branch)
+			}
+
+			if _, _, _, err := installWorkflowTemplates(repo, false); err != nil {
+				t.Fatalf("installWorkflowTemplates: %v", err)
+			}
+
+			substituted := 0
+			for _, name := range templates.ListWorkflowTemplates() {
+				tmplLines := strings.Split(templates.Workflow(name), "\n")
+				body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows",
+					strings.TrimSuffix(name, ".template")))
+				if err != nil {
+					t.Fatalf("read scaffolded %s: %v", name, err)
+				}
+				outLines := strings.Split(string(body), "\n")
+				if len(tmplLines) != len(outLines) {
+					t.Fatalf("%s: template has %d lines, scaffolded file has %d — rendering is "+
+						"no longer line-for-line, so this probe cannot locate the occurrences",
+						name, len(tmplLines), len(outLines))
+				}
+				for i, line := range tmplLines {
+					if !strings.Contains(line, placeholder) {
+						continue
+					}
+					substituted++
+					if strings.Contains(outLines[i], placeholder) {
+						t.Errorf("%s line %d: raw placeholder survived: %q", name, i+1, outLines[i])
+					}
+					if !strings.Contains(outLines[i], tc.branch) {
+						t.Errorf("%s line %d: %q does not carry this repo's default branch %q",
+							name, i+1, outLines[i], tc.branch)
+					}
+				}
+			}
+			// The zero control: a renamed placeholder would make every
+			// assertion above vacuous and this test silently green.
+			if substituted < 4 {
+				t.Fatalf("only %d placeholder occurrence(s) checked — expected at least 4 "+
+					"(a trigger and a SCAFFOLDED_BRANCH in each of two workflows); "+
+					"the placeholder was renamed or the templates stopped carrying it", substituted)
+			}
+		})
+	}
 }

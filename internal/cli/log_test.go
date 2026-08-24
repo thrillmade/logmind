@@ -895,6 +895,7 @@ func TestLog_NudgeInteractive_ImmediateReply(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
+		bornDefaultBranch(t, d)
 		runGitIn(t, d, "checkout", "-b", "feat/nudge-immediate")
 
 		withFakeTTY(t, true, func() {

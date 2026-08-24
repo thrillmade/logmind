@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+// bornDefaultBranch gives the repo a default branch that actually EXISTS,
+// as a ref, before a feature branch is cut from it. See CONTRIBUTING.md's
+// "Tests" section for why `git init -b main` alone is not enough and every
+// test whose SUBJECT is branch-vs-default behaviour (the branch-summary
+// nudge, onNonDefaultBranch) calls this first — the rule lives there, not
+// here, so this comment doesn't drift from it.
+//
+// `git commit --allow-empty` deliberately: it creates the ref and touches
+// neither the index nor the working tree, so the scaffolded docs stay
+// exactly as untracked as the tests already expect. This mirrors what
+// TestOnNonDefaultBranch (derived_test.go) — the guard that owns this
+// function's contract — has always done.
+func bornDefaultBranch(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", "commit", "--allow-empty", "-q", "-m", "root")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("root commit: %v\n%s", err, out)
+	}
+}
+
 // checkoutBranch creates + switches to a feature branch in dir.
 func checkoutBranch(t *testing.T, dir, name string) {
 	t.Helper()
@@ -163,6 +184,7 @@ func TestLog_NudgeAdvisoryOnNonTTY(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
+		bornDefaultBranch(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() {
 			root := NewRootCmd()
@@ -192,6 +214,7 @@ func TestLog_NudgeSkippedWithHeadlineFlag(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
+		bornDefaultBranch(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, false, func() {
 			root := NewRootCmd()
@@ -214,6 +237,7 @@ func TestLog_NudgeInteractiveEditOnTTY(t *testing.T) {
 	dir := withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
+		bornDefaultBranch(t, d)
 		checkoutBranch(t, d, "feat/x")
 		withFakeTTY(t, true, func() { // pretend stdin is a TTY
 			root := NewRootCmd()

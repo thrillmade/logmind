@@ -69,7 +69,15 @@ A repo with no commits yet is **not** one of the three. `git symbolic-ref
 
 - Prefer table-driven tests over many one-shot functions.
 - For anything that touches branches, init with `git init -b main` so
-  the test is independent of `init.defaultBranch` config.
+  the test is independent of `init.defaultBranch` config. That alone is
+  NOT enough when the test's subject is branch-vs-default behavior (the
+  branch-summary nudge, `onNonDefaultBranch`): `git init` leaves the
+  branch unborn — no commit, no ref — and gitcli.DefaultBranch's
+  unborn-HEAD rung then answers with whatever branch gets checked out
+  next, making the checked-out feature branch its own "default" and the
+  assertion vacuous. Commit once first (`bornDefaultBranch` in
+  `internal/cli/headline_test.go`) so the default branch actually exists
+  before a feature branch is cut from it.
 - Snapshot tests live alongside the package; goldens under
   `<pkg>/testdata/*.golden`. Regenerate with `make snapshot` after a
   deliberate output change, and commit the new goldens.

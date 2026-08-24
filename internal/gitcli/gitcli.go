@@ -714,22 +714,26 @@ func LastCommitTime(repoRoot, relPath string) (time.Time, bool) {
 	return t, true
 }
 
-// DefaultBranch resolves the repo's default branch following the same
-// 5-step search Python's git_handler.default_branch uses:
+// DefaultBranch resolves the repo's default branch. The search descends
+// from Python's git_handler.default_branch but is no longer that function:
+// step 2 was rebuilt and step 4 is new (both explained below).
 //
 //  1. refs/remotes/origin/HEAD                  (set by `git clone` or
 //     `git remote set-head`)
 //  2. the conventional names, RESOLVED rather than ranked (see below)
 //  3. single-branch repo: that branch IS the default
-//  4. `git config init.defaultBranch`
-//  5. hard fallback: "main"
+//  4. UNBORN HEAD: the branch the first commit will create
+//  5. `git config init.defaultBranch`
+//  6. hard fallback: "main"
 //
 // Used by `logmind rebase` (B3) when --base isn't supplied, and — since
 // the workflow `on:` filter became a scaffold-time render — by
 // `logmind init`, where a wrong answer installs a workflow that never
-// fires. Same resolution order as Python so a consuming repo configured
-// to point at `master` via `git config init.defaultBranch master` keeps
-// working after the v1 cutover.
+// fires. The init.defaultBranch rung is kept from Python so a consuming
+// repo pointed at `master` via `git config init.defaultBranch master`
+// keeps working after the v1 cutover — and step 4 hands an unborn one of
+// those the same answer anyway, since `git init` reads that very key to
+// decide what to write into HEAD.
 //
 // Step 2 used to be a fixed PREFERENCE — "local `main` if it exists, else
 // `master`" — which answers "main" for a `master` repo that happens to
@@ -739,8 +743,41 @@ func LastCommitTime(repoRoot, relPath string) (time.Time, bool) {
 // into a workflow trigger, because the wrong name there is a check that
 // silently never runs. It now resolves instead: if only one of the two
 // conventional names exists, it IS the answer; when both do, the tie is
-// broken by evidence about which one this repository actually uses,
-// and only a repo that offers no evidence at all still lands on "main".
+// broken by evidence about which one this repository actually uses, and
+// only a tie no evidence can break still resolves to "main".
+//
+// Step 4 exists because a repo with NO COMMITS YET is not a repo with no
+// evidence — the sentence above once claimed the whole search had that
+// property, and this is the case that made it false. `git init -b trunk`
+// writes `trunk` into HEAD; that is where the first commit lands and what
+// the forge will call the default branch. But a repo that has only ever
+// been `git init`-ed carries no refs at all, so steps 1-3 each came up
+// empty and `logmind init` scaffolded `branches: [main]` — a trigger
+// matching no branch the repo will ever have, on the README's own Quick
+// Start, at exit 0.
+//
+// The step is guarded on UNBORN specifically. HEAD read unconditionally
+// would make every feature branch its own default and collapse
+// onNonDefaultBranch (internal/cli/derived.go) to false everywhere; step
+// 2's tiebreak (b) consults HEAD for exactly that reason, and only as a
+// tiebreak. Unborn is NOT the one state where HEAD is "the only branch
+// this repository has" — that was the premise here until a repo with
+// commits on `develop` and `feature` (no origin), then `git checkout
+// --orphan gh-pages`, disproved it: HEAD was unborn on gh-pages, and step
+// 4 answered `gh-pages` anyway, though the repository plainly has other
+// branches. Unborn is only evidence of that when refs/heads/ is EMPTY —
+// no born branch exists yet at all — so the step is gated on that,
+// reusing step 3's ref listing rather than re-querying it.
+//
+// Its PLACE in the order is the other half of the answer:
+//
+//   - below 1-3, so no answer they already give can change. origin/HEAD
+//     still wins for a clone whose local HEAD points elsewhere, and that is
+//     right on the merits too: the remote's declared default outranks a
+//     local ref that has never been pushed.
+//   - above init.defaultBranch, because that config is what `git init`
+//     CONSULTED in order to write HEAD, and `-b` overrides it. HEAD is the
+//     answer; the config is the guess that may already have been overruled.
 func DefaultBranch(repoRoot string) string {
 	// 1. origin/HEAD
 	if name := RemoteHEAD(repoRoot); name != "" {
@@ -758,20 +795,68 @@ func DefaultBranch(repoRoot string) string {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &bytes.Buffer{}
+	var branches []string
 	if cmd.Run() == nil {
-		branches := strings.Fields(out.String())
+		branches = strings.Fields(out.String())
 		if len(branches) == 1 {
 			return branches[0]
 		}
 	}
 
-	// 4. init.defaultBranch
+	// 4. Unborn HEAD — the branch the first commit will create. Gated on
+	// refs/heads/ being EMPTY (see the doc comment above): reuses the
+	// listing step 3 already fetched rather than querying it twice. An
+	// established repo — branches already exist — that runs `git checkout
+	// --orphan` also leaves HEAD unborn, on a name that is not the
+	// repository's default, just a new branch nobody has committed to yet.
+	if len(branches) == 0 {
+		if name := unbornHEAD(repoRoot); name != "" {
+			return name
+		}
+	}
+
+	// 5. init.defaultBranch
 	if value, ok := ConfigGet(repoRoot, "init.defaultBranch"); ok && value != "" {
 		return value
 	}
 
-	// 5. Hard fallback
+	// 6. Hard fallback
 	return "main"
+}
+
+// unbornHEAD returns the branch name HEAD points at when that branch does
+// not exist yet — a repo `git init` has created but nothing has committed
+// to. Empty string for every other state: a born branch, a detached HEAD, a
+// HEAD pointing outside refs/heads/, or a directory that is not a repo.
+//
+// Read the CurrentBranch contract above before touching this: `git
+// symbolic-ref HEAD` SUCCEEDS on an unborn repo, resolving HEAD's ref
+// without dereferencing it to a commit. So the probe for unborn-ness is not
+// "does symbolic-ref fail" (it does not; a previous round wrote that false
+// premise into seven places) but "does the ref it names exist yet".
+//
+// The full ref is used rather than CurrentBranch's `--short`: --short
+// answers `custom/x` for a HEAD at refs/custom/x, which git does allow
+// committing to, and which is not a branch. Requiring the refs/heads/
+// prefix keeps this from reporting one as an unborn default branch.
+func unbornHEAD(repoRoot string) string {
+	cmd := exec.Command("git", "symbolic-ref", "HEAD")
+	cmd.Dir = repoRoot
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &bytes.Buffer{}
+	if cmd.Run() != nil {
+		return ""
+	}
+	ref := strings.TrimSpace(stdout.String())
+	name, ok := strings.CutPrefix(ref, "refs/heads/")
+	if !ok || name == "" {
+		return ""
+	}
+	if refExists(repoRoot, ref) {
+		return "" // born: the branch HEAD names already has a commit.
+	}
+	return name
 }
 
 // conventionalDefaultBranches are the two names a repository's default
@@ -803,7 +888,7 @@ var conventionalDefaultBranches = []string{"main", "master"}
 //	   returning it unconditionally would make every feature branch its own
 //	   "default" and collapse onNonDefaultBranch to false everywhere.
 //	c. init.defaultBranch, when it names one of the two. Scoped to the tie
-//	   deliberately — DefaultBranch step 4 already reads this key, but as a
+//	   deliberately — DefaultBranch step 5 already reads this key, but as a
 //	   free-form answer; here it only gets to pick between two branches
 //	   that both exist.
 //	d. the conventional order. A repo with both names, no origin, no
