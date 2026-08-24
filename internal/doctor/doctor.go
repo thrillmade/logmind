@@ -187,6 +187,26 @@ type StatusReport struct {
 	// `logmind auto <profile>` is the deliberate remediation, exactly as
 	// `logmind init --spec` is for the spec nudge.
 	AutoAdvisories []string `json:"auto_advisories"`
+
+	// GateAdvisories is an ADVISORY list (#330) naming any SPEC §1.6
+	// blocking setting — git.enforce_commits, review.strict_mode,
+	// review.auto_fix — this repository currently has in its weakened
+	// state.
+	//
+	// It is the other half of §1.6's sentence. `logmind config set`
+	// refuses an agent-initiated weakening through the command; "not by
+	// editing the file" is addressed to the agent, and no local tool can
+	// enforce it. What a tool CAN do is notice afterwards and say so, so a
+	// person reading `logmind doctor` learns their commit gate is off
+	// without having to go looking.
+	//
+	// Advisory, and deliberately never Overall: these are a person's
+	// settings, and a person is entitled to have turned one off. Reporting
+	// a legitimate choice as drift would send them to `doctor --fix`,
+	// which correctly will not touch it (fixing it would be logmind
+	// writing a blocking setting on its own account — the very thing §1.6
+	// reserves for a person).
+	GateAdvisories []string `json:"gate_advisories"`
 }
 
 // ToJSON serialises the report with 2-space indent, matching Python's
@@ -260,7 +280,100 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 		SummariesNeeded: collectSummariesNeeded(projectRoot),
 		SpecAdvisories:  collectSpecAdvisories(projectRoot),
 		AutoAdvisories:  collectAutoAdvisories(projectRoot),
+		GateAdvisories:  collectGateAdvisories(projectRoot),
 	}
+}
+
+// cludBugConfigPath is where SPEC §1.6 puts review.strict_mode and
+// review.auto_fix. logmind does not write this file; it reads the two keys so
+// the gate advisory can cover all three settings §1.6 names rather than only
+// the one that happens to live in logmind's own config.
+const cludBugConfigPath = ".claude/skills/.clud-bug.json"
+
+// collectGateAdvisories returns the ADVISORY list of SPEC §1.6 blocking
+// settings currently in their weakened state — see StatusReport.GateAdvisories
+// for why this is advisory and never Overall.
+//
+// Which keys count, and which direction is a weakening, come from
+// config.BlockingSettings — the same table `logmind config set`'s refusal
+// reads, so the report and the refusal cannot disagree about what is
+// protected.
+//
+// Reads the EFFECTIVE value: a repository that never set enforce_commits gets
+// the documented default (true) and no advisory. A missing or unparseable
+// file says nothing — doctor is read-only and a broken config is already
+// reported elsewhere; inventing a gate warning out of a YAML syntax error
+// would be a second, wronger message about the same file.
+func collectGateAdvisories(projectRoot string) []string {
+	// Each value carries the file it was actually READ from, not the file
+	// §1.6 designates. `logmind config set review.strict_mode` writes into
+	// .logmind/config.yml, so naming .clud-bug.json for a value that came
+	// from somewhere else would send the reader to the wrong file.
+	type found struct {
+		value  any
+		source string
+	}
+	values := map[string]found{}
+
+	const logmindConfig = ".logmind/config.yml"
+	merged, err := config.LoadPathAsMap(filepath.Join(projectRoot, filepath.FromSlash(logmindConfig)))
+	if err == nil {
+		for _, b := range config.BlockingSettings() {
+			if v, ok := config.GetPath(merged, b.Key); ok && v != nil {
+				values[b.Key] = found{v, logmindConfig}
+			}
+		}
+	}
+	// .clud-bug.json wins for its own keys: §1.6 names it as their home, so
+	// a value there is the one in force. A stray review.* in config.yml
+	// (which `logmind config set review.strict_mode` writes, inertly — see
+	// the note in internal/cli/config_blocking.go) is still reported when
+	// .clud-bug.json is silent, because it is still evidence of the write.
+	if review, ok := readCludBugReview(filepath.Join(projectRoot, filepath.FromSlash(cludBugConfigPath))); ok {
+		for _, key := range []string{"strict_mode", "auto_fix"} {
+			if v, ok := review[key]; ok && v != nil {
+				values["review."+key] = found{v, cludBugConfigPath}
+			}
+		}
+	}
+
+	var out []string
+	for _, b := range config.BlockingSettings() {
+		f, ok := values[b.Key]
+		if !ok || !b.Weakens(f.value) {
+			continue
+		}
+		line := fmt.Sprintf(
+			"%s is %v in %s — the weakened value; it governs %s. SPEC §1.6 makes this a "+
+				"person's to change: if you did not change it, an agent did.",
+			b.Key, f.value, f.source, b.Governs)
+		if f.source == logmindConfig {
+			line += fmt.Sprintf(" Restore with `logmind config set %s %v`.", b.Key, b.PersonInLoop)
+		} else {
+			line += fmt.Sprintf(" Restore it to %v in that file — it is clud-bug's to write, not logmind's.", b.PersonInLoop)
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// readCludBugReview returns the `review` object from .clud-bug.json.
+//
+// Tolerant on purpose: a missing file is the common case (a repository that
+// has not configured review), and an unparseable one belongs to clud-bug to
+// complain about, not to logmind's stack-status command.
+func readCludBugReview(path string) (map[string]any, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var doc struct {
+		Review map[string]any `json:"review"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, false
+	}
+	return doc.Review, doc.Review != nil
 }
 
 // collectAutoAdvisories returns the ADVISORY list for `.logmind/auto.yml`
@@ -1175,6 +1288,13 @@ func RenderStatus(r StatusReport) string {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("Unattended-operation directive (%d):", len(r.AutoAdvisories)))
 		for _, s := range r.AutoAdvisories {
+			lines = append(lines, fmt.Sprintf("  • %s", s))
+		}
+	}
+	if len(r.GateAdvisories) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Blocking settings currently weakened (%d):", len(r.GateAdvisories)))
+		for _, s := range r.GateAdvisories {
 			lines = append(lines, fmt.Sprintf("  • %s", s))
 		}
 	}
