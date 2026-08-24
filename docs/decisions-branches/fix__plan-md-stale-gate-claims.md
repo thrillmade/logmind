@@ -37,3 +37,14 @@
 
 ---
 
+## 2026-08-24 15:04 - docs/plan.md: scope the control claim to dev — main's template is still v4 and returns 0 on the same probe
+
+**Reasoning:** The third verifier passed the numbers but flagged one trap: my control 'the same anchored grep returns 2 against the template' is dev-scoped, and a reader testing it against main's copy would get 0 and wrongly conclude the probe is broken. Measured: main's check-decisions.yml.template carries 'logmind-template-version: v4' and returns 0; dev's returns 2. A document whose subject is measurement precision must not leave a control a reader cannot reproduce.
+
+**Alternatives considered:** Merge as written — the verifier called it true given the antecedent one sentence earlier, and not worth blocking on. Rejected: true-but-reproducibly-misleading is the exact failure this bullet was rewritten to remove, and the fix is one clause.
+
+**Implications:**
+- I first wrote 'unversioned v4', which is self-contradictory — the marker IS present and reads v4. Corrected to 'still at v4 (marker present, pre-rewrite)' before committing. This change narrows a claim rather than asserting a new one; the single new fact, that main's template returns 0, was measured directly with the command shown, so it does not reopen the verdict.
+
+---
+

@@ -421,7 +421,9 @@ Verified against current source and against each consumer repository's
   list. **Nothing is modernised** — `grep -cE '^[^#]*logmind check-decisions'`
   returns **0** on both branches; the single non-anchored hit is a comment
   saying the file does not yet do this. (Control: the same anchored grep
-  returns 2 against the template.) So the gate judging every logmind PR is
+  returns 2 against the template on `dev`. Scoped deliberately: `main`'s copy of that
+  template is still at `v4` (marker present, pre-rewrite) and returns 0 on the
+  same probe, so the control demonstrates the probe on `dev` only.) So the gate judging every logmind PR is
   defeatable by retitling — no actor or maintainer check gates `skip_logmind`,
   so any PR author can do it — and we do not run the gate we ship. That is
   #364, and it is pre-tag.
