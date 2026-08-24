@@ -100,8 +100,11 @@ func TestLoad_UnknownMaxRecentKeyIsIgnored(t *testing.T) {
 		if err := root.Execute(); err != nil {
 			t.Fatalf("config get with a stale max_recent key errored: %v\n%s", err, out.String())
 		}
-		if got := strings.TrimSpace(out.String()); got != "False" {
-			t.Errorf("branch_aware = %q; want False — the neighbouring key must still resolve", got)
+		// `false`, the way the file spells it — see formatConfigValue.
+		// What this test is actually pinning is that the neighbouring key
+		// still resolves past the unrecognised max_recent.
+		if got := strings.TrimSpace(out.String()); got != "false" {
+			t.Errorf("branch_aware = %q; want false — the neighbouring key must still resolve", got)
 		}
 	})
 }

@@ -254,6 +254,43 @@ layered guards keep proprietary skills from leaking into a public catalog:
 There is no `--force` flag — these are guard rails, not toggles. See
 `logmind skill push --help` for the full surface.
 
+### Settings a person changes, not an agent
+
+Three settings decide whether something *blocks*, and SPEC §1.6 reserves them
+for a person: `git.enforce_commits`, `review.strict_mode` and
+`review.auto_fix`. `logmind config set` refuses a write that **weakens** one of
+them — turning a gate off, or turning auto-fix on — and says why. Turning a
+gate **on** is never refused, and every other setting is written as usual: an
+agent doing setup or registering a skill it just wrote must not be blocked.
+
+How logmind decides a person is asking, in full:
+
+1. **No agent marker in the environment.** `LOGMIND_AGENT`, `CLAUDECODE`,
+   `CLAUDE_CODE`, `CURSOR_AGENT`, `CODEX_SANDBOX`. Any one of them set to a
+   non-empty value refuses the write outright, naming the variable it saw.
+2. **A terminal, and a person who retypes the key.** stderr must be a TTY and
+   stdin must be block-safe; logmind then prints what the setting governs and
+   asks for the key to be typed back. `y` does not count.
+
+Step 2 is the guard — an agent driving `logmind` as a subprocess over pipes
+cannot satisfy it whatever harness it is, listed above or not. Step 1 is a
+courtesy that produces a better message and catches an agent inside a PTY; the
+marker list is non-exhaustive on purpose and nothing rests on it being
+complete.
+
+**What defeats it.** Any agent with a shell can: unset the marker, allocate a
+PTY and answer the prompt — or skip all that and edit `.logmind/config.yml`
+directly, which no local tool can prevent. This is a speed bump and a signal,
+not a boundary. The backstops are that `logmind doctor` reports any of the
+three it finds already weakened (**Blocking settings currently weakened**, also
+`gate_advisories` in `--json`), that SPEC §6.3 reads gate settings from the
+base ref so a weakening inside a pull request cannot affect the gate judging
+it, and that a config change is a hunk in a diff a review reads like any other.
+
+A person in a workflow, a cron job or over `ssh` has no terminal and is
+refused for that reason, which the message says: these settings are
+deliberately not automatable.
+
 ## Contributing / Development Setup
 
 Working on logmind itself? It's a Go module — clone, build, run.
