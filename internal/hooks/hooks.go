@@ -132,7 +132,7 @@ func BuildPostMergeBody() string {
 		"# regenerations.\n" +
 		"#\n" +
 		"# v0.6.7 bug fix: regenerate but do NOT git add. Previously the hook\n" +
-		"# auto-staged docs/timeline.md + docs/file-structure.md, but the\n" +
+		"# auto-staged the derived docs, but the\n" +
 		"# staged-but-uncommitted files then blocked `git checkout main` on\n" +
 		"# every PR cycle (post-merge fires from `git pull --rebase` after a\n" +
 		"# squash merge — there's no commit being constructed, so staging was\n" +
@@ -197,7 +197,11 @@ func BuildPostMergeBody() string {
 		"    fi\n" +
 		"  fi\n" +
 		"  if [ -d docs ]; then\n" +
+		"    # Both halves of the SPEC 3.3 split, each named explicitly:\n" +
+		"    # --write writes the file it is given and NO other, so the pair is\n" +
+		"    # two invocations, not one that guesses a sibling path.\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
+		"    logmind timeline --write docs/timeline-archive.md --half archive >/dev/null 2>&1 || true\n" +
 		"    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n" +
 		"  fi\n" +
 		"fi\n"
@@ -221,7 +225,8 @@ func BuildPostRewriteBody() string {
 		"# Why: the merge driver in .gitattributes only fires when a merge\n" +
 		"# produces conflicts on the derived files. A clean rebase rewrites\n" +
 		"# multiple commits without ever invoking the driver — leaving\n" +
-		"# docs/timeline.md and docs/file-structure.md stale relative to the\n" +
+		"# docs/timeline.md, docs/timeline-archive.md and docs/file-structure.md\n" +
+		"# stale relative to the\n" +
 		"# replayed `docs/decisions-branches/<branch>.md` entries. This hook\n" +
 		"# sweeps the final state once and stages the regen for inclusion in\n" +
 		"# the user's next commit / amend cycle.\n" +
@@ -242,9 +247,14 @@ func BuildPostRewriteBody() string {
 		"    exit 0\n" +
 		"  fi\n" +
 		"  if [ -n \"$current\" ] && [ -d docs ]; then\n" +
+		"    # Both halves of the SPEC 3.3 split, each named explicitly:\n" +
+		"    # --write writes the file it is given and NO other.\n" +
 		"    logmind timeline --write docs/timeline.md >/dev/null 2>&1 || true\n" +
+		"    logmind timeline --write docs/timeline-archive.md --half archive >/dev/null 2>&1 || true\n" +
 		"    logmind file-structure --write docs/file-structure.md >/dev/null 2>&1 || true\n" +
-		"    git add docs/timeline.md docs/file-structure.md 2>/dev/null || true\n" +
+		"    for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do\n" +
+		"      git add \"$d\" 2>/dev/null || true\n" +
+		"    done\n" +
 		"  fi\n" +
 		"fi\n"
 }
@@ -263,9 +273,9 @@ func BuildPostRewriteBody() string {
 // the commit). It now BLOCKS a substantive commit that bypasses
 // `logmind log`, unless git.enforce_commits:false or a guardcommit
 // carve-out applies ([skip-logmind], LOGMIND_ALLOW_GIT_COMMIT=1, a
-// staged decision file, under-threshold, or a rebase/merge/cherry-pick
-// in progress — see internal/guardcommit's package doc for the full
-// list). Because the hook-version marker below is embedded via
+// decision entry in the staged diff, under-threshold, or a
+// rebase/merge/cherry-pick in progress — see internal/guardcommit's
+// package doc for the full list). Because the hook-version marker below is embedded via
 // hookVersion(), every repo's existing v0.6.16-era warn-only hook
 // auto-upgrades to this enforcing body the next time `logmind init`
 // (refresh mode) or `logmind doctor --fix` runs — installHook's
@@ -278,6 +288,45 @@ func BuildPostRewriteBody() string {
 // under POSIX sh on every platform git itself supports, so `command -v`
 // is always available. A missing binary fails open (exit 0) — logmind
 // not being installed should never block a commit.
+//
+// Loud fail-open + engine-skew handshake (issue #270, SPEC §3.4). Fail-open
+// is REQUIRED and unchanged — "a missing, stale or crashing engine MUST
+// allow the commit" — but §3.4 also says "Failing open MUST NOT be silent. A
+// hook that cannot run the engine it was installed for MUST say so on
+// stderr, naming what it looked for and what it found." This body used to
+// say nothing at all: a `logmind` on PATH that predates `guard-commit` (the
+// released v1.2.0 does) exits 1, fell through the rc!=65 path below, and the
+// commit landed with the gate silently off. Two changes close that:
+//
+//   - Every no-decision exit from this hook now prints a one-line stderr
+//     notice naming what it looked for (`logmind` on PATH, able to run
+//     `guard-commit`), what it found (nothing, or the resolved absolute path
+//     and its exit code), and which logmind version installed this hook. The
+//     exit code is still 0 in both cases.
+//   - The invocation carries LOGMIND_HOOK_VERSION — this hook's own
+//     installed-by version — so the engine can compare it against its own
+//     and complain on a MAJOR skew (§3.4: "An installer MUST make that skew
+//     visible ... checking the engine's version at run and complaining").
+//     See reportEngineSkew in internal/cli/guard_commit.go.
+//
+// Why an ENVIRONMENT VARIABLE and not a `--hook-version` flag: an engine
+// that doesn't recognise the variable ignores it, while an engine that
+// doesn't recognise a flag ERRORS OUT — which would turn "the gate ran
+// against a slightly older engine" into "the gate did not run" for exactly
+// the mixed-version fleet §3.4 says this matters most for. The handshake
+// must never be able to break a gate that was working.
+//
+// Why not pin the installing binary's absolute path (§3.4's OTHER offered
+// remedy): the hook body is byte-compared in two places — internal/doctor's
+// probeHook diffs the installed file against BuildCommitMsgBody(), and
+// testdata/commit-msg.golden pins the same bytes in CI. Both require the
+// body to be a pure function of internal/version.Version. A path resolved at
+// install time makes it a function of the installing machine's filesystem
+// instead, so every correctly-installed hook on a machine whose logmind
+// lives anywhere else would be reported as content drift, and no golden
+// could be checked in at all. A pinned path also breaks on a reinstall to a
+// different prefix and needs a PATH fallback to stay fail-open — which
+// reintroduces the bare-name binding it was meant to remove.
 //
 // Stale-binary hardening (CTO design amendment, post-PR2): this body used
 // to do `logmind guard-commit --layer git-hook --msg-file "$MSG_FILE"; exit $?`
@@ -314,11 +363,23 @@ func BuildCommitMsgBody() string {
 		"# PreToolUse guard). Delegates the enforce/allow decision entirely to\n" +
 		"# `logmind guard-commit --layer git-hook` — see internal/guardcommit for\n" +
 		"# the carve-outs (git.enforce_commits:false, [skip-logmind],\n" +
-		"# LOGMIND_ALLOW_GIT_COMMIT=1, a staged decision file, under-threshold,\n" +
-		"# rebase/merge/cherry-pick in progress).\n" +
+		"# LOGMIND_ALLOW_GIT_COMMIT=1, a decision ENTRY in the staged diff (not\n" +
+		"# merely a staged decision FILE), under-threshold, rebase/merge/\n" +
+		"# cherry-pick in progress).\n" +
 		"#\n" +
 		"# Fails open when logmind isn't on PATH: a missing binary should never\n" +
-		"# block a commit.\n" +
+		"# block a commit. Fail-open is NOT silent though (issue #270): every\n" +
+		"# path that allows a commit without a decision from the engine prints a\n" +
+		"# one-line notice to stderr naming what was looked for, what was found,\n" +
+		"# and which logmind installed this hook. A gate that cannot report its\n" +
+		"# own absence gets trusted long after it stopped working.\n" +
+		"#\n" +
+		"# LOGMIND_HOOK_VERSION carries this hook's installed-by version to the\n" +
+		"# engine so it can complain about a major-version skew between the\n" +
+		"# binary that WROTE this hook and the one now RUNNING it. Deliberately\n" +
+		"# an env var, not a flag: an engine that doesn't know the variable\n" +
+		"# ignores it, whereas an engine that doesn't know a flag would error\n" +
+		"# out — turning a working gate into a skipped one.\n" +
 		"#\n" +
 		"# Stale-binary hardening: 65 is guard-commit's OWN distinctive block\n" +
 		"# signal (EX_DATAERR). Any other nonzero exit — including a STALE\n" +
@@ -344,18 +405,25 @@ func BuildCommitMsgBody() string {
 		"if [ -z \"$MSG_FILE\" ] || [ ! -f \"$MSG_FILE\" ]; then\n" +
 		"    exit 0\n" +
 		"fi\n" +
-		"if command -v logmind >/dev/null 2>&1; then\n" +
-		"    logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\" &\n" +
-		"    __lm_pid=$!\n" +
-		"    ( sleep 10; kill \"$__lm_pid\" 2>/dev/null ) >/dev/null 2>&1 &\n" +
-		"    __lm_watcher=$!\n" +
-		"    wait \"$__lm_pid\" 2>/dev/null\n" +
-		"    rc=$?\n" +
-		"    kill \"$__lm_watcher\" 2>/dev/null\n" +
-		"    wait \"$__lm_watcher\" 2>/dev/null\n" +
-		"    if [ \"$rc\" -eq 65 ]; then\n" +
-		"        exit 1\n" +
-		"    fi\n" +
+		"__lm_want='" + hookVersion() + "'\n" +
+		"__lm_engine=$(command -v logmind 2>/dev/null || true)\n" +
+		"if [ -z \"$__lm_engine\" ]; then\n" +
+		"    printf 'logmind: commit gate NOT RUN — looked for `logmind` on PATH, found nothing (this hook was installed by logmind %s). Commit allowed.\\n' \"$__lm_want\" >&2\n" +
+		"    exit 0\n" +
+		"fi\n" +
+		"LOGMIND_HOOK_VERSION=\"$__lm_want\" logmind guard-commit --layer git-hook --msg-file \"$MSG_FILE\" &\n" +
+		"__lm_pid=$!\n" +
+		"( sleep 10; kill \"$__lm_pid\" 2>/dev/null ) >/dev/null 2>&1 &\n" +
+		"__lm_watcher=$!\n" +
+		"wait \"$__lm_pid\" 2>/dev/null\n" +
+		"rc=$?\n" +
+		"kill \"$__lm_watcher\" 2>/dev/null\n" +
+		"wait \"$__lm_watcher\" 2>/dev/null\n" +
+		"if [ \"$rc\" -eq 65 ]; then\n" +
+		"    exit 1\n" +
+		"fi\n" +
+		"if [ \"$rc\" -ne 0 ]; then\n" +
+		"    printf 'logmind: commit gate NOT RUN — %s could not run `guard-commit` (exit %s); this hook was installed by logmind %s. Commit allowed; run `logmind doctor`.\\n' \"$__lm_engine\" \"$rc\" \"$__lm_want\" >&2\n" +
 		"fi\n" +
 		"exit 0\n"
 }
@@ -367,7 +435,8 @@ func BuildCommitMsgBody() string {
 //
 // The gap L2a closes: L1 only fires inside `logmind log`. A raw `git commit
 // -am ...` (or any commit that skips `logmind log` entirely) stages
-// whatever docs/timeline.md / docs/file-structure.md currently look like in
+// whatever the derived docs (docs/timeline.md, docs/timeline-archive.md,
+// docs/file-structure.md) currently look like in
 // the working tree — including a stale/dirty copy left behind by something
 // like `logmind warp` deliberately writing the default branch's newer copy
 // into the working tree for review. `guard-commit`'s CarveOutUnderThreshold
@@ -453,7 +522,7 @@ func BuildCommitMsgBody() string {
 //
 // MUST NEVER block a commit. Unlike the commit-msg hook (Layer 2 of commit
 // enforcement, which can legitimately reject a commit), this hook exists
-// solely to keep two files pinned — a purely mechanical, lossless operation
+// solely to keep the derived files pinned — a purely mechanical, lossless operation
 // (the docs regenerate deterministically from the committed decision files,
 // which travel with the branch and never conflict). It always exits 0,
 // whether or not `.logmind/config.yml` is present, whether or not the
@@ -476,14 +545,15 @@ func BuildPreCommitBody() string {
 		"# logmind pre-commit hook\n" +
 		HookVersionPrefix + hookVersion() + "\n" +
 		"# Installed by `logmind init` (v2.0.0+). L2a of the derived-docs-on-main\n" +
-		"# pin-preservation design: docs/timeline.md and docs/file-structure.md are\n" +
-		"# purely-derived, main-only artifacts (see internal/cli/derived.go). A raw\n" +
+		"# pin-preservation design: docs/timeline.md, docs/timeline-archive.md and\n" +
+		"# docs/file-structure.md are purely-derived, main-only artifacts (see\n" +
+		"# internal/cli/derived.go). A raw\n" +
 		"# `git commit` — bypassing `logmind log`, whose own commitDecision restore\n" +
-		"# is Layer 1 — could otherwise sweep a dirtied copy of either file into the\n" +
+		"# is Layer 1 — could otherwise sweep a dirtied copy of any of them into the\n" +
 		"# commit on a non-default branch, e.g. after `logmind warp` pulls in the\n" +
-		"# default branch's newer copy for review. This hook restores both to their\n" +
-		"# committed (HEAD) content, in both the index and the working tree, right\n" +
-		"# before the commit is built.\n" +
+		"# default branch's newer copy for review. This hook restores them all to\n" +
+		"# their committed (HEAD) content, in both the index and the working tree,\n" +
+		"# right before the commit is built.\n" +
 		"#\n" +
 		"# This hook MUST NEVER block a commit — it always exits 0. The restore is\n" +
 		"# lossless (the docs regenerate deterministically from the committed\n" +
@@ -494,6 +564,13 @@ func BuildPreCommitBody() string {
 		"# guard-commit`), this restore is simple enough to inline directly, which\n" +
 		"# keeps it working in a fresh clone or CI runner before logmind is\n" +
 		"# installed, or when the on-PATH binary is stale or broken.\n" +
+		"#\n" +
+		"# ONE path per `git checkout`, not all three in one command. `git checkout\n" +
+		"# HEAD -- a b c` is ALL-OR-NOTHING: if any pathspec is untracked it errors\n" +
+		"# and restores NOTHING. A repo that has not regenerated on main since\n" +
+		"# docs/timeline-archive.md was introduced has no committed copy of it, so a\n" +
+		"# single combined command would silently turn this whole restore off in\n" +
+		"# exactly the repos still catching up.\n" +
 		"\n" +
 		"if [ -f .logmind/config.yml ]; then\n" +
 		"  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)\n" +
@@ -503,7 +580,9 @@ func BuildPreCommitBody() string {
 		"  default=${default#origin/}\n" +
 		"  [ -z \"$default\" ] && default=main\n" +
 		"  if [ -n \"$current\" ] && [ \"$current\" != \"$default\" ]; then\n" +
-		"    git checkout HEAD -- docs/timeline.md docs/file-structure.md >/dev/null 2>&1 || true\n" +
+		"    for d in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do\n" +
+		"      git checkout HEAD -- \"$d\" >/dev/null 2>&1 || true\n" +
+		"    done\n" +
 		"  fi\n" +
 		"fi\n" +
 		"exit 0\n"
@@ -600,10 +679,15 @@ func installHook(hookPath, body, marker string) (bool, error) {
 	// Write atomically (temp sibling + rename): a bare os.WriteFile here
 	// would O_TRUNC an EXISTING hook before writing the new body, so a
 	// crash mid-write could leave a truncated/corrupt git hook behind.
-	// atomicio.WriteFile also chmods the temp file before the rename, so
-	// the executable bit lands correctly whether hookPath is new or being
-	// updated — no separate re-chmod needed.
-	if err := atomicio.WriteFile(hookPath, []byte(body), 0o755); err != nil {
+	//
+	// WriteFileMode, not WriteFile: 0o755 is not a default here, it is the
+	// point — a git hook without the executable bit is silently never run.
+	// atomicio.WriteFile deliberately PRESERVES an existing file's mode (it
+	// reproduces os.WriteFile, which only honours perm on create), so a hook
+	// that somehow lost its exec bit would keep having lost it. Asserting
+	// the mode subsumes the separate re-chmod this site would otherwise
+	// need, and it says at the call site that the mode is intentional.
+	if err := atomicio.WriteFileMode(hookPath, []byte(body), 0o755); err != nil {
 		return false, err
 	}
 	return true, nil

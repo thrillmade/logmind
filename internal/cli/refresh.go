@@ -28,6 +28,8 @@
 package cli
 
 import (
+	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/thrillmade/logmind/internal/claudehook"
@@ -39,9 +41,11 @@ import (
 // refreshResult tallies what applyRefresh actually changed. It drives both
 // init's "✓/↻" lines and doctor --fix's quiet `ok` summary.
 type refreshResult struct {
-	WorkflowsCreated   []string // rel paths
-	WorkflowsRefreshed []string // rel paths
-	AgentsMDMsg        string   // "" when no change
+	WorkflowsCreated   []string                     // rel paths
+	WorkflowsRefreshed []string                     // rel paths
+	WorkflowsDeclined  []templateDowngrade          // refused downgrades (#286) — MUST be reported
+	AgentsMDMsg        string                       // "" when no change
+	AgentsMDDeclined   *inserter.AgentsBlockRefusal // refused block refresh (#267) — MUST be reported
 	GitattrChanged     bool
 	MergeDriverSet     bool     // a merge-driver git config key was (re)written
 	HooksRefreshed     []string // subset of {"post-merge","post-rewrite","commit-msg"}
@@ -75,17 +79,19 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 	}
 
 	if opts.githubActions {
-		created, refreshed, err := installWorkflowTemplates(cwd, true)
+		created, refreshed, declined, err := installWorkflowTemplates(cwd, true)
 		res.WorkflowsCreated = created
 		res.WorkflowsRefreshed = refreshed
+		res.WorkflowsDeclined = declined
 		note(err)
 	}
 
 	// AGENTS.md marker block + .gitattributes block are repo-content, not
 	// git-state, so they run regardless of opts.git.
-	msg, err := inserter.EnsureAgentsMD(cwd)
+	msg, declined, err := inserter.EnsureAgentsMD(cwd)
 	if err == nil {
 		res.AgentsMDMsg = msg
+		res.AgentsMDDeclined = declined
 	}
 	note(err)
 
@@ -131,4 +137,199 @@ func applyRefresh(cwd string, opts refreshOpts) (refreshResult, error) {
 	}
 
 	return res, firstErr
+}
+
+// reportTemplateDowngrades writes one stderr line per refused workflow
+// refresh. Called by BOTH refresh surfaces (init refresh mode, doctor
+// --fix) — the refusal is the whole point of #286, so it can never be
+// left to a caller's discretion.
+//
+// Shape follows SPEC §3.4's rule for the analogous fail-open case ("Failing
+// open MUST NOT be silent... MUST say so on stderr, naming what it looked
+// for and what it found"): name the file, both markers, and the direction.
+// Four causes, four remedies — so four messages. A single "left unchanged"
+// line would tell a user whose file is AHEAD of the binary to go take
+// ownership of it, a user whose file is THEIRS to go upgrade, and a user
+// whose disk is full that logmind made a decision.
+func reportTemplateDowngrades(stderr io.Writer, declined []templateDowngrade) {
+	for _, d := range declined {
+		// THE FAILURE CASE IS CHECKED ON `Err`, NOT ON `Reason`, AND IT IS
+		// CHECKED FIRST. A write that FAILED is not a decision, and it must
+		// never be printed in the vocabulary of the deliberate cases — "left
+		// unchanged … refusing to downgrade" reads as considered. Keying it
+		// on the presence of an error rather than on the reason tag means an
+		// entry constructed without a Reason still cannot be described as a
+		// refusal: declineDowngrade is the zero value of declineReason, so a
+		// `templateDowngrade{Path: p, Err: err}` written by the next person
+		// would otherwise print "installed template  is NEWER than the ".
+		// `error:` rather than `note:` because the callers exit non-zero on
+		// this one (#313) and stay at 0 for the three below.
+		if d.Err != nil {
+			// Not a judgement about the file — logmind wanted it and could not
+			// have it. Distinguished from the three refusals below because the
+			// remedy is different in kind: those ask the user to decide who
+			// owns the file, this one says the write itself could not happen.
+			// Every other template in the same pass was still installed (#306),
+			// which is why this reads "was NOT written" rather than "left
+			// unchanged": the run continued, and the user has to know that this
+			// one path did not come with it.
+			fmt.Fprintf(stderr,
+				"error: %s was NOT written — %v. The other workflow templates in this run were "+
+					"still processed; re-run once this path is writable.\n",
+				d.Path, d.Err)
+			continue
+		}
+		switch d.Reason {
+		case declineUnmarked:
+			// SPEC §5.2: "An artifact carrying no marker at all belongs to
+			// the user and MUST NOT be overwritten." Saying so is what makes
+			// the refusal auditable rather than a silent no-op.
+			//
+			// The remedy is delete-and-regenerate, NOT "paste the bundled
+			// marker in yourself": installWorkflowTemplates only rewrites a
+			// file whose installed marker DIFFERS from the bundled one (the
+			// `installedVer != bundledVer` guard below) — pasting the
+			// CURRENT marker makes the file match on the very next read, so
+			// it is filed "current" forever and never refreshed again, no
+			// matter what the rest of the file says. Deleting the file
+			// routes the next `--fix`/`init` through the CREATE branch
+			// instead, which always writes — verified end to end for #306.
+			fmt.Fprintf(stderr,
+				"note: %s left unchanged — it carries no `# logmind-template-version:` marker, "+
+					"so logmind treats it as yours and will not overwrite it. To hand it back to "+
+					"logmind, delete %s and re-run `logmind doctor --fix` (or `logmind init`) to "+
+					"regenerate it from the bundled template — pasting the marker in by hand would "+
+					"make the file look current forever without actually matching it.\n",
+				d.Path, d.Path)
+		case declineDisplaced:
+			fmt.Fprintf(stderr,
+				"note: %s left unchanged — its `# logmind-template-version: %s` marker is on line %d, "+
+					"not line 1, so logmind cannot tell whether the file is yours or its own and will "+
+					"not overwrite it. Move the marker to line 1 to let logmind refresh it, or delete "+
+					"the marker to keep the file yours.\n",
+				d.Path, d.Installed, d.Line)
+		case declineUnwritable:
+			// Unreachable: declineUnwritable always carries Err, and the
+			// guard at the top of the loop returns on that. Kept so the
+			// switch is exhaustive over declineReason rather than silently
+			// falling into the downgrade wording if that invariant ever
+			// breaks — and it says so instead of duplicating the message.
+			fmt.Fprintf(stderr,
+				"error: %s was NOT written — the reason was recorded as unwritable but no error "+
+					"came with it; this is a logmind bug, please report it.\n", d.Path)
+		default:
+			fmt.Fprintf(stderr,
+				"note: %s left unchanged — installed template %s is NEWER than the %s this binary bundles; "+
+					"refusing to downgrade. Upgrade logmind to move it forward.\n",
+				d.Path, d.Installed, d.Bundled)
+		}
+	}
+}
+
+// unwritablePaths names the declines that are FAILURES rather than ownership
+// judgements. declineUnmarked / declineDisplaced / declineDowngrade are stable,
+// legitimate repository states a surface may finish successfully on; a path
+// logmind could not write at all is not, and every surface has to be able to
+// tell the two apart — that is what lets a refusal continue the run without
+// letting the run claim it succeeded (#306).
+//
+// ONE PREDICATE, and it is the same `d.Err != nil` that reportTemplateDowngrades
+// prints from. Three surfaces ask this question — init's receipt, init refresh
+// mode's exit code, doctor --fix — and a second spelling of it (`d.Reason ==
+// declineUnwritable`) is a second copy of the rule that reads as true until one
+// quietly disagrees with the message the user was shown.
+func unwritablePaths(declined []templateDowngrade) []string {
+	var out []string
+	for _, d := range declined {
+		if d.Err != nil {
+			out = append(out, d.Path)
+		}
+	}
+	return out
+}
+
+// unwritableCount is unwritablePaths' arity for the callers that only report a
+// number.
+func unwritableCount(declined []templateDowngrade) int {
+	return len(unwritablePaths(declined))
+}
+
+// reportAgentsBlockRefusal writes the one stderr line for a refused
+// AGENTS.md marker-block refresh (#267). Same contract as
+// reportTemplateDowngrades above and the same §3.4 shape — every surface
+// that can hit the refusal calls this, so none of them can swallow it.
+//
+// Two messages, because the two conditions want different remedies:
+//
+//   - AHEAD — the block parses and orders after ours. The repo is running
+//     in front of this binary (a staggered fleet rollout, #257); the fix
+//     is to upgrade logmind, and the block is fine as it stands.
+//   - UNRECOGNISED — the id is absent or unreadable, so there is no
+//     flavour to preserve and no generation to compare. Upgrading may not
+//     help; a human has to look at the block.
+//
+// A no-op on nil so callers can call it unconditionally.
+func reportAgentsBlockRefusal(stderr io.Writer, d *inserter.AgentsBlockRefusal) {
+	if d == nil {
+		return
+	}
+	if d.Ahead {
+		fmt.Fprintf(stderr,
+			"note: %s logmind block left unchanged — installed block-version %s is NEWER than the %s this "+
+				"binary ships; refusing to downgrade. Upgrade logmind to move it forward.\n",
+			d.Path, d.Installed, d.Bundled)
+		return
+	}
+	found := d.Installed
+	if found == "" {
+		found = "none"
+	}
+	fmt.Fprintf(stderr,
+		"note: %s logmind block left unchanged — unrecognised block-version marker (found %s; this binary "+
+			"ships %s); refusing to guess which template it is.\n",
+		d.Path, found, d.Bundled)
+}
+
+// reportRedirectRefusal writes the one stderr line for a per-tool redirect
+// file (SPEC §1.2) logmind declined to write — protocol#77's rows 2 and 3.
+// Same contract as the two reporters above: every surface that can hit the
+// refusal calls this, so none of them can swallow it.
+//
+// THE REPORT IS HALF THE FIX. `logmind init` already left AGENTS.md's user
+// prose alone and already refused a newer workflow template; what made #336 a
+// data-loss bug rather than a policy disagreement is that the redirect files
+// were rewritten with nothing said. The ruling spells the remedy out —
+// "leave it, and say so on stderr" — and SPEC §3.4's rule for the analogous
+// fail-open case gives the shape: name the file, what was looked for, and what
+// was found.
+//
+// Two messages, because the two states want different remedies: a file another
+// component owns is not a mistake to correct, and a file with no marker at all
+// is the user's to hand over if they want to.
+//
+// A no-op on nil so callers can call it unconditionally.
+func reportRedirectRefusal(stderr io.Writer, d *inserter.RedirectRefusal) {
+	if d == nil {
+		return
+	}
+	switch d.Ownership {
+	case inserter.MarkerForeign:
+		fmt.Fprintf(stderr,
+			"note: %s left unchanged — it carries %s's marker (line %d) and no logmind entry, so it is "+
+				"%s's file, not logmind's. Every component points %s at AGENTS.md, so there is nothing "+
+				"missing; if you want logmind's entry there too, delete %s and re-run `logmind init`.\n",
+			d.Path, d.Owner, d.Line, d.Owner, d.Display, d.Path)
+	default:
+		// SPEC:1101: "an artifact carrying no marker at all belongs to the
+		// user and MUST NOT be overwritten." The remedy is
+		// delete-and-regenerate rather than "paste the marker in yourself" —
+		// the same reason the workflow message gives, plus a simpler one here:
+		// the file logmind would write is three lines pointing at AGENTS.md,
+		// so a user who wants it gets it back in one command.
+		fmt.Fprintf(stderr,
+			"note: %s left unchanged — logmind looked for %s and found none, so it treats the file as "+
+				"yours (SPEC:1101) and will not overwrite it. %s reads this file; if you want logmind's "+
+				"pointer to AGENTS.md in it, delete %s and re-run `logmind init`.\n",
+			d.Path, d.Marker, d.Display, d.Path)
+	}
 }

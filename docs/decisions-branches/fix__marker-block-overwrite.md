@@ -1,0 +1,72 @@
+← back to [docs/timeline.md](../timeline.md)
+
+<!-- logmind-entry-start: 2026-08-15-inserter-make-a-block-body-where-a-whole-file-belongs-imposs -->
+- **2026-08-15** — inserter: make a block body where a whole file belongs impossible to express, and collapse the two marker extractors to one
+<!-- logmind-entry-end -->
+
+## 2026-08-15 14:00 - inserter: make a block body where a whole file belongs impossible to express, and collapse the two marker extractors to one
+
+**Reasoning:** Two issues turned out to be one class: a partial write landing on a whole artifact the user owns, against SPEC line 1101. Self-update passed a block body where ReplaceMarkerBlock's first parameter is the whole file, then wrote the result over all of AGENTS.md, destroying everything outside the markers. Doctor read the template marker from line one only while init scanned every line, so a marker displaced to line two was markerless to one and versioned to the other, and doctor --fix then overwrote the file it had misjudged.
+
+**Alternatives considered:** Correct the argument at the call site and align the two regexes. Rejected: both defects existed because the shapes permitted them. ReplaceMarkerBlock is now unexported, since returning its input unchanged when markers are absent is a safe contract for a pure function and a data-loss contract for anything that writes the result. RefreshMarkerBlockFile owns the read, so no whole-file parameter is left to get wrong, and OutdatedMarkerEntry's OldBody field is deleted because a struct offering a path and a body side by side is what made the wrong call look plausible.
+
+**Implications:**
+- The self-update call site was deleted rather than repaired: FindOutdatedMarkerBlocks only ever reported AGENTS.md, which EnsureAgentsMD had already refreshed through the same classifier, making it a second refresher of one path against SPEC 5.2. Being unreachable is why its wrong argument survived untested. First-line-only extraction wins, because any-line makes ownership a substring search and a substring search over a user's file claims it; a workflow merely quoting the marker in a heredoc would be adopted and then overwritten. Displacement becomes its own reported state rather than collapsing into markerless. Four mutations, all compiled, all died.
+
+---
+
+## 2026-08-15 14:50 - refresh: name a remedy that works, and route every inserter write through the symlink-refusing primitive
+
+**Reasoning:** The panel found the new refusal told the user to paste the bundled marker version as the file's first line, which is exactly the value installWorkflowTemplates treats as nothing to do, since it rewrites only on version inequality. The advice therefore guaranteed the file would never be refreshed again while doctor reported it current, and it was the only path the message offered. The working remedy, delete the file and re-run doctor --fix, was never mentioned. Verified end to end after the change: the file is left alone, the message names deletion, deleting and re-running regenerates the real gate body rather than the inert stub, and doctor then reports it current for a file that actually matches.
+
+**Alternatives considered:** Make doctor verify content rather than marker version, so a file claiming the current version with arbitrary content cannot be believed. Rejected on the SPEC: section 5.2 defines drift purely as a marker that does not match the current version, and reserves content hashing for catalog-subscribed items through skills-lock.json, a different artifact class. Marker-only freshness is the deliberate take-this-file-back escape hatch, consistent across workflows, hooks and the AGENTS.md block, so the message was the whole bug.
+
+**Implications:**
+- Five raw writes in inserter now route through atomicio.WriteFile, which refuses to follow a symlink; the line numbers in the report I was handed were wrong, and re-deriving them by exhaustive search found exactly five rather than the five named. The underlying hazard was reproduced directly: a dangling symlink at a managed path makes os.ReadFile return not-exist, the caller concludes the file is absent, and a bare os.WriteFile then creates it wherever the link points. Eight mutations, all compiled, all died, including one that plants a second AGENTS.md writer in a different file under a different symbol, which the previous single-file substring test would have missed.
+
+---
+
+## 2026-08-15 14:55 - inserter: two more raw writes in dependabot.go, found by a sweep of the whole tree rather than of this package
+
+**Reasoning:** The earlier pass routed five sites and recorded that as the whole of this package, which was wrong. A tree-wide sweep found two more in dependabot.go: a create branch reading not-exist as absent, the same shape as the AGENTS.md create path, and a merge branch overwriting the whole file after a successful read. Neither was in the panel report or in my brief, because both were derived from a list of this file rather than from a search of the package. A count taken from a report is not a measurement.
+
+**Alternatives considered:** Leave them to the sweep lane that found them. Rejected: that lane deliberately reported them as an unowned gap rather than editing a package another branch held, which is the right instinct, and the fix belongs where the surrounding tests and the rest of the routing already are.
+
+**Implications:**
+- Both are whole-file overwrites with no append or partial semantics, so neither earns an exception. The explicit directory creation before the first was removed as redundant, since the primitive makes its own parent. Two mutations, both compiled, both died. One of the new tests plants a non-dangling symlink pointing at a real file elsewhere, which is the harder case: the read succeeds, so a guard that only considers dangling links would pass it.
+
+---
+
+## 2026-08-15 15:48 - guard the write primitive rather than the path, and close the escape doctor --fix still had
+
+**Reasoning:** The test I had accepted as strengthened was weaker than the one it replaced: the panel restored the literal defect this branch exists to fix and the test passed, as it did for four other real second writers, because it matched on how the path was spelled. Path spellings are unbounded and write primitives are a closed set, so the guard now parses the syntax tree for the primitives instead. All five evasions were replanted individually, each compiled, each went red. Separately the panel found doctor --fix still writing six thousand bytes outside the repository through a dangling symlink, in two branches of init that this branch had not touched.
+
+**Alternatives considered:** Replace the source scan with a behavioural test that fails when the file is written twice. Rejected on measurement rather than taste: with the defect restored, the byte-survival test still passes, because the offending loop finds nothing to do once the earlier refresh has run. That is precisely why the original defect survived untested, and it means no behavioural test can cover this class. The guard states that limit rather than implying completeness.
+
+**Implications:**
+- Seventeen citations pointing at section 1.1 were corrected to 5.2, including one in a string the user reads, after checking both sentences against the live specification rather than against another comment. The unreadable-binary case now reports that a logmind on the path could not be asked its version, instead of claiming the user owns an unmarked artifact. Two write sites in another lane's files are recorded in the allowlist with the finding written down rather than edited across a boundary, and a second guard of the same kind now exists in that lane, which is one list too many and is being folded into one.
+
+---
+
+## 2026-08-15 16:23 - init: one refused artifact must not cost the others, and a refusal must not be reported as success
+
+**Reasoning:** A symlinked workflow made init abandon the remaining three templates, exit zero, and print that the repository initialised successfully; re-running then claimed everything was already current, so the gap never healed. Self-update had the same shape from a different cause: the refusal was returned into a condition testing only for the absence of an error, with no branch for its presence, so the command reported templates up to date while the block stayed stale. Both are the failure this branch exists to prevent, reached through the error path rather than the write path.
+
+**Alternatives considered:** Keep the guard I built and patch its blind spots. Rejected: it matched the identifier spelled o-s, so an aliased import defeated it while the literal defect this branch fixes sat restored in the tree and the suite stayed green. It had traded a path spelling for a package spelling. The sibling lane already resolves primitives from the import declarations and keys its ledger by enclosing function, so this one is deleted rather than patched a third time, and what is temporarily uncovered is recorded rather than assumed closed.
+
+**Implications:**
+- The refusal is recorded on the existing declined list rather than a second one, and it lives in the shared loop body so every mode inherits it. Displacement became its own reported state on the probe, so a marker on the second line is no longer described as no marker at all, which the specification reserves for artifacts carrying none. Nothing unguarded remains in the affected trees today; the absent coverage is prospective only, and was measured rather than asserted.
+
+---
+
+## 2026-08-15 21:42 - init: pin the four failure sites whose abort would have gone unnoticed
+
+**Reasoning:** Behaviour was correct at all seven sites in the install loop, but only three were pinned: mutating the other four from continue to return compiled cleanly and left the suite green. That is the abort-the-loop defect this branch spent three rounds removing, able to return through most of its own surface. The downgrade refusal matters most because it is not a failure-injection corner at all, it is the case the code's own comment documents, where an installed template is newer than the one the binary bundles.
+
+**Alternatives considered:** Rely on the three existing pins, since they cover the same loop. Rejected on measurement: the ownership test places its newer marker on the template that sorts last, so an abort there abandons nothing and the test cannot see it. Sort order decided whether a guard worked, which is exactly the kind of accident a passing test hides.
+
+**Implications:**
+- The downgrade site is pinned by the reachable scenario rather than a forced error, with the newer marker on the template that sorts first so an abort has three others left to abandon. Two of the four need injection because there is no natural way to fail a brand-new file's write; one uses a directory in the file's place rather than permission bits, so it runs the same on every machine and needs no root check. All four mutations compiled and died, and the three earlier pins stayed green throughout, so the new coverage sits alongside the old rather than displacing it.
+
+---
+

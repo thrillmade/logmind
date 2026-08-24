@@ -17,17 +17,19 @@ git:
   # Block substantive commits that bypass `logmind log` (commit-msg + Claude
   # Code PreToolUse hooks). Set false to fall back to warn-only for this repo.
   enforce_commits: true
-  # Lines-changed threshold shared with `logmind check-decisions --threshold`.
+  # Lines-changed threshold. SPEC §3.4 makes this the ONE source for every
+  # enforcement point — the commit-msg hook, the harness guard, and the CI
+  # gate. `logmind check-decisions --threshold` overrides it locally, but is
+  # refused alongside `--base/--head`: the gate reads this file and nothing
+  # else, so a pull request cannot raise its own bar.
   commit_line_threshold: 20
 
 # Decision management
 decisions:
-  # Maximum number of recent decisions to keep in decisions.md
-  # Older decisions are moved to decisions-archive.md
-  max_recent: 20
-
-  # Route feature-branch decisions to docs/decisions-branches/<branch>.md
-  # The default branch always writes to docs/decisions.md.
+  # Route each branch's decisions to docs/decisions-branches/<branch>.md —
+  # the default branch included, it is a branch like any other. Every file is
+  # append-only and uncapped; what is bounded is the VIEW (docs/timeline.md
+  # carries the __LOGMIND_RECENT_LIMIT__ most recent entries, docs/timeline-archive.md the rest).
   # Set to false to log every branch into the same file (legacy behavior).
   branch_aware: true
 

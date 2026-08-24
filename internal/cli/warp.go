@@ -16,10 +16,10 @@ import (
 func newWarpCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "warp",
-		Short: "Refresh docs/timeline.md + docs/file-structure.md from main (read-only catch-up + repair)",
-		Long: `Fetch the latest default branch and refresh your working copy of the two
-DERIVED docs (docs/timeline.md, docs/file-structure.md) so your context reflects
-main's current decisions.
+		Short: "Refresh the derived docs from main (read-only catch-up + repair)",
+		Long: `Fetch the latest default branch and refresh your working copy of the
+DERIVED docs (docs/timeline.md, docs/timeline-archive.md,
+docs/file-structure.md) so your context reflects main's current decisions.
 
 Never commits: warp does not create a commit or move HEAD. They are
 regenerated on main only; a branch must keep them byte-identical to its
@@ -29,7 +29,7 @@ conflict-free).
 
 warp is also the repair surface for a branch that has ALREADY diverged from
 the zero-conflict invariant (e.g. an old binary's local regen, or a hand
-edit, landed in a past commit): after fetching, it restores both files to
+edit, landed in a past commit): after fetching, it restores those files to
 their merge-base-with-default content in BOTH the index and the working
 tree — i.e. it deliberately STAGES the repair. That's not a side effect to
 apologize for: staging is what lets the repair ride into your NEXT commit
@@ -47,6 +47,16 @@ undo the repair on that path. This coupling is a known, currently
 UNRESOLVED gap (see BuildPreCommitBody's doc comment, internal/hooks/
 hooks.go); a raw 'git commit' instead of 'logmind log' hits the exact same
 hook and has the same exposure.
+
+warp's output has TWO layers holding DIFFERENT content, and which one you
+commit is up to you. The read-refresh leaves origin/<default>'s TIP content
+in the working tree, unstaged; the repair leaves MERGE-BASE content in the
+index. 'logmind log' and a plain 'git commit' both do the right thing — the
+first reverts the unstaged copies to HEAD, the second takes only the index —
+but 'git commit -a' (or 'git add -A') sweeps the refreshed tip copies in as
+well, and on any branch that forked before the default branch's last regen
+the tip is NOT the merge-base, so CI's check-derived-docs rejects the
+result. Commit what warp STAGED, not what it refreshed.
 
 logmind log's own restore (and the harness guard) target HEAD rather than
 the merge-base on their OWN hot path — cheap and offline, but unable to
@@ -126,7 +136,7 @@ func runWarp(cwd string, stdout, stderr io.Writer) error {
 	// the repair is what lets it survive into the caller's next commit
 	// instead of sitting in the working tree until something else (a fresh
 	// `warp`, another read-refresh) overwrites it again. It is narrower than
-	// a `git add -A` (it only ever touches these two known, already-tracked
+	// a `git add -A` (it only ever touches these few known, already-tracked
 	// paths) and never creates a commit, so warp's "never commits" contract
 	// holds; see TestWarp_DoesNotCommit.
 	//
@@ -168,7 +178,7 @@ func runWarp(cwd string, stdout, stderr io.Writer) error {
 
 	ahead := ""
 	if out, _, err := gitcli.RunCaptured(cwd, "rev-list", "--count", "HEAD.."+ref, "--",
-		"docs/decisions.md", "docs/decisions-branches", "docs/decisions-archive.md"); err == nil {
+		"docs/decisions.md", "docs/decisions-branches"); err == nil {
 		if n, e := strconv.Atoi(strings.TrimSpace(out)); e == nil && n > 0 {
 			ahead = fmt.Sprintf(" · main is +%d decision commit(s) ahead", n)
 		}

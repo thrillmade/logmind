@@ -1,10 +1,10 @@
 name: logmind / check-derived-docs
 
-# v2.0.0 derived-docs-on-main. The two derived docs are regenerated ONLY here on
+# v2.0.0 derived-docs-on-main. The derived docs are regenerated ONLY here on
 # main. On a PR this gate is NON-mutating and BLOCKING: it fails if the branch
-# edited either derived doc (which would cause cross-PR merge conflicts). A
-# branch's real decisions live in docs/decisions-branches/<branch>.md; timeline
-# and file-structure regenerate on main after merge.
+# edited any derived doc (which would cause cross-PR merge conflicts). A
+# branch's real decisions live in docs/decisions-branches/<branch>.md; the
+# timeline, its archive and file-structure regenerate on main after merge.
 #
 # v10: the zero-conflict invariant is now UNCONDITIONAL for every repo running
 # this workflow — v9's per-repo `derived_docs.mode: integration-point`
@@ -17,48 +17,424 @@ name: logmind / check-derived-docs
 # (::error + exit 1): it is the job not doing its job, and reporting it as
 # success is how a regenerator stays broken for weeks while every run is
 # green.
+#
+# v12: the push credential is a CHAIN, not one hardcoded secret. v11 shipped
+# a raw `LOGMIND_AUTO_REGEN_PAT` as the only rung — the credential path this
+# repo itself had already moved off — so a repo with a GitHub App configured
+# could not use it and a repo with neither warned and did nothing. The chain
+# now degrades: a GitHub App installation token if App credentials are
+# configured, else a PAT if one is, else the workflow's own GITHUB_TOKEN,
+# which always exists. The App rung is an OPTIMIZATION, never a dependency:
+# logmind must work in a repo with no App, no PAT, and no organization
+# behind it. A push that was attempted and refused still fails the job
+# (::error + exit 1), exactly as v11 established.
+#
+# What v11's OTHER outcome — "no credential: warn and exit 0" — means does
+# change, and the change is the point rather than a side effect. v11 reached
+# it whenever no PAT was configured, which was most repos; adding rung 3
+# means "configured nothing" now ATTEMPTS the push, so on GitHub-hosted
+# Actions, where `github.token` is always populated, the warn-and-exit-0
+# branch is UNREACHABLE. It is kept, not preserved-in-name: a runner that
+# injects no token at all (`act`, a self-hosted harness) still lands there,
+# and it is what stops `set -u` from aborting on an unbound $TOKEN with a
+# message that names nothing. The branch is documented at its own site.
+#
+# v12 also stops assuming the default branch is called `main`. It was
+# hardcoded in four operative places — the push refspec (`HEAD:main`), the
+# `on: push:` filter, the PR gate's remediation command, and the ruleset
+# error message — so a repo on `master` or `trunk` either regenerated onto
+# a branch it does not have or never regenerated at all. Everything
+# evaluated at RUNTIME now reads `github.event.repository.default_branch`;
+# the one thing that cannot (an `on:` filter takes no expression) is
+# substituted at scaffold time by `logmind init`, and the PR gate warns
+# when the two have drifted apart. Same principle as the credential chain:
+# logmind must work standalone, which means assuming nothing about how a
+# repository is set up.
+#
+# v13: docs/timeline-archive.md joins the gate (SPEC §3.3, logmind#265). The
+# history is now rendered in two halves — docs/timeline.md carries the
+# 50 most recent entries and the archive the
+# remainder — and §3.3 governs all three alike: "A non-default branch MUST
+# NOT modify any derived file — the history, its archive, or the map." A
+# branch that edits the archive is blocked exactly as one that edits the
+# timeline. The regen step on the default branch names the archive
+# explicitly too: `logmind timeline --write` writes the ONE file it is
+# given, so the pair is two invocations. It used to be one, with the archive
+# inferred as a sibling of whatever path `--write` named — which dropped a
+# stray `timeline-archive.md` beside git's merge scratch file at the worktree
+# root, and, where a file of that name was tracked, replaced its contents.
+#
+# v14 (logmind#261): the PR gate's trigger moves `pull_request` →
+# `pull_request_target`, and the comment on the gate job that claimed
+# immunity is deleted rather than softened. That comment said staying
+# checkout-free meant "there is nothing here for a PR to influence about its
+# own gate". It was wrong in the one direction nobody re-reads: being
+# checkout-free protects the WORKSPACE, and what a pull request rewrites on
+# a `pull_request` trigger is the JOB DEFINITION — this file, read by the
+# forge from the pull request's own merge commit. §6.3: "a workspace-free
+# job is not exempt: what the pull request rewrote is the definition, not
+# the workspace." So a branch could edit the derived docs AND, in the same
+# diff, change the `grep` below to match nothing. `pull_request_target`
+# reads this file from the base branch instead, which is the whole fix; the
+# gate's logic, its three paths and its exit codes are byte-for-byte what
+# v13 had.
+#
+# The trigger's known hazard does not apply and must not be introduced: this
+# job takes no checkout at all, so there is no workspace for the pull
+# request's content to land in. §6.3 permits this route only on that
+# condition.
+#
+# Two consequences, both intended. This gate is one merge behind its own
+# source — the pull request that edits it is judged by the base branch's
+# copy, which is the point — and the pull request that MIGRATES an installed
+# copy off `pull_request` fires neither trigger, so `check-derived-docs` is
+# absent from that one pull request rather than green on it. Absent fails a
+# required-checks rule; green would have satisfied it.
+#
+# v14 also narrows `contents: write` to the job that pushes. Under
+# `pull_request` the forge forced a fork's token read-only however this file
+# was written; under `pull_request_target` the permissions block is what the
+# job actually gets, on a fork pull request too. The gate needs no write and
+# now cannot have one.
+#
+# v15 (logmind#345): the pull-request gate compares CONTENT, and it accepts
+# the REPAIR as well as the untouched state. Two changes; the second is the
+# one that unsticks a branch that has already drifted.
+#
+# What v14 asked was whether the pull request's DIFF mentions a derived
+# doc. That is very nearly the right question — `gh pr diff` is the forge's
+# three-dot diff, so a file appears in it only when its bytes at the head
+# differ from its bytes at the merge base — and "very nearly" is doing real
+# work in that sentence. The question is now asked outright: the gate reads
+# a blob id at each ref and compares those. A blob id IS a content hash, so
+# the check cannot be re-read as a file-list test by the next person, it
+# does not rest on an undocumented property of `gh pr diff`, and it does
+# not flag a file whose MODE changed while its content did not.
+#
+# The second change is the fix. v14 accepted exactly ONE state — "unchanged
+# since the merge-base with the branch you are merging into" — and a
+# repository with an integration branch can reach a state no commit
+# satisfies. Once `dev` itself carries a divergent timeline, the promotion
+# pull request `dev` -> `main` is red, and every pull request opened to
+# REPAIR `dev` changes a derived doc relative to `dev`, so it is red too.
+# The rule forbids the only remedy for the state it is reporting.
+# (thrillmade/protocol#102, and #106 which did nothing but the revert the
+# error message named and failed on it.)
+#
+# So a SECOND state is accepted, and it is the one SPEC §3.3 actually
+# names: the file holds its merge-base-with-the-DEFAULT-branch content.
+# That is the pin the specification defines the invariant against, and it
+# is what `logmind warp` restores to. It is not a self-service escape
+# (§6.3): the accepted bytes are a blob from the BASE repository's own
+# history, at a commit the forge computes, so a pull request cannot author
+# the content that would let it pass.
+#
+# The two rules are NOT conflict-free for the same reason, and v15 first
+# shipped saying they were (logmind#361 — the sentence claimed "only one
+# side of the merge has changed the file" of BOTH). Rule A is genuinely
+# unconditional: the head side is unchanged, so git takes the base's side
+# whatever the base branch has done since, and no state of it can produce a
+# conflict. Rule B CHANGES the head side. It is one-sided only while the
+# base branch still holds its merge-base content — and neither merge-base
+# the gate computes moves when the base branch commits, so the rule cannot
+# see that happen. The condition therefore has to be READ: rule B accepts
+# only when the base branch's TIP blob is still the merge-base blob (the
+# base has not touched the file) or is already the head blob (the base has
+# arrived at the same content).
+#
+# The hole that closes is not a stale green, it is a permanent one. Once a
+# repair PR has gone green and the base branch then edits the same derived
+# doc, a `synchronize` re-run recomputes the identical two merge-bases and
+# the identical three blob ids, so it stays green while `git merge` stops on
+# a conflict marker — and two such pull requests merged in sequence give one
+# clean merge and one conflict. What the gate cannot do is decide the case
+# where BOTH sides changed the file: it reports that (`raced`) and hands it
+# back, with the one remedy that works — merge the base branch in, redo the
+# repair, which moves the merge base up and makes the repair one-sided
+# again.
+#
+# v14's remedy also named the wrong ref, which is why protocol#106 failed
+# even by v14's own rule: `git checkout origin/<default> -- …` restores the
+# default branch's TIP, and the default branch REGENERATES these files on
+# every merge, so its tip is not the merge-base and stops being it the
+# moment anything merges. The message now names the merge-base — `logmind
+# warp`, or the `git merge-base` form by hand — and says outright that a
+# tip-restore lands straight back here.
+#
+# And the remedy has to be one that RUNS. `git checkout <merge-base> -- <all
+# three paths>` does not, whenever a branch carries a derived doc the merge
+# base does not: pathspec checkout is all-or-nothing, so it exits 1 on the
+# missing path and restores NONE of the others. `logmind warp` does not
+# close that case either — it restores per path, so it fixes every doc that
+# exists at the merge base, but it cannot DELETE one the branch added
+# (logmind#362). The message now names a per-path loop that checks out what
+# exists there and `git rm`s what does not, says which of the two `logmind
+# warp` covers, and no longer claims warp "does exactly that".
+#
+# Fail-closed, stated because the obvious one-liner is not: a blob read
+# that fails with any status other than 404 aborts the job. Two empty
+# strings compare EQUAL, so `|| echo ""` over a rate-limit or a 500 is a
+# gate that reports PASS exactly when it could not evaluate. A 404 is a
+# real answer — the repository does not carry that doc at that ref — and
+# absent on both sides is agreement.
+#
+# v15 also drops `pull-requests: read`. It was granted for `gh pr diff`,
+# and nothing reads a pull-request endpoint now: the head SHA and the base
+# ref come from the event payload, and every blob id comes from
+# `repos/…/contents` and `repos/…/compare`, which are `contents: read`. A
+# grant whose stated reason is gone is a grant nobody re-reads.
+#
+# NOTE on the version number: this was v12 until logmind#301 round 5 caught
+# it colliding with a DIFFERENT, already in-flight v12 (logmind#314) — two
+# branches independently bumped v11 to v12 with unrelated content, and nothing
+# compared the two beyond the marker string matching. This archive change
+# moves to v13 so the two numbers stay one-to-one with one piece of content
+# each. v13's body is v12's body plus the archive: the credential chain and
+# the resolved default branch below are #314's and are NOT reverted here.
 
 on:
-  pull_request:
+  # `pull_request_target`, not `pull_request` — see the v14 note above. The
+  # forge reads a `pull_request` workflow from the pull request's own merge
+  # commit, so the gate below would be the branch's copy of itself.
+  pull_request_target:
     types: [opened, synchronize, reopened]
   push:
+    # NOT hardcoded to `main`. A workflow's `on:` filter cannot take an
+    # expression — GitHub evaluates no context under `on:` — so `logmind
+    # init` substitutes this repository's actual default branch here at
+    # scaffold time, the same way it substitutes __LOGMIND_VERSION__
+    # elsewhere. A repo on `master`, `trunk`, or anything else gets its own
+    # name written in.
+    #
+    # Broadening this to `branches: ['**']` and gating the job instead is
+    # NOT an option here: this file also carries `check-derived-docs`, and a
+    # job skipped by its own `if:` reports SUCCESS rather than skipped. Every
+    # push to a PR branch would then add a second `check-derived-docs` run on
+    # the same head SHA that passed without evaluating anything — and where
+    # the check has been made a required status check, that green run is what
+    # the branch rule reads.
+    #
+    # Required is the repo owner's call, not this file's: logmind's own
+    # `main` ruleset configures no required status checks at all, so here
+    # `check-derived-docs` blocks by failing the run and by nothing else.
+    # A misleading green is the cost in this repo and a bypassed gate is the
+    # cost in one that made it required; neither is acceptable.
+    #
+    # If the default branch is renamed later, this line goes stale and the
+    # regen simply stops firing — so the PR gate below compares it against
+    # the live default branch and warns. `logmind init --refresh` rewrites it.
     branches: [main]
 
 permissions:
-  contents: write        # regen-on-main commits + pushes the regen to main
-  pull-requests: read    # the PR gate reads the PR file list via `gh pr diff`
+  contents: read         # every job reads; only regen-on-main writes, and it asks for that itself
   # NOTE: specifying ANY permission zeroes all others (GitHub default), so
-  # pull-requests MUST be listed explicitly — without it `gh pr diff` 403s and
-  # the gate fails-closed on EVERY PR, not just violators.
+  # every scope a job needs MUST be listed here explicitly — a missing one is
+  # a 403, and a 403 in the gate is a fail-closed red on EVERY pull request,
+  # not just on violators.
+  #
+  # `pull-requests: read` used to sit here, for `gh pr diff`. v15's gate
+  # reads no pull-request endpoint at all: the head SHA and the base ref
+  # arrive in the event payload, and every blob id it compares comes from
+  # `repos/…/contents` and `repos/…/compare`, both of which `contents: read`
+  # covers. Putting the grant back would be granting it for nothing.
+  #
+  # `contents: write` used to live here, at workflow level, where it reached
+  # both jobs. Under `pull_request` that cost nothing — the forge forced a
+  # fork's token read-only whatever this file asked for. Under
+  # `pull_request_target` (v14) the ask is granted for real, on a fork pull
+  # request too, so the write moves down to `regen-on-main`, the one job that
+  # pushes. A job-level block REPLACES this one rather than adding to it,
+  # which is why the block below names `contents: write` outright.
 
 jobs:
   check-derived-docs:
     name: check-derived-docs
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
-      # NO checkout, deliberately. This job only needs the PR's file list —
-      # never the PR's own content — via `gh pr diff`. A checkout on a
-      # pull_request event lands refs/pull/N/merge (the PR's own content);
-      # staying checkout-free means there is nothing here for a PR to
-      # influence about its own gate.
-      - name: Assert the branch did not edit the derived docs
+      # NO checkout, deliberately — and that is a statement about the
+      # WORKSPACE only. This job needs a handful of blob ids and nothing
+      # else, and `repos/…/contents` and `repos/…/compare` hand them over at
+      # an explicit ref. Under `pull_request_target` §6.3 additionally
+      # REQUIRES the absence: "a gate taking the second route MUST NOT check
+      # out the pull request's content." Adding a checkout here is not a
+      # convenience, it is the hazard the trigger is known for.
+      #
+      # Reading a blob ID is not checking the pull request's content out:
+      # nothing is written into a workspace and nothing is executed — the
+      # value compared is a hash the forge computed. That distinction is
+      # exactly what lets v15 compare CONTENT while staying checkout-free.
+      #
+      # What being checkout-free does NOT buy — this used to claim otherwise,
+      # and the claim is why nobody looked again — is immunity for the gate
+      # ITSELF. That is bought one line up, by the trigger: `pull_request`
+      # would have the forge read this whole file from the branch's own merge
+      # commit, workspace or no workspace.
+      - name: Assert the derived docs hold their merge-base content
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
+          # The pull request's head commit, taken from the event rather than
+          # from a workspace. It is reachable through the BASE repository's
+          # API even when it lives in a fork — the forge keeps it as
+          # refs/pull/N/head — so a fork pull request needs no special case
+          # anywhere below.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The branch this pull request MERGES INTO, which is not always the
+          # default branch: a repository with a `dev` integration branch
+          # opens most of its pull requests against `dev`.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # The live default branch, and the one baked into `on: push:` when
+          # this workflow was scaffolded. They are compared below: a rename
+          # of the default branch leaves the regen trigger pointing at a
+          # branch that no longer exists, and nothing else would ever say so.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SCAFFOLDED_BRANCH: main
         run: |
           set -euo pipefail
-          changed=$(gh pr diff "$PR" --name-only --repo "$GITHUB_REPOSITORY")
-          if printf '%s\n' "$changed" | grep -qxE 'docs/(timeline|file-structure)\.md'; then
-            echo "::error title=Derived docs were edited on this branch::This PR modifies docs/timeline.md and/or docs/file-structure.md. These are DERIVED, main-only artifacts; editing them on a branch causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: revert them to main's version — run 'logmind warp', or 'git checkout origin/main -- docs/timeline.md docs/file-structure.md' — then commit. Their real content regenerates on main after merge."
+          if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then
+            echo "::warning title=Derived-doc regen is wired to the wrong branch::This workflow's 'on: push:' filter was scaffolded for '$SCAFFOLDED_BRANCH', but this repository's default branch is now '$DEFAULT_BRANCH'. The regen job therefore never fires, and the derived docs on '$DEFAULT_BRANCH' will drift stale — silently, because nothing else reports it. Fix: run 'logmind init --refresh' to rewrite the trigger."
+          fi
+
+          err="$(mktemp)"
+
+          # blob <ref> <path> — the git blob id of <path> at <ref>, or the
+          # empty string when <path> does not exist there. A blob id IS a
+          # content hash, which is what makes every comparison below a
+          # comparison of CONTENT rather than of a file list.
+          #
+          # It is a function, not a `|| echo ""` on one line, for one
+          # reason: two empty strings compare EQUAL. Swallowing a rate-limit
+          # or a 500 the way that one-liner does turns "the gate could not
+          # evaluate" into "the gate passed", so anything that is not a 404
+          # fails the job here. A 404 is a real answer — this repository
+          # does not carry that doc at that ref — and absent on both sides
+          # is agreement.
+          blob() {
+            local out
+            if out="$(gh api "repos/$GITHUB_REPOSITORY/contents/$2?ref=$1" --jq .sha 2>"$err")"; then
+              printf '%s' "$out"
+              return 0
+            fi
+            if grep -q '(HTTP 404)' "$err"; then
+              return 0
+            fi
+            cat "$err" >&2
+            # >&2, and that is not a style choice: every caller reads this
+            # function through `$(...)`, which captures STDOUT. An annotation
+            # echoed to stdout would be swallowed into a variable and never
+            # reach the log, so the job would fail closed — correctly — with
+            # nothing on the run saying why.
+            echo "::error title=Derived-doc gate could not evaluate::Reading '$2' at ref '$1' failed with a status other than 404 (the response is in the log above). The gate is failing CLOSED: an unreadable ref must not be mistaken for agreement." >&2
+            return 1
+          }
+
+          # merge_base <ref> — the commit where <ref> and this pull request's
+          # head last agreed, computed by the forge from the BASE
+          # repository's history. Nothing inside the pull request can move
+          # it, which is what keeps §6.3 satisfied while the gate reads
+          # content.
+          merge_base() {
+            gh api "repos/$GITHUB_REPOSITORY/compare/$1...$HEAD_SHA" --jq .merge_base_commit.sha
+          }
+
+          base_mb="$(merge_base "$BASE_REF")"
+          # SPEC §3.3 pins each derived file to its merge-base with the
+          # DEFAULT branch, and that is the ref 'logmind warp' restores to.
+          # When the pull request already targets the default branch the two
+          # bases are the same commit, so the second round-trip is skipped
+          # rather than paid on every run.
+          pin_mb="$base_mb"
+          if [ "$BASE_REF" != "$DEFAULT_BRANCH" ]; then
+            pin_mb="$(merge_base "$DEFAULT_BRANCH")"
+          fi
+          echo "merge-base with '$BASE_REF' (the merge this PR will perform): $base_mb"
+          echo "merge-base with '$DEFAULT_BRANCH' (the SPEC §3.3 pin): $pin_mb"
+
+          # Rule A below (head equals the merge-base with '$BASE_REF') is
+          # unconditional and needs no further input: it leaves the HEAD side
+          # of the merge unchanged, so git takes the base's side whatever
+          # '$BASE_REF' has done since, and no state of the base branch can
+          # make it conflict.
+          #
+          # Rule B is not that, and v15 shipped asserting it was (logmind#361).
+          # Rule B CHANGES the head side, so it is conflict-free only while
+          # the BASE side is still the one at the merge base — and neither
+          # merge-base above moves when '$BASE_REF' commits, so on its own
+          # the rule cannot see the base branch move. It has to be read.
+          diverged=""
+          raced=""
+          for f in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do
+            head_blob="$(blob "$HEAD_SHA" "$f")"
+            base_blob="$(blob "$base_mb" "$f")"
+            pin_blob="$base_blob"
+            if [ "$pin_mb" != "$base_mb" ]; then
+              pin_blob="$(blob "$pin_mb" "$f")"
+            fi
+            if [ "$head_blob" = "$base_blob" ]; then
+              echo "$f: byte-identical to the merge-base with '$BASE_REF' — this merge cannot touch it."
+            elif [ "$head_blob" = "$pin_blob" ]; then
+              # The base branch's TIP — the one input the two merge-bases
+              # cannot supply. Rule B is one-sided, and therefore safe, in
+              # exactly two states: the base has not touched this file since
+              # the merge base (so only the head side changed it), or the base
+              # has already arrived at the same content (so neither side
+              # changes it). Anything else and BOTH sides changed the file.
+              base_tip_blob="$(blob "$BASE_REF" "$f")"
+              if [ "$base_tip_blob" = "$base_blob" ] || [ "$base_tip_blob" = "$head_blob" ]; then
+                echo "$f: restored to its merge-base-with-'$DEFAULT_BRANCH' content — the SPEC §3.3 repair, accepted. '$BASE_REF' still holds either the merge-base content or this same content, so at most one side of this merge changes it and it cannot conflict."
+              else
+                raced="$raced $f"
+              fi
+            else
+              diverged="$diverged $f"
+            fi
+          done
+
+          # Two failures, two different remedies, so two messages. Reporting a
+          # raced repair as a divergence would print an untrue sentence — the
+          # content IS the pin — and send the author to restore a file that is
+          # already correct.
+          if [ -n "$raced" ]; then
+            echo "::error title=The base branch moved a derived doc this PR also changes::This PR's copy of$raced holds its merge-base-with-'$DEFAULT_BRANCH' content — the SPEC §3.3 repair, which this gate accepts — but '$BASE_REF' has ITSELF changed that file since the merge base with this pull request ($base_mb). Both sides of the merge now change it, so merging would stop on a conflict marker. The repair is right; its merge base is stale. Fix: bring '$BASE_REF' in and redo the repair — 'git fetch origin $BASE_REF && git merge origin/$BASE_REF' (resolve any derived-doc conflict whichever way you like), then 'logmind warp', then commit. That moves this pull request's merge base up to the tip of '$BASE_REF', which is what makes the repair one-sided again."
+          fi
+          if [ -n "$diverged" ]; then
+            echo "::error title=Derived docs diverge from their merge-base content::This PR's copy of$diverged matches NEITHER the merge-base with '$BASE_REF' ($base_mb) NOR the merge-base with '$DEFAULT_BRANCH' ($pin_mb). These are DERIVED, default-branch-only artifacts; a branch that carries its own version of them is what causes the cross-PR merge conflicts v2.0.0 eliminates. Fix: restore them to their MERGE-BASE content. 'logmind warp' does that for every one of them that EXISTS at the merge base; it cannot DELETE a derived doc this branch ADDED, so a doc that is new on this branch has to go by hand (logmind#362). By hand, covering both: 'git fetch origin $DEFAULT_BRANCH && mb=\"\$(git merge-base origin/$DEFAULT_BRANCH HEAD)\" && for f in docs/timeline.md docs/timeline-archive.md docs/file-structure.md; do if git cat-file -e \"\$mb:\$f\" 2>/dev/null; then git checkout \"\$mb\" -- \"\$f\"; else git rm -q --ignore-unmatch -- \"\$f\"; fi; done' — then commit. One 'git checkout <merge-base> -- <all three paths>' is NOT the same command and is why this message used to name a remedy that did nothing: pathspec checkout is all-or-nothing, so it exits 1 and restores NONE of them when any one path is absent at the merge base. Do NOT restore to 'origin/$DEFAULT_BRANCH' itself: '$DEFAULT_BRANCH' REGENERATES these files on every merge, so its tip is not the merge-base and a tip-restore lands straight back here (logmind#345). Their real content regenerates on '$DEFAULT_BRANCH' after merge."
+          fi
+          if [ -n "$raced$diverged" ]; then
             exit 1
           fi
-          echo "Branch did not edit the derived docs — the merge cannot conflict on them."
+          echo "Every derived doc is changed by at most one side of this merge — it cannot conflict on them."
 
   regen-on-main:
     name: regen-on-main
-    if: github.event_name == 'push'
+    # The trigger above already narrows this to one branch, but the trigger
+    # is a scaffold-time literal and this is the live value: if the two ever
+    # disagree, the regen must NOT run and push to a non-default branch.
+    # (The job id/name keep saying "main" because the decision log and the
+    # ruleset history refer to them by that name; what the job DOES is
+    # resolved, not assumed.)
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
+    # The write lives HERE, on the one job that pushes, rather than at
+    # workflow level where it also reached the pull-request gate (v14). A
+    # job-level block replaces the workflow-level one outright — it does not
+    # merge with it — so this must restate every permission the job needs,
+    # and `contents: write` implies the read the checkout below does.
+    permissions:
+      contents: write
+    # CREDENTIAL CHAIN, rung 1 — OPTIONAL. The two lines below are the only
+    # thing a repository customises to enable the GitHub App rung; every
+    # other line of the credential mechanism is identical in every repo that
+    # installs this workflow, which is what keeps this file and logmind's own
+    # copy of it from drifting apart. Leave them pointing at secrets you have
+    # not configured and nothing breaks: the chain falls through to rung 2 (a
+    # PAT) and then rung 3 (the workflow's own GITHUB_TOKEN). The App is an
+    # OPTIMIZATION — it is the only identity that can be granted a ruleset
+    # bypass, so it is what makes this work on a protected default branch —
+    # never a dependency.
+    env:
+      APP_ID: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -73,60 +449,96 @@ jobs:
       - name: Regenerate derived docs
         run: |
           set -euo pipefail
+          # Both halves of the SPEC §3.3 split, each named explicitly:
+          # `--write` writes the file it is given and no other.
           ./bin/logmind timeline --write docs/timeline.md
+          ./bin/logmind timeline --write docs/timeline-archive.md --half archive
           ./bin/logmind file-structure --write docs/file-structure.md
-      # Mint a 1-hour installation token for the `skdd-steward[bot]` App
-      # (org secrets keep their legacy THRILLMADE_ORCHESTRATOR_* names). This
-      # identity — NOT a PAT — is the one carrying ruleset bypass, which the
-      # push below REQUIRES: `main` is governed by a "changes must be made
-      # through a pull request" rule, so a plain credentialed push is rejected
-      # with GH013 no matter how much repo scope the token has.
-      # See docs/orchestrator-app.md for the App spec + rotation.
-      - name: Mint steward App installation token
+      # Rung 1: mint a short-lived (1 hour) App installation token, but only
+      # when App credentials are actually configured. The `if:` reads the job
+      # `env` above rather than `secrets` directly because the `secrets`
+      # context is NOT available to a step-level `if:`. `continue-on-error`
+      # covers the other half: a misconfigured or expired App must degrade to
+      # rung 2, not fail the job. `owner`/`repositories` are deliberately
+      # omitted — the action defaults both to the current repository, which
+      # is what a shipped template must do.
+      - name: Mint GitHub App installation token (optional)
         id: app_token
+        if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
         continue-on-error: true
         uses: actions/create-github-app-token@v3
         with:
-          # KEEP `app-id` — see the note in release.yml. app-id and client-id
-          # are different values; this secret holds the numeric App ID, which
-          # `client-id` does not accept. The deprecation warning is cosmetic.
-          app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
-          private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}
-          owner: thrillmade
-          repositories: logmind
+          app-id: ${{ env.APP_ID }}
+          private-key: ${{ env.APP_PRIVATE_KEY }}
 
       - name: Commit + push if changed
         env:
-          STEWARD_TOKEN: ${{ steps.app_token.outputs.token }}
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
+          PAT: ${{ secrets.LOGMIND_AUTO_REGEN_PAT }}
+          DEFAULT_TOKEN: ${{ github.token }}
+          # Resolved from the event, never assumed to be `main`. Passed
+          # through env rather than interpolated into the script: a branch
+          # name is attacker-influenceable text, and `${{ }}` inside a
+          # `run:` block is a script-injection site.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain -- docs/timeline.md docs/file-structure.md)" ]; then
-            echo "Derived docs already current on main."
+          if [ -z "$(git status --porcelain -- docs/timeline.md docs/timeline-archive.md docs/file-structure.md)" ]; then
+            echo "Derived docs already current on '$DEFAULT_BRANCH'."
             exit 0
           fi
-          if [ -z "${STEWARD_TOKEN:-}" ]; then
-            echo "::warning title=Derived docs stale on main::Could not mint a steward token; cannot push the regen. This will keep failing on every run until the skdd-steward[bot] App credentials (THRILLMADE_ORCHESTRATOR_APP_ID / THRILLMADE_ORCHESTRATOR_PRIVATE_KEY) are fixed — it will NOT self-heal on the next merge. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
+          # The chain, in order. Rung 3 always exists, so "configured
+          # nothing" now ATTEMPTS the push instead of warning and doing
+          # nothing — a regenerator that reports success while never pushing
+          # is how one stays broken for weeks with every run green.
+          if [ -n "${APP_TOKEN:-}" ]; then
+            TOKEN="$APP_TOKEN"
+            RUNG="a GitHub App installation token"
+          elif [ -n "${PAT:-}" ]; then
+            TOKEN="$PAT"
+            RUNG="LOGMIND_AUTO_REGEN_PAT"
+          elif [ -n "${DEFAULT_TOKEN:-}" ]; then
+            TOKEN="$DEFAULT_TOKEN"
+            RUNG="the workflow's own GITHUB_TOKEN"
+          else
+            # UNREACHABLE on GitHub-hosted Actions: `github.token` is
+            # populated for every workflow run, so rung 3 above always fires
+            # and nothing reaches this. Kept anyway, for two reasons that are
+            # not "it might come back": a runner that injects no token (`act`,
+            # a self-hosted harness) does land here, and without it the
+            # `set -u` in effect would abort on the unbound $TOKEN below with
+            # a message naming neither the job nor the cause. Do NOT read this
+            # branch as v11's live "no credential" degradation — since rung 3
+            # exists, "configured nothing" attempts the push instead.
+            echo "::warning title=Derived docs stale on the default branch::No credential of any kind is available to push the regen — no GitHub App token, no LOGMIND_AUTO_REGEN_PAT, and not even the workflow's own GITHUB_TOKEN. This will keep failing on every run until one is configured — it will NOT self-heal on the next merge. (No conflict risk — this is a freshness-only gap: branches never modify the derived docs, so nothing can conflict on them.)"
             exit 0
           fi
-          git config user.name "skdd-steward[bot]"
-          git config user.email "skdd-steward[bot]@users.noreply.github.com"
-          git add docs/timeline.md docs/file-structure.md
+          echo "Pushing the derived-doc regen with $RUNG."
+          # The commit author is github-actions[bot] on every rung. What a
+          # protected branch evaluates is the identity of the PUSHING token,
+          # not the commit author, so keying the author to the rung would buy
+          # nothing and cost a line the two copies of this file could drift on.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/timeline.md docs/timeline-archive.md docs/file-structure.md
           git commit -m "[skip-logmind] chore: regen derived docs"
           # SPEC-2 §3.3: "Three outcomes, and they MUST NOT look alike."
-          # No credential (above) degrades — a warning and a successful
-          # exit, because a merge that was otherwise fine should not fail
-          # over it. A push that was attempted and refused is different:
-          # "a refused write is the job not doing its job", so unlike the
-          # no-credential case this one MUST fail the job, loudly — a
-          # rejected push here is not conflict risk (branches never modify
-          # the derived docs) but it IS main's derived docs going stale,
-          # and reporting it as success is how that stayed invisible for
-          # eleven days straight (#262). When the cause is a missing
-          # ruleset bypass (GH013, a policy refusal), this is NOT
-          # transient: every future push hits the same refusal until a
-          # human adds the identity to the bypass list — see the error
-          # message below and docs/orchestrator-app.md.
-          if ! git push "https://x-access-token:${STEWARD_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:main"; then
-            echo "::error title=Derived-doc regen push refused::The push was rejected — most likely GH013: the skdd-steward[bot] identity is missing from the 'main' ruleset's bypass list for 'changes must be made through a pull request'. This is a POLICY refusal, not a token-scope problem, so it will NOT self-heal on the next merge — every future push hits the same refusal until the identity is added to the bypass list (see docs/orchestrator-app.md). No conflict risk — branches never modify the derived docs, so nothing can conflict on them — but main's derived docs are now stale and this run failed to fix that."
+          # Nothing-to-push exits 0 quietly. No credential at all (above)
+          # degrades — a warning and a successful exit, because a merge that
+          # was otherwise fine should not fail over it — though on a
+          # GitHub-hosted runner rung 3 makes that outcome unreachable, so
+          # the two outcomes actually observable here are this one and the
+          # next. A push that was attempted and refused is different: "a refused write is the job
+          # not doing its job", so unlike the no-credential case this one
+          # MUST fail the job, loudly. If your default branch is protected by
+          # a "changes must be made through a pull request" rule, a plain
+          # credentialed push is rejected (GH013) no matter how much scope
+          # the token has — the pushing identity must be on the ruleset
+          # BYPASS list, and only a GitHub App (rung 1) can be added to one.
+          # That's a policy refusal, NOT transient: every future push hits
+          # the same refusal until a human adds the identity to the bypass
+          # list.
+          if ! git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${DEFAULT_BRANCH}"; then
+            echo "::error title=Derived-doc regen push refused::The push was rejected while authenticating with $RUNG — most likely GH013: that identity is missing from the '$DEFAULT_BRANCH' ruleset's bypass list for 'changes must be made through a pull request'. This is a POLICY refusal, not a token-scope problem, so it will NOT self-heal on the next merge — every future push hits the same refusal until the identity is added to the bypass list. Only a GitHub App can be a bypass actor, so a repo pushing with a PAT or GITHUB_TOKEN must configure LOGMIND_APP_ID / LOGMIND_APP_PRIVATE_KEY to get past a rule like this. No conflict risk — branches never modify the derived docs, so nothing can conflict on them — but '$DEFAULT_BRANCH' derived docs are now stale and this run failed to fix that."
             exit 1
           fi

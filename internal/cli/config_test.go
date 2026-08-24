@@ -11,6 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/thrillmade/logmind/internal/config"
 )
 
 // withTempCwd runs fn inside a fresh temp directory, restoring the
@@ -50,7 +54,7 @@ func TestConfigList_DefaultsMatchPython(t *testing.T) {
 		mustContain(t, got, "  auto_push: true\n")
 		mustContain(t, got, "  commit_message_template: 'logmind: {decision}'\n")
 		mustContain(t, got, "decisions:\n")
-		mustContain(t, got, "  max_recent: 20\n")
+		mustContain(t, got, "  branch_aware: true\n")
 		mustContain(t, got, "agents:\n")
 		mustContain(t, got, "  claude: true\n")
 		mustContain(t, got, "  cursor: true\n")
@@ -68,8 +72,11 @@ func TestConfigGet_Boolean(t *testing.T) {
 		if err := root.Execute(); err != nil {
 			t.Fatalf("execute: %v", err)
 		}
-		if got := strings.TrimSpace(out.String()); got != "True" {
-			t.Errorf("get git.auto_push = %q; want True", got)
+		// `true`, not Python's `True`: SPEC §1.6 requires the
+		// non-interactive form to be scriptable, and the file holds
+		// `auto_push: true`. See formatConfigValue.
+		if got := strings.TrimSpace(out.String()); got != "true" {
+			t.Errorf("get git.auto_push = %q; want true", got)
 		}
 	})
 }
@@ -77,7 +84,7 @@ func TestConfigGet_Boolean(t *testing.T) {
 func TestConfigGet_Int(t *testing.T) {
 	withTempCwd(t, func(_ string) {
 		root := NewRootCmd()
-		root.SetArgs([]string{"config", "get", "decisions.max_recent"})
+		root.SetArgs([]string{"config", "get", "git.commit_line_threshold"})
 		var out bytes.Buffer
 		root.SetOut(&out)
 		root.SetErr(&out)
@@ -85,7 +92,7 @@ func TestConfigGet_Int(t *testing.T) {
 			t.Fatalf("execute: %v", err)
 		}
 		if got := strings.TrimSpace(out.String()); got != "20" {
-			t.Errorf("get decisions.max_recent = %q; want 20", got)
+			t.Errorf("get git.commit_line_threshold = %q; want 20", got)
 		}
 	})
 }
@@ -115,7 +122,7 @@ func TestConfigSet_BooleanCoercion(t *testing.T) {
 		if err := root.Execute(); err != nil {
 			t.Fatalf("execute: %v", err)
 		}
-		mustContain(t, out.String(), "Set git.auto_push = False")
+		mustContain(t, out.String(), "Set git.auto_push = false")
 		// File should exist + contain the new value.
 		data, err := os.ReadFile(filepath.Join(dir, ".logmind", "config.yml"))
 		if err != nil {
@@ -128,19 +135,19 @@ func TestConfigSet_BooleanCoercion(t *testing.T) {
 func TestConfigSet_IntCoercion(t *testing.T) {
 	withTempCwd(t, func(dir string) {
 		root := NewRootCmd()
-		root.SetArgs([]string{"config", "set", "decisions.max_recent", "42"})
+		root.SetArgs([]string{"config", "set", "git.commit_line_threshold", "42"})
 		var out bytes.Buffer
 		root.SetOut(&out)
 		root.SetErr(&out)
 		if err := root.Execute(); err != nil {
 			t.Fatalf("execute: %v", err)
 		}
-		mustContain(t, out.String(), "Set decisions.max_recent = 42")
+		mustContain(t, out.String(), "Set git.commit_line_threshold = 42")
 		data, err := os.ReadFile(filepath.Join(dir, ".logmind", "config.yml"))
 		if err != nil {
 			t.Fatalf("read config: %v", err)
 		}
-		mustContain(t, string(data), "max_recent: 42")
+		mustContain(t, string(data), "commit_line_threshold: 42")
 	})
 }
 
@@ -176,7 +183,7 @@ func TestConfigSet_PreservesUnrelatedKeys(t *testing.T) {
 		mustContain(t, body, "auto_push: false")
 		mustContain(t, body, "claude: false")
 		// Defaults should still be merged in.
-		mustContain(t, body, "max_recent: 20")
+		mustContain(t, body, "branch_aware: true")
 		mustContain(t, body, "cursor: true")
 	})
 }
@@ -223,4 +230,87 @@ func mustContain(t *testing.T, body, needle string) {
 	if !strings.Contains(body, needle) {
 		t.Errorf("output missing %q\n--- got ---\n%s", needle, body)
 	}
+}
+
+// TestConfigGet_ScriptableShapes pins SPEC §1.6's "its non-interactive form
+// MUST be scriptable — the same command in a terminal and in a workflow".
+//
+// Before #330 this path rendered through Python's str() and then fell through
+// to Go's %v: a bool printed `False` while the file held `false` (so
+// `[ "$(logmind config get git.enforce_commits)" = "false" ]` took the wrong
+// branch), a list printed `[a b c]`, and a whole section printed a struct
+// pointer — `&{[auto_commit ...] map[...]}`. Every case below is a value type
+// `config get` can actually be handed.
+func TestConfigGet_ScriptableShapes(t *testing.T) {
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{"git.auto_push", "true"},
+		{"git.auto_rebase", "false"},
+		{"git.enforce_commits", "true"},
+		{"git.commit_line_threshold", "20"},
+		{"git.commit_message_template", "logmind: {decision}"},
+		{"allow_promote_from_private", "false"},
+		{"catalog_target", "thrillmade/agent-skills"},
+		// A section renders as the YAML it is in the file, not as a Go
+		// struct pointer.
+		{"privacy_scanner", "keywords: []\norg_domains: []\nseverity_overrides: {}"},
+	}
+	for _, c := range cases {
+		t.Run(c.key, func(t *testing.T) {
+			withTempCwd(t, func(_ string) {
+				root := NewRootCmd()
+				root.SetArgs([]string{"config", "get", c.key})
+				var out, errOut bytes.Buffer
+				root.SetOut(&out)
+				root.SetErr(&errOut)
+				if err := root.Execute(); err != nil {
+					t.Fatalf("execute: %v (%s)", err, errOut.String())
+				}
+				if got := strings.TrimRight(out.String(), "\n"); got != c.want {
+					t.Errorf("config get %s = %q; want %q", c.key, got, c.want)
+				}
+			})
+		})
+	}
+}
+
+// A list renders as YAML a workflow can parse — one item per line, quoted
+// where YAML needs it (`- '*.pyc'`, because a bare `*` opens an alias), which
+// is exactly how the same list is spelled in .logmind/config.yml. Before #330
+// it rendered as Go slice syntax, `[__pycache__ .git ...]`, which nothing
+// parses and which loses any pattern containing a space.
+//
+// Asserted by round-tripping the output back through YAML and comparing to
+// the one owner of the defaults, rather than by pinning the quoting — the
+// property §1.6 asks for is that a workflow can read it.
+func TestConfigGet_ListIsYAMLNotGoSliceSyntax(t *testing.T) {
+	withTempCwd(t, func(_ string) {
+		root := NewRootCmd()
+		root.SetArgs([]string{"config", "get", "file_structure.ignore_patterns"})
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("execute: %v (%s)", err, errOut.String())
+		}
+		body := out.String()
+		if strings.HasPrefix(strings.TrimSpace(body), "[") {
+			t.Fatalf("config get rendered Go slice syntax, not YAML:\n%s", body)
+		}
+		var got []string
+		if err := yaml.Unmarshal([]byte(body), &got); err != nil {
+			t.Fatalf("output is not parseable YAML: %v\n%s", err, body)
+		}
+		want := config.DefaultIgnorePatterns()
+		if len(got) != len(want) {
+			t.Fatalf("parsed %d patterns, want %d\n%s", len(got), len(want), body)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("pattern %d = %q; want %q", i, got[i], want[i])
+			}
+		}
+	})
 }

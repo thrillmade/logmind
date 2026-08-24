@@ -1,4 +1,5 @@
 # >>> logmind >>>
 docs/timeline.md          merge=logmind-timeline
+docs/timeline-archive.md  merge=logmind-timeline-archive
 docs/file-structure.md    merge=logmind-file-structure
 # <<< logmind <<<

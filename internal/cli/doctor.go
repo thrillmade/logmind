@@ -104,8 +104,27 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		git:                true,
 		claudeAgentEnabled: claudeAgentEnabledFromConfig(cwd),
 	})
+	// Refused workflow downgrades (#286), a refused AGENTS.md block refresh
+	// (#267) and a path --fix could not write at all (#306) — printed BEFORE
+	// the failure check and BEFORE the --json branch below: these are refusals
+	// the user must see on every surface, and stderr never pollutes the JSON
+	// document on stdout. The run that is ABOUT TO FAIL is exactly the run
+	// whose partial results have no other way of reaching the user: --fix
+	// installs the remaining templates now, and returning first reported that
+	// as a total failure.
+	reportTemplateDowngrades(cmd.ErrOrStderr(), res.WorkflowsDeclined)
+	reportAgentsBlockRefusal(cmd.ErrOrStderr(), res.AgentsMDDeclined)
+
 	if refreshErr != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "error: doctor --fix:", refreshErr)
+		return ErrSilent
+	}
+	// A path --fix could not write is a FAILED fix, not a repository state it
+	// may report an `ok` line over — the notes above named each one. The
+	// ownership refusals (markerless / displaced / ahead) deliberately do NOT
+	// land here: those are stable states --fix is correct to leave alone, and
+	// they surface as residual rows below.
+	if unwritableCount(res.WorkflowsDeclined) > 0 {
 		return ErrSilent
 	}
 
@@ -138,13 +157,62 @@ func runDoctorFix(cmd *cobra.Command, offline, asJSON bool) error {
 		return nil
 	}
 
-	cmd.Println(formatDoctorFixOK(res, residual, summariesBackfilled))
-	for _, name := range residual {
-		fmt.Fprintf(cmd.ErrOrStderr(),
-			"note: %q still drifted — not auto-fixable by `doctor --fix` "+
-				"(PATH/version, or a hand-written hook). See `logmind doctor`.\n", name)
+	cmd.Println(formatDoctorFixOK(res, len(residual), summariesBackfilled))
+	for _, wf := range residual {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: %q %s. See `logmind doctor`.\n", wf.Name, residualCause(wf))
 	}
 	return nil
+}
+
+// residualCause names WHY a residual probe is still drifted after --fix, so
+// the note printed for it is accurate rather than a one-size-fits-all guess.
+// The four residualProbes drift values mean four different things:
+//
+//   - "stale" — an actual version mismatch --fix cannot resolve on its own
+//     (the PATH binary, or a hook whose installed version trails the one
+//     running).
+//   - "foreign" — a hand-written git hook occupies the path; --fix leaves a
+//     foreign hook alone by design (see probePreCommitHook).
+//   - "markerless" — SPEC §5.2: the artifact carries no marker --fix is
+//     willing to act on, so it is the user's and was left untouched. Before
+//     #306 this row was invisible because --fix silently overwrote exactly
+//     this case; now that it is refused and correctly reported, it needs its
+//     own explanation — "a hand-written hook" is only true of the "foreign"
+//     case above, and a bare workflow or AGENTS.md block with no marker is
+//     neither PATH/version drift nor a hook at all.
+//   - "unreadable" — a logmind IS on PATH but its `--version` could not be
+//     executed or could not be parsed (probePathResolution). This case used
+//     to be filed as "markerless" too, which made the note above claim SPEC
+//     §5.2 ownership over a binary on PATH — an artifact that has no marker
+//     concept in the first place, and that logmind never claims to own. The
+//     row is real drift; only its stated cause was wrong.
+//
+// "markerless" is then SPLIT AGAIN, by WorkflowStatus.Displaced: it is one
+// VERDICT covering two different facts, and only one of them is an ownership
+// claim. SPEC §5.2 gives the file to the user when it carries "no marker at
+// all" — a marker sitting on line 2 is not that. Reporting both under the
+// ownership sentence made a single `doctor --fix` run print, of one file,
+// both "its marker is on line 2, not line 1, so logmind cannot tell whether
+// the file is yours or its own" and "it carries no logmind marker … so SPEC
+// §5.2 treats it as yours" — two mutually exclusive accounts of one refusal.
+func residualCause(wf doctor.WorkflowStatus) string {
+	switch wf.Drift {
+	case "foreign":
+		return "still drifted — a hand-written hook is installed in its place, which `doctor --fix` leaves alone"
+	case "markerless":
+		if wf.Displaced {
+			// NOT the §5.2 ownership sentence: this file does carry a marker,
+			// so §5.2's "no marker at all" does not apply to it. Matches the
+			// declineDisplaced note reportTemplateDowngrades prints for the
+			// same file in the same run — one refusal, one account of it.
+			return "still drifted — it carries a logmind marker, but not on line 1, so `doctor --fix` cannot tell whether the file is yours or its own and leaves it alone"
+		}
+		return "still drifted — it carries no logmind marker `doctor --fix` can act on, so SPEC §5.2 treats it as yours and leaves it alone"
+	case "unreadable":
+		return "still drifted — a logmind is on PATH but its `--version` could not be read, so `doctor --fix` cannot tell whether it matches the running binary"
+	default: // "stale"
+		return "still drifted — not auto-fixable by `doctor --fix` (PATH/version)"
+	}
 }
 
 // driftCount counts probe rows that are "stale" — the drift signal that flips
@@ -164,15 +232,19 @@ func driftCount(r doctor.StatusReport) int {
 	return n
 }
 
-// residualProbes returns the names of probes still drifted after a fix pass:
-// PATH/version drift and foreign (markerless, or — for the pre-commit hook
-// specifically — "foreign") hooks, which --fix deliberately does not touch.
-func residualProbes(r doctor.StatusReport) []string {
-	var out []string
+// residualProbes returns the probes still drifted after a fix pass: PATH/
+// version drift ("stale"), an unmarked or displaced-marker artifact --fix
+// refuses to touch per SPEC §5.2 ("markerless"), a hand-written hook
+// occupying a managed path ("foreign"), and a PATH binary whose --version
+// could not be read ("unreadable") — four different reasons --fix
+// deliberately leaves the row alone. Callers that need to explain WHY use
+// residualCause(wf.Drift) rather than assuming any single cause.
+func residualProbes(r doctor.StatusReport) []doctor.WorkflowStatus {
+	var out []doctor.WorkflowStatus
 	for _, t := range r.Tools {
 		for _, wf := range t.Workflows {
-			if wf.Drift == "stale" || wf.Drift == "markerless" || wf.Drift == "foreign" {
-				out = append(out, wf.Name)
+			if wf.Drift == "stale" || wf.Drift == "markerless" || wf.Drift == "foreign" || wf.Drift == "unreadable" {
+				out = append(out, wf)
 			}
 		}
 	}
@@ -203,7 +275,7 @@ func claudeAgentEnabledFromConfig(cwd string) bool {
 }
 
 // formatDoctorFixOK renders the single quiet `ok` summary line.
-func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled int) string {
+func formatDoctorFixOK(res refreshResult, residualCount, summariesBackfilled int) string {
 	state := func(changed bool, changedWord string) string {
 		if changed {
 			return changedWord
@@ -219,7 +291,7 @@ func formatDoctorFixOK(res refreshResult, residual []string, summariesBackfilled
 		len(res.HooksRefreshed),
 		state(res.ClaudeHookChanged, "changed"),
 		summariesBackfilled,
-		len(residual),
+		residualCount,
 	)
 }
 

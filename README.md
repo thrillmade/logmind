@@ -16,10 +16,9 @@ package handles the docs, the branch routing, and the merge-time
 aggregation.
 
 **Key concept:** Install once, init anywhere, log everything. Feature
-branches get their own decision file; on PR merge a GitHub Action appends
-a one-line summary to `docs/decisions.md` linking the PR + the branch
-detail. `docs/timeline.md` is the main-canonical, source-derived union of
-every decision file in the repo — the one start-here doc for a cold agent.
+branches get their own decision file. `docs/timeline.md` is the
+main-canonical, source-derived union of every decision file in the repo —
+the one start-here doc for a cold agent.
 AGENTS.md is the canonical agent-instruction file; per-tool files
 (CLAUDE.md, .cursorrules, ...) are 2-line stubs pointing to it.
 
@@ -45,13 +44,14 @@ brew install thrillmade/tap/logmind
 curl -fsSL https://logmind.dev/install.sh | bash
 
 # Pin to a specific version on either path:
-LOGMIND_VERSION=v2.0.0 curl -fsSL https://logmind.dev/install.sh | bash
+LOGMIND_VERSION=v1.2.0 curl -fsSL https://logmind.dev/install.sh | bash
 ```
 
 Verify the install:
 
 ```bash
-logmind --version  # logmind 2.0.0 (spec 1.5.0)
+logmind --version
+# logmind 1.2.0 (spec 0.1.1)
 ```
 
 The curl installer is idempotent — re-running it when the same version
@@ -100,49 +100,37 @@ verification, and the legacy Python path).
 
 ## Recommended repo settings
 
-`docs/timeline.md` and `docs/file-structure.md` are **purely derived** —
-under `derived_docs: {mode: integration-point}` in `.logmind/config.yml`, a
-branch never edits them; they regenerate only on `main`. **This is opt-in**:
-`mode` defaults to `"driver"`, which reproduces the pre-v2.0.0 behavior
-(derived docs regenerate on every branch, nothing restores or blocks
-anything) — set `mode: integration-point` to turn the invariant on. Once
-adopted, it's enforced in layers, each closing a gap the previous one can't
-reach:
+`docs/timeline.md` and `docs/file-structure.md` are **purely derived** — a
+branch never edits them; they regenerate only on `main`. This zero-conflict
+invariant is **unconditional for every repo** — there is no opt-in, no
+config key, nothing to adopt — and is enforced in layers, each closing a
+gap the previous one can't reach:
 
 - **L0** — the `post-merge`/`post-rewrite` git hooks regenerate on the
-  default branch only; a feature branch is never touched. (In driver mode
-  they regenerate on every branch instead.)
+  default branch only; a feature branch is never touched.
 - **L1** — `logmind log` restores both files to `HEAD` before staging, on
   a non-default branch.
 - **L2 (pin-preservation)** — catches a raw `git commit` that L0/L1 can't
   reach, e.g. after `logmind warp` deliberately pulls `main`'s newer copy
   into your working tree for review. **L2a** is a `pre-commit` git hook
   (pure git, no `logmind` binary required, never blocks a commit),
-  installed only in integration-point mode. **L2b** is the same restore run
-  inside the Claude Code harness's PreToolUse guard, before its allow/block
-  decision — this additionally catches `git commit --no-verify` (which
-  skips every git hook, including L2a) and works in a fresh clone (git
-  hooks aren't cloned; `.claude/settings.json` is).
+  installed by `logmind init`. **L2b** is the same restore run inside the
+  Claude Code harness's PreToolUse guard, before its allow/block decision
+  — this additionally catches `git commit --no-verify` (which skips every
+  git hook, including L2a) and works in a fresh clone (git hooks aren't
+  cloned; `.claude/settings.json` is).
 - **L3** — the `regen-timeline.yml` GitHub Action's `check-derived-docs`
-  job first checks whether *this repo* declared integration-point mode; an
-  unadopted (driver-mode) repo passes with an explanatory message instead
-  of blocking. An adopted repo's PR gate **blocks a PR** that modified
-  either derived doc, and on every push to `main` regenerates both files
-  and commits + pushes them back (needs a `LOGMIND_AUTO_REGEN_PAT` secret,
-  fine-grained, repo-scoped, Contents: write; without it, the workflow just
+  job **blocks a PR** that modified either derived doc, and on every push
+  to `main` regenerates both files and commits + pushes them back (via a
+  minted `skdd-steward[bot]` App token; without it, the workflow just
   warns that `main` is momentarily stale — never a conflict risk, only a
   freshness gap).
-
-Set `derived_docs.min_binary` (e.g. `"2.0.0"`) alongside `mode:
-integration-point` — `logmind doctor` warns when the running binary is
-older than that floor.
 
 L0-L2 are local guardrails, not guarantees — every one is bypassable
 (`--no-verify`, a deleted or disabled hook, hand-editing
 `.claude/settings.json`, or a tool that never goes through git or Claude
 Code). **L3 (CI) is the only non-bypassable enforcement**, since it runs
-server-side on every PR regardless of what did or didn't happen locally —
-and even it only applies once a repo has adopted integration-point mode.
+server-side on every PR regardless of what did or didn't happen locally.
 
 For the derived files to stay conflict-free across *concurrent* PRs, the
 following is **recommended** (belt-and-suspenders — L0-L3 already make a
@@ -157,8 +145,10 @@ derived-doc conflict impossible by construction on any single merge):
 
 Without that toggle, the derived-doc invariant still holds per merge — a
 branch's copy is always byte-identical to its own merge-base, so git takes
-`main`'s (regenerated) side automatically, and the `logmind-timeline` merge
-driver is belt-and-suspenders for the rare case a branch diverges anyway.
+`main`'s (regenerated) side automatically, and the `logmind-timeline` /
+`logmind-timeline-archive` / `logmind-file-structure` merge drivers — one per
+derived doc — are belt-and-suspenders for the rare case a branch diverges
+anyway.
 Being up to date mainly helps avoid unrelated conflicts elsewhere (e.g. two
 branches editing the same decision file) and keeps history linear.
 
@@ -264,6 +254,43 @@ layered guards keep proprietary skills from leaking into a public catalog:
 There is no `--force` flag — these are guard rails, not toggles. See
 `logmind skill push --help` for the full surface.
 
+### Settings a person changes, not an agent
+
+Three settings decide whether something *blocks*, and SPEC §1.6 reserves them
+for a person: `git.enforce_commits`, `review.strict_mode` and
+`review.auto_fix`. `logmind config set` refuses a write that **weakens** one of
+them — turning a gate off, or turning auto-fix on — and says why. Turning a
+gate **on** is never refused, and every other setting is written as usual: an
+agent doing setup or registering a skill it just wrote must not be blocked.
+
+How logmind decides a person is asking, in full:
+
+1. **No agent marker in the environment.** `LOGMIND_AGENT`, `CLAUDECODE`,
+   `CLAUDE_CODE`, `CURSOR_AGENT`, `CODEX_SANDBOX`. Any one of them set to a
+   non-empty value refuses the write outright, naming the variable it saw.
+2. **A terminal, and a person who retypes the key.** stderr must be a TTY and
+   stdin must be block-safe; logmind then prints what the setting governs and
+   asks for the key to be typed back. `y` does not count.
+
+Step 2 is the guard — an agent driving `logmind` as a subprocess over pipes
+cannot satisfy it whatever harness it is, listed above or not. Step 1 is a
+courtesy that produces a better message and catches an agent inside a PTY; the
+marker list is non-exhaustive on purpose and nothing rests on it being
+complete.
+
+**What defeats it.** Any agent with a shell can: unset the marker, allocate a
+PTY and answer the prompt — or skip all that and edit `.logmind/config.yml`
+directly, which no local tool can prevent. This is a speed bump and a signal,
+not a boundary. The backstops are that `logmind doctor` reports any of the
+three it finds already weakened (**Blocking settings currently weakened**, also
+`gate_advisories` in `--json`), that SPEC §6.3 reads gate settings from the
+base ref so a weakening inside a pull request cannot affect the gate judging
+it, and that a config change is a hunk in a diff a review reads like any other.
+
+A person in a workflow, a cron job or over `ssh` has no terminal and is
+refused for that reason, which the message says: these settings are
+deliberately not automatable.
+
 ## Contributing / Development Setup
 
 Working on logmind itself? It's a Go module — clone, build, run.
@@ -287,7 +314,8 @@ tests, release workflow).
 ## Documentation
 
 - **[Install](docs/install.md)** - Full install matrix (brew, curl, go install, manual, legacy Python)
-- **[Plan & Architecture](docs/plan.md)** - Vision, approach, and technical details
+- **[Architecture](docs/plan.md)** - Vision, approach, and technical details
+- **[Roadmap](docs/roadmap.md)** - What ships next, in what order, and why
 - **[AI Agent Files](docs/ai-agent-files.md)** - How logmind integrates with AI instruction files
 - **[First Decision Example](docs/first-decision-example.md)** - What the initial decision looks like
 
@@ -316,7 +344,8 @@ tests, release workflow).
 - **AI-friendly:** Recent decisions + file structure = complete context
 - **Automatic:** Commits and pushes on every log
 
-See [docs/plan.md](docs/plan.md) for complete architecture and roadmap.
+See [docs/plan.md](docs/plan.md) for the architecture and
+[docs/roadmap.md](docs/roadmap.md) for the roadmap.
 
 ## Legacy install (Python, frozen at v0.6.16)
 

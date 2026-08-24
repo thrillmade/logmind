@@ -6,8 +6,9 @@
 //     docs/decisions.md (the "current branch" contract SKILL.md/AGENTS.md
 //     document)
 //   - no decisions logged yet on the current branch → friendly message
-//   - --all appends the archive under an ARCHIVED DECISIONS banner when the
-//     archive file exists, and a "(no archive)" ok-suffix when it doesn't
+//   - --all appends a LEGACY docs/decisions-archive.md under an ARCHIVED
+//     DECISIONS banner when that file exists, and never invents one when it
+//     doesn't
 //   - --all ALSO appends every other docs/decisions-branches/*.md file under
 //     a BRANCH DECISIONS banner (SPEC section sec-3-2's "every branch
 //     decisions file" half), without duplicating the current branch's own
@@ -15,8 +16,9 @@
 //   - --quiet collapses stdout to exactly one `ok k=v` line
 //   - docs/ missing → friendly error + ErrSilent
 //   - --brief: title + timestamp only, grouped by "[source]" tag under --all
-//   - --json: SPEC section sec-3-2's NORMATIVE schema — exact key set, exact
-//     source grammar (main / archive / branch:<name>), machine-clean stdout
+//   - --json: logmind's own schema (not a PROTOCOL SPEC schema — the SPEC
+//     defines no --json output for any command) — exact key set, exact
+//     source grammar (legacy / archive / branch:<name>), machine-clean stdout
 //   - --brief --json: full schema keys always present, body fields zeroed
 package cli
 
@@ -60,9 +62,10 @@ func runShowCmd(t *testing.T, extraArgs ...string) string {
 	return out.String()
 }
 
-// TestShow_DefaultBranch_StreamsDecisionsMd: on the default branch, `show`
-// streams docs/decisions.md verbatim and prints the ok-trailer.
-func TestShow_DefaultBranch_StreamsDecisionsMd(t *testing.T) {
+// TestShow_DefaultBranch_StreamsMainBranchFile: on the default branch, `show`
+// streams docs/decisions-branches/main.md — the file `logmind log` just wrote
+// to, main being a branch like any other (§3.2) — and prints the ok-trailer.
+func TestShow_DefaultBranch_StreamsMainBranchFile(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		initLogTestGitRepo(t, d)
 		scaffoldDocs(t)
@@ -71,7 +74,7 @@ func TestShow_DefaultBranch_StreamsDecisionsMd(t *testing.T) {
 		body := runShowCmd(t)
 		mustContain(t, body, "## ")
 		mustContain(t, body, "Use PostgreSQL")
-		mustContain(t, body, "ok show: docs/decisions.md")
+		mustContain(t, body, "ok show: docs/decisions-branches/main.md")
 		mustContain(t, body, "bytes")
 	})
 }
@@ -90,9 +93,9 @@ func TestShow_FeatureBranch_StreamsBranchFile(t *testing.T) {
 		body := runShowCmd(t)
 		mustContain(t, body, "Add JWT auth")
 		mustContain(t, body, "ok show: docs/decisions-branches/feat__login.md")
-		// The default-branch decisions.md content must NOT leak in.
+		// main's own branch file must NOT leak in.
 		if strings.Contains(body, "Initialize logmind decision tracking") {
-			t.Errorf("feature-branch show leaked docs/decisions.md content:\n%s", body)
+			t.Errorf("feature-branch show leaked docs/decisions-branches/main.md content:\n%s", body)
 		}
 	})
 }
@@ -112,18 +115,25 @@ func TestShow_NoDecisionsYetOnBranch(t *testing.T) {
 	})
 }
 
-// TestShow_All_ArchiveVariants: --all appends the archive under a banner
-// when it exists, and degrades gracefully (no banner, "(no archive)"
-// ok-suffix) when it doesn't.
-func TestShow_All_ArchiveVariants(t *testing.T) {
+// TestShow_All_StreamsALegacyArchive: §3.2 stopped rotation, so no repo grows
+// a NEW docs/decisions-archive.md — but one left behind by a pre-§3.2 binary
+// holds real decisions, and `--all` must stream it under its banner. A repo
+// that never rotated has no archive, and its absence is not reported as a
+// missing thing.
+//
+// The `ok show:` trailer is asserted in BOTH directions, restoring the
+// assertion the collapse PR dropped: a body that streams the archive while the
+// receipt says nothing extra was read is exactly the half-fix this catches.
+// The wording moved from "+ archive"/"(no archive)" to the count form the
+// v2 trailer uses, which pins strictly more (the count, not just the word).
+func TestShow_All_StreamsALegacyArchive(t *testing.T) {
 	cases := []struct {
 		name         string
 		writeArchive bool
-		wantBanner   bool
 		wantOkSuffix string
 	}{
-		{name: "archive present", writeArchive: true, wantBanner: true, wantOkSuffix: "+ archive"},
-		{name: "archive absent", writeArchive: false, wantBanner: false, wantOkSuffix: "(no archive)"},
+		{name: "legacy archive present", writeArchive: true, wantOkSuffix: "+ 1 legacy file(s)"},
+		{name: "no archive file", writeArchive: false, wantOkSuffix: "(no other branch files)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -138,16 +148,80 @@ func TestShow_All_ArchiveVariants(t *testing.T) {
 
 				body := runShowCmd(t, "--all")
 				mustContain(t, body, "Main decision")
-				if tc.wantBanner {
+				if tc.writeArchive {
 					mustContain(t, body, "ARCHIVED DECISIONS")
 					mustContain(t, body, "Archived decision")
-				} else if strings.Contains(body, "ARCHIVED DECISIONS") {
-					t.Errorf("did not expect ARCHIVED DECISIONS banner:\n%s", body)
+				} else {
+					if strings.Contains(body, "ARCHIVED DECISIONS") {
+						t.Errorf("--all streamed an ARCHIVED DECISIONS banner with no archive on disk:\n%s", body)
+					}
+					if strings.Contains(body, "Archived decision") {
+						t.Errorf("--all invented archived content:\n%s", body)
+					}
 				}
 				mustContain(t, body, tc.wantOkSuffix)
 			})
 		})
 	}
+}
+
+// TestShow_Bare_ReachesALegacyMainLog is the HIGH 4 regression.
+//
+// A repo that upgraded across §3.2 has its main-branch history in
+// docs/decisions.md and no docs/decisions-branches/main.md yet. Bare `logmind
+// show` — the command the docs put first, and the one a reader least likely to
+// know a second command exists will run — answered
+// "No decisions logged yet on this branch." over a file full of them, while
+// `search` and `show --all` found them.
+//
+// Asserted on the rendered output of the real command in a real git repo on
+// the default branch.
+func TestShow_Bare_ReachesALegacyMainLog(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		// The pre-§3.2 shape: a main log at docs/decisions.md, and no
+		// docs/decisions-branches/main.md — that file only appears once a
+		// post-§3.2 binary logs on the default branch.
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"# Decisions\n\n## 2024-03-04 08:00 - Chose Postgres over MySQL\n\n**Reasoning:** pre-upgrade-rationale\n\n---\n")
+		mainFile := filepath.Join(d, "docs", "decisions-branches", "main.md")
+		if err := os.Remove(mainFile); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove %s: %v", mainFile, err)
+		}
+		if pathExists(mainFile) {
+			t.Fatal("fixture precondition: this repo must have no main.md, so bare show has nothing else to find")
+		}
+
+		body := runShowCmd(t)
+		mustContain(t, body, "Chose Postgres over MySQL")
+		mustContain(t, body, "pre-upgrade-rationale")
+		mustContain(t, body, "LEGACY MAIN LOG")
+		// The receipt must not claim the branch file was all there was.
+		mustContain(t, body, "legacy file(s)")
+
+		// CONTROLS: the paths that already worked still do, in the same repo.
+		mustContain(t, runSearchCmd(t, "pre-upgrade-rationale"), "docs/decisions.md")
+		mustContain(t, runShowCmd(t, "--all"), "Chose Postgres over MySQL")
+	})
+}
+
+// TestShow_Bare_UnchangedWhereThereIsNoLegacyLog: the flip side. A repo
+// scaffolded by a current `logmind init` has no docs/decisions.md and no
+// archive, so bare `show` keeps its historical output exactly — friendly empty
+// message, bare "(N bytes)" trailer, no banners.
+func TestShow_Bare_UnchangedWhereThereIsNoLegacyLog(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		checkoutBranch(t, d, "feat/empty")
+
+		body := runShowCmd(t)
+		mustContain(t, body, "No decisions logged yet on this branch.")
+		mustNotContain(t, body, "LEGACY MAIN LOG")
+		mustNotContain(t, body, "legacy file(s)")
+		mustNotContain(t, body, "(no other branch files)")
+	})
 }
 
 // TestShow_Quiet_EmitsOneOkLine: --quiet suppresses the verbatim body —
@@ -230,12 +304,15 @@ func TestShow_All_ExcludesCurrentBranchFile(t *testing.T) {
 		mustContain(t, body, "BRANCH DECISIONS: feat/other")
 		mustContain(t, body, "Other branch decision")
 
-		// Exactly one BRANCH DECISIONS banner (feat/other) — the current
-		// branch's own file must not ALSO get a "BRANCH DECISIONS: feat/login"
-		// section (its content is already the primary body above).
-		if n := strings.Count(body, "BRANCH DECISIONS:"); n != 1 {
-			t.Errorf("want exactly 1 BRANCH DECISIONS banner, got %d:\n%s", n, body)
+		// One banner per OTHER branch file — feat/other plus main, whose own
+		// file carries the first decision `logmind init` logged (§3.2: main is
+		// a branch like any other). The current branch's file must not ALSO
+		// get a "BRANCH DECISIONS: feat/login" section, since its content is
+		// already the primary body above.
+		if n := strings.Count(body, "BRANCH DECISIONS:"); n != 2 {
+			t.Errorf("want exactly 2 BRANCH DECISIONS banners (feat/other, main), got %d:\n%s", n, body)
 		}
+		mustContain(t, body, "BRANCH DECISIONS: main")
 		if strings.Contains(body, "BRANCH DECISIONS: feat/login") {
 			t.Errorf("current branch file re-shown under its own BRANCH DECISIONS banner:\n%s", body)
 		}
@@ -267,8 +344,13 @@ func TestShow_Brief_TitleAndTimestampOnly(t *testing.T) {
 }
 
 // TestShow_Brief_All_GroupsBySource: under --all, --brief groups lines under
-// a "[source]" tag per source, in main → branch → archive order, and the
+// a "[source]" tag per source, in legacy → branch → archive order, and the
 // tag text matches the --json "source" value exactly.
+//
+// The full three-way ordering is asserted, restoring the `branchIdx <
+// archiveIdx` half the collapse PR dropped: the source ORDER is the contract
+// the raw stream, --brief and --json all share, and a change that reordered
+// the extras would otherwise ship silently.
 func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
@@ -276,30 +358,71 @@ func TestShow_Brief_All_GroupsBySource(t *testing.T) {
 			"## 2026-06-01 10:00 - Main decision\n")
 		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__other.md"),
 			"## 2026-06-02 11:00 - Branch decision\n")
+		// A legacy archive from a pre-§3.2 binary — still a source, tagged
+		// with the grammar's "archive" label.
 		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 			"## 2025-01-01 09:00 - Archived decision\n")
 
 		body := runShowCmd(t, "--brief", "--all")
-		mustContain(t, body, "[main]")
+		mustContain(t, body, "[legacy]")
 		mustContain(t, body, "[branch:feat/other]")
 		mustContain(t, body, "[archive]")
 		mustContain(t, body, "2026-06-01 10:00 - Main decision")
 		mustContain(t, body, "2026-06-02 11:00 - Branch decision")
 		mustContain(t, body, "2025-01-01 09:00 - Archived decision")
 
-		mainIdx := strings.Index(body, "[main]")
+		legacyIdx := strings.Index(body, "[legacy]")
 		branchIdx := strings.Index(body, "[branch:feat/other]")
 		archiveIdx := strings.Index(body, "[archive]")
-		if !(mainIdx >= 0 && mainIdx < branchIdx && branchIdx < archiveIdx) {
-			t.Errorf("want [main] < [branch:feat/other] < [archive] ordering, got indices %d, %d, %d:\n%s",
-				mainIdx, branchIdx, archiveIdx, body)
+		if !(legacyIdx >= 0 && legacyIdx < branchIdx && branchIdx < archiveIdx) {
+			t.Errorf("want [legacy] < [branch:feat/other] < [archive] ordering, got indices %d, %d, %d:\n%s",
+				legacyIdx, branchIdx, archiveIdx, body)
 		}
 	})
 }
 
-// TestShow_JSON_SchemaKeysAndValues pins SPEC section sec-3-2's NORMATIVE
-// --json schema for a 2-decision fixture: exact key set (no more, no fewer —
-// a future rename/add/drop of a key breaks this test) and correct values,
+// TestShow_All_DanglingSymlinkFailsLoud pins logmind#301 round 5: a
+// docs/decisions-branches/*.md entry that decisions.ListSources found via
+// directory enumeration but that fails to read (most realistically a
+// dangling symlink) used to be silently dropped by `show --all --brief` /
+// `--json` — the ONLY one of the four read paths (search, timeline, show's
+// own default/--all text stream) that didn't fail loud on the identical
+// file. Skipped when symlinks aren't supported by the test filesystem.
+func TestShow_All_DanglingSymlinkFailsLoud(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		branchDir := filepath.Join(d, "docs", "decisions-branches")
+		mustMkdir(t, branchDir)
+		mustWrite(t, filepath.Join(branchDir, "feat__other.md"),
+			"## 2026-06-02 11:00 - Other branch decision\n")
+		brokenPath := filepath.Join(branchDir, "broken.md")
+		if err := os.Symlink(filepath.Join(d, "does-not-exist"), brokenPath); err != nil {
+			t.Skipf("symlink not supported on this filesystem: %v", err)
+		}
+
+		for _, args := range [][]string{
+			{"show", "--all", "--brief"},
+			{"show", "--all", "--json"},
+		} {
+			root := NewRootCmd()
+			root.SetArgs(args)
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&out)
+			if err := root.Execute(); err == nil {
+				t.Errorf("%v: expected an error on the dangling symlink, got none; stdout:\n%s", args, out.String())
+			}
+			if strings.Contains(out.String(), "Other branch decision") {
+				t.Errorf("%v: partially succeeded and printed output instead of failing loud:\n%s", args, out.String())
+			}
+		}
+	})
+}
+
+// TestShow_JSON_SchemaKeysAndValues pins logmind's own --json schema (not a
+// PROTOCOL SPEC schema — the SPEC defines no --json output for any command;
+// this test IS the schema's authority) for a 2-decision fixture: exact key
+// set (no more, no fewer — a future rename/add/drop of a key breaks this
+// test) and correct values,
 // including the alternatives/implications arrays parsed out of the
 // **Alternatives considered:**/**Implications:** markdown sections.
 func TestShow_JSON_SchemaKeysAndValues(t *testing.T) {
@@ -328,11 +451,11 @@ func TestShow_JSON_SchemaKeysAndValues(t *testing.T) {
 		wantKeys := []string{"title", "timestamp", "reasoning", "alternatives", "implications", "source"}
 		for _, entry := range doc.Decisions {
 			if len(entry) != len(wantKeys) {
-				t.Errorf("entry has %d keys, want %d (NORMATIVE schema): %v", len(entry), len(wantKeys), entry)
+				t.Errorf("entry has %d keys, want %d (logmind's own --json schema): %v", len(entry), len(wantKeys), entry)
 			}
 			for _, k := range wantKeys {
 				if _, ok := entry[k]; !ok {
-					t.Errorf("entry missing NORMATIVE key %q: %v", k, entry)
+					t.Errorf("entry missing schema key %q: %v", k, entry)
 				}
 			}
 		}
@@ -347,8 +470,8 @@ func TestShow_JSON_SchemaKeysAndValues(t *testing.T) {
 		if first["reasoning"] != "Because reasons" {
 			t.Errorf("reasoning = %v, want %q", first["reasoning"], "Because reasons")
 		}
-		if first["source"] != "main" {
-			t.Errorf("source = %v, want %q", first["source"], "main")
+		if first["source"] != "legacy" {
+			t.Errorf("source = %v, want %q", first["source"], "legacy")
 		}
 		if alts, ok := first["alternatives"].([]any); !ok || len(alts) != 2 || alts[0] != "Option A" || alts[1] != "Option B" {
 			t.Errorf("alternatives = %v, want [Option A, Option B]", first["alternatives"])
@@ -392,8 +515,18 @@ func TestShow_JSON_MachineCleanOutput(t *testing.T) {
 }
 
 // TestShow_JSON_All_SourceValues: under --all --json, every decision's
-// "source" value matches SPEC section sec-3-2's grammar exactly:
-// "main" | "archive" | "branch:<name>".
+// "source" value matches logmind's own grammar exactly (not a PROTOCOL SPEC
+// grammar — see showSource in show.go):
+// "legacy" | "archive" | "branch:<name>". A legacy docs/decisions-archive.md
+// still produces "archive" — §3.2 stopped WRITING that file, it did not make
+// the decisions in it stop counting.
+//
+// "legacy", not "main": round-10 fix. §3.2 collapsed the layout so the
+// default branch's decisions land in docs/decisions-branches/main.md like
+// any other branch (source "branch:main") — "main" the bare token would now
+// silently mean two different things depending on when a consumer last read
+// this schema, so the pre-§3.2 docs/decisions.md file was renamed to the
+// unambiguous "legacy" instead.
 func TestShow_JSON_All_SourceValues(t *testing.T) {
 	withTempCwd(t, func(d string) {
 		mustMkdir(t, filepath.Join(d, "docs", "decisions-branches"))
@@ -401,6 +534,7 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 			"## 2026-06-03 09:00 - Main decision\n")
 		mustWrite(t, filepath.Join(d, "docs", "decisions-branches", "feat__widget.md"),
 			"## 2026-06-02 08:00 - Branch decision\n")
+		// A legacy archive from a pre-§3.2 binary — still a source.
 		mustWrite(t, filepath.Join(d, "docs", "decisions-archive.md"),
 			"## 2025-01-01 07:00 - Archived decision\n")
 
@@ -415,16 +549,70 @@ func TestShow_JSON_All_SourceValues(t *testing.T) {
 		for _, e := range doc.Decisions {
 			got[e["source"].(string)] = true
 		}
-		for _, want := range []string{"main", "branch:feat/widget", "archive"} {
+		for _, want := range []string{"legacy", "archive", "branch:feat/widget"} {
 			if !got[want] {
 				t.Errorf("missing source %q; got sources %v", want, got)
+			}
+		}
+		for src := range got {
+			if src != "legacy" && src != "archive" && !strings.HasPrefix(src, "branch:") {
+				t.Errorf("source %q is outside logmind's own --json source grammar; got %v", src, got)
 			}
 		}
 	})
 }
 
+// TestShow_JSON_All_LegacyFileAndMainBranchAreDistinctSources pins the
+// round-10 LOW finding directly: a repo that upgraded across §3.2 commonly
+// has BOTH a leftover pre-upgrade docs/decisions.md AND a real
+// docs/decisions-branches/main.md on disk at once (a decision logged on
+// main after the upgrade). These are two different things and MUST tag
+// distinctly — "legacy" for the old file, "branch:main" for the branch
+// file — never both collapsing onto a bare "main" token, which used to mean
+// "made on the current default branch" pre-#301 and would otherwise now
+// silently mean "the pre-upgrade file" instead, changing logmind's own
+// schema's meaning under an unchanged key.
+//
+// The prior test (TestShow_JSON_All_SourceValues) never exercises this: its
+// fixture has no git repo, so docs/decisions.md IS the base file
+// (isBranchFile=false) and extraSources never visits it as an extra source
+// at all — the ListSources("legacy") path this test targets goes
+// unexercised there. This test runs `show` in a REAL git repo on a REAL
+// `main` branch specifically so the legacy file is read as a genuine EXTRA
+// source alongside the branch file.
+func TestShow_JSON_All_LegacyFileAndMainBranchAreDistinctSources(t *testing.T) {
+	withTempCwd(t, func(d string) {
+		initLogTestGitRepo(t, d)
+		scaffoldDocs(t)
+		withFakeTTY(t, false, func() { logOnce(t, "Decision made on main post-upgrade") })
+		mustWrite(t, filepath.Join(d, "docs", "decisions.md"),
+			"# Decisions\n\n## 2024-01-01 08:00 - Pre-upgrade legacy decision\n\n**Reasoning:** old\n\n---\n")
+
+		body := runShowCmd(t, "--all", "--json")
+		var doc struct {
+			Decisions []map[string]any `json:"decisions"`
+		}
+		if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("--all --json output did not parse: %v\n%s", err, body)
+		}
+		bySource := map[string]string{}
+		for _, e := range doc.Decisions {
+			bySource[e["source"].(string)] = e["title"].(string)
+		}
+		if got, want := bySource["branch:main"], "Decision made on main post-upgrade"; got != want {
+			t.Errorf(`source "branch:main" title = %q, want %q (sources: %v)`, got, want, bySource)
+		}
+		if got, want := bySource["legacy"], "Pre-upgrade legacy decision"; got != want {
+			t.Errorf(`source "legacy" title = %q, want %q (sources: %v)`, got, want, bySource)
+		}
+		if title, present := bySource["main"]; present {
+			t.Errorf(`bare "main" source must not appear — ambiguous between the legacy file and the main branch; got title %q under it (sources: %v)`, title, bySource)
+		}
+	})
+}
+
 // TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema: --brief --json keeps the
-// FULL NORMATIVE key set (never drops a key) but zeroes
+// FULL schema key set (never drops a key) but zeroes
 // reasoning/alternatives/implications ("" / [] / []) rather than parsing
 // them out of the entry body — the documented --brief+--json precedence.
 func TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema(t *testing.T) {
@@ -449,7 +637,7 @@ func TestShow_BriefJSON_ZeroesBodyFieldsKeepsSchema(t *testing.T) {
 		e := doc.Decisions[0]
 		for _, k := range []string{"title", "timestamp", "reasoning", "alternatives", "implications", "source"} {
 			if _, ok := e[k]; !ok {
-				t.Errorf("--brief --json dropped NORMATIVE key %q: %v", k, e)
+				t.Errorf("--brief --json dropped schema key %q: %v", k, e)
 			}
 		}
 		if e["title"] != "First decision" {

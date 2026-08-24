@@ -70,27 +70,58 @@ func runSelfUpdate(cmd *cobra.Command) error {
 	}
 
 	updated := false
+	blockRefused := false
+	blockFailed := false
 
-	if msg, err := inserter.EnsureAgentsMD(cwd); err == nil && msg != "" {
-		fmt.Fprintln(out, msg)
-		updated = true
-	}
-
-	// Refresh per-agent stubs by detecting drift and rewriting affected
-	// files. The inserter package's FindOutdatedMarkerBlocks +
-	// MigrateToAgentsMD pipeline already covers this; we call them here
-	// in best-effort mode.
-	if entries, err := inserter.FindOutdatedMarkerBlocks(cwd); err == nil {
-		for _, entry := range entries {
-			refreshed := inserter.ReplaceMarkerBlock(entry.OldBody, entry.NewBody)
-			if err := os.WriteFile(entry.Path, []byte(refreshed), 0o644); err == nil {
-				if rel, err := filepath.Rel(cwd, entry.Path); err == nil {
-					fmt.Fprintln(out, "✓ Refreshed marker block in", rel)
-					updated = true
-				}
-			}
+	// THE ERROR IS NOT OPTIONAL (#306). This used to read
+	// `if …, err := inserter.EnsureAgentsMD(cwd); err == nil {` with no else,
+	// which was survivable only while the error was unreachable. Teaching the
+	// AGENTS.md write to refuse a symlink at its destination made it reachable,
+	// and the discarded branch then printed "✓ logmind templates are up to
+	// date." over a block that was still stale, exited 0, and never showed the
+	// refusal at all — the worst of the three outcomes, because it is the one
+	// that stops the user from looking.
+	msg, declined, err := inserter.EnsureAgentsMD(cwd)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "error: self-update: AGENTS.md logmind block was NOT refreshed —", err)
+		blockFailed = true
+	} else {
+		if msg != "" {
+			fmt.Fprintln(out, msg)
+			updated = true
 		}
+		// self-update is the surface a stale binary is most likely to be
+		// run from, so it is the most likely to meet a block a newer one
+		// wrote. Say so rather than reporting "up to date" (#267).
+		reportAgentsBlockRefusal(cmd.ErrOrStderr(), declined)
+		blockRefused = declined != nil
 	}
+
+	// NOTE — there is deliberately no second AGENTS.md refresher here (#297).
+	//
+	// A FindOutdatedMarkerBlocks loop used to sit at this point, writing
+	// AGENTS.md a second time in the same command. FindOutdatedMarkerBlocks
+	// only ever reports AGENTS.md, and EnsureAgentsMD above has already
+	// refreshed it against the same classifier (planBlockRefresh) — so the
+	// loop was pure duplication, which SPEC §5.2 forbids outright ("Exactly
+	// one automation owns any generated or copied path. Two refreshers MUST
+	// NOT write the same path"). Being unreachable is also why nothing caught
+	// that it passed the BLOCK BODY where the WHOLE FILE belonged and wrote
+	// the resulting fragment over the user's entire AGENTS.md.
+	//
+	// Deleting the duplicate is the fix, not repairing its arguments: the
+	// second writer had no work of its own to do, and a dead write path is
+	// exactly where an untested defect survives.
+	//
+	// Precisely what is single here, since "EnsureAgentsMD is the single owner
+	// of this path" overstated it: AGENTS.md's bytes have exactly one WRITE
+	// PRIMITIVE, inserter.RefreshMarkerBlockFile, which owns the read, requires
+	// the markers to be present, and writes the whole file back. Two commands
+	// route through it — this one via inserter.EnsureAgentsMD, and `logmind
+	// agents update --apply` via runAgentsUpdate — which is one owner reached
+	// from two surfaces, not two refreshers. What SPEC §5.2 forbids is the
+	// second REFRESHER, and within this command the call above is the only one.
+	// EnsureAgentsMD reports through `msg`.
 
 	// Refresh local hooks to match the running binary's body.
 	if _, err := os.Stat(filepath.Join(cwd, ".git")); err == nil {
@@ -122,7 +153,28 @@ func runSelfUpdate(cmd *cobra.Command) error {
 	}
 
 	if !updated {
-		fmt.Fprintln(out, "✓ logmind templates are up to date.")
+		switch {
+		case blockFailed:
+			// Neither "up to date" nor "left unchanged": the refresh was
+			// attempted and FAILED, and the block on disk is still whatever it
+			// was — stale, most likely, since that is why the write was tried.
+			fmt.Fprintln(out, "! AGENTS.md logmind block could NOT be refreshed — see the error on stderr.")
+		case blockRefused:
+			// "up to date" would contradict the note on stderr — this repo's
+			// block is one this binary can't move forward, not one it just
+			// verified (#267).
+			fmt.Fprintln(out, "! AGENTS.md logmind block left unchanged — see the note on stderr.")
+		default:
+			fmt.Fprintln(out, "✓ logmind templates are up to date.")
+		}
+	}
+	if blockFailed {
+		// `ok self-update applied` is a receipt for work that happened. Exit
+		// non-zero as well: the self-update workflow runs this unattended, and
+		// a zero exit is the difference between a repo whose stale block gets
+		// noticed and one where it never does.
+		fmt.Fprintln(out, "ok self-update incomplete")
+		return ErrSilent
 	}
 	fmt.Fprintln(out, "ok self-update applied")
 	return nil

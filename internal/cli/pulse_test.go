@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // neutralizePathProbe points PATH at a directory containing ONLY a `git`
@@ -502,14 +503,15 @@ func TestLog_Pulse_SpecLine_TimezoneStable(t *testing.T) {
 			mustWriteUnder(t, d, ".logmind/config.yml", "context:\n  spec_file: SPEC.md\n")
 			commitFileWithDate(t, d, "SPEC.md", "# Spec\n", "2020-06-15T12:00:00Z")
 
-			// Overwrite docs/decisions.md with exactly specPulseThreshold headers
-			// dated decisionDay at noon — direct-write so the header dates are
-			// fully controlled (not time.Now()).
+			// Overwrite the branch file `logmind init` logged its own first
+			// decision into with exactly specPulseThreshold headers dated
+			// decisionDay at noon — direct-write so the header dates are fully
+			// controlled (not time.Now()), and so this is the whole entry set.
 			var b strings.Builder
 			for i := 0; i < specPulseThreshold; i++ {
 				fmt.Fprintf(&b, "## %s 12:00 - decision %d\n\n**Reasoning:** why\n\n---\n\n", decisionDay, i)
 			}
-			mustWriteUnder(t, d, "docs/decisions.md", b.String())
+			mustWriteUnder(t, d, "docs/decisions-branches/main.md", b.String())
 
 			for _, loc := range zones {
 				time.Local = loc
@@ -654,10 +656,9 @@ func initClonePairScaffolded(t *testing.T) (origin, repo string) {
 	commitAll(t, origin, "scaffold")
 
 	repo = filepath.Join(t.TempDir(), "repo")
-	cmd := exec.Command("git", "clone", "-q", origin, repo)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git clone: %v\n%s", err, out)
-	}
+	// A clone does NOT inherit origin's gc.auto/maintenance.auto (local,
+	// per-repo config `git clone` doesn't copy) — see testgit's package doc.
+	testgit.CloneRepo(t, repo, "-q", origin)
 	runGitIn(t, repo, "config", "user.email", "test@example.com")
 	runGitIn(t, repo, "config", "user.name", "Test")
 	runGitIn(t, repo, "config", "commit.gpgsign", "false")

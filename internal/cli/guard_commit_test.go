@@ -9,6 +9,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/claudehook"
+	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/version"
 )
 
 // writeGuardCommitConfig writes a minimal .logmind/config.yml under repo
@@ -493,6 +497,139 @@ func TestRunGuardCommit_GitHook_MissingMsgFileOnDisk_PropagatesRealError(t *test
 	}
 }
 
+// --- the git-hook layer's engine-skew handshake (issue #270) --------------
+
+// The commit-msg hook resolves its engine by bare name off PATH, so the
+// binary that answers need not be the one that installed the hook. SPEC §3.4
+// requires an installer to "make that skew visible", offering two ways and
+// leaving the choice open: pin the engine resolved at install, or check the
+// engine's version at run and complain. logmind checks at run — the hook
+// hands its own installed-by version over in LOGMIND_HOOK_VERSION and the
+// engine compares it against its own.
+//
+// The comparison is on MAJOR version (see version.SameMajor for why), and it
+// is advisory in the strictest sense: it never moves the exit code, in
+// either direction.
+
+func TestRunGuardCommit_GitHook_ReportsMajorEngineSkew(t *testing.T) {
+	repo := initRepo(t)
+	stageLines(t, repo, "small.go", 5)
+	msgFile := writeMsgFile(t, repo, "a small change")
+	t.Setenv(hookVersionEnv, "1.2.0") // the hook was written by a 1.x logmind
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+		nil, &stdout, &stderr)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil — a skew notice must never change the decision", exitCode, err)
+	}
+	for _, must := range []string{"DIFFERENT logmind", "1.2.0", version.Version} {
+		if !strings.Contains(stderr.String(), must) {
+			t.Errorf("skew notice missing %q; stderr = %q", must, stderr.String())
+		}
+	}
+	// stdout carries guard-commit's own chatty allow line; the skew notice
+	// must not be anywhere near it.
+	if strings.Contains(stdout.String(), "DIFFERENT logmind") {
+		t.Errorf("skew notice leaked to stdout: %q", stdout.String())
+	}
+}
+
+// A skew notice must not be able to rescue — or to cause — a block. Pin both
+// halves against the same 1.x hook version.
+func TestRunGuardCommit_GitHook_SkewNoticeLeavesTheBlockIntact(t *testing.T) {
+	repo := initRepo(t)
+	stageLines(t, repo, "big.go", 25)
+	msgFile := writeMsgFile(t, repo, "a big change")
+	t.Setenv(hookVersionEnv, "1.2.0")
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+		nil, &stdout, &stderr)
+	if exitCode != 65 || err != nil {
+		t.Fatalf("exitCode=%d err=%v; want 65,nil (the block still stands under skew)", exitCode, err)
+	}
+	if !strings.Contains(stderr.String(), "DIFFERENT logmind") {
+		t.Errorf("stderr = %q; want the skew notice alongside the block reason", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "logmind log") {
+		t.Errorf("stderr = %q; want the block reason too", stderr.String())
+	}
+}
+
+// The quiet contract: §3.4 keeps a gate's reports about itself off stdout and
+// out of reach of a quiet flag, exactly like a block reason.
+func TestRunGuardCommit_GitHook_SkewNoticeSurvivesQuiet(t *testing.T) {
+	repo := initRepo(t)
+	stageLines(t, repo, "small.go", 5)
+	msgFile := writeMsgFile(t, repo, "a small change")
+	t.Setenv(hookVersionEnv, "1.2.0")
+
+	var stdout, stderr bytes.Buffer
+	if _, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, true,
+		nil, &stdout, &stderr); err != nil {
+		t.Fatalf("runGuardCommit: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "DIFFERENT logmind") {
+		t.Errorf("stderr = %q; the skew notice must not be suppressible by --quiet", stderr.String())
+	}
+}
+
+// The noise floor. A notice that fires on every commit in every repo whose
+// hooks predate the last release teaches its reader to ignore the one
+// message that matters, so only a MAJOR difference is reported — an
+// unset variable, a matching major, and a version string this binary cannot
+// parse all stay silent. Minor/patch hook staleness is still reported, on
+// demand, by `logmind doctor`'s hook-drift probe.
+func TestRunGuardCommit_GitHook_SkewNoticeStaysSilentWhenItShould(t *testing.T) {
+	sameMajor := "2.99.99"
+	if !version.SameMajor(sameMajor, version.Version) {
+		t.Fatalf("fixture is stale: %q is no longer the same major as %q", sameMajor, version.Version)
+	}
+	for name, hookVer := range map[string]string{
+		"unset":       "",
+		"same major":  sameMajor,
+		"unparseable": "not-a-version",
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := initRepo(t)
+			stageLines(t, repo, "small.go", 5)
+			msgFile := writeMsgFile(t, repo, "a small change")
+			t.Setenv(hookVersionEnv, hookVer)
+
+			var stdout, stderr bytes.Buffer
+			if _, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+				nil, &stdout, &stderr); err != nil {
+				t.Fatalf("runGuardCommit: %v", err)
+			}
+			if strings.Contains(stderr.String(), "DIFFERENT logmind") {
+				t.Errorf("skew notice fired for %s hook version %q; stderr = %q", name, hookVer, stderr.String())
+			}
+		})
+	}
+}
+
+// git.enforce_commits:false is the repo's own decision to run without the
+// local gate. It should not then be nagged about which binary would have
+// enforced it — the off-ramp returns before the notice.
+func TestRunGuardCommit_GitHook_NoSkewNoticeWhenEnforcementIsOff(t *testing.T) {
+	repo := initRepo(t)
+	writeGuardCommitConfig(t, repo, "git:\n  enforce_commits: false\n")
+	stageLines(t, repo, "big.go", 25)
+	msgFile := writeMsgFile(t, repo, "a big change")
+	t.Setenv(hookVersionEnv, "1.2.0")
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "git-hook", msgFile, 20, true, false,
+		nil, &stdout, &stderr)
+	if exitCode != 0 || err != nil {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil (enforce_commits:false off-ramp)", exitCode, err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q; want silence when the repo has turned local enforcement off", stderr.String())
+	}
+}
+
 // --- shared: --layer validation, threshold resolution, enforce_commits ---
 
 func TestRunGuardCommit_InvalidLayer_PlainError(t *testing.T) {
@@ -749,4 +886,210 @@ func writeMsgFile(t *testing.T, repo, subject string) string {
 		t.Fatalf("write msg file: %v", err)
 	}
 	return path
+}
+
+// --- the harness layer's engine-skew handshake (issue #298) ---------------
+//
+// #270 gave the git layer the §3.4 report; the harness layer never got one, so
+// half the rule shipped. The harness layer's hole is the WIDER of the two,
+// because .claude/settings.json is ordinary repo content that travels with
+// `git clone` — a fresh clone arrives carrying a guard entry written by
+// whatever logmind the last committer had, to be run by whatever logmind the
+// cloner has. That is §3.4's "fleet mid-migration" by construction.
+//
+// It cannot use the git layer's LOGMIND_HOOK_VERSION channel: the harness
+// invocation is a single line run through whatever shell the OS hands Claude
+// Code, and `VAR=x cmd` is POSIX-only syntax. It reads the installer's own
+// marker out of settings.json instead, and routes the verdict through the same
+// engineSkewNotice both layers share.
+
+// installHarnessGuardWithVersion installs the REAL PreToolUse guard entry
+// (claudehook's own installer, not a hand-rolled imitation) and then rewrites
+// its `# logmind-hook-version:` marker to hookVer, or strips the marker
+// entirely when hookVer is "".
+//
+// Going through the installer is the point: it pins that the engine reads the
+// marker the installer actually WRITES. A hand-built fixture would keep
+// passing after a change to CanonicalCommand's marker placement that left
+// every real repo unreadable.
+func installHarnessGuardWithVersion(t *testing.T, repo, hookVer string) {
+	t.Helper()
+	if _, err := claudehook.EnsurePreToolUseGuard(repo); err != nil {
+		t.Fatalf("EnsurePreToolUseGuard: %v", err)
+	}
+	path := claudehook.SettingsPath(repo)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	installed := hooks.HookVersionPrefix + version.Version
+	if !strings.Contains(string(data), installed) {
+		t.Fatalf("installer wrote no %q marker; fixture is stale:\n%s", installed, data)
+	}
+	replacement := hooks.HookVersionPrefix + hookVer
+	if hookVer == "" {
+		replacement = ""
+	}
+	out := strings.Replace(string(data), installed, replacement, 1)
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		t.Fatalf("rewrite settings.json: %v", err)
+	}
+}
+
+// The load-bearing one. A repo whose guard entry was installed by a 1.x
+// logmind, evaluated by this 2.x engine: the commit is still allowed (the gate
+// ran and said yes), AND the skew reaches a human.
+//
+// "Reaches a human" is asserted on the channel that actually does so. Measured
+// against Claude Code 2.1.233 with a live PreToolUse hook: an exit-0 hook's
+// stderr produces a bare `hook_success` attachment and is shown to nobody,
+// while a `{"systemMessage": ...}` object on stdout produces a dedicated
+// `hook_system_message` attachment — Claude Code's documented "display a
+// message to the user" field. A stderr-only notice here would satisfy §3.4's
+// letter and be invisible in practice, which is the failure §3.4 exists to
+// stop.
+func TestRunGuardCommit_Harness_ReportsMajorEngineSkewToTheUser(t *testing.T) {
+	repo := initRepo(t)
+	installHarnessGuardWithVersion(t, repo, "1.2.0")
+	if err := os.WriteFile(filepath.Join(repo, "small.go"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
+		strings.NewReader(harnessJSON(t, "Bash", `git commit -m x`, repo)), &stdout, &stderr)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil — a skew notice must never change the decision", exitCode, err)
+	}
+
+	// stdout must be exactly one hook-output JSON object Claude Code can
+	// parse. Decoding into a map (not a struct) is deliberate: it lets the
+	// test see EVERY key, so a future field that could move the allow/block
+	// decision cannot be added here unnoticed.
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout is not a hook-output JSON object: %v\nstdout = %q", err, stdout.String())
+	}
+	msg, ok := out["systemMessage"].(string)
+	if !ok {
+		t.Fatalf("stdout carries no systemMessage; got %q", stdout.String())
+	}
+	for _, must := range []string{"DIFFERENT logmind", "1.2.0", version.Version} {
+		if !strings.Contains(msg, must) {
+			t.Errorf("systemMessage missing %q; got %q", must, msg)
+		}
+	}
+	if len(out) != 1 {
+		t.Errorf("hook output carries %d keys (%v); want systemMessage ALONE — a permissionDecision or continue field here would let a report about the gate move the gate", len(out), out)
+	}
+	// §3.4 asks for stderr too, and the block path relies on it.
+	if !strings.Contains(stderr.String(), "DIFFERENT logmind") {
+		t.Errorf("stderr = %q; want the notice there as well (SPEC §3.4)", stderr.String())
+	}
+}
+
+// A skew notice must not be able to rescue — or to cause — a block.
+func TestRunGuardCommit_Harness_SkewNoticeLeavesTheBlockIntact(t *testing.T) {
+	repo := initRepo(t)
+	installHarnessGuardWithVersion(t, repo, "1.2.0")
+	if err := os.WriteFile(filepath.Join(repo, "big.go"), []byte(bigLines(25)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
+		strings.NewReader(harnessJSON(t, "Bash", `git commit -m x`, repo)), &stdout, &stderr)
+	if exitCode != 2 || err != nil {
+		t.Fatalf("exitCode=%d err=%v; want 2,nil (the block still stands under skew)", exitCode, err)
+	}
+	// Exit 2 IS surfaced, stderr and all — so the notice rides it, and nothing
+	// goes to stdout, where a JSON body next to a block would be two answers to
+	// one question.
+	if !strings.Contains(stderr.String(), "DIFFERENT logmind") {
+		t.Errorf("stderr = %q; want the skew notice alongside the block reason", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "logmind log") {
+		t.Errorf("stderr = %q; want the block reason too", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q; want empty on the block path", stdout.String())
+	}
+}
+
+// The noise floor, plus the two ways this layer legitimately knows nothing: no
+// guard entry installed in the repo at all, and an entry carrying no marker (a
+// pre-marker install). Both must stay silent rather than guess.
+func TestRunGuardCommit_Harness_SkewNoticeStaysSilentWhenItShould(t *testing.T) {
+	sameMajor := "2.99.99"
+	if !version.SameMajor(sameMajor, version.Version) {
+		t.Fatalf("fixture is stale: %q is no longer the same major as %q", sameMajor, version.Version)
+	}
+	for name, install := range map[string]func(t *testing.T, repo string){
+		"no settings.json at all": func(*testing.T, string) {},
+		"entry without a marker":  func(t *testing.T, repo string) { installHarnessGuardWithVersion(t, repo, "") },
+		"same major":              func(t *testing.T, repo string) { installHarnessGuardWithVersion(t, repo, sameMajor) },
+		"unparseable":             func(t *testing.T, repo string) { installHarnessGuardWithVersion(t, repo, "not-a-version") },
+		"exactly this version":    func(t *testing.T, repo string) { installHarnessGuardWithVersion(t, repo, version.Version) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := initRepo(t)
+			install(t, repo)
+			if err := os.WriteFile(filepath.Join(repo, "small.go"), []byte("x\n"), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			var stdout, stderr bytes.Buffer
+			exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
+				strings.NewReader(harnessJSON(t, "Bash", `git commit -m x`, repo)), &stdout, &stderr)
+			if err != nil || exitCode != 0 {
+				t.Fatalf("exitCode=%d err=%v; want 0,nil", exitCode, err)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q; want empty — an ordinary allow must print nothing", stdout.String())
+			}
+			if strings.Contains(stderr.String(), "DIFFERENT logmind") {
+				t.Errorf("skew notice fired for %s; stderr = %q", name, stderr.String())
+			}
+		})
+	}
+}
+
+// git.enforce_commits:false is the repo saying it does not want local
+// interception. Nagging it about which binary would have intercepted is noise
+// it explicitly opted out of — same placement as the git layer's.
+func TestRunGuardCommit_Harness_SkewNoticeRespectsTheEnforceOffRamp(t *testing.T) {
+	repo := initRepo(t)
+	installHarnessGuardWithVersion(t, repo, "1.2.0")
+	writeGuardCommitConfig(t, repo, "git:\n  enforce_commits: false\n")
+	if err := os.WriteFile(filepath.Join(repo, "big.go"), []byte(bigLines(25)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
+		strings.NewReader(harnessJSON(t, "Bash", `git commit -m x`, repo)), &stdout, &stderr)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil", exitCode, err)
+	}
+	if stdout.Len() != 0 || strings.Contains(stderr.String(), "DIFFERENT logmind") {
+		t.Errorf("stdout=%q stderr=%q; want silence under enforce_commits:false", stdout.String(), stderr.String())
+	}
+}
+
+// The frequency pin. A PreToolUse hook fires on EVERY Bash tool call; a notice
+// attached to all of them is a notice nobody reads. It must ride only the
+// calls the gate actually judges — the git-commit ones.
+func TestRunGuardCommit_Harness_SkewNoticeOnlyRidesGitCommits(t *testing.T) {
+	repo := initRepo(t)
+	installHarnessGuardWithVersion(t, repo, "1.2.0")
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runGuardCommit(repo, "harness", "", 20, true, false,
+		strings.NewReader(harnessJSON(t, "Bash", `ls -la`, repo)), &stdout, &stderr)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("exitCode=%d err=%v; want 0,nil", exitCode, err)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q; want silence on a non-commit Bash call", stdout.String(), stderr.String())
+	}
 }

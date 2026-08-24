@@ -7,7 +7,7 @@ files like `CLAUDE.md` or `.cursorrules` are stubs that point here so the
 guidance lives in one place.
 
 <!-- logmind-start -->
-<!-- logmind-block-version: v9-pointer -->
+<!-- logmind-block-version: v10-pointer -->
 ## Decision logging — `logmind log` is REQUIRED for substantive commits
 
 **`logmind log` replaces `git add` + `git commit` + `git push` for any change that carries a decision** — do not run those git commands directly.
@@ -24,7 +24,7 @@ guidance lives in one place.
 logmind log "summary" -r "why" -a "alternative" -i "implication"
 ```
 
-This project uses [logmind](https://logmind.dev). What counts as a decision, branch routing, `--stage scoped` for unrelated WIP, `logmind doctor`, and the required-reading list ([`docs/timeline.md`](docs/timeline.md), [`docs/decisions.md`](docs/decisions.md), [`docs/file-structure.md`](docs/file-structure.md), `docs/decisions-branches/<branch>.md`) all live in the **`logmind` agent skill** at https://github.com/thrillmade/agent-skills/tree/main/skills/logmind.
+This project uses [logmind](https://logmind.dev). What counts as a decision, branch routing, `--stage scoped` for unrelated WIP, `logmind doctor`, and the required-reading list ([`docs/timeline.md`](docs/timeline.md), [`docs/file-structure.md`](docs/file-structure.md), `docs/decisions-branches/<branch>.md`) all live in the **`logmind` agent skill** at https://github.com/thrillmade/agent-skills/tree/main/skills/logmind.
 <!-- logmind-end -->
 
 ## Release infrastructure
@@ -44,7 +44,8 @@ records the "why" behind changes via `logmind log`, and keeps the derived
 `docs/timeline.md` + `docs/file-structure.md` in sync as agent-readable
 context. One leg of the thrillmade SkDD toolchain (with clud-bug = review,
 agent-skills = catalog). Entry point `cmd/logmind/main.go`; code under
-`internal/`. See [docs/plan.md](docs/plan.md) for architecture + roadmap.
+`internal/`. See [docs/plan.md](docs/plan.md) for architecture, and
+[docs/roadmap.md](docs/roadmap.md) for what ships next and in what order.
 
 ## Development Commands
 

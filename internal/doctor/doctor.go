@@ -67,11 +67,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thrillmade/logmind/internal/auto"
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/config"
 	"github.com/thrillmade/logmind/internal/decisions"
 	"github.com/thrillmade/logmind/internal/gitattr"
 	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/timeline"
 	"github.com/thrillmade/logmind/internal/version"
@@ -87,8 +89,14 @@ var LogmindWorkflows = []string{
 }
 
 // Marker regexes match Python's compiled patterns at the source.
+// The `# logmind-template-version:` extractor deliberately does NOT live
+// here. doctor READS that marker and internal/cli WRITES against it, and two
+// copies of the rule meant a file could be markerless to the reader and
+// versioned to the writer at the same time (#299) — so `doctor --fix`
+// overwrote a file `doctor` had just called the user's. Both sides now call
+// inserter.ExtractTemplateMarker, the same way both already order generations
+// through inserter.ParseMarkerGeneration (#294).
 var (
-	logmindMarkerRe       = regexp.MustCompile(`^# logmind-template-version:\s*(\S+)`)
 	logmindBlockVersionRe = regexp.MustCompile(`<!--\s*logmind-block-version:\s*(\S+)\s*-->`)
 	// logmindVersionLineRe parses the version out of a PATH binary's
 	// `--version` output. It anchors on the REAL versionLine format emitted
@@ -114,6 +122,22 @@ type WorkflowStatus struct {
 	Marker        *string `json:"marker"`
 	BundledMarker *string `json:"bundled_marker"`
 	Drift         string  `json:"drift"`
+
+	// Displaced is true when a marker IS present but not on line 1 (#299).
+	// The VERDICT for that file is "markerless" — the writer refuses to touch
+	// it — but the REASON is not the one a bare markerless file has, and SPEC
+	// §5.2 grants user ownership only to "an artifact carrying no marker at
+	// all". Without this, `doctor --fix` printed both "its marker is on line 2,
+	// not line 1, so logmind cannot tell whether the file is yours or its own"
+	// and "it carries no logmind marker … so SPEC §5.2 treats it as yours" for
+	// the same file in the same run.
+	//
+	// Deliberately NOT serialized: the JSON field names here are a cross-repo
+	// contract (clud-bug, agent-skills parse this shape), and this is an
+	// explanation for a stderr note, not a verdict a consumer branches on.
+	// One owner for the fact — probeWorkflow computes it, callers read it,
+	// nobody re-derives it by sniffing the prose in Marker.
+	Displaced bool `json:"-"`
 }
 
 // ToolStatus aggregates per-tool fields (currently just `logmind`;
@@ -150,6 +174,39 @@ type StatusReport struct {
 	// spec_file is unset. Like SummariesNeeded, this NEVER affects Overall —
 	// the spec fold-in is a nice-to-have, not a gate.
 	SpecAdvisories []string `json:"spec_advisories"`
+
+	// AutoAdvisories is an ADVISORY list (#241) about `.logmind/auto.yml`,
+	// the standing directive `logmind auto <profile>` writes: a directive
+	// that predates the current bundled policy, one written for a profile
+	// this binary doesn't know, or one carrying no ownership marker. Empty
+	// in the (common) case of a repo that never opted into `logmind auto`.
+	//
+	// Advisory for the same reason SpecAdvisories is: `auto` is an explicit
+	// opt-in verb and its directive carries policy a human authored, so
+	// nothing here is auto-fixable and none of it is drift. Re-running
+	// `logmind auto <profile>` is the deliberate remediation, exactly as
+	// `logmind init --spec` is for the spec nudge.
+	AutoAdvisories []string `json:"auto_advisories"`
+
+	// GateAdvisories is an ADVISORY list (#330) naming any SPEC §1.6
+	// blocking setting — git.enforce_commits, review.strict_mode,
+	// review.auto_fix — this repository currently has in its weakened
+	// state.
+	//
+	// It is the other half of §1.6's sentence. `logmind config set`
+	// refuses an agent-initiated weakening through the command; "not by
+	// editing the file" is addressed to the agent, and no local tool can
+	// enforce it. What a tool CAN do is notice afterwards and say so, so a
+	// person reading `logmind doctor` learns their commit gate is off
+	// without having to go looking.
+	//
+	// Advisory, and deliberately never Overall: these are a person's
+	// settings, and a person is entitled to have turned one off. Reporting
+	// a legitimate choice as drift would send them to `doctor --fix`,
+	// which correctly will not touch it (fixing it would be logmind
+	// writing a blocking setting on its own account — the very thing §1.6
+	// reserves for a person).
+	GateAdvisories []string `json:"gate_advisories"`
 }
 
 // ToJSON serialises the report with 2-space indent, matching Python's
@@ -222,6 +279,152 @@ func CollectStatus(projectRoot string, offline bool) StatusReport {
 		Suggestions:     suggestions,
 		SummariesNeeded: collectSummariesNeeded(projectRoot),
 		SpecAdvisories:  collectSpecAdvisories(projectRoot),
+		AutoAdvisories:  collectAutoAdvisories(projectRoot),
+		GateAdvisories:  collectGateAdvisories(projectRoot),
+	}
+}
+
+// cludBugConfigPath is where SPEC §1.6 puts review.strict_mode and
+// review.auto_fix. logmind does not write this file; it reads the two keys so
+// the gate advisory can cover all three settings §1.6 names rather than only
+// the one that happens to live in logmind's own config.
+const cludBugConfigPath = ".claude/skills/.clud-bug.json"
+
+// collectGateAdvisories returns the ADVISORY list of SPEC §1.6 blocking
+// settings currently in their weakened state — see StatusReport.GateAdvisories
+// for why this is advisory and never Overall.
+//
+// Which keys count, and which direction is a weakening, come from
+// config.BlockingSettings — the same table `logmind config set`'s refusal
+// reads, so the report and the refusal cannot disagree about what is
+// protected.
+//
+// Reads the EFFECTIVE value: a repository that never set enforce_commits gets
+// the documented default (true) and no advisory. A missing or unparseable
+// file says nothing — doctor is read-only and a broken config is already
+// reported elsewhere; inventing a gate warning out of a YAML syntax error
+// would be a second, wronger message about the same file.
+func collectGateAdvisories(projectRoot string) []string {
+	// Each value carries the file it was actually READ from, not the file
+	// §1.6 designates. `logmind config set review.strict_mode` writes into
+	// .logmind/config.yml, so naming .clud-bug.json for a value that came
+	// from somewhere else would send the reader to the wrong file.
+	type found struct {
+		value  any
+		source string
+	}
+	values := map[string]found{}
+
+	const logmindConfig = ".logmind/config.yml"
+	merged, err := config.LoadPathAsMap(filepath.Join(projectRoot, filepath.FromSlash(logmindConfig)))
+	if err == nil {
+		for _, b := range config.BlockingSettings() {
+			if v, ok := config.GetPath(merged, b.Key); ok && v != nil {
+				values[b.Key] = found{v, logmindConfig}
+			}
+		}
+	}
+	// .clud-bug.json wins for its own keys: §1.6 names it as their home, so
+	// a value there is the one in force. A stray review.* in config.yml
+	// (which `logmind config set review.strict_mode` writes, inertly — see
+	// the note in internal/cli/config_blocking.go) is still reported when
+	// .clud-bug.json is silent, because it is still evidence of the write.
+	if review, ok := readCludBugReview(filepath.Join(projectRoot, filepath.FromSlash(cludBugConfigPath))); ok {
+		for _, key := range []string{"strict_mode", "auto_fix"} {
+			if v, ok := review[key]; ok && v != nil {
+				values["review."+key] = found{v, cludBugConfigPath}
+			}
+		}
+	}
+
+	var out []string
+	for _, b := range config.BlockingSettings() {
+		f, ok := values[b.Key]
+		if !ok || !b.Weakens(f.value) {
+			continue
+		}
+		line := fmt.Sprintf(
+			"%s is %v in %s — the weakened value; it governs %s. SPEC §1.6 makes this a "+
+				"person's to change: if you did not change it, an agent did.",
+			b.Key, f.value, f.source, b.Governs)
+		if f.source == logmindConfig {
+			line += fmt.Sprintf(" Restore with `logmind config set %s %v`.", b.Key, b.PersonInLoop)
+		} else {
+			line += fmt.Sprintf(" Restore it to %v in that file — it is clud-bug's to write, not logmind's.", b.PersonInLoop)
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// readCludBugReview returns the `review` object from .clud-bug.json.
+//
+// Tolerant on purpose: a missing file is the common case (a repository that
+// has not configured review), and an unparseable one belongs to clud-bug to
+// complain about, not to logmind's stack-status command.
+func readCludBugReview(path string) (map[string]any, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var doc struct {
+		Review map[string]any `json:"review"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, false
+	}
+	return doc.Review, doc.Review != nil
+}
+
+// collectAutoAdvisories returns the ADVISORY list for `.logmind/auto.yml`
+// — the standing directive `logmind auto <profile>` writes (#241).
+//
+// A repo that never ran `logmind auto` has no directive and gets nothing:
+// absence is not drift, exactly as a missing workflow or hook is "not
+// installed" rather than "stale". When a directive IS installed, three
+// things are worth saying:
+//
+//   - its ownership marker predates (or postdates) the directive this
+//     binary bundles — the policy it restates has moved on;
+//   - it names a profile this binary does not know — a newer logmind, a
+//     hand-written file, or a typo, and in every case not something to
+//     guess at;
+//   - it carries no marker at all, so it belongs to the user (SPEC §5.2)
+//     and nothing will ever refresh it.
+//
+// Purely informational: like SpecAdvisories, it never feeds Overall.
+// `doctor --fix` deliberately does not act on any of it — the directive
+// carries policy a human authored (repo hard stops, the wake mechanism),
+// and rewriting that from a template is exactly the failure the whole
+// feature exists to prevent.
+func collectAutoAdvisories(projectRoot string) []string {
+	state := auto.Inspect(projectRoot)
+	if !state.Present {
+		return nil
+	}
+	const path = ".logmind/auto.yml"
+	if state.Marker == "" {
+		return []string{
+			path + " carries no `# logmind-auto-version:` marker — it belongs to you, and logmind will " +
+				"never refresh it. Move it aside and re-run `logmind auto <profile>` to adopt a managed directive.",
+		}
+	}
+	profile, known := auto.Lookup(state.Profile)
+	if !known {
+		return []string{
+			fmt.Sprintf("%s names profile %q, which this binary does not know (known: %s) — logmind will not "+
+				"guess what it should contain. Upgrade logmind, or re-run `logmind auto <profile>`.",
+				path, state.Profile, strings.Join(auto.Names(), ", ")),
+		}
+	}
+	bundled, ok := auto.BundledMarker(profile)
+	if !ok || bundled == state.Marker {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("%s is at %s; this binary bundles %s for profile %q — the policy it restates has changed. "+
+			"Move it aside, re-run `logmind auto %s`, then re-apply your repo-specific slots.",
+			path, state.Marker, bundled, profile.Name, profile.Name),
 	}
 }
 
@@ -481,20 +684,15 @@ func classifyLogmindDrift(workflows []WorkflowStatus) string {
 
 func bundledLogmindMarker(workflowName string) *string {
 	body := templates.Workflow(workflowName + ".template")
-	first := firstLine(body)
-	m := logmindMarkerRe.FindStringSubmatch(first)
-	if len(m) < 2 {
+	marker := inserter.ExtractTemplateMarker(body)
+	if !marker.Writable() {
+		// A template WE ship whose marker isn't on line 1 is a build defect,
+		// not a repo state — report "no bundled marker" rather than compare
+		// against a token the writer would refuse to act on.
 		return nil
 	}
-	v := m[1]
+	v := marker.Version
 	return &v
-}
-
-func firstLine(s string) string {
-	if idx := strings.Index(s, "\n"); idx >= 0 {
-		return s[:idx]
-	}
-	return s
 }
 
 func readWorkflow(projectRoot, name string) (string, bool) {
@@ -505,6 +703,16 @@ func readWorkflow(projectRoot, name string) (string, bool) {
 	return string(data), true
 }
 
+// classifyMarker compares an installed workflow's template marker against
+// the one this binary bundles.
+//
+// The comparison is ORDERED, not an equality test. #289 taught
+// installWorkflowTemplates to refuse a downgrade; teaching only the writer
+// and not the reader left doctor reporting a repository that is AHEAD of
+// this binary as "STALE (latest: <older>)" — a verdict and a label both
+// inverted — and, because --fix now correctly refuses to overwrite it, a
+// row that could never be cleared. The two consumers of the same fact have
+// to agree, or the tool contradicts itself.
 func classifyMarker(marker, bundled *string) string {
 	if marker == nil {
 		return "markerless"
@@ -515,6 +723,14 @@ func classifyMarker(marker, bundled *string) string {
 	if *marker == *bundled {
 		return "current"
 	}
+	// An unparseable marker on either side falls through to the old
+	// equality semantics: something differs and we cannot say which way,
+	// so "stale" is the honest answer and refreshing is safe.
+	mv, mok := inserter.ParseMarkerGeneration(*marker)
+	bv, bok := inserter.ParseMarkerGeneration(*bundled)
+	if mok && bok && mv > bv {
+		return "ahead"
+	}
 	return "stale"
 }
 
@@ -523,16 +739,36 @@ func probeWorkflow(projectRoot, name string, bundled *string) WorkflowStatus {
 	if !ok {
 		return WorkflowStatus{Name: name, Installed: false, Marker: nil, BundledMarker: bundled, Drift: "missing"}
 	}
-	first := firstLine(content)
-	m := logmindMarkerRe.FindStringSubmatch(first)
-	var marker *string
-	if len(m) >= 2 {
-		v := m[1]
-		marker = &v
+	found := inserter.ExtractTemplateMarker(content)
+
+	// `owned` is what the DRIFT VERDICT is computed from, and it is non-nil
+	// only when the file is ours to refresh. classifyMarker's nil case is the
+	// SPEC §5.2 "belongs to the user" verdict, so routing anything the writer
+	// would refuse through nil is what keeps the reader's answer identical to
+	// the writer's — the disagreement between them WAS #299.
+	var owned *string
+	if found.Writable() {
+		v := found.Version
+		owned = &v
 	}
+
+	// `display` may say more than the verdict does. A displaced marker is
+	// "markerless" as a verdict, but reporting only that would hide the fact
+	// that a marker IS present — the one thing the user needs in order to
+	// move the file deliberately into either camp. Prose in the marker column
+	// matches the existing "markerless (pre-v0.6.10)" / "foreign … left
+	// alone" rows rather than inventing a drift value consumers don't parse.
+	display := owned
+	displaced := found.Ownership == inserter.MarkerDisplaced
+	if displaced {
+		v := fmt.Sprintf("%s on line %d, not line 1", found.Version, found.Line)
+		display = &v
+	}
+
 	return WorkflowStatus{
-		Name: name, Installed: true, Marker: marker,
-		BundledMarker: bundled, Drift: classifyMarker(marker, bundled),
+		Name: name, Installed: true, Marker: display,
+		BundledMarker: bundled, Drift: classifyMarker(owned, bundled),
+		Displaced: displaced,
 	}
 }
 
@@ -550,18 +786,78 @@ func bundledAgentsMDBlockVersions() (*string, *string) {
 	return read(templates.AgentsSlimTemplate()), read(templates.AgentsTemplate())
 }
 
+// bundledForBlock picks WHICH bundled marker an installed AGENTS.md block
+// is measured against — nil when this binary has nothing it may compare.
+//
+// It mirrors inserter.planBlockRefresh, the WRITER's rule, guard for
+// guard, because the reader and the writer answering differently about one
+// file is what #299 was:
+//
+//   - ORDERABLE. An id this binary cannot parse as a generation is one the
+//     writer refuses to move at all, so there is nothing to be stale
+//     against. nil here → classifyMarker says "unknown", which is the
+//     honest answer and does not send the reader to a `--fix` that will
+//     decline.
+//   - FLAVOUR. SPEC §1.1 forbids a silent full↔slim flip, so the writer
+//     compares a slim block against the bundled SLIM marker and a full one
+//     against the bundled FULL marker. Comparing against the wrong flavour
+//     is how a current full block reads as stale, and how a stale one is
+//     told to "upgrade" to a marker of the other flavour entirely.
+//
+// The flavour is read OFF the token rather than enumerated (the tag is
+// everything from the first "-", matching inserter.parseBlockMarker's own
+// split), so a generation this binary has never heard of still classifies
+// into the right camp instead of falling into a default.
+// TestProbeAgentsMD_AgreesWithTheWriter is what keeps the two in step.
+func bundledForBlock(marker string, slim, full *string) *string {
+	if _, ok := inserter.ParseMarkerGeneration(marker); !ok {
+		return nil
+	}
+	want := blockMarkerFlavour(marker)
+	for _, bundled := range []*string{slim, full} {
+		if bundled != nil && blockMarkerFlavour(*bundled) == want {
+			return bundled
+		}
+	}
+	return nil
+}
+
+// blockMarkerFlavour returns a block marker's flavour tag: "-pointer" for
+// the slim block, "" for the full one.
+func blockMarkerFlavour(marker string) string {
+	if i := strings.IndexByte(marker, '-'); i >= 0 {
+		return marker[i:]
+	}
+	return ""
+}
+
+// probeAgentsMD reports the AGENTS.md logmind block's drift.
+//
+// ORDERED, like every other marker row (classifyMarker) — this used to be
+// bare equality plus a `default: stale`, which inverts the verdict for a
+// repository running AHEAD of the binary reading it. That is not a corner:
+// it is the staggered-rollout state by construction (#257), and the wave
+// that bumps the slim block to v10-pointer is what puts the fleet into it.
+// A released binary bundling v9-pointer would have reported
+// `AGENTS.md v10-pointer STALE (latest: v9-pointer)` — verdict and label
+// both backwards — while REFUSING, correctly, to downgrade the block in
+// the same run, and printing that refusal on stderr. Three contradictory
+// statements about one file, and a row nothing could clear.
 func probeAgentsMD(projectRoot string) WorkflowStatus {
 	slim, full := bundledAgentsMDBlockVersions()
-	display := slim
-	if display == nil {
-		display = full
+	// What init would install here (SPEC §1.1: slim by default) — the only
+	// meaningful "bundled" value when there is no installed block to
+	// measure against.
+	fallback := slim
+	if fallback == nil {
+		fallback = full
 	}
 	path := filepath.Join(projectRoot, "AGENTS.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return WorkflowStatus{
 			Name: "AGENTS.md", Installed: false, Marker: nil,
-			BundledMarker: display, Drift: "missing",
+			BundledMarker: fallback, Drift: "missing",
 		}
 	}
 	m := logmindBlockVersionRe.FindStringSubmatch(string(data))
@@ -570,20 +866,16 @@ func probeAgentsMD(projectRoot string) WorkflowStatus {
 		v := m[1]
 		marker = &v
 	}
-	drift := "markerless"
-	switch {
-	case marker == nil:
-		drift = "markerless"
-	case slim == nil && full == nil:
-		drift = "unknown"
-	case (slim != nil && *marker == *slim) || (full != nil && *marker == *full):
-		drift = "current"
-	default:
-		drift = "stale"
+	// The bundled marker REPORTED is the one actually compared against, so
+	// an "(latest: …)" / "(bundles: …)" the reader is shown names a marker
+	// their block could really move to.
+	bundled := fallback
+	if marker != nil {
+		bundled = bundledForBlock(*marker, slim, full)
 	}
 	return WorkflowStatus{
 		Name: "AGENTS.md", Installed: true, Marker: marker,
-		BundledMarker: display, Drift: drift,
+		BundledMarker: bundled, Drift: classifyMarker(marker, bundled),
 	}
 }
 
@@ -803,8 +1095,18 @@ func probeClaudePreToolUseHook(projectRoot string) WorkflowStatus {
 //     can act on it without invoking `which -a`.
 //   - drift="missing"   when no logmind found on PATH (merge driver
 //     shell-outs will fail).
-//   - drift="markerless" when the PATH binary exists but its
-//     --version is unreadable / unparseable.
+//   - drift="unreadable" when the PATH binary exists but its
+//     --version cannot be executed or cannot be parsed.
+//
+// "unreadable" is deliberately NOT "markerless" (#306). Everywhere else in
+// this file "markerless" carries SPEC §5.2's OWNERSHIP verdict — "an artifact
+// carrying no marker at all belongs to the user and MUST NOT be overwritten"
+// — and callers act on it as such: `doctor --fix` refuses to write the path,
+// and the residual note tells the user logmind is leaving their file alone. A
+// binary on PATH is not a user-owned markerless artifact and has no marker
+// concept at all; what happened is that logmind could not read its version.
+// Reusing the ownership token for it made --fix report a true fact ("still
+// drifted") with a false cause.
 //
 // Errors are best-effort: every failure path produces a status row
 // (no panics). This is the v0.6.16 carry-forward that bubbles up
@@ -837,7 +1139,7 @@ func probePathResolution() WorkflowStatus {
 		marker := fmt.Sprintf("%s (cannot exec --version)", pathBin)
 		return WorkflowStatus{
 			Name: "logmind on PATH", Installed: true,
-			Marker: &marker, BundledMarker: &running, Drift: "markerless",
+			Marker: &marker, BundledMarker: &running, Drift: "unreadable",
 		}
 	}
 	text := strings.TrimSpace(string(out))
@@ -846,7 +1148,7 @@ func probePathResolution() WorkflowStatus {
 		marker := fmt.Sprintf("%s (no version parsed from %q)", pathBin, text)
 		return WorkflowStatus{
 			Name: "logmind on PATH", Installed: true,
-			Marker: &marker, BundledMarker: &running, Drift: "markerless",
+			Marker: &marker, BundledMarker: &running, Drift: "unreadable",
 		}
 	}
 	pathVer := strings.TrimRight(m[1], ",")
@@ -888,6 +1190,8 @@ func formatDrift(drift string) string {
 		return "current"
 	case "markerless":
 		return "markerless"
+	case "unreadable":
+		return "version unreadable"
 	case "missing":
 		return "—"
 	case "foreign":
@@ -933,6 +1237,13 @@ func RenderStatus(r StatusReport) string {
 			if wf.Drift == "stale" && wf.BundledMarker != nil {
 				driftWord = fmt.Sprintf("STALE (latest: %s)", *wf.BundledMarker)
 			}
+			// "ahead" is not a problem to fix — it is this binary being
+			// behind the repository. Saying "latest" of the older marker
+			// would be false, and calling it stale would send the reader
+			// to `--fix`, which correctly refuses and leaves them stuck.
+			if wf.Drift == "ahead" && wf.BundledMarker != nil {
+				driftWord = fmt.Sprintf("ahead of this binary (bundles: %s) — upgrade logmind", *wf.BundledMarker)
+			}
 			lines = append(lines, fmt.Sprintf("  %-28s %-4s %s", wf.Name, marker, driftWord))
 		}
 
@@ -970,6 +1281,20 @@ func RenderStatus(r StatusReport) string {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("Canonical spec file (%d):", len(r.SpecAdvisories)))
 		for _, s := range r.SpecAdvisories {
+			lines = append(lines, fmt.Sprintf("  • %s", s))
+		}
+	}
+	if len(r.AutoAdvisories) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Unattended-operation directive (%d):", len(r.AutoAdvisories)))
+		for _, s := range r.AutoAdvisories {
+			lines = append(lines, fmt.Sprintf("  • %s", s))
+		}
+	}
+	if len(r.GateAdvisories) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Blocking settings currently weakened (%d):", len(r.GateAdvisories)))
+		for _, s := range r.GateAdvisories {
 			lines = append(lines, fmt.Sprintf("  • %s", s))
 		}
 	}

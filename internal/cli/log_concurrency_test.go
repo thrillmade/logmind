@@ -16,8 +16,8 @@
 //     while every single invocation printed success.
 //
 // This test builds the real binary and spawns N real `logmind log`
-// subprocesses concurrently against the same target file (the
-// default branch's docs/decisions.md), then asserts:
+// subprocesses concurrently against the same target file
+// (docs/decisions-branches/main.md — the repo is on `main`), then asserts:
 //
 //	(a) no crashes — every invocation either lands cleanly or, on a
 //	    saturated host, fails LOUD on the acquire timeout and is retried
@@ -48,6 +48,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // TestLogConcurrent_NoCrashes_NoLostDecisions is the mandatory
@@ -238,19 +240,23 @@ func assertAllDecisionsPresent(t *testing.T, content string, n int) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("lost %d/%d decisions to the concurrent write race: %v\n\n--- final decisions.md ---\n%s",
+		t.Errorf("lost %d/%d decisions to the concurrent write race: %v\n\n--- final decision file ---\n%s",
 			len(missing), n, missing, content)
 	}
 	if len(matches) != n {
-		t.Errorf("found %d decision entries in decisions.md; want exactly %d (duplicates or corruption?)", len(matches), n)
+		t.Errorf("found %d decision entries in the decision file; want exactly %d (duplicates or corruption?)", len(matches), n)
 	}
 }
 
+// readDecisions reads the file every invocation in these tests targets:
+// docs/decisions-branches/main.md, since the repo is on `main` and §3.2 routes
+// a decision to the file named for its branch, default branch included.
 func readDecisions(t *testing.T, repo string) string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(repo, "docs", "decisions.md"))
+	path := filepath.Join(repo, "docs", "decisions-branches", "main.md")
+	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read decisions.md: %v", err)
+		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
 }
@@ -301,18 +307,14 @@ func newConcurrencyTestRepo(t *testing.T, binPath string) string {
 	t.Helper()
 	repo := t.TempDir()
 
-	runGitCmd(t, repo, "init", "-q", "-b", "main")
+	// testgit.InitRepo disables git's background maintenance in the new
+	// repo (see its package doc) — this suite is the most exposed of any
+	// to issue #271's race, since it drives many concurrent commits into
+	// one repo.
+	testgit.InitRepo(t, repo, "-q", "-b", "main")
 	runGitCmd(t, repo, "config", "user.email", "test@test.com")
 	runGitCmd(t, repo, "config", "user.name", "test")
 	runGitCmd(t, repo, "config", "commit.gpgsign", "false")
-	// Both keys — see initLogTestGitRepo (log_test.go) for the full write-up
-	// and the GIT_TRACE2 evidence. Short version: `git commit` spawns
-	// `git maintenance run --auto`, gated by maintenance.auto and NOT by
-	// gc.auto; the spawned process can daemonize and is still writing into
-	// .git/objects when t.TempDir() cleanup runs. This suite is the most
-	// exposed of any — it drives many concurrent commits into one repo.
-	runGitCmd(t, repo, "config", "gc.auto", "0")
-	runGitCmd(t, repo, "config", "maintenance.auto", "false")
 
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("test repo\n"), 0o644); err != nil {
 		t.Fatalf("seed README.md: %v", err)

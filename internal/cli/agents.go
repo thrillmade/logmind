@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thrillmade/logmind/internal/agents"
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/inserter"
 	"github.com/thrillmade/logmind/internal/version"
 )
@@ -143,14 +144,14 @@ func newAgentsAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAgentsAdd(cwd, args[0], noCommit, cmd.OutOrStdout())
+			return runAgentsAdd(cwd, args[0], noCommit, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&noCommit, "no-commit", false, "Don't commit the new file")
 	return cmd
 }
 
-func runAgentsAdd(cwd, agentName string, noCommit bool, stdout io.Writer) error {
+func runAgentsAdd(cwd, agentName string, noCommit bool, stdout, stderr io.Writer) error {
 	a, ok := agents.Lookup(agentName)
 	if !ok {
 		fmt.Fprintf(stdout, "Error: Unknown agent '%s'. Valid agents: %s\n",
@@ -177,15 +178,24 @@ func runAgentsAdd(cwd, agentName string, noCommit bool, stdout io.Writer) error 
 		return nil
 	}
 
-	created, err := inserter.CreateAgentFile(agentName, cwd)
+	written, refused, err := inserter.CreateAgentFile(agentName, cwd)
 	if err != nil {
 		return err
 	}
-	if created == "" {
+	// Reachable only by losing the race with whoever created the file between
+	// the fileExists check above and the read inside CreateAgentFile — which
+	// is precisely why the check inside the write primitive is the one that
+	// counts, and why this branch is not folded into the "Failed to create"
+	// error below: the file was not created because it was not ours.
+	if refused != nil {
+		reportRedirectRefusal(stderr, refused)
+		return nil
+	}
+	if written.Path == "" {
 		fmt.Fprintf(stdout, "Error: Failed to create file for agent '%s'\n", agentName)
 		return ErrSilent
 	}
-	fmt.Fprintf(stdout, "✓ Created %s with logmind instructions\n", filepath.Base(created))
+	fmt.Fprintf(stdout, "✓ Created %s with logmind instructions\n", filepath.Base(written.Path))
 	noteDeferredCommit(noCommit, stdout)
 	return nil
 }
@@ -312,18 +322,19 @@ Dry-run (default): reports which files would be updated.
 			if err != nil {
 				return err
 			}
-			return runAgentsUpdate(cwd, version.Version, doApply, cmd.OutOrStdout())
+			return runAgentsUpdate(cwd, version.Version, doApply, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&doApply, "apply", false, "Rewrite stale marker blocks in place. Default is dry-run.")
 	return cmd
 }
 
-func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout io.Writer) error {
-	outdated, err := inserter.FindOutdatedMarkerBlocks(cwd)
+func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout, stderr io.Writer) error {
+	outdated, declined, err := inserter.FindOutdatedMarkerBlocks(cwd)
 	if err != nil {
 		return err
 	}
+	reportAgentsBlockRefusal(stderr, declined)
 	stalePins, err := inserter.FindOutdatedWorkflowPins(cwd, currentVersion)
 	if err != nil {
 		return err
@@ -344,6 +355,12 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout io.Writer)
 		}
 		if _, ok := inserter.ExtractMarkerBlock(string(data)); !ok {
 			fmt.Fprintln(stdout, "✓ AGENTS.md exists but has no logmind marker block. Run `logmind init` to install one (will preserve existing content above + below the markers).")
+			return nil
+		}
+		if declined != nil {
+			// A block this binary can't read or can't move forward is NOT
+			// "current" — claiming it is was the quiet half of #267.
+			fmt.Fprintln(stdout, "! AGENTS.md logmind block left unchanged — see the note on stderr.")
 			return nil
 		}
 		fmt.Fprintln(stdout, "✓ AGENTS.md logmind block is current (no update needed).")
@@ -381,14 +398,45 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout io.Writer)
 		return nil
 	}
 
-	// Apply path: rewrite each file in place.
+	// Apply path: rewrite each file in place through the one write
+	// primitive, inserter.RefreshMarkerBlockFile. It OWNS THE READ (#297):
+	// the two-string form it replaces took a whole file and a block body as
+	// the same type and returned its first argument unchanged when the
+	// markers were absent, so passing the wrong one produced a fragment
+	// silently and wrote it over the user's whole file. Here there is no
+	// whole-file parameter to get wrong, and a markerless file is refused
+	// (inserter.ErrNoMarkerBlock) rather than rewritten.
+	//
+	// It writes through atomicio.WriteFile, not os.WriteFile, and that is
+	// load-bearing here for #313's reason: these paths come from a scan of
+	// a repository logmind did not necessarily write, and os.WriteFile
+	// follows symlinks. A symlinked AGENTS.md / workflow file would have
+	// its logmind block rewritten through the link, outside the repo.
+	// The rename lands on the NAME instead. (Also makes the rewrite
+	// crash-safe — the user's AGENTS.md is never a truncated stub.)
+	//
+	// UNDISCLOSED UNTIL NOW, NOW DISCLOSED: atomicio's rule 3 (see its
+	// package doc) means the rename gives the destination a NEW inode. A
+	// HARDLINKED AGENTS.md — a twin path pointing at the same inode, set up
+	// by hand or by a dotfile manager — is silently detached: the twin keeps
+	// the OLD content, this command still exits 0, and nothing here warns
+	// that the two files just diverged. install_hook.go's force-append
+	// branch faces the identical fact and chooses the opposite behaviour
+	// (raw os.WriteFile, deliberately, to write THROUGH the link) — but that
+	// is not an inconsistency to resolve by matching it: a shared git hook
+	// via a hardlinked/symlinked .git/hooks/pre-commit is a common,
+	// documented setup (husky, chezmoi, dotfile managers), where write-
+	// through is the intent, while a hardlinked AGENTS.md twin is not a
+	// setup this command supports or has ever advertised — there is no
+	// call-site reasoning that write-through is wanted here, only the
+	// absence of a check. Detecting it (an Lstat + link-count check before
+	// every rewrite in this loop) is a real fix that belongs to whoever
+	// next touches this path; until then, the accepted behaviour is
+	// atomicio's documented one: a hardlinked destination is detached
+	// silently, same as any other atomicio.WriteFile call site that hasn't
+	// opted out for a stated reason.
 	for _, e := range outdated {
-		data, err := os.ReadFile(e.Path)
-		if err != nil {
-			return err
-		}
-		refreshed := inserter.ReplaceMarkerBlock(string(data), e.NewBody)
-		if err := os.WriteFile(e.Path, []byte(refreshed), 0o644); err != nil {
+		if err := inserter.RefreshMarkerBlockFile(e.Path, e.NewBody); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, e.Path)
@@ -400,7 +448,7 @@ func runAgentsUpdate(cwd, currentVersion string, doApply bool, stdout io.Writer)
 			return err
 		}
 		rewritten, _ := inserter.UpdateWorkflowPin(string(data), p.NewVersion)
-		if err := os.WriteFile(p.Path, []byte(rewritten), 0o644); err != nil {
+		if err := atomicio.WriteFile(p.Path, []byte(rewritten), 0o644); err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(cwd, p.Path)
@@ -427,17 +475,24 @@ func newAgentsMigrateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAgentsMigrate(cwd, noCommit, cmd.OutOrStdout())
+			return runAgentsMigrate(cwd, noCommit, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().BoolVar(&noCommit, "no-commit", false, "Don't commit the migration changes")
 	return cmd
 }
 
-func runAgentsMigrate(cwd string, noCommit bool, stdout io.Writer) error {
-	messages, err := inserter.MigrateToAgentsMD(cwd)
+func runAgentsMigrate(cwd string, noCommit bool, stdout, stderr io.Writer) error {
+	messages, declined, refused, err := inserter.MigrateToAgentsMD(cwd)
 	if err != nil {
 		return err
+	}
+	// Reported before the messages: migrate consolidates the per-agent
+	// files either way, but AGENTS.md's own block was left alone (#267),
+	// and a file another component owns was left where it is (#336).
+	reportAgentsBlockRefusal(stderr, declined)
+	for i := range refused {
+		reportRedirectRefusal(stderr, &refused[i])
 	}
 	if len(messages) == 0 {
 		fmt.Fprintln(stdout, "No agent files to migrate (already consolidated).")

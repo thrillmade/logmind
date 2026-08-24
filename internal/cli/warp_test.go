@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // initClonePair builds a real origin/repo pair on the local filesystem: origin
@@ -52,10 +54,10 @@ func initClonePair(t *testing.T) (origin, repo string) {
 	commitAll(t, origin, "init")
 
 	repo = filepath.Join(t.TempDir(), "repo")
-	cmd := exec.Command("git", "clone", "-q", origin, repo)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git clone: %v\n%s", err, out)
-	}
+	// A clone does NOT inherit origin's gc.auto/maintenance.auto — those are
+	// local, per-repo config that `git clone` doesn't copy — so the clone
+	// needs testgit's fix applied again, independently (see its package doc).
+	testgit.CloneRepo(t, repo, "-q", origin)
 	runGitIn(t, repo, "config", "user.email", "test@example.com")
 	runGitIn(t, repo, "config", "user.name", "Test")
 	runGitIn(t, repo, "config", "commit.gpgsign", "false")

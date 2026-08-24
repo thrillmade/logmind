@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 var update = flag.Bool("update", false, "regenerate testdata/*.golden files from current Go output")
@@ -163,13 +166,7 @@ func TestConfigureMergeDrivers_SetsKeys(t *testing.T) {
 		t.Skip("git not on PATH; skipping ConfigureMergeDrivers test")
 	}
 	dir := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	testgit.InitRepo(t, dir, "-q")
 	if !ConfigureMergeDrivers(dir) {
 		t.Fatalf("ConfigureMergeDrivers returned false on fresh repo")
 	}
@@ -180,6 +177,173 @@ func TestConfigureMergeDrivers_SetsKeys(t *testing.T) {
 	// expected value).
 	if ConfigureMergeDrivers(dir) {
 		t.Fatalf("ConfigureMergeDrivers reported changes on second identical call")
+	}
+}
+
+// TestAddMissingLines_DoesNotReinstateDeliberatelyRemovedLine pins
+// logmind#301 round 5 LOW: addMissingLines used to re-add ANY DefaultLines
+// pattern absent from the block, with no way to tell "this repo predates
+// the pattern" apart from "the user deleted it on purpose". Reinstating a
+// line someone removed on purpose is the same class of bug as overwriting
+// a user-owned artifact.
+//
+// Sequence: seed a block that predates docs/timeline-archive.md (simulating
+// an old repo), run the CURRENT EnsureBlock once so it's offered and added
+// (an upgrade must still land it), delete it by hand (the user's deliberate
+// removal), then run EnsureBlock again — it must NOT come back.
+func TestAddMissingLines_DoesNotReinstateDeliberatelyRemovedLine(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping addMissingLines offered-tracking test")
+	}
+	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q")
+	path := filepath.Join(dir, ".gitattributes")
+
+	oldLines := []string{
+		"docs/timeline.md          merge=logmind-timeline",
+		"docs/file-structure.md    merge=logmind-file-structure",
+	}
+	if _, err := ensureBlockWithLines(path, oldLines); err != nil {
+		t.Fatalf("seed pre-archive block: %v", err)
+	}
+
+	// Upgrade: the CURRENT DefaultLines (adds timeline-archive.md) must
+	// still land on a repo that has never seen that pattern.
+	changed, err := EnsureBlock(path)
+	if err != nil {
+		t.Fatalf("EnsureBlock (upgrade): %v", err)
+	}
+	if !changed {
+		t.Fatalf("EnsureBlock did not add the new timeline-archive.md registration on upgrade")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after upgrade: %v", err)
+	}
+	if !strings.Contains(string(body), "docs/timeline-archive.md") {
+		t.Fatalf("timeline-archive.md missing after upgrade:\n%s", body)
+	}
+
+	// The user deliberately deletes the line logmind just added.
+	const archiveLine = "docs/timeline-archive.md  merge=logmind-timeline-archive\n"
+	if !strings.Contains(string(body), archiveLine) {
+		t.Fatalf("archive line not in the exact expected form; got:\n%s", body)
+	}
+	withoutArchive := strings.Replace(string(body), archiveLine, "", 1)
+	if err := os.WriteFile(path, []byte(withoutArchive), 0o644); err != nil {
+		t.Fatalf("simulate user deletion: %v", err)
+	}
+
+	// A later run (another `init`, or `refresh`) must NOT bring it back.
+	changed, err = EnsureBlock(path)
+	if err != nil {
+		t.Fatalf("EnsureBlock (after deletion): %v", err)
+	}
+	if changed {
+		t.Fatalf("EnsureBlock reported changed=true reinstating a deliberately deleted line")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after second EnsureBlock: %v", err)
+	}
+	if strings.Contains(string(after), "docs/timeline-archive.md") {
+		t.Fatalf("timeline-archive.md was reinstated after the user deleted it:\n%s", after)
+	}
+}
+
+// TestAddMissingLines_FailedWriteDoesNotRecordAsOffered pins the HIGH from
+// logmind#301 round 6: a write that never happened must not be recorded as
+// "offered", or addMissingLines treats the missing pattern as a line the
+// user deliberately removed and skips it forever afterwards — even once
+// whatever blocked the write is gone.
+//
+// Two runs against a block that's missing docs/timeline-archive.md:
+//
+//  1. `.gitattributes` is a symlink, so atomicio.WriteFile refuses the
+//     write. EnsureBlock must return an error and the pattern must NOT be
+//     recorded as offered.
+//  2. The SAME path, now a regular file with the identical missing-line
+//     block, must still pick up docs/timeline-archive.md — proving run 1's
+//     failure didn't poison the record.
+//
+// Before this fix, run 1's `defer recordOfferedPatterns(...)` fired
+// unconditionally on the error return, so run 2 also reported
+// changed=false and never wrote the line — exactly the panel's
+// reproduction (docs/timeline-archive.md merge driver never registered
+// again).
+func TestAddMissingLines_FailedWriteDoesNotRecordAsOffered(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unprivileged symlink creation is unreliable on Windows CI runners")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping addMissingLines offered-tracking test")
+	}
+	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q")
+	path := filepath.Join(dir, ".gitattributes")
+
+	oldLines := []string{
+		"docs/timeline.md          merge=logmind-timeline",
+		"docs/file-structure.md    merge=logmind-file-structure",
+	}
+	if _, err := ensureBlockWithLines(path, oldLines); err != nil {
+		t.Fatalf("seed pre-archive block: %v", err)
+	}
+	seeded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded block: %v", err)
+	}
+
+	// Run 1: retarget .gitattributes to a symlink pointing at a copy of the
+	// identical seeded block, so addMissingLines computes the same
+	// "missing docs/timeline-archive.md" set but the write is refused.
+	outside := filepath.Join(dir, "..", "escaped-gitattributes-offered-tracking")
+	if err := os.WriteFile(outside, seeded, 0o644); err != nil {
+		t.Fatalf("seed outside: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove seeded .gitattributes: %v", err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	changed, err := EnsureBlock(path)
+	if err == nil {
+		t.Fatalf("run 1 (symlinked): want a symlink refusal error, got changed=%v err=nil", changed)
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("run 1 error = %q; want it to name the symlink", err)
+	}
+	if changed {
+		t.Fatalf("run 1 (symlinked): want changed=false on a refused write, got true")
+	}
+	t.Logf("run 1 (symlinked): changed=%v err=%v", changed, err)
+
+	// Run 2: same path, now a regular file with the identical missing-line
+	// block. Must still register docs/timeline-archive.md.
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove symlink before run 2: %v", err)
+	}
+	if err := os.WriteFile(path, seeded, 0o644); err != nil {
+		t.Fatalf("restore regular file before run 2: %v", err)
+	}
+
+	changed, err = EnsureBlock(path)
+	t.Logf("run 2 (regular file): changed=%v err=%v", changed, err)
+	if err != nil {
+		t.Fatalf("run 2 (regular file): unexpected error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("BUG: run 1's refused write permanently suppressed docs/timeline-archive.md — run 2 reported changed=false (\"nothing to do\")")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after run 2: %v", err)
+	}
+	if !strings.Contains(string(after), "docs/timeline-archive.md") {
+		t.Fatalf("BUG: docs/timeline-archive.md merge driver never registered again:\n%s", after)
 	}
 }
 

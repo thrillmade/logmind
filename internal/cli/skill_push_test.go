@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/thrillmade/logmind/internal/skill"
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // initGitRepo runs the minimal git plumbing to make the repo at root
@@ -39,14 +40,10 @@ func initGitRepo(t *testing.T, root string) {
 			t.Fatalf("git %v: %v (%s)", args, err, out)
 		}
 	}
-	runGit("init", "-q", "-b", "main")
+	testgit.InitRepo(t, root, "-q", "-b", "main")
 	runGit("config", "user.email", "test@example.com")
 	runGit("config", "user.name", "Test")
 	runGit("config", "commit.gpgsign", "false")
-	// Both keys — see initLogTestGitRepo (log_test.go). maintenance.auto is
-	// the actual spawn gate; gc.auto alone does not suppress it.
-	runGit("config", "gc.auto", "0")
-	runGit("config", "maintenance.auto", "false")
 	runGit("remote", "add", "origin", "https://github.com/thrillmade/logmind.git")
 	// Seed a commit so HEAD exists.
 	dummy := filepath.Join(root, ".seed")

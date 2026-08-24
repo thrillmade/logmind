@@ -39,7 +39,11 @@ run — there's no separate stub to write.
 
 `logmind init` inserts the logmind block between
 `<!-- logmind-start -->` / `<!-- logmind-end -->` markers, versioned via
-`<!-- logmind-block-version: v9-pointer -->`. If the marker is already
+`<!-- logmind-block-version: v10-pointer -->` for the slim body `init`
+installs by default (the full body is a generation behind at `v9`, and the
+two flavours bump independently — read the current pair off the templates
+with `grep -h logmind-block-version internal/templates/AGENTS.md*.template`
+rather than trusting this line). If the marker is already
 present, the block is left alone on a plain re-run (`logmind doctor --fix`
 or a version bump refreshes a *stale* block in place); any other existing
 content in `AGENTS.md` — `## Project Overview`, `## Development Commands`,
@@ -48,7 +52,7 @@ etc. — is preserved as-is.
 ### Per-tool files (stubs)
 
 For every enabled agent, `logmind init` / `logmind agents add <name>`
-writes (or overwrites) a 2-line stub:
+installs a marked stub entry:
 
 ```
 <!-- logmind-stub: AI agent instructions for this project live in AGENTS.md -->
@@ -56,11 +60,36 @@ See [AGENTS.md](AGENTS.md) for project-specific AI agent instructions, including
 the decision-logging requirement (logmind) and required reading.
 ```
 
+**These files are shared, and logmind writes only the entry it owns**
+(SPEC:1101, [protocol#77's ruling](https://github.com/thrillmade/protocol/issues/77#issuecomment-5308058696)).
+Several components install into the same `CLAUDE.md` — this repository's own
+opens with Claude Code's `@AGENTS.md` import directive above the stub, and
+`protocol`'s carries clud-bug's marked block below it. What logmind rewrites
+is the span from its `<!-- logmind-stub: -->` line to the next blank line,
+next component marker, or end of file. Every byte outside that span is left
+exactly as found.
+
+Which means, per state of the file:
+
+| the file … | logmind |
+|---|---|
+| does not exist | writes it, carrying the `logmind-stub` marker |
+| carries logmind's marker | rewrites that entry only |
+| carries another component's marker and no logmind entry | leaves it, and says so on stderr |
+| carries no marker at all | leaves it, and says so on stderr |
+
+For the two JSON tools (`cody`, `zed`) the marker is the top-level
+`"logmind"` key, since JSON carries no comments — logmind refreshes that key
+and leaves every other setting in the file alone. A settings file it cannot
+parse (Zed's routinely carries comments) is one it cannot claim, so it is
+left alone too.
+
 If a per-tool file already exists with real hand-written content (not yet
 a stub), `logmind agents add <name>` falls back to splicing a
 `<!-- logmind-start -->` / `<!-- logmind-end -->` section into that file
 in place (the legacy, pre-AGENTS.md insertion path) rather than clobbering
-it. `logmind agents migrate` consolidates any such files into stubs.
+it. `logmind agents migrate` consolidates any such files into stubs — but
+never one carrying another component's marker.
 
 ### Context files
 
@@ -69,10 +98,11 @@ pointed to from the `AGENTS.md` block:
 
 - **[docs/timeline.md](timeline.md)** — auto-generated, main-canonical
   union of every decision across every branch; start here
-- **[docs/decisions.md](decisions.md)** — 20 most recent decisions on the
-  default branch
+- **`docs/timeline-archive.md`** — the history older than the 50 entries in
+  `docs/timeline.md`, same format (both are written by one regeneration)
 - **[docs/decisions-branches/](decisions-branches/)** — per-branch
-  decision logs for in-flight feature work
+  decision logs; the record itself, one file per branch (the default
+  branch included), append-only and uncapped
 - **[docs/file-structure.md](file-structure.md)** — current project tree
 
 ## CLI Commands
@@ -108,7 +138,7 @@ Supported agents: claude, cursor, copilot, windsurf, aider, continue, cody, zed,
 logmind agents add cursor    # Write .cursorrules as a stub pointing to AGENTS.md
 logmind agents add windsurf  # Write .windsurfrules as a stub pointing to AGENTS.md
 logmind agents remove cursor # Remove .cursorrules
-logmind agents update        # Refresh stale logmind blocks + CI workflow pins
+logmind agents update        # Reports stale logmind blocks + CI workflow pins (dry-run; add --apply to rewrite)
 logmind agents migrate       # Consolidate any full per-agent files into stubs
 ```
 
@@ -137,10 +167,9 @@ $ logmind init
 Initializing logmind...
 
 ✓ Created docs/
-✓ Created docs/decisions.md
-✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
 ✓ Created docs/timeline.md
+✓ Created docs/timeline-archive.md
 ✓ Created .logmind/config.yml
 Created AGENTS.md (canonical agent instructions)
 ✓ Created CLAUDE.md
@@ -169,10 +198,9 @@ $ logmind init --agents claude,cursor,windsurf
 Initializing logmind...
 
 ✓ Created docs/
-✓ Created docs/decisions.md
-✓ Created docs/decisions-archive.md
 ✓ Created docs/file-structure.md
 ✓ Created docs/timeline.md
+✓ Created docs/timeline-archive.md
 ✓ Created .logmind/config.yml
 Created AGENTS.md (canonical agent instructions)
 ✓ Created CLAUDE.md

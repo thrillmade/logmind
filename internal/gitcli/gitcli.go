@@ -35,6 +35,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -117,12 +119,19 @@ func TopLevel(cwd string) (string, bool) {
 }
 
 // CurrentBranch returns the current branch name (e.g. "v1-go-rewrite")
-// or an empty string when HEAD is detached, the repo is unborn without
-// a usable symbolic-ref answer, or any error path. Mirrors
-// git_handler.current_branch.
+// or an empty string when HEAD is detached, when cwd is not a repo, or on
+// any other error path. Mirrors git_handler.current_branch.
 //
-// Implementation: `git symbolic-ref --short HEAD`. Returns "" on
-// detached HEAD (symbolic-ref exits non-zero in that case).
+// Implementation: `git symbolic-ref --short HEAD`. Returns "" on detached
+// HEAD — symbolic-ref exits non-zero there because HEAD holds a raw SHA
+// rather than a ref.
+//
+// An UNBORN repo (no commits yet) is NOT an empty-string case, and callers
+// have assumed otherwise. symbolic-ref resolves HEAD's ref WITHOUT
+// dereferencing it to a commit, so it succeeds before the first commit and
+// answers with the branch HEAD already points at (a fresh `git init` gives
+// `main`, exit 0) even while `git rev-parse --verify HEAD` fails. Anything
+// that needs "does this repo have a commit" must ask rev-parse, not this.
 func CurrentBranch(repoRoot string) string {
 	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
 	cmd.Dir = repoRoot
@@ -182,6 +191,48 @@ func RemoteRepoName(repoRoot string) string {
 	return url
 }
 
+// CommonDirRepoName returns the basename of the directory containing the
+// repository's SHARED git dir — `git rev-parse --git-common-dir`. This is
+// deliberately not `--show-toplevel`: inside a `git worktree` checkout,
+// `--show-toplevel` resolves to the WORKTREE's own path (e.g.
+// ".../agent-<id>"), which is exactly the checkout-basename bug this
+// exists to route around. `--git-common-dir` instead points at the ONE
+// .git directory every worktree of a repo shares, so its parent's
+// basename is the actual repository name no matter which worktree (or how
+// deep a subdirectory of one) the command runs from.
+//
+// git prints `--git-common-dir` relative to repoRoot in the common case
+// (".git" at the top level, "../../.git" three directories down) and only
+// switches to an absolute path when relative wouldn't resolve correctly
+// (observed from inside a worktree). We join against repoRoot before
+// taking the parent's basename so both forms resolve the same way.
+//
+// Empty string on any failure (not a repo, missing git binary, unexpected
+// path shape) — callers fall back to the checkout directory's basename,
+// the same degrade pattern as RemoteRepoName.
+func CommonDirRepoName(repoRoot string) string {
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(stdout.String())
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(repoRoot, dir)
+	}
+	name := filepath.Base(filepath.Dir(dir))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
+}
+
 // DiffCachedNames returns the list of staged file paths
 // (`git diff --cached --name-only`). Empty slice on any failure or
 // when nothing is staged.
@@ -225,7 +276,7 @@ type NumstatLine struct {
 // Returns an empty slice on git failure — check-decisions treats that
 // as "0 lines changed" rather than blowing up the pre-commit hook.
 func DiffCachedNumstat(repoRoot string) []NumstatLine {
-	cmd := exec.Command("git", "diff", "--cached", "--numstat")
+	cmd := exec.Command("git", append([]string{"diff", "--cached"}, numstatFlags...)...)
 	cmd.Dir = repoRoot
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -244,7 +295,7 @@ func DiffCachedNumstat(repoRoot string) []NumstatLine {
 // git commit` stages anything, so `--cached` alone would undercount a
 // change that is still sitting unstaged at evaluation time.
 func DiffNumstat(repoRoot string) []NumstatLine {
-	cmd := exec.Command("git", "diff", "--numstat")
+	cmd := exec.Command("git", append([]string{"diff"}, numstatFlags...)...)
 	cmd.Dir = repoRoot
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -253,6 +304,197 @@ func DiffNumstat(repoRoot string) []NumstatLine {
 		return nil
 	}
 	return parseNumstat(stdout.String())
+}
+
+// rangeSpec renders the three-dot range `check-decisions --base/--head`
+// evaluates: base...head is the diff of head against the MERGE BASE of
+// the two, which is what a pull request actually proposes to add. A
+// two-dot range would also attribute everything that landed on base
+// since the branch forked, failing a PR for its neighbours' lines.
+func rangeSpec(base, head string) string { return base + "..." + head }
+
+// DiffRangeNames returns the file paths a base...head range touches
+// (`git diff --name-only base...head`).
+//
+// Unlike DiffCachedNames this reports an ERROR rather than degrading to
+// an empty slice. Its caller is the `check-decisions` gate, which is the
+// point that actually blocks a merge (SPEC §3.4) — a bad ref there must
+// fail loudly, because "git couldn't resolve the range" and "the range
+// changed nothing" are the same empty result and only one of them should
+// let a pull request through.
+func DiffRangeNames(repoRoot, base, head string) ([]string, error) {
+	out, err := runDiffRange(repoRoot, base, head, "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimRight(out, "\n")
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
+}
+
+// numstatFlags is the ONE flag list every substantive-line count runs
+// with. SPEC §3.4 drives all three enforcement points from "one shared
+// evaluation," so the flags live here rather than at each call site —
+// a flag one surface passes and another doesn't is that one evaluation
+// quietly becoming two.
+//
+// --no-renames is load-bearing, and its absence was a live gate hole.
+// With rename detection ON, git renders a cross-directory rename as a
+// SINGLE row whose path field is `old => new`:
+//
+//	150	0	docs/notes.md => src/payload.go
+//
+// guardcommit.IsExcludedPath prefix-matches that whole string, so the
+// row is excluded as `docs/...` and 550 lines of new Go counted zero —
+// the gate passed a change it exists to stop. --no-renames splits it
+// into a deletion under docs/ (correctly excluded) and an addition under
+// src/ (correctly counted).
+//
+// Deliberately NOT fixed by teaching IsExcludedPath to parse `old =>
+// new`: git has two rename renderings (that one, and the compact
+// `{docs => src}/sub/notes.md`), so a parser owes both plus whatever
+// git adds later. Not asking for renames at all has no such surface.
+var numstatFlags = []string{"--numstat", "--no-renames"}
+
+// DiffRangeNumstat parses `git diff --numstat base...head` into typed
+// rows. Same parsing rules as DiffCachedNumstat, same loud-on-failure
+// contract as DiffRangeNames.
+//
+// The flags deliberately match DiffCachedNumstat's exactly: SPEC §3.4
+// drives every enforcement point from "one shared evaluation," and a flag
+// one surface passes and another doesn't is that evaluation quietly
+// becoming two. See numstatFlags for why --no-renames is among them.
+func DiffRangeNumstat(repoRoot, base, head string) ([]NumstatLine, error) {
+	out, err := runDiffRange(repoRoot, base, head, numstatFlags...)
+	if err != nil {
+		return nil, err
+	}
+	return parseNumstat(out), nil
+}
+
+// AddedHunk is the run of lines ONE diff hunk added, with git's leading
+// "+" stripped, in file order.
+//
+// The type exists so the boundary cannot be dropped by accident. Under
+// -U0 a hunk covers a contiguous range of the NEW file — its "+" lines
+// are exactly that range, adjacent to each other and to nothing else —
+// while two hunks are separated by content the change never touched.
+// Returning one flat []string throws that away: non-adjacent hunks
+// concatenate with no gap, and a reader that scans for structure across
+// the join reads text from one part of the file as if it sat in another.
+// That was a live gate hole. guardcommit.WellFormedDecisionAdded scanned
+// the joined string for a §3.1 section, so prose added by a LATER,
+// unrelated hunk became the body of a reasoning section opened in an
+// EARLIER one. Measured on the PR head: 302 lines of new Go, an empty
+// `**Reasoning:**` in one hunk and an unrelated bullet in another →
+// `git commit` exit 0 "allowed (decision-recorded)" and
+// `check-decisions --base --head` exit 0; the same change minus the
+// second hunk → exit 65 and exit 1.
+type AddedHunk []string
+
+// DiffCachedAddedHunks returns the lines the staged diff ADDS to one
+// path, grouped by hunk, with git's leading "+" stripped. Nil on any
+// failure, matching its DiffCached* siblings.
+//
+// -U0 asks for no context lines, so every "+" line inside a hunk is
+// genuinely new content rather than an unchanged neighbour. Callers use
+// this to judge what a change WROTE to a file, not what the file
+// contains — SPEC §3.4: "A decision clears the gate by being written,
+// not by existing."
+func DiffCachedAddedHunks(repoRoot, path string) []AddedHunk {
+	cmd := exec.Command("git", "diff", "--cached", "-U0", "--", path)
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+	return parseAddedHunks(stdout.String())
+}
+
+// DiffRangeAddedHunks is DiffCachedAddedHunks over a base...head range,
+// with DiffRangeNames' loud-on-failure contract.
+func DiffRangeAddedHunks(repoRoot, base, head, path string) ([]AddedHunk, error) {
+	out, err := runDiffRange(repoRoot, base, head, "-U0", "--", path)
+	if err != nil {
+		return nil, err
+	}
+	return parseAddedHunks(out), nil
+}
+
+// runDiffRange runs `git diff <flags...> base...head` (with the range
+// inserted ahead of any pathspec the caller passed after "--") and
+// returns stdout. Shared by the three DiffRange* wrappers so the range
+// spelling and the error shape live in one place.
+func runDiffRange(repoRoot, base, head string, flags ...string) (string, error) {
+	args := []string{"diff"}
+	spec := rangeSpec(base, head)
+	inserted := false
+	for _, f := range flags {
+		if f == "--" && !inserted {
+			args = append(args, spec)
+			inserted = true
+		}
+		args = append(args, f)
+	}
+	if !inserted {
+		args = append(args, spec)
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoRoot
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", ErrGitNotFound
+		}
+		return "", &GitError{Op: "diff " + spec, Err: err, Stderr: stderr.String()}
+	}
+	return stdout.String(), nil
+}
+
+// parseAddedHunks pulls the added-content lines out of a unified diff,
+// stripping the leading "+", one AddedHunk per "@@" hunk.
+//
+// It tracks hunk state rather than filtering on a "+++" prefix: a real
+// added line whose own content begins with "++" renders as "+++...", so
+// a prefix test would silently drop it. Only lines after a "@@" header
+// are content; a "diff --git" line starts the next file's header block
+// and ends the current one.
+//
+// Every "@@" opens a new group, so a caller can never see two hunks'
+// lines as one run — see AddedHunk for why that boundary is the whole
+// point. A hunk that added nothing (a pure deletion) contributes no
+// group rather than an empty one, so `len(hunks)` counts what was
+// written rather than what was edited.
+func parseAddedHunks(out string) []AddedHunk {
+	var hunks []AddedHunk
+	var current AddedHunk
+	inHunk := false
+	flush := func() {
+		if len(current) > 0 {
+			hunks = append(hunks, current)
+		}
+		current = nil
+	}
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			flush()
+			inHunk = false
+		case strings.HasPrefix(line, "@@ "):
+			flush()
+			inHunk = true
+		case inHunk && strings.HasPrefix(line, "+"):
+			current = append(current, strings.TrimPrefix(line, "+"))
+		}
+	}
+	flush()
+	return hunks
 }
 
 // UntrackedFiles returns the repo-relative paths of every untracked
@@ -472,35 +714,79 @@ func LastCommitTime(repoRoot, relPath string) (time.Time, bool) {
 	return t, true
 }
 
-// DefaultBranch resolves the repo's default branch following the same
-// 5-step search Python's git_handler.default_branch uses:
+// DefaultBranch resolves the repo's default branch. The search descends
+// from Python's git_handler.default_branch but is no longer that function:
+// step 2 was rebuilt and step 4 is new (both explained below).
 //
 //  1. refs/remotes/origin/HEAD                  (set by `git clone` or
 //     `git remote set-head`)
-//  2. local `main` if it exists, else `master`
+//  2. the conventional names, RESOLVED rather than ranked (see below)
 //  3. single-branch repo: that branch IS the default
-//  4. `git config init.defaultBranch`
-//  5. hard fallback: "main"
+//  4. UNBORN HEAD: the branch the first commit will create
+//  5. `git config init.defaultBranch`
+//  6. hard fallback: "main"
 //
-// Used by `logmind rebase` (B3) when --base isn't supplied. Same
-// resolution order as Python so a consuming repo configured to point
-// at `master` via `git config init.defaultBranch master` keeps
-// working after the v1 cutover.
+// Used by `logmind rebase` (B3) when --base isn't supplied, and — since
+// the workflow `on:` filter became a scaffold-time render — by
+// `logmind init`, where a wrong answer installs a workflow that never
+// fires. The init.defaultBranch rung is kept from Python so a consuming
+// repo pointed at `master` via `git config init.defaultBranch master`
+// keeps working after the v1 cutover — and step 4 hands an unborn one of
+// those the same answer anyway, since `git init` reads that very key to
+// decide what to write into HEAD.
+//
+// Step 2 used to be a fixed PREFERENCE — "local `main` if it exists, else
+// `master`" — which answers "main" for a `master` repo that happens to
+// carry a stray local `main` (a leftover from a rename, or a branch
+// somebody created by reflex). That was tolerable while every caller only
+// needed a rebase base; it is not tolerable now that the answer is written
+// into a workflow trigger, because the wrong name there is a check that
+// silently never runs. It now resolves instead: if only one of the two
+// conventional names exists, it IS the answer; when both do, the tie is
+// broken by evidence about which one this repository actually uses, and
+// only a tie no evidence can break still resolves to "main".
+//
+// Step 4 exists because a repo with NO COMMITS YET is not a repo with no
+// evidence — the sentence above once claimed the whole search had that
+// property, and this is the case that made it false. `git init -b trunk`
+// writes `trunk` into HEAD; that is where the first commit lands and what
+// the forge will call the default branch. But a repo that has only ever
+// been `git init`-ed carries no refs at all, so steps 1-3 each came up
+// empty and `logmind init` scaffolded `branches: [main]` — a trigger
+// matching no branch the repo will ever have, on the README's own Quick
+// Start, at exit 0.
+//
+// The step is guarded on UNBORN specifically. HEAD read unconditionally
+// would make every feature branch its own default and collapse
+// onNonDefaultBranch (internal/cli/derived.go) to false everywhere; step
+// 2's tiebreak (b) consults HEAD for exactly that reason, and only as a
+// tiebreak. Unborn is NOT the one state where HEAD is "the only branch
+// this repository has" — that was the premise here until a repo with
+// commits on `develop` and `feature` (no origin), then `git checkout
+// --orphan gh-pages`, disproved it: HEAD was unborn on gh-pages, and step
+// 4 answered `gh-pages` anyway, though the repository plainly has other
+// branches. Unborn is only evidence of that when refs/heads/ is EMPTY —
+// no born branch exists yet at all — so the step is gated on that,
+// reusing step 3's ref listing rather than re-querying it.
+//
+// Its PLACE in the order is the other half of the answer:
+//
+//   - below 1-3, so no answer they already give can change. origin/HEAD
+//     still wins for a clone whose local HEAD points elsewhere, and that is
+//     right on the merits too: the remote's declared default outranks a
+//     local ref that has never been pushed.
+//   - above init.defaultBranch, because that config is what `git init`
+//     CONSULTED in order to write HEAD, and `-b` overrides it. HEAD is the
+//     answer; the config is the guess that may already have been overruled.
 func DefaultBranch(repoRoot string) string {
 	// 1. origin/HEAD
 	if name := RemoteHEAD(repoRoot); name != "" {
 		return name
 	}
 
-	// 2. local main / master
-	for _, candidate := range []string{"main", "master"} {
-		cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+candidate)
-		cmd.Dir = repoRoot
-		cmd.Stdout = &bytes.Buffer{}
-		cmd.Stderr = &bytes.Buffer{}
-		if cmd.Run() == nil {
-			return candidate
-		}
+	// 2. the conventional names — resolved, not ranked.
+	if name := resolveConventionalBranch(repoRoot); name != "" {
+		return name
 	}
 
 	// 3. Single-branch repo
@@ -509,20 +795,152 @@ func DefaultBranch(repoRoot string) string {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &bytes.Buffer{}
+	var branches []string
 	if cmd.Run() == nil {
-		branches := strings.Fields(out.String())
+		branches = strings.Fields(out.String())
 		if len(branches) == 1 {
 			return branches[0]
 		}
 	}
 
-	// 4. init.defaultBranch
+	// 4. Unborn HEAD — the branch the first commit will create. Gated on
+	// refs/heads/ being EMPTY (see the doc comment above): reuses the
+	// listing step 3 already fetched rather than querying it twice. An
+	// established repo — branches already exist — that runs `git checkout
+	// --orphan` also leaves HEAD unborn, on a name that is not the
+	// repository's default, just a new branch nobody has committed to yet.
+	if len(branches) == 0 {
+		if name := unbornHEAD(repoRoot); name != "" {
+			return name
+		}
+	}
+
+	// 5. init.defaultBranch
 	if value, ok := ConfigGet(repoRoot, "init.defaultBranch"); ok && value != "" {
 		return value
 	}
 
-	// 5. Hard fallback
+	// 6. Hard fallback
 	return "main"
+}
+
+// unbornHEAD returns the branch name HEAD points at when that branch does
+// not exist yet — a repo `git init` has created but nothing has committed
+// to. Empty string for every other state: a born branch, a detached HEAD, a
+// HEAD pointing outside refs/heads/, or a directory that is not a repo.
+//
+// Read the CurrentBranch contract above before touching this: `git
+// symbolic-ref HEAD` SUCCEEDS on an unborn repo, resolving HEAD's ref
+// without dereferencing it to a commit. So the probe for unborn-ness is not
+// "does symbolic-ref fail" (it does not; a previous round wrote that false
+// premise into seven places) but "does the ref it names exist yet".
+//
+// The full ref is used rather than CurrentBranch's `--short`: --short
+// answers `custom/x` for a HEAD at refs/custom/x, which git does allow
+// committing to, and which is not a branch. Requiring the refs/heads/
+// prefix keeps this from reporting one as an unborn default branch.
+func unbornHEAD(repoRoot string) string {
+	cmd := exec.Command("git", "symbolic-ref", "HEAD")
+	cmd.Dir = repoRoot
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &bytes.Buffer{}
+	if cmd.Run() != nil {
+		return ""
+	}
+	ref := strings.TrimSpace(stdout.String())
+	name, ok := strings.CutPrefix(ref, "refs/heads/")
+	if !ok || name == "" {
+		return ""
+	}
+	if refExists(repoRoot, ref) {
+		return "" // born: the branch HEAD names already has a commit.
+	}
+	return name
+}
+
+// conventionalDefaultBranches are the two names a repository's default
+// branch is called when nobody has said otherwise. Order here is NOT a
+// preference — resolveConventionalBranch never returns one because it is
+// listed first; the last tiebreak below is the only place the order shows.
+var conventionalDefaultBranches = []string{"main", "master"}
+
+// resolveConventionalBranch answers step 2 of DefaultBranch: which of the
+// conventional names, if either, is this repository's default branch.
+// Returns "" when neither exists locally, so DefaultBranch falls through
+// to its remaining steps.
+//
+// The defect this replaces: a fixed `main`-before-`master` preference
+// returned "main" for a repo whose default is `master` merely because a
+// stray local `main` existed. Covering two names blindly (the old
+// `branches: [main, master]` workflow filter) covered that case by
+// accident; rendering ONE name only helps if the one rendered is right.
+//
+// So when both names exist the tie is broken by evidence, strongest first:
+//
+//	a. the remote — exactly one of origin/main, origin/master exists.
+//	   origin/HEAD is already gone (DefaultBranch step 1), but which
+//	   branches the remote actually publishes still outranks anything
+//	   local: a stray local `main` in a clone of a `master` repo has no
+//	   origin/main behind it.
+//	b. HEAD — the branch currently checked out, when it is one of the two.
+//	   Only ever consulted as a tiebreak: HEAD is the CURRENT branch, and
+//	   returning it unconditionally would make every feature branch its own
+//	   "default" and collapse onNonDefaultBranch to false everywhere.
+//	c. init.defaultBranch, when it names one of the two. Scoped to the tie
+//	   deliberately — DefaultBranch step 5 already reads this key, but as a
+//	   free-form answer; here it only gets to pick between two branches
+//	   that both exist.
+//	d. the conventional order. A repo with both names, no origin, no
+//	   matching HEAD and no config has told us nothing.
+func resolveConventionalBranch(repoRoot string) string {
+	var present []string
+	for _, candidate := range conventionalDefaultBranches {
+		if refExists(repoRoot, "refs/heads/"+candidate) {
+			present = append(present, candidate)
+		}
+	}
+	if len(present) == 0 {
+		return ""
+	}
+	if len(present) == 1 {
+		return present[0]
+	}
+
+	// a. the remote's own branch set.
+	var onRemote []string
+	for _, candidate := range present {
+		if refExists(repoRoot, "refs/remotes/origin/"+candidate) {
+			onRemote = append(onRemote, candidate)
+		}
+	}
+	if len(onRemote) == 1 {
+		return onRemote[0]
+	}
+
+	// b. the checked-out branch, if it is one of the candidates.
+	if head := CurrentBranch(repoRoot); slices.Contains(present, head) {
+		return head
+	}
+
+	// c. init.defaultBranch, but only as a choice between the candidates.
+	if value, ok := ConfigGet(repoRoot, "init.defaultBranch"); ok && slices.Contains(present, value) {
+		return value
+	}
+
+	// d. no evidence at all.
+	return present[0]
+}
+
+// refExists reports whether a fully-qualified ref (refs/heads/main,
+// refs/remotes/origin/master, …) resolves in repoRoot. False on any error,
+// including "not a git repository".
+func refExists(repoRoot, ref string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
+	cmd.Dir = repoRoot
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+	return cmd.Run() == nil
 }
 
 // RunCaptured runs `git <args>` against repoRoot and returns stdout,

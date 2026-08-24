@@ -49,16 +49,35 @@ choice run:
 logmind log "Short summary" -r "why" -a "alt 1" -i "implication"
 ```
 
-Branch-aware: feature branches write to
-`docs/decisions-branches/<branch>.md`; the default branch writes to
-`docs/decisions.md`. The PR-merge GH Action then appends a one-line
-summary linking your PR.
+Branch-aware, with one path rule and no exception to it: every entry writes
+to `docs/decisions-branches/<branch>.md` for the branch it was made on, the
+default branch included (`main.md`). `docs/decisions.md` is a legacy source —
+read where it exists, and never written **on the branch-aware path**.
+`resolveDecisionsPath` still falls back to it in exactly three cases, all of
+them cases where the router cannot resolve a branch name to route by:
+`decisions.branch_aware: false`; `git` reporting this is not a repository,
+which also fires when the `git` binary itself is unreachable — even inside a
+real repo, on a real branch; and a detached HEAD. In those three it is
+created and appended to.
+
+A repo with no commits yet is **not** one of the three. `git symbolic-ref
+--short HEAD` succeeds before the first commit — a fresh `git init` answers
+`main` — so the first decision in an empty repo lands in
+`docs/decisions-branches/main.md` like any other.
 
 ### Tests
 
 - Prefer table-driven tests over many one-shot functions.
 - For anything that touches branches, init with `git init -b main` so
-  the test is independent of `init.defaultBranch` config.
+  the test is independent of `init.defaultBranch` config. That alone is
+  NOT enough when the test's subject is branch-vs-default behavior (the
+  branch-summary nudge, `onNonDefaultBranch`): `git init` leaves the
+  branch unborn — no commit, no ref — and gitcli.DefaultBranch's
+  unborn-HEAD rung then answers with whatever branch gets checked out
+  next, making the checked-out feature branch its own "default" and the
+  assertion vacuous. Commit once first (`bornDefaultBranch` in
+  `internal/cli/headline_test.go`) so the default branch actually exists
+  before a feature branch is cut from it.
 - Snapshot tests live alongside the package; goldens under
   `<pkg>/testdata/*.golden`. Regenerate with `make snapshot` after a
   deliberate output change, and commit the new goldens.

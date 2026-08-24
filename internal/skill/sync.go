@@ -969,7 +969,7 @@ func (w warnWriter) Write(p []byte) (int, error) {
 }
 
 // decisionRefsForSkill scans docs/decisions.md + docs/decisions-branches/
-// *.md + docs/decisions-archive.md (via internal/decisions.Collect, the
+// *.md (via internal/decisions.Collect, the
 // same multi-source reader `logmind timeline` uses) for entries whose
 // title mentions the skill by name, and returns SPEC §1.11.1 "Derived
 // from decisions" anchor lines (`docs/<file>#<title-slug>`), sorted for

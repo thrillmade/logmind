@@ -56,6 +56,7 @@ var DefaultAllowOrphans = []string{
 	"docs/decisions.md",
 	"docs/decisions-archive.md",
 	"docs/file-structure.md",
+	"docs/timeline-archive.md",
 	"docs/decisions-branches/",
 	"docs/reviews/",
 }
@@ -297,8 +298,10 @@ func splitBrokenLine(line string) (source, target string) {
 // broken markdown link. Heuristics, in order:
 //
 //  1. The target is `docs/decisions-branches/<branch>.md` or
-//     `docs/decisions/<branch>.md` referenced FROM `docs/timeline.md` —
-//     the timeline is auto-derived and stale; re-run `logmind timeline --write`.
+//     `docs/decisions/<branch>.md` referenced FROM `docs/timeline.md` or
+//     `docs/timeline-archive.md` — that half is auto-derived and stale, so
+//     re-run the command that writes THAT half (they are different commands;
+//     `--write` writes the one file it is given).
 //  2. The target is `docs/file-structure.md` referenced FROM AGENTS.md /
 //     README.md — same story, re-run `logmind file-structure --write`.
 //  3. Anything else → suggest removing the dead link or restoring the
@@ -310,13 +313,22 @@ func suggestBrokenLinkFix(repoRoot, source, target string) string {
 	targetClean := filepath.ToSlash(target)
 
 	// Timeline regen heuristic — covers the common Layer 1 case where
-	// the user logs a new branch decision but forgets to run
-	// `logmind timeline --write`.
-	if sourceClean == "docs/timeline.md" &&
-		(strings.HasPrefix(targetClean, "docs/decisions-branches/") ||
-			strings.HasPrefix(targetClean, "decisions-branches/") ||
-			strings.HasPrefix(targetClean, "decisions/")) {
-		return "→ run: logmind timeline --write docs/timeline.md"
+	// the user logs a new branch decision but forgets to regenerate.
+	//
+	// The archive gets its own advice, not the timeline's. `logmind timeline
+	// --write` writes the ONE file it is given, so the command that fixes
+	// docs/timeline.md does not touch docs/timeline-archive.md — and printed
+	// against the archive it is advice that cannot work, run and re-run while
+	// the same broken links stay exactly where they were.
+	if strings.HasPrefix(targetClean, "docs/decisions-branches/") ||
+		strings.HasPrefix(targetClean, "decisions-branches/") ||
+		strings.HasPrefix(targetClean, "decisions/") {
+		switch sourceClean {
+		case "docs/timeline.md":
+			return "→ run: logmind timeline --write docs/timeline.md"
+		case "docs/timeline-archive.md":
+			return "→ run: logmind timeline --write docs/timeline-archive.md --half archive"
+		}
 	}
 
 	// File-structure regen heuristic.

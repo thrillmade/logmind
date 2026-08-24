@@ -124,14 +124,39 @@ type GitConfig struct {
 }
 
 // DecisionsConfig mirrors the `decisions:` section.
+//
+// `max_recent` used to live here, capping docs/decisions.md and rotating the
+// overflow into docs/decisions-archive.md. SPEC §3.2 removed the cap outright
+// — every decision file is append-only and uncapped — so the key is gone. A
+// config that still carries it is not an error: §1.6 requires an unrecognised
+// key to be ignored and round-tripped unchanged, which is what LoadAsMap's
+// merge does with any key this struct does not name.
 type DecisionsConfig struct {
-	MaxRecent   int  `yaml:"max_recent"`
 	BranchAware bool `yaml:"branch_aware"`
 }
 
 // FileStructureConfig mirrors the `file_structure:` section.
 type FileStructureConfig struct {
-	AutoUpdate     bool     `yaml:"auto_update"`
+	AutoUpdate bool `yaml:"auto_update"`
+	// IgnorePatterns is the CONFIG pattern source of SPEC §1.4 — the THIRD
+	// of three, never the effective set, and never the defaults.
+	//
+	// DefaultConfig deliberately leaves this nil. That is the whole point:
+	// nil means "this repository configured nothing", a non-empty slice means
+	// "the user's config.yml set this key", and there is no third state to
+	// get wrong. Seeding it with the built-in defaults (which DefaultConfig
+	// used to do) made those two indistinguishable by the time the value
+	// reached tree.ResolveRules — sixteen built-in patterns arriving wearing
+	// the config source's identity, at the config source's POSITION. §1.4
+	// resolves positionally (last match wins, as git does), so mis-ranked
+	// defaults silently outranked a `.gitignore` `!dist` the repository had
+	// written on purpose. Unseeding makes that state unrepresentable rather
+	// than merely corrected.
+	//
+	// The built-in defaults are DefaultIgnorePatterns() — source 1, kept
+	// distinct. The three-way merge happens once, in tree.ResolveRules,
+	// which every consumer routes through. Read this field directly to
+	// decide what to ignore and you reopen #269.
 	IgnorePatterns []string `yaml:"ignore_patterns"`
 	// RootLabel overrides the file-structure tree's root line. Default ""
 	// = the checkout directory's basename (today's behavior); a fixed
@@ -195,8 +220,50 @@ func ResolveSpecFile(repoRoot string, cfg Config) (path string, ok bool) {
 	return joined, true
 }
 
+// DefaultIgnorePatterns returns the built-in ignore patterns — SPEC §1.4's
+// FIRST pattern source, and the SPEC §1.2.1 "MUST include at least" list.
+//
+// This is the one owner of that fact. DefaultMap (the `config list` / `config
+// set` surface) renders it, and tree.ResolveRules seeds the merge with it;
+// neither keeps a second copy. It is deliberately NOT part of DefaultConfig's
+// FileStructure.IgnorePatterns, which is the CONFIG source only — see that
+// field's doc comment for why conflating the two was the #269/#303 defect.
+//
+// Returns a fresh slice per call so a caller that appends cannot scribble on
+// the built-ins for every other caller in the process.
+//
+// Patterns are written WITHOUT the SPEC prose's trailing "/": internal/tree's
+// matcher does a literal filepath.Match against the whole relative path, each
+// path component, and the basename, and §1.4 says so itself — "a trailing
+// slash therefore matches nothing, so patterns are written without one".
+func DefaultIgnorePatterns() []string {
+	return []string{
+		"__pycache__",
+		".git",
+		"node_modules",
+		"venv",
+		".venv",
+		"env",
+		".env",
+		"*.pyc",
+		".pytest_cache",
+		".mypy_cache",
+		"dist",
+		"build",
+		"*.egg-info",
+		".next",
+		".turbo",
+		".DS_Store",
+	}
+}
+
 // DefaultConfig returns a fresh Config populated with the same values
 // hard-coded into Python's DEFAULT_CONFIG (core/config.py:14-67).
+//
+// One deliberate departure: FileStructure.IgnorePatterns is nil rather than
+// the built-in list. See that field's doc comment — the field is §1.4's
+// config source, and the defaults are their own source
+// (DefaultIgnorePatterns).
 func DefaultConfig() Config {
 	return Config{
 		Git: GitConfig{
@@ -208,39 +275,17 @@ func DefaultConfig() Config {
 			CommitLineThreshold:   20,
 		},
 		Decisions: DecisionsConfig{
-			MaxRecent:   20,
 			BranchAware: true,
 		},
 		FileStructure: FileStructureConfig{
 			AutoUpdate: true,
-			IgnorePatterns: []string{
-				"__pycache__",
-				".git",
-				"node_modules",
-				"venv",
-				".venv",
-				"env",
-				".env",
-				"*.pyc",
-				".pytest_cache",
-				".mypy_cache",
-				"dist",
-				"build",
-				"*.egg-info",
-				// SPEC §1.2.1's default list MUST also include these three
-				// (.next/, .turbo/, .DS_Store) — added without the SPEC
-				// prose's trailing "/" because internal/tree's matcher
-				// (patternSetMatches) does a literal filepath.Match against
-				// the basename/path component; every OTHER default pattern
-				// here is already written without a trailing slash for the
-				// same reason (a literal ".next/" would never match the
-				// directory component ".next" and so would silently ignore
-				// nothing).
-				".next",
-				".turbo",
-				".DS_Store",
-			},
-			RootLabel: "",
+			// IgnorePatterns is left NIL on purpose — see the field's doc
+			// comment. The built-in defaults are DefaultIgnorePatterns(),
+			// a source of their own; putting them here would hand
+			// tree.ResolveRules sixteen patterns wearing the config
+			// source's identity and position.
+			IgnorePatterns: nil,
+			RootLabel:      "",
 		},
 		// Context.Repomap default false → `logmind context` emits today's
 		// two-doc payload byte-for-byte. NOT added to DefaultMap (below); the
@@ -347,29 +392,20 @@ func DefaultMap() *OrderedMap {
 	root.Set("git", git)
 
 	decisions := NewOrderedMap()
-	decisions.Set("max_recent", 20)
 	decisions.Set("branch_aware", true)
 	root.Set("decisions", decisions)
 
 	fileStructure := NewOrderedMap()
 	fileStructure.Set("auto_update", true)
-	patterns := []any{
-		"__pycache__",
-		".git",
-		"node_modules",
-		"venv",
-		".venv",
-		"env",
-		".env",
-		"*.pyc",
-		".pytest_cache",
-		".mypy_cache",
-		"dist",
-		"build",
-		"*.egg-info",
-		".next",
-		".turbo",
-		".DS_Store",
+	// Derived from DefaultIgnorePatterns rather than hand-copied: the two
+	// lists used to be maintained separately, so `config list` could report
+	// one set while the tree walk used another. `config set` writes this
+	// merged map straight back out, so what `config list` shows and what
+	// `config set` would persist come from the same source by construction.
+	defaults := DefaultIgnorePatterns()
+	patterns := make([]any, 0, len(defaults))
+	for _, p := range defaults {
+		patterns = append(patterns, p)
 	}
 	fileStructure.Set("ignore_patterns", patterns)
 	root.Set("file_structure", fileStructure)
@@ -456,10 +492,17 @@ func SaveMap(path string, m *OrderedMap) error {
 	if err := enc.Close(); err != nil {
 		return err
 	}
-	// 0600: matches the permission this path has always written
-	// (os.CreateTemp's mode, never explicitly widened) — unchanged by
-	// the atomicio consolidation.
-	return atomicio.WriteFile(path, buf.Bytes(), 0o600)
+	// 0600: matches the permission this path has always written —
+	// unchanged by the move to atomicio's own create-temp routine (see
+	// internal/atomicio's package doc for why it no longer calls
+	// os.CreateTemp); never explicitly widened.
+	//
+	// WriteFileMode, not WriteFile: this is logmind's own file and 0600 is
+	// a deliberate choice, not a create-time default. WriteFile would
+	// preserve whatever mode an existing config.yml had (it reproduces
+	// os.WriteFile), which would let a config that got widened once stay
+	// widened forever.
+	return atomicio.WriteFileMode(path, buf.Bytes(), 0o600)
 }
 
 // deepUpdate recursively folds src into dst — matches Python

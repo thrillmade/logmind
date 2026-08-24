@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 // TestInstallHook_NotARepo asserts the "not a git repository" output
@@ -50,6 +53,7 @@ func TestInstallHook_FreshInstall(t *testing.T) {
 		"( sleep 10; kill",          // the deadline watchdog
 		"wait \"$__lm_pid\"",        // capture the real exit code
 		"-gt 128",                   // timeout/crash → fail open
+		"check-decisions NOT RUN",   // #270: the no-op is not a SILENT one
 	} {
 		if !strings.Contains(string(body), must) {
 			t.Errorf("pre-commit body missing %q", must)
@@ -133,6 +137,46 @@ func TestInstallHook_ForeignWithForce(t *testing.T) {
 	}
 }
 
+// TestInstallHook_NoEngineOnPath_FailsOpenLoudly is the issue #270
+// regression for this hook: `logmind install-hook` is opt-in — the user
+// asked for the gate — so a run where nothing on PATH answers to `logmind`
+// must still allow the commit (exit 0, per SPEC §3.4's mandatory fail-open)
+// AND must say on stderr that it did not run. The stale-engine case needs no
+// equivalent here: this body preserves check-decisions' own exit code, so an
+// engine that doesn't know the subcommand exits nonzero and BLOCKS — noisy
+// by construction, never a silent allow.
+//
+// Runs the hook script directly under an empty PATH, the hermetic way to say
+// "nothing answers to logmind" — filtering the host's real PATH would depend
+// on where this machine keeps git and logmind (often one directory).
+func TestInstallHook_NoEngineOnPath_FailsOpenLoudly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX sh hook body; not applicable on Windows")
+	}
+	repo := initRepo(t)
+	if err := runInstallHook(repo, false, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runInstallHook: %v", err)
+	}
+
+	cmd := exec.Command("/bin/sh", filepath.Join(repo, ".git", "hooks", "pre-commit"))
+	cmd.Dir = repo
+	cmd.Env = []string{"PATH="}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("hook exited non-zero with no engine on PATH: %v\nstderr: %s", err, stderr.String())
+	}
+	for _, must := range []string{"check-decisions NOT RUN", "found nothing"} {
+		if !strings.Contains(stderr.String(), must) {
+			t.Errorf("stderr missing %q; got: %q", must, stderr.String())
+		}
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("hook wrote to stdout: %q; the notice belongs on stderr", stdout.String())
+	}
+}
+
 // initRepo creates a git repo with an initial commit at t.TempDir().
 // Test-helper duplicate of the one in internal/gitcli — repeated
 // here so the cli package's tests don't depend on a sibling test
@@ -143,8 +187,8 @@ func initRepo(t *testing.T) string {
 		t.Skip("git not on PATH; skipping integration test")
 	}
 	dir := t.TempDir()
+	testgit.InitRepo(t, dir, "-q")
 	for _, args := range [][]string{
-		{"init", "-q"},
 		{"config", "user.email", "t@t.com"},
 		{"config", "user.name", "t"},
 	} {

@@ -1,7 +1,9 @@
 package tree
 
 import (
+	"github.com/thrillmade/logmind/internal/testgit"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,5 +80,60 @@ func TestResolveRootLabel(t *testing.T) {
 	// "auto" in a non-git dir → "" (degrades to basename downstream).
 	if got := resolveRootLabel(t.TempDir(), "auto"); got != "" {
 		t.Errorf("auto in non-git dir → %q; want \"\"", got)
+	}
+}
+
+// TestResolveRootLabel_WorktreeMatchesMainCheckout is the regression pin
+// for logmind#285: a `git worktree` checkout must resolve to the SAME
+// root label as the main checkout it was created from, even though the
+// two live in differently-named directories (a real repo's checkout dir
+// vs. ".../agent-<id>"). Before the fix, resolveRootLabel's default
+// ("", unconfigured) case fell straight through to "", and
+// RenderWithLabel's basename fallback then picked up whichever directory
+// the command happened to run from — silently corrupting
+// docs/file-structure.md's root line on every regen inside a worktree.
+func TestResolveRootLabel_WorktreeMatchesMainCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; skipping integration test")
+	}
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v (in %s): %v\n%s", args, dir, err, out)
+		}
+	}
+
+	base := t.TempDir()
+	main := filepath.Join(base, "myrepo")
+	if err := os.MkdirAll(main, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(main, "init", "-q")
+	run(main, "config", "user.email", "test@test.com")
+	run(main, "config", "user.name", "test")
+	// This test commits, so it needs the same background-maintenance
+	// suppression every other test repo gets (#271). It builds its repo
+	// through a local `run` helper rather than testgit.InitRepo because it
+	// also needs `git worktree add` against the same handle.
+	testgit.DisableMaintenance(t, main)
+	mustWriteTree(t, filepath.Join(main, "README.md"), "hello\n")
+	run(main, "add", "README.md")
+	run(main, "commit", "-q", "-m", "init")
+
+	// Checkout dir name deliberately unrelated to the repo name — mirrors
+	// the parallel-agent worktree layout the issue reports.
+	worktree := filepath.Join(base, "agent-deadbeef123")
+	run(main, "worktree", "add", "-q", worktree, "-b", "wt-branch")
+
+	mainLabel := resolveRootLabel(main, "")
+	worktreeLabel := resolveRootLabel(worktree, "")
+
+	if mainLabel != "myrepo" {
+		t.Errorf("resolveRootLabel(main checkout, \"\") = %q; want %q", mainLabel, "myrepo")
+	}
+	if worktreeLabel != mainLabel {
+		t.Errorf("worktree root label = %q; main checkout root label = %q — the two checkouts of the same repo must agree (logmind#285)", worktreeLabel, mainLabel)
 	}
 }

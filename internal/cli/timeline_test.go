@@ -12,7 +12,7 @@ import (
 
 // makeDocs lays out a minimal docs/ tree with a few decision entries.
 // Returns the cwd path the runTimeline subroutine should use.
-func makeDocs(t *testing.T, decisionsBody, archiveBody string, branchFiles map[string]string) string {
+func makeDocs(t *testing.T, decisionsBody string, branchFiles map[string]string) string {
 	t.Helper()
 	cwd := t.TempDir()
 	docs := filepath.Join(cwd, "docs")
@@ -21,11 +21,6 @@ func makeDocs(t *testing.T, decisionsBody, archiveBody string, branchFiles map[s
 	}
 	if decisionsBody != "" {
 		if err := os.WriteFile(filepath.Join(docs, "decisions.md"), []byte(decisionsBody), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if archiveBody != "" {
-		if err := os.WriteFile(filepath.Join(docs, "decisions-archive.md"), []byte(archiveBody), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,7 +36,7 @@ func makeDocs(t *testing.T, decisionsBody, archiveBody string, branchFiles map[s
 func TestTimelineNoDocs(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, "", false, false, &stdout, &stderr)
+	err := runTimeline(cwd, "", halfDefault, false, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("err = %v; want ErrSilent", err)
 	}
@@ -60,10 +55,10 @@ func TestTimelineStdoutMainCanonical(t *testing.T) {
 			"## 2026-06-03 10:00 - Mid 1\n"+
 			"## 2026-06-02 09:00 - Mid 2\n"+
 			"## 2026-06-01 08:00 - Oldest\n",
-		"", nil,
+		nil,
 	)
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, "", false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, "", halfDefault, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if !timeline.HasEntryBlocks(stdout.String()) {
@@ -80,7 +75,7 @@ func TestTimelineStdoutMainCanonical(t *testing.T) {
 // TestTimelineFullFlagIsNoop: `--full` is accepted but ignored as of v2.0.0
 // (the timeline is single-format), so passing it produces identical output.
 func TestTimelineFullFlagIsNoop(t *testing.T) {
-	cwd := makeDocs(t, "## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", "", nil)
+	cwd := makeDocs(t, "## 2026-06-04 14:00 - Newest\n## 2026-06-01 08:00 - Oldest\n", nil)
 	root := NewRootCmd()
 	root.SetArgs([]string{"timeline", "--full"})
 	var out bytes.Buffer
@@ -106,11 +101,11 @@ func TestTimelineWriteFresh(t *testing.T) {
 	cwd := makeDocs(t,
 		"## 2026-06-04 14:00 - Newest\n"+
 			"## 2026-06-01 08:00 - Oldest\n",
-		"", nil,
+		nil,
 	)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, halfDefault, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("✓ Regenerated")) {
@@ -123,15 +118,15 @@ func TestTimelineWriteFresh(t *testing.T) {
 
 // TestTimelineWriteIdempotent: second invocation reports "already up to date".
 func TestTimelineWriteIdempotent(t *testing.T) {
-	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
+	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", nil)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, halfDefault, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, halfDefault, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("already up to date")) {
@@ -141,16 +136,16 @@ func TestTimelineWriteIdempotent(t *testing.T) {
 
 // TestTimelineCheckClean: docs/timeline.md is in sync → exit 0.
 func TestTimelineCheckClean(t *testing.T) {
-	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
+	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", nil)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	// Seed the file by writing it first.
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, halfDefault, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, true, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, halfDefault, true, false, &stdout, &stderr); err != nil {
 		t.Fatalf("check err = %v", err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("is up to date")) {
@@ -160,14 +155,14 @@ func TestTimelineCheckClean(t *testing.T) {
 
 // TestTimelineCheckStale: docs/timeline.md is out of date → exit 1.
 func TestTimelineCheckStale(t *testing.T) {
-	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
+	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", nil)
 	target := filepath.Join(cwd, "docs", "timeline.md")
 	// Write a placeholder that doesn't match the rendered output.
 	if err := os.WriteFile(target, []byte("# stale\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, target, true, false, &stdout, &stderr)
+	err := runTimeline(cwd, target, halfDefault, true, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("stale check err = %v; want ErrSilent", err)
 	}
@@ -178,9 +173,9 @@ func TestTimelineCheckStale(t *testing.T) {
 
 // TestTimelineCheckRequiresWrite: --check without --write errors.
 func TestTimelineCheckRequiresWrite(t *testing.T) {
-	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", "", nil)
+	cwd := makeDocs(t, "## 2026-06-01 10:00 - One\n", nil)
 	var stdout, stderr bytes.Buffer
-	err := runTimeline(cwd, "", true, false, &stdout, &stderr)
+	err := runTimeline(cwd, "", halfDefault, true, false, &stdout, &stderr)
 	if !errors.Is(err, ErrSilent) {
 		t.Errorf("err = %v; want ErrSilent", err)
 	}
@@ -196,7 +191,7 @@ func TestTimelineCheckRequiresWrite(t *testing.T) {
 // main-canonical entry-block format, and that --write/--check use the SAME
 // generator (no false-stale wedge).
 func TestTimelineLegacyConfigKeyIgnored(t *testing.T) {
-	cwd := makeDocs(t, "", "", map[string]string{
+	cwd := makeDocs(t, "", map[string]string{
 		"feat__x.md": "<!-- logmind-entry-start: 2026-06-29-x -->\n- row\n<!-- logmind-entry-end -->\n",
 	})
 	if err := os.MkdirAll(filepath.Join(cwd, ".logmind"), 0o755); err != nil {
@@ -210,7 +205,7 @@ func TestTimelineLegacyConfigKeyIgnored(t *testing.T) {
 	target := filepath.Join(cwd, "docs", "timeline.md")
 
 	var stdout, stderr bytes.Buffer
-	if err := runTimeline(cwd, target, false, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, halfDefault, false, false, &stdout, &stderr); err != nil {
 		t.Fatalf("write: %v (%s)", err, stderr.String())
 	}
 	got, _ := os.ReadFile(target)
@@ -220,7 +215,7 @@ func TestTimelineLegacyConfigKeyIgnored(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	if err := runTimeline(cwd, target, true, false, &stdout, &stderr); err != nil {
+	if err := runTimeline(cwd, target, halfDefault, true, false, &stdout, &stderr); err != nil {
 		t.Errorf("--check after a write reported stale: %v\n%s", err, stdout.String())
 	}
 }

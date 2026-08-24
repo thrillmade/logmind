@@ -1,6 +1,7 @@
 package claudehook
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -22,8 +23,78 @@ func TestCanonicalCommand_Shape(t *testing.T) {
 	if got != want {
 		t.Fatalf("CanonicalCommand() = %q; want %q", got, want)
 	}
-	if strings.Contains(got, "command -v") {
-		t.Errorf("CanonicalCommand() must NOT contain a `command -v logmind` guard (must stay cross-platform + fail-open on missing binary); got %q", got)
+}
+
+// TestCanonicalCommand_MissingBinaryIsFailOpenAndLoud replaces an older
+// assertion that the command string "must NOT contain `command -v`". That
+// assertion pinned a SHAPE, and a shape assertion is passed by any rewrite
+// that keeps the shape while destroying the behaviour — including the one
+// that matters here: appending `|| true`, or wrapping the call in an
+// existence check that exits 0, both keep `command -v` absent and both make
+// the vanished gate silent.
+//
+// What is pinned instead is the outcome measured against Claude Code 2.1.233
+// with a real PreToolUse hook and no `logmind` on PATH. Two exit-code facts
+// carry the whole contract, and they pull in opposite directions:
+//
+//   - exit 2 is the ONLY code that blocks the tool call, so anything else is
+//     fail-open. §3.4: "a missing, stale or crashing engine MUST allow."
+//   - exit 0 is the only code whose stderr reaches NOBODY (it yields a bare
+//     `hook_success` attachment). A non-zero, non-2 exit yields a
+//     `hook_non_blocking_error` attachment carrying the stderr and the
+//     command string, which is what a human actually sees. §3.4: "Failing
+//     open MUST NOT be silent."
+//
+// So the missing-binary path must land strictly between the two — non-zero
+// AND non-2 — with something on stderr that names what was looked for. That
+// is exactly what a bare command name does for free, via the shell's own
+// exit 127; the test exists to catch the day someone "improves" it.
+func TestCanonicalCommand_MissingBinaryIsFailOpenAndLoud(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX sh; the harness runs CanonicalCommand under the user's shell on Windows")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not on PATH; skipping shell-exec test")
+	}
+
+	// An empty directory as the ENTIRE PATH: no logmind, by construction.
+	emptyPath := t.TempDir()
+
+	// Control: the probe can observe a run that DOES find the binary. Without
+	// this, a test that only ever sees "not found" cannot tell a real absence
+	// from a broken harness — see the stub's argv check in the sibling test.
+	stubDir := t.TempDir()
+	stub := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "logmind"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write stub logmind: %v", err)
+	}
+	var control bytes.Buffer
+	ctl := exec.Command(sh, "-c", CanonicalCommand())
+	ctl.Env = []string{"PATH=" + stubDir}
+	ctl.Stderr = &control
+	if err := ctl.Run(); err != nil {
+		t.Fatalf("control run (logmind present) failed: %v; stderr=%q", err, control.String())
+	}
+	if control.Len() != 0 {
+		t.Fatalf("control run wrote stderr %q; want silence when the binary IS present", control.String())
+	}
+
+	var stderr bytes.Buffer
+	cmd := exec.Command(sh, "-c", CanonicalCommand())
+	cmd.Env = []string{"PATH=" + emptyPath}
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	code := cmd.ProcessState.ExitCode()
+	if err == nil || code == 0 {
+		t.Fatalf("exit code = %d (err=%v); want non-zero — an exit-0 PreToolUse hook's stderr reaches nobody, so a gate that vanished this way would be silent (SPEC §3.4)", code, err)
+	}
+	if code == 2 {
+		t.Fatalf("exit code = 2; that BLOCKS the tool call — a missing logmind must never stop a user working (SPEC §3.4 fail-open)")
+	}
+	if !strings.Contains(stderr.String(), "logmind") {
+		t.Errorf("stderr = %q; want it to name what was looked for (SPEC §3.4: \"naming what it looked for and what it found\")", stderr.String())
 	}
 }
 

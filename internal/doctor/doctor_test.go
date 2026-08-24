@@ -9,6 +9,7 @@
 package doctor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/thrillmade/logmind/internal/claudehook"
 	"github.com/thrillmade/logmind/internal/hooks"
+	"github.com/thrillmade/logmind/internal/inserter"
+	"github.com/thrillmade/logmind/internal/templates"
 	"github.com/thrillmade/logmind/internal/version"
 )
 
@@ -413,9 +416,9 @@ func TestProbePathResolution_MatchingVersionIsCurrent(t *testing.T) {
 // TestProbePathResolution_RealVersionFormatNotMarkerless is the direct #214
 // regression: a PATH binary whose `--version` prints the genuine
 // `logmind <ver> (spec <ver>)` line (root.go's versionLine) MUST classify as
-// current/stale — never markerless. The pre-fix regex (`version\s+(\S+)`)
-// found no "version" token in that line, so a real on-PATH Go logmind was
-// always mis-labeled markerless and the PATH-drift row went blind.
+// current/stale — never the unparseable fallback. The pre-fix regex
+// (`version\s+(\S+)`) found no "version" token in that line, so a real
+// on-PATH Go logmind was always mis-labeled and the PATH-drift row went blind.
 func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
@@ -430,8 +433,8 @@ func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
 	_ = os.Setenv("PATH", tmp)
 
 	row := probePathResolution()
-	if row.Drift == "markerless" {
-		t.Fatalf("Drift = markerless on a real `logmind <ver> (spec <ver>)` line; #214 regressed (marker=%v)", row.Marker)
+	if row.Drift == "unreadable" {
+		t.Fatalf("Drift = unreadable on a real `logmind <ver> (spec <ver>)` line; #214 regressed (marker=%v)", row.Marker)
 	}
 	if row.Drift != "stale" {
 		t.Errorf("Drift = %q; want stale (9.9.9-onpath != running %s)", row.Drift, version.Version)
@@ -444,8 +447,9 @@ func TestProbePathResolution_RealVersionFormatNotMarkerless(t *testing.T) {
 // TestProbePathResolution_LegacyClickVersionClassified is the dual-review
 // follow-up to #214: a stale PYTHON (Click) binary on PATH prints
 // `logmind, version X`. The re-anchored regex must still parse it and
-// classify it stale/DRIFT — not silently degrade it to markerless, which
-// would blind the drift row to exactly the stale binary it exists to catch.
+// classify it stale/DRIFT — not silently degrade it to the unparseable
+// fallback, which would blind the drift row to exactly the stale binary it
+// exists to catch.
 func TestProbePathResolution_LegacyClickVersionClassified(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
@@ -458,8 +462,8 @@ func TestProbePathResolution_LegacyClickVersionClassified(t *testing.T) {
 	_ = os.Setenv("PATH", tmp)
 
 	row := probePathResolution()
-	if row.Drift == "markerless" {
-		t.Fatalf("Drift = markerless on legacy Click `logmind, version 0.6.16`; a stale Python binary must be classified, not blinded (marker=%v)", row.Marker)
+	if row.Drift == "unreadable" {
+		t.Fatalf("Drift = unreadable on legacy Click `logmind, version 0.6.16`; a stale Python binary must be classified, not blinded (marker=%v)", row.Marker)
 	}
 	if row.Drift != "stale" {
 		t.Errorf("Drift = %q; want stale (0.6.16 != running %s)", row.Drift, version.Version)
@@ -469,7 +473,15 @@ func TestProbePathResolution_LegacyClickVersionClassified(t *testing.T) {
 	}
 }
 
-func TestProbePathResolution_MarkerlessOnGarbageVersion(t *testing.T) {
+// TestProbePathResolution_UnreadableOnGarbageVersion — #306: a PATH binary
+// whose output carries no parseable version is "unreadable", NOT "markerless".
+// "markerless" is SPEC §5.2's OWNERSHIP verdict ("an artifact carrying no
+// marker at all belongs to the user and MUST NOT be overwritten") and callers
+// act on it as such — `doctor --fix` refuses to write the path and the
+// residual note tells the user logmind is leaving their file alone. A binary
+// on PATH is not a user-owned markerless artifact; reusing the ownership token
+// for it made --fix state a true drift with a false cause.
+func TestProbePathResolution_UnreadableOnGarbageVersion(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "logmind")
 	// Output that doesn't include the `version ` token at all so the
@@ -483,8 +495,12 @@ func TestProbePathResolution_MarkerlessOnGarbageVersion(t *testing.T) {
 	_ = os.Setenv("PATH", tmp)
 
 	row := probePathResolution()
-	if row.Drift != "markerless" {
-		t.Errorf("Drift = %q; want markerless", row.Drift)
+	if row.Drift != "unreadable" {
+		t.Errorf("Drift = %q; want unreadable", row.Drift)
+	}
+	if row.Drift == "markerless" {
+		t.Error("Drift = markerless: an unreadable PATH binary is being reported under SPEC §5.2's " +
+			"user-ownership verdict, which is a different fact about a different kind of artifact")
 	}
 }
 
@@ -659,6 +675,72 @@ func revertClaudeHookMarker(t *testing.T, dir string) {
 	}
 }
 
+// --- probeCommitMsgHook (the §3.4 commit gate) ---------------------------
+
+// probeHook's whole drift signal rests on the hook body being a pure
+// function of internal/version.Version: it byte-compares the installed file
+// against hooks.BuildCommitMsgBody(). Issue #270 weighed pinning the
+// installing binary's absolute PATH into that body and rejected it for
+// exactly this reason — a body that varied by machine would make every
+// correctly-installed hook look like content drift. These two tests are the
+// pin on that reasoning: a hook this binary just wrote is CURRENT, and one
+// byte of hand-editing is STALE.
+
+func TestProbeCommitMsgHook_CurrentAfterInstall(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	if _, err := hooks.InstallCommitMsg(dir); err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	row := probeCommitMsgHook(dir)
+	if row.Drift != "current" {
+		t.Errorf("Drift = %q; want current — a correctly-installed hook must not be reported as drifted", row.Drift)
+	}
+	if row.Marker == nil || *row.Marker != version.Version {
+		t.Errorf("Marker = %v; want %v", row.Marker, version.Version)
+	}
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "OK" {
+		t.Errorf("Overall = %q; want OK", r.Overall)
+	}
+}
+
+// TestProbeCommitMsgHook_ContentDriftOnHandEdit hand-edits ONE line of the
+// installed hook — the fail-open branch, i.e. the line someone silencing the
+// gate would reach for — leaving the version marker untouched, so only the
+// byte-compare can catch it.
+func TestProbeCommitMsgHook_ContentDriftOnHandEdit(t *testing.T) {
+	dir := freshRepo(t)
+	fakeGitDir(t, dir)
+	if _, err := hooks.InstallCommitMsg(dir); err != nil {
+		t.Fatalf("InstallCommitMsg: %v", err)
+	}
+	path := filepath.Join(dir, ".git", "hooks", "commit-msg")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read commit-msg: %v", err)
+	}
+	edited := strings.Replace(string(data), `if [ "$rc" -eq 65 ]; then`, `if [ "$rc" -eq 66 ]; then`, 1)
+	if edited == string(data) {
+		t.Fatalf("fixture is stale: the rc==65 block guard is no longer in the installed body")
+	}
+	mustWrite(t, path, edited)
+
+	row := probeCommitMsgHook(dir)
+	if row.Drift != "stale" {
+		t.Errorf("Drift = %q; want stale — a hand-edited hook body must be detected", row.Drift)
+	}
+	if row.Marker == nil || !strings.Contains(*row.Marker, "content drift") {
+		t.Errorf("Marker = %v; want it to say content drift (the version marker is untouched)", row.Marker)
+	}
+
+	r := CollectStatus(dir, true)
+	if r.Overall != "DRIFT" {
+		t.Errorf("Overall = %q; want DRIFT with a hand-edited commit-msg hook", r.Overall)
+	}
+}
+
 // --- probePreCommitHook (L2a / v2.0.0 derived-docs pin-preservation) -----
 
 // fakeGitDir plants a bare `.git/hooks/` directory under dir — enough for
@@ -749,5 +831,364 @@ func TestProbePreCommitHook_StaleOnRevertedMarker(t *testing.T) {
 	r := CollectStatus(dir, true)
 	if r.Overall != "DRIFT" {
 		t.Errorf("Overall = %q; want DRIFT with stale pre-commit marker", r.Overall)
+	}
+}
+
+// TestClassifyMarker_OrderedNotEqual pins the bug a retrospective panel
+// found in the combination of #289 and #291.
+//
+// #289 taught `installWorkflowTemplates` that template markers are ORDERED
+// and refused to move one backwards. It did not teach doctor, which still
+// compared for equality — so a repository AHEAD of the running binary was
+// reported "STALE (latest: <older marker>)", with both the verdict and the
+// "latest" label inverted. Worse, because #289's refusal is correct, the
+// row became permanently unclearable: doctor said stale, --fix refused,
+// and nothing the operator did could reconcile them.
+//
+// Two consumers of the same fact have to agree, or the tool contradicts
+// itself.
+func TestClassifyMarker_OrderedNotEqual(t *testing.T) {
+	s := func(v string) *string { return &v }
+	cases := []struct {
+		name            string
+		marker, bundled *string
+		want            string
+	}{
+		{"equal is current", s("v5"), s("v5"), "current"},
+		{"older installed is stale", s("v1"), s("v5"), "stale"},
+		{"newer installed is ahead, not stale", s("v99"), s("v5"), "ahead"},
+
+		// The lexical trap: "v11" sorts BEFORE "v4" as a string, so an
+		// equality-or-string-compare implementation looks correct on
+		// single digits and inverts the moment a version reaches two.
+		{"v11 vs v4 is ahead, not stale", s("v11"), s("v4"), "ahead"},
+		{"v4 vs v11 is stale", s("v4"), s("v11"), "stale"},
+
+		// Flavour suffixes must not defeat the parse.
+		{"pointer suffix, newer", s("v10-pointer"), s("v9-pointer"), "ahead"},
+		{"pointer suffix, older", s("v9-pointer"), s("v10-pointer"), "stale"},
+
+		// Unparseable falls back to the old semantics: something differs
+		// and we cannot say which way, so "stale" is the honest answer.
+		{"unparseable installed falls back to stale", s("vNEXT"), s("v5"), "stale"},
+		{"unparseable bundled falls back to stale", s("v5"), s("vNEXT"), "stale"},
+
+		{"no marker is markerless", nil, s("v5"), "markerless"},
+		{"no bundled is unknown", s("v5"), nil, "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyMarker(tc.marker, tc.bundled); got != tc.want {
+				t.Errorf("classifyMarker() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderStatus_AheadRowNamesTheDirection pins the STRING the user
+// saw, not the helper behind it.
+//
+// An adversarial review found the first attempt at this test worthless:
+// it constructed `Drift: "ahead"` literally and asserted the roll-up did
+// not flip, so deleting the rendering branch entirely left the package
+// green while the row silently fell back to a bare "ahead" via
+// formatDrift's default. The reported symptom was the string
+// `STALE (latest: v4)` — inverted verdict, inverted label — so the string
+// is what has to be pinned.
+func TestRenderStatus_AheadRowNamesTheDirection(t *testing.T) {
+	bundled := "v5"
+	installed := "v99"
+	r := StatusReport{
+		Overall: "OK",
+		Tools: []ToolStatus{{
+			Name:  "logmind",
+			Drift: "ok",
+			Workflows: []WorkflowStatus{{
+				Name:          "check-decisions.yml",
+				Marker:        &installed,
+				BundledMarker: &bundled,
+				Drift:         "ahead",
+			}},
+		}},
+	}
+	body := RenderStatus(r)
+
+	if !strings.Contains(body, "ahead of this binary") {
+		t.Errorf("rendered row does not name the direction; got:\n%s", body)
+	}
+	if !strings.Contains(body, "bundles: v5") {
+		t.Errorf("rendered row does not name what this binary bundles; got:\n%s", body)
+	}
+	// The original defect: calling the OLDER marker "latest".
+	if strings.Contains(body, "latest: v5") {
+		t.Errorf("rendered row calls the older marker \"latest\" — the inverted label this fixes; got:\n%s", body)
+	}
+	if strings.Contains(body, "STALE") {
+		t.Errorf("an ahead row must not read STALE; got:\n%s", body)
+	}
+}
+
+// --- AGENTS.md block drift (probeAgentsMD) ----------------------------
+//
+// This function had NO test at all: `grep -rn "probeAgentsMD"
+// --include="*_test.go" .` returned 0 while the same grep for
+// classifyMarker returned 2 — the ordered comparator was unit-tested on a
+// helper the shipped AGENTS.md path bypassed entirely.
+
+// plantAgentsBlock writes an AGENTS.md that is the BUNDLED block of the
+// marker's own flavour with its version id rewritten to `marker`, so the
+// only thing differing from what this binary would install is the id under
+// test. That fidelity is load-bearing for the writer-agreement test below:
+// inserter compares BODIES once the id passes its guards, so a hand-rolled
+// stub body would read as "needs refreshing" at every id, including the
+// current one, and the agreement would be measuring the fixture.
+func plantAgentsBlock(t *testing.T, dir, marker string) {
+	t.Helper()
+	body := templates.AgentsSlimTemplate()
+	if blockMarkerFlavour(marker) == "" {
+		body = templates.AgentsTemplate()
+	}
+	planted := logmindBlockVersionRe.ReplaceAllString(body, "<!-- logmind-block-version: "+marker+" -->")
+	if planted == body && marker != bundledMarkerOf(t, body) {
+		t.Fatalf("fixture failed: no block-version marker was rewritten in the bundled template")
+	}
+	mustWrite(t, filepath.Join(dir, "AGENTS.md"), planted)
+}
+
+// bundledMarkerOf reads the version id out of one of our own template
+// bodies — used only to let plantAgentsBlock tell "nothing was rewritten
+// because the id already matched" from "nothing was rewritten because the
+// template lost its marker".
+func bundledMarkerOf(t *testing.T, body string) string {
+	t.Helper()
+	m := logmindBlockVersionRe.FindStringSubmatch(body)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+// bumpedMarker returns the marker `by` generations from the bundled one
+// for the named flavour: bumpedMarker(t, "-pointer", +1) is the slim block
+// a binary one wave ahead of this one installs.
+func bumpedMarker(t *testing.T, flavour string, by int) string {
+	t.Helper()
+	slim, full := bundledAgentsMDBlockVersions()
+	bundled := full
+	if flavour == "-pointer" {
+		bundled = slim
+	}
+	if bundled == nil {
+		t.Fatalf("this binary bundles no %q-flavour AGENTS.md block marker", flavour)
+	}
+	gen, ok := inserter.ParseMarkerGeneration(*bundled)
+	if !ok {
+		t.Fatalf("bundled marker %q does not parse as a generation", *bundled)
+	}
+	return fmt.Sprintf("v%d%s", gen+by, flavour)
+}
+
+// TestProbeAgentsMD_OrdersTheInstalledMarker is the row-level pin. The
+// verdict that matters is `ahead`: a repository carrying a block NEWER
+// than this binary bundles is not stale, and calling it stale sends the
+// operator to a `--fix` that correctly refuses — an unclearable row plus
+// two contradictory statements about one file.
+func TestProbeAgentsMD_OrdersTheInstalledMarker(t *testing.T) {
+	slim, full := bundledAgentsMDBlockVersions()
+	if slim == nil || full == nil {
+		t.Fatal("this binary bundles an AGENTS.md template with no readable block-version marker")
+	}
+	cases := []struct {
+		name    string
+		marker  string // "" plants no marker line
+		want    string
+		wantCmp *string // the bundled marker the row must report; nil = none
+	}{
+		{name: "bundled slim marker is current", marker: *slim, want: "current", wantCmp: slim},
+		{name: "bundled full marker is current", marker: *full, want: "current", wantCmp: full},
+		{name: "an older slim block is stale", marker: bumpedMarker(t, "-pointer", -1),
+			want: "stale", wantCmp: slim},
+		{name: "a NEWER slim block is ahead, not stale", marker: bumpedMarker(t, "-pointer", +1),
+			want: "ahead", wantCmp: slim},
+		{name: "a newer slim block many waves out is still ahead", marker: bumpedMarker(t, "-pointer", +90),
+			want: "ahead", wantCmp: slim},
+		{name: "an older full block is stale", marker: bumpedMarker(t, "", -1),
+			want: "stale", wantCmp: full},
+		// The case bare equality got wrong in BOTH directions: a full
+		// block one generation ahead of the bundled full marker read
+		// "stale (latest: <the slim marker>)" — wrong verdict, wrong
+		// flavour — because it matched neither bundled token exactly.
+		{name: "a NEWER full block is ahead of the FULL marker", marker: bumpedMarker(t, "", +1),
+			want: "ahead", wantCmp: full},
+		{name: "an unorderable id is unknown, not stale", marker: "vNEXT-pointer",
+			want: "unknown", wantCmp: nil},
+		{name: "a flavour this binary does not ship is unknown", marker: "v10-experimental",
+			want: "unknown", wantCmp: nil},
+		{name: "no marker at all is markerless", marker: "", want: "markerless", wantCmp: slim},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.marker == "" {
+				mustWrite(t, filepath.Join(dir, "AGENTS.md"), "# AGENTS.md\n\nhand-written, no logmind block\n")
+			} else {
+				plantAgentsBlock(t, dir, tc.marker)
+			}
+
+			row := probeAgentsMD(dir)
+			if row.Drift != tc.want {
+				t.Errorf("Drift = %q; want %q (installed %q)", row.Drift, tc.want, tc.marker)
+			}
+			switch {
+			case tc.wantCmp == nil && row.BundledMarker != nil:
+				t.Errorf("BundledMarker = %q; want none — there is nothing this block can be moved to",
+					*row.BundledMarker)
+			case tc.wantCmp != nil && row.BundledMarker == nil:
+				t.Errorf("BundledMarker is nil; want %q", *tc.wantCmp)
+			case tc.wantCmp != nil && *row.BundledMarker != *tc.wantCmp:
+				t.Errorf("BundledMarker = %q; want %q — the row must name the marker it actually compared "+
+					"against, or it tells the reader to move to a block of the other flavour",
+					*row.BundledMarker, *tc.wantCmp)
+			}
+		})
+	}
+
+	// CONTROL — the probe discriminates. A file that is missing entirely
+	// must not read as any of the verdicts above, or the table proves
+	// nothing about what was on disk.
+	if row := probeAgentsMD(t.TempDir()); row.Drift != "missing" || row.Installed {
+		t.Fatalf("control failed: probeAgentsMD on a repo with no AGENTS.md = %+v; want missing", row)
+	}
+}
+
+// TestProbeAgentsMD_AgreesWithTheWriter is the cross-component pin, and
+// the reason the ordering above is written the way it is: doctor REPORTS
+// this file's drift and inserter WRITES it, and the two answering
+// differently is the defect (#299's lesson, applied to the block).
+//
+// The writer's verdict is read from its own exported surface —
+// inserter.FindOutdatedMarkerBlocks, the function `agents update` and
+// `doctor --fix` route through — against the same bytes on disk. So a
+// change to the writer's flavour or ordering rule fails HERE rather than
+// in a fleet repo.
+func TestProbeAgentsMD_AgreesWithTheWriter(t *testing.T) {
+	slim, _ := bundledAgentsMDBlockVersions()
+	if slim == nil {
+		t.Fatal("this binary bundles a slim AGENTS.md template with no readable block-version marker")
+	}
+	markers := []string{
+		*slim,                           // current
+		bumpedMarker(t, "-pointer", -1), // behind this binary
+		bumpedMarker(t, "-pointer", +1), // ahead of it — the #257 rollout state
+		bumpedMarker(t, "", +1),         // ahead, other flavour
+		"vNEXT-pointer",                 // unorderable
+	}
+	for _, marker := range markers {
+		t.Run(marker, func(t *testing.T) {
+			dir := t.TempDir()
+			plantAgentsBlock(t, dir, marker)
+
+			entries, refusal, err := inserter.FindOutdatedMarkerBlocks(dir)
+			if err != nil {
+				t.Fatalf("FindOutdatedMarkerBlocks: %v", err)
+			}
+			drift := probeAgentsMD(dir).Drift
+
+			switch {
+			case refusal != nil && refusal.Ahead:
+				if drift != "ahead" {
+					t.Errorf("the writer refuses to downgrade this block (installed %s is NEWER than %s) "+
+						"but doctor reports %q — the same run would say the block is behind AND ahead",
+						refusal.Installed, refusal.Bundled, drift)
+				}
+			case refusal != nil:
+				if drift != "unknown" && drift != "markerless" {
+					t.Errorf("the writer refuses this block as unreadable but doctor reports %q, which "+
+						"sends the reader to a --fix that will decline", drift)
+				}
+			case len(entries) > 0:
+				if drift != "stale" {
+					t.Errorf("the writer would refresh this block but doctor reports %q", drift)
+				}
+			default:
+				if drift != "current" {
+					t.Errorf("the writer considers this block current but doctor reports %q", drift)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderStatus_AheadAgentsMDRowNamesTheDirection pins the STRING the
+// operator reads, end to end — CollectStatus through RenderStatus — for
+// the same reason TestRenderStatus_AheadRowNamesTheDirection does for
+// workflows: a test that constructs `Drift: "ahead"` by hand stays green
+// while the probe that produces it says "stale".
+//
+// Wording is deliberately the workflow rows' ("ahead of this binary
+// (bundles: …)"), not a third vocabulary for the same fact.
+func TestRenderStatus_AheadAgentsMDRowNamesTheDirection(t *testing.T) {
+	dir := freshRepo(t)
+	ahead := bumpedMarker(t, "-pointer", +1)
+	plantAgentsBlock(t, dir, ahead)
+
+	r := CollectStatus(dir, true)
+	body := RenderStatus(r)
+
+	line := ""
+	for _, l := range strings.Split(body, "\n") {
+		if strings.Contains(l, "AGENTS.md") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no AGENTS.md row in the rendered report:\n%s", body)
+	}
+	if !strings.Contains(line, "ahead of this binary") {
+		t.Errorf("the AGENTS.md row does not name the direction; got %q", line)
+	}
+	if strings.Contains(line, "STALE") {
+		t.Errorf("a block NEWER than this binary reads STALE — the inverted verdict; got %q", line)
+	}
+	if strings.Contains(line, "latest: ") {
+		t.Errorf("the row calls the OLDER bundled marker \"latest\"; got %q", line)
+	}
+	// And it must not drag the whole stack to DRIFT, which is what sends
+	// the operator to a `--fix` that will (correctly) refuse to touch it.
+	if r.Overall == "DRIFT" {
+		t.Errorf("a block ahead of this binary flipped the stack to DRIFT:\n%s", body)
+	}
+
+	// CONTROL — the same repo with a block one generation BEHIND must
+	// still read STALE and still flip the stack, or the assertions above
+	// are passing on a row that reports nothing at all.
+	plantAgentsBlock(t, dir, bumpedMarker(t, "-pointer", -1))
+	stale := CollectStatus(dir, true)
+	staleBody := RenderStatus(stale)
+	if !strings.Contains(staleBody, "STALE") || stale.Overall != "DRIFT" {
+		t.Errorf("control failed: an OLDER block does not report STALE/DRIFT, so the ahead assertions "+
+			"above prove nothing:\n%s", staleBody)
+	}
+}
+
+// TestClassifyLogmindDrift_AheadDoesNotFlipDrift covers the roll-up.
+// Deliberately kept alongside the rendering test above rather than
+// instead of it: this one proves an ahead row does not send the operator
+// to `--fix`, which correctly refuses; that one proves the row says why.
+func TestClassifyLogmindDrift_AheadDoesNotFlipDrift(t *testing.T) {
+	ahead := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "ahead"}}
+	if got := classifyLogmindDrift(ahead); got == "stale" {
+		t.Errorf("an ahead workflow flipped the tool to stale; got %q", got)
+	}
+	stale := []WorkflowStatus{{Name: "check-decisions.yml", Drift: "stale"}}
+	if got := classifyLogmindDrift(stale); got != "stale" {
+		t.Errorf("a stale workflow must still flip the tool to stale; got %q", got)
+	}
+	mixed := []WorkflowStatus{
+		{Name: "check-decisions.yml", Drift: "ahead"},
+		{Name: "regen-timeline.yml", Drift: "stale"},
+	}
+	if got := classifyLogmindDrift(mixed); got != "stale" {
+		t.Errorf("ahead masked a genuinely stale row; got %q, want stale", got)
 	}
 }

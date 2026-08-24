@@ -3,6 +3,8 @@ package gitcli
 import (
 	"os/exec"
 	"testing"
+
+	"github.com/thrillmade/logmind/internal/testgit"
 )
 
 func TestRemoteRepoName(t *testing.T) {
@@ -22,7 +24,7 @@ func TestRemoteRepoName(t *testing.T) {
 				t.Fatalf("git %v: %v\n%s", args, err, out)
 			}
 		}
-		git("init")
+		testgit.InitRepo(t, dir)
 		git("remote", "add", "origin", url)
 		if got := RemoteRepoName(dir); got != "logmind" {
 			t.Errorf("RemoteRepoName(%q) = %q; want logmind", url, got)
@@ -31,11 +33,7 @@ func TestRemoteRepoName(t *testing.T) {
 
 	// No origin remote → "" (resolveRootLabel falls back to the basename).
 	dir := t.TempDir()
-	cmd := exec.Command("git", "init")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
+	testgit.InitRepo(t, dir)
 	if got := RemoteRepoName(dir); got != "" {
 		t.Errorf("no-origin RemoteRepoName = %q; want empty", got)
 	}

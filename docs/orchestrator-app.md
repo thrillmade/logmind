@@ -45,8 +45,8 @@ originate from a thrillmade-owned workflow.
 - **Steward service** — a standing service (not just workflow-minted
   tokens) running under this App identity. Contract details are drafted in
   [`thrillmade/protocol#39`](https://github.com/thrillmade/protocol/issues/39)
-  and SPEC §17 (draft — not yet merged into the canonical
-  `thrillmade/protocol` SPEC).
+  and tracked in SPEC §0.3's Planned list, "Unified install and the
+  steward — [skdd#6](https://github.com/thrillmade/skdd/issues/6)".
 
 Per the master plan at
 `/Users/ludlow/.claude/plans/ok-here-is-recent-distributed-chipmunk.md`,
@@ -56,7 +56,7 @@ spin up a machine-user account: PATs require periodic rotation and tie the
 release pipeline to one human's GitHub account, and machine-user accounts
 add real-account-maintenance overhead with no narrower audit story than an
 App. Tokens are 1-hour installation tokens minted at workflow time by the
-official `actions/create-github-app-token@v2` action — the only App-token
+official `actions/create-github-app-token@v3` action — the only App-token
 action compatible with the repo's `allowed_actions: selected` workflow
 allowlist.
 
@@ -125,22 +125,49 @@ coverage.
 
 Why the wider blast radius is acceptable:
 
-- **Branch rulesets force PRs on every repo.** Only
-  `thrillmade/homebrew-tap` carries the App as a ruleset bypass actor (see
-  "Ruleset bypass" below); every other repo in the org rejects a direct
-  push from the App's installation token and requires the write to land
-  through a reviewed PR like anyone else's. Installing on `all` repos does
-  not mean the App can direct-write to all of them.
+- **Branch rulesets do NOT force PRs on every repo — 13 of 20 accept a
+  direct push from the App.** Bypass is evaluated per ruleset, and rulesets
+  *aggregate*: a push must satisfy every ruleset matching the ref. The
+  steward is a bypass actor on both **organization-level** rulesets
+  (`18502737 org-baseline`, `16898453 org-default-protection`), which apply
+  everywhere. A repo is protected from the App only if it *additionally*
+  carries its own ruleset requiring pull requests without naming the steward.
+  Six do: `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
+  `homebrew-logmind`, `setup-logmind`. A seventh, `arlyn-working`, is
+  protected by **classic branch protection** instead of a ruleset
+  (`enforce_admins: true`), and the steward holds no Administration
+  permission to override it. The other thirteen — including `logmind`,
+  `protocol`, `skdd`, `reporulez` and `homebrew-tap` — accept a direct push.
+
+  **`tremendous-machine` looks blocked and is not.** Its ruleset `4741217`
+  exists, is `active`, requires pull requests and names no bypass actor — but
+  its `conditions.ref_name.include` is `[]`, so it matches no ref at all. That
+  is why the enumerate-the-rulesets method got this wrong twice. **Ask the
+  forge which rules actually apply** instead:
+
+  ```sh
+  gh api repos/thrillmade/<repo>/rules/branches/main --jq '[.[].ruleset_id]|unique'
+  ```
+
+  `tremendous-machine` → `[16898453, 18502737]`, identical to `logmind`, the
+  canonical accepting case. Control: `agent-skills` → `[16434011, 16898453,
+  18502737]`, its own ruleset present.
 - **All-repos is what the census reads today, and what the catalog
   fan-out / chore loop will require** — see "Purpose" above.
 
 **Residual risk, stated plainly:** a compromised App private key can mint
 an installation token scoped to every repository in the org, for that
-token's 1-hour lifetime. `homebrew-tap`'s bypass actor means that one repo
-is exposed to a direct, unreviewed push even under compromise; every other
-repo is limited by required PR review on merge — real exposure (an
-attacker could open PRs, comment, file issues, read contents across the
-org), but gated by human review rather than by installation scope.
+token's 1-hour lifetime. **Thirteen of the org's twenty repos are exposed to
+a direct, unreviewed push under compromise** — not one. The org-level
+bypass, not `homebrew-tap`'s own entry, is what grants it; only the seven repos carrying either their own
+PR-requiring ruleset or classic branch protection stop a direct push — and
+stopping a direct push is NOT the same as requiring review; see below.
+
+Real exposure: an attacker could open pull requests, comment, file issues and
+read contents across the org — **and merge**, because the steward bypasses the
+ruleset that requires review, not merely the one that restricts pushes. The
+limit is the token's one-hour lifetime and the App's permission set, not
+installation scope and not human review.
 
 Expansion or contraction of the installed-repo list happens via the App's
 Installation settings page on the org — never re-register the App.
@@ -194,9 +221,85 @@ required_linear_history + pull_request (0 reviews, squash only). The
 steward App is added as a bypass actor so its direct pushes are exempt;
 human pushes still go through PR review. The bypass IS the audit trail —
 every direct push appears in the org audit log under the App identity.
-`homebrew-tap` is the only repo in the org with a bypass entry — see
-"Installation scope" above for why that matters now that the App installs
-`all` repos rather than a selected list.
+**`homebrew-tap` IS the only repo whose own ruleset names the steward as a
+bypass actor** — that part was right, and an earlier revision of this section
+wrongly called it false. What it omitted is that the steward ALSO bypasses via
+two *organization-level* rulesets that apply to every repo, so a repo's own
+ruleset is not the only thing granting exemption:
+
+```sh
+gh api repos/thrillmade/<repo>/rulesets --jq '.[] | "\(.id) \(.name)"'
+gh api repos/thrillmade/<repo>/rulesets/<id> \
+  --jq '.bypass_actors[]? | "\(.actor_type) \(.actor_id) \(.bypass_mode)"'
+gh api /apps/skdd-steward --jq .id     # the id to look for
+```
+
+Measured 2026-08-15 across all **20** org repos: `18502737 org-baseline` and
+`16898453 org-default-protection` both list the steward with
+`bypass_mode: always`, and both apply everywhere. Control: `20570854`,
+`18292238`, `16434011` and `17128312` all have a `bypass_actors` key, and the
+first three hold zero entries — so the empty result is a real zero, not a
+missing field.
+
+**Rulesets aggregate.** A push must satisfy every ruleset matching the ref, so
+bypassing the org pair is not sufficient where a repo adds its own. **Six**
+repos do — `.github`, `agent-skills`, `clud-bug`, `clud-bug-app`,
+`homebrew-logmind`, `setup-logmind` — and the steward is blocked in those.
+With `arlyn-working` below, that is **seven blocked and thirteen accepting**;
+the six here plus one is the only arithmetic in this section.
+
+**Rulesets are not the only mechanism, and checking only them is how this
+section was wrong twice.** `arlyn-working` carries no ruleset but is protected
+by classic branch protection with `enforce_admins: true`, which nothing bypasses
+without Administration permission — and the steward has none
+(`gh api /apps/skdd-steward --jq .permissions` → contents, issues, metadata,
+pull_requests). Any audit here MUST check both:
+
+```sh
+gh api repos/thrillmade/<repo>/rulesets              # mechanism 1
+gh api repos/thrillmade/<repo>/branches/main/protection   # mechanism 2
+```
+
+So seven are blocked and the remaining thirteen accept a direct push.
+
+**Blocked means a direct push is refused. For the steward it does not mean
+review either — but not because review is unrequired.**
+
+`16898453 org-default-protection` requires **1 approval and code-owner
+review**, in every repo:
+
+```sh
+gh api repos/thrillmade/<repo>/rules/branches/main \
+  --jq '.[]|select(.type=="pull_request")|"\(.ruleset_id) approvals=\(.parameters.required_approving_review_count) codeowners=\(.parameters.require_code_owner_review)"'
+```
+
+→ `18502737 approvals=0 codeowners=false` · `16898453 approvals=1
+codeowners=true`. Identical on `logmind`, `agent-skills` and `homebrew-tap`.
+An earlier revision of this paragraph claimed every rule required zero
+approvals; that came from reading `16434011`, one repo's own ruleset, and
+generalising — the same mistake as the count above, one ruleset standing in
+for all of them.
+
+So a human contributor does face review. **The steward does not**, because it
+bypasses `16898453` outright (`Integration:3951953`, `bypass_mode: always`) —
+and bypassing the ruleset bypasses its review requirement along with its push
+restriction. Holding `pull_requests: write`, it can open a pull request and
+merge it in any repo, blocked or not.
+
+The seven blocked repos therefore stop the App's *direct push* and nothing
+else. Combined with logmind#315 — no ruleset in the org requires status checks
+— an App-authored merge faces no automated gate and no human one.
+
+`logmind` is in the second group: it carries no repo-level ruleset, so
+`regen-on-main`'s push to its default branch is exempt. That is the fact the
+release path depends on, and it is measured rather than generalised — an
+earlier revision of this section claimed exemption "in any org repo", which is
+wrong for the seven above.
+
+Corroboration, and a caution: `homebrew-tap` is the only default branch in the
+org carrying direct steward commits. `logmind`, `agent-skills` and `clud-bug`
+have zero. So for every repo except the tap this exemption is inferred from
+configuration and has never actually been exercised.
 
 The GitHub Rulesets API requires a full ruleset body on `PUT` — it does
 not accept a partial patch. Use a read-merge-PUT pattern: fetch the
@@ -348,13 +451,13 @@ steps — the env-var name stays unchanged for a minimal diff; the secret
 behind it is now an App token.
 
 ```yaml
-      # actions/create-github-app-token@v2 is the official action and the
+      # actions/create-github-app-token@v3 is the official action and the
       # only App-token action compatible with this repo's
       # `allowed_actions: selected` workflow allowlist (tibdex/github-app-token
       # is NOT permitted — verified-Marketplace and actions/* only).
       - name: Mint orchestrator App installation token
         id: app_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.THRILLMADE_ORCHESTRATOR_APP_ID }}
           private-key: ${{ secrets.THRILLMADE_ORCHESTRATOR_PRIVATE_KEY }}

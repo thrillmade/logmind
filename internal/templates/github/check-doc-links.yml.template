@@ -1,4 +1,4 @@
-# logmind-template-version: v8
+# logmind-template-version: v10
 name: logmind / check-links
 
 # Flag broken or orphaned markdown links so agents stay in context when
@@ -48,11 +48,58 @@ name: logmind / check-links
 # anonymous, and shared GitHub-hosted-runner IP ranges routinely blow
 # through the 60-req/hour unauthenticated api.github.com budget, 403ing
 # before logmind is even installed (setup-logmind#4).
+#
+# v9 — the `thrillmade/setup-logmind` pin moves v1.0.0 → v1.0.1. v1.0.1 is
+# the action's current release and what every repo already running these
+# workflows resolves to via Dependabot; shipping v1.0.0 meant a freshly
+# scaffolded repo installed a pin older than the fleet's on day one.
+#
+# v9 also stops guessing the default branch. The `on: push:` filter was
+# `[main, master]` — two of the N names a default branch can have — so a
+# repo on `trunk` or `develop` lost default-branch link checking entirely,
+# and nothing said so. It is now substituted at scaffold time by `logmind
+# init` from the repository's real default branch, with a first step that
+# warns if the two have since drifted apart. Same ruling as the credential
+# chain and the regen refspec: logmind must work standalone, which means
+# assuming nothing about how a repository is set up.
+#
+# v10 — the derived-doc self-heal regenerates the ARCHIVE too. The history is
+# rendered in two halves since §3.3 (docs/timeline.md carries the
+# __LOGMIND_RECENT_LIMIT__ most recent entries, docs/timeline-archive.md the
+# remainder), and `logmind timeline --write` writes the ONE file it is
+# given — so the pair is two invocations, exactly as regen-timeline.yml v13
+# already does it. This step
+# ran only the timeline and the map, so a broken link living in the archive
+# survived every self-heal pass: the job re-ran, changed nothing, and
+# reported the same finding next time. Worse, linkcheck's own advice for an
+# archive-sourced break is `logmind timeline --write docs/timeline-archive.md
+# --half archive` (internal/linkcheck: remediation heuristic) — the workflow
+# printed a fix it could not itself run.
+#
+# The marker bump is the point, not paperwork. `doctor` and
+# logmind-self-update compare the `# logmind-template-version:` marker, never
+# the body, so a content-only fix would leave every repo already running v9
+# with the two-of-three self-heal forever and no drift row to say so. The
+# cost is the designed one: consumers see check-doc-links.yml flagged stale
+# and refreshed on the next `logmind doctor --fix` / self-update, which
+# overwrites local edits to that file — the same trade every prior bump made.
 
 on:
   pull_request:
   push:
-    branches: [main, master]
+    # NOT a guess at what the default branch is called. `logmind init`
+    # substitutes this repository's actual default branch here at scaffold
+    # time — an `on:` filter cannot take an expression, so this is the only
+    # way it is not a hardcoded literal.
+    #
+    # This replaced `[main, master]`, which was a two-name guess: it covered
+    # two of the N names a default branch can have and silently missed the
+    # rest, so a repo on `trunk` or `develop` lost its default-branch link
+    # check with nothing reporting the gap. The rendered value covers every
+    # name exactly. If the default branch is renamed after scaffolding this
+    # line goes stale — the first step of check-links compares it against
+    # the live value and warns.
+    branches: [__LOGMIND_DEFAULT_BRANCH__]
 
 permissions:
   contents: read          # GITHUB_TOKEN stays read-only; the optional PAT does any push
@@ -65,6 +112,23 @@ jobs:
       report: ${{ steps.check.outputs.report }}
       failed: ${{ steps.check.outputs.failed }}
     steps:
+      # First, and dependency-free on purpose: this must still report even
+      # when the install below 403s. A default branch renamed after
+      # scaffolding leaves the `on: push:` filter above pointing at a name
+      # that no longer exists, and the only symptom is a check that quietly
+      # stops running on the default branch. Advisory only — a stale trigger
+      # is this repository's own configuration drift, never a defect in the
+      # pull request being checked.
+      - name: Warn if the scaffolded trigger no longer matches the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SCAFFOLDED_BRANCH: __LOGMIND_DEFAULT_BRANCH__
+        run: |
+          set -euo pipefail
+          if [ "$SCAFFOLDED_BRANCH" != "$DEFAULT_BRANCH" ]; then
+            echo "::warning title=check-links is wired to the wrong branch::This workflow's 'on: push:' filter was scaffolded for '$SCAFFOLDED_BRANCH', but this repository's default branch is now '$DEFAULT_BRANCH'. Link checking therefore no longer runs on pushes to '$DEFAULT_BRANCH' — silently, because a check that stops running reports nothing at all. Fix: run 'logmind init --refresh' to rewrite the trigger."
+          fi
+
       - uses: actions/checkout@v6
         with:
           # Check out the PR head. `repository:` is REQUIRED so fork PRs
@@ -81,7 +145,7 @@ jobs:
       # consumer repos. Dependabot keeps the action ref current via the
       # `github-actions` ecosystem block in `.github/dependabot.yml` (also
       # installed by `logmind init`).
-      - uses: thrillmade/setup-logmind@v1.0.0
+      - uses: thrillmade/setup-logmind@v1.0.1
         with:
           token: ${{ github.token }}
 
@@ -135,7 +199,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: thrillmade/setup-logmind@v1.0.0
+      - uses: thrillmade/setup-logmind@v1.0.1
         with:
           token: ${{ github.token }}
 
@@ -211,8 +275,12 @@ jobs:
 
           # Auto-fix common derived-doc cases by re-running the regen
           # commands (idempotent; no-op when content is already correct).
+          # `logmind timeline --write` writes the ONE file named, so the
+          # two halves of the history are two invocations (§3.3). Omitting
+          # the archive left archive-sourced breaks unfixable by this job.
           if [ -d docs ]; then
             logmind timeline --write docs/timeline.md || true
+            logmind timeline --write docs/timeline-archive.md --half archive || true
             logmind file-structure --write docs/file-structure.md || true
           fi
 

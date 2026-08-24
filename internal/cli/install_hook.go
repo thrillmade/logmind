@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thrillmade/logmind/internal/atomicio"
 	"github.com/thrillmade/logmind/internal/clierr"
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
@@ -113,6 +114,33 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// (Python appended a bare `logmind check-decisions` line here; #213
 		// upgrades that to the deadline-wrapped invocation).
 		newContent := strings.TrimRight(content, "\n") + "\n" + preCommitGuardedCall
+		// DELIBERATELY os.WriteFile, not atomicio. Justified by atomicio's
+		// one rule (see internal/atomicio's package doc), not by an
+		// exception to it: an atomic replace swaps the NAME, so it refuses
+		// a symlink on the destination (rule 2) and severs hardlinks
+		// (rule 3). Both are exactly what must not happen here.
+		//
+		//   - Write-through IS the intent. Pointing .git/hooks/pre-commit
+		//     at a shared/tracked script — husky, chezmoi, a dotfile-managed
+		//     hooks dir, or a hardlink into one — is a common, deliberate
+		//     setup, and appending logmind's line to that shared script is
+		//     what --force was asked to do. atomicio would refuse the write
+		//     outright, or silently hand the user a detached private copy
+		//     that stops tracking the shared file.
+		//   - The dangling-symlink attack cannot reach this branch. We are
+		//     on the ReadFile-SUCCEEDED path, so the name resolved to a real
+		//     file; the exploit needs ErrNotExist (see the fresh-install
+		//     branch below, which IS routed through atomicio).
+		//   - Nor can a hostile repo plant the link: git never checks
+		//     anything out into .git/, so .git/hooks/pre-commit is not
+		//     attacker-supplied content in the threat model this sweep is
+		//     about — unlike AGENTS.md, .github/workflows/*, or .claude/.
+		//
+		// (This keep used to argue a third point — that atomicio
+		// "unconditionally chmods to the perm argument". That was true of
+		// the old implementation and is no longer: rule 1 preserves an
+		// existing file's mode. Deleted rather than restated, because a keep
+		// that outlives its reason is how an exception becomes permanent.)
 		if err := os.WriteFile(hookPath, []byte(newContent), 0o755); err != nil {
 			return err
 		}
@@ -120,22 +148,29 @@ func runInstallHook(cwd string, force bool, stdout io.Writer) error {
 		// already had its exec bit when read). Mirror that — don't
 		// chmod here either; if the user had a non-exec custom
 		// hook, we preserve their mode (best-effort, matches Python).
+		// os.WriteFile's perm argument above is inert for the same
+		// reason: it only applies on create.
 		fmt.Fprintln(stdout, "✓ Added logmind check-decisions to existing pre-commit hook.")
 		return nil
 
 	case errors.Is(readErr, os.ErrNotExist):
 		// Fresh install. Python writes parent dir + "#!/bin/sh\n" + hook_line + chmod 0o755.
-		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
-			return err
-		}
+		//
+		// atomicio.WriteFile (which does the MkdirAll itself), not
+		// os.WriteFile: ErrNotExist here does NOT mean "nothing is at this
+		// path". A dangling symlink at .git/hooks/pre-commit lands us on
+		// exactly this branch, and a bare os.WriteFile would follow it and
+		// drop an executable 0o755 shell script wherever it points. The
+		// rename replaces the link itself.
+		//
+		// WriteFileMode, not WriteFile: 0o755 is the point, not a default.
+		// Rule 1 makes WriteFile's perm a CREATE mode that the umask filters
+		// (a user with `umask 077` would get 0o700, and one who somehow had a
+		// non-exec hook would keep it), so the mode-asserting variant states
+		// the contract at the call site and replaces the follow-up os.Chmod
+		// this branch used to need. Python chmods 0o755 unconditionally too.
 		body := "#!/bin/sh\n" + preCommitGuardedCall
-		if err := os.WriteFile(hookPath, []byte(body), 0o755); err != nil {
-			return err
-		}
-		// WriteFile only honours perm bits on CREATE; chmod
-		// explicitly to make sure the exec bit survives umask
-		// stripping (Python does chmod(0o755) unconditionally too).
-		if err := os.Chmod(hookPath, 0o755); err != nil {
+		if err := atomicio.WriteFileMode(hookPath, []byte(body), 0o755); err != nil {
 			return err
 		}
 		fmt.Fprintln(stdout, "✓ Installed logmind pre-commit hook.")
@@ -164,7 +199,17 @@ const preCommitMarker = "logmind check-decisions"
 //
 //   - Missing binary: the `command -v logmind` guard makes it a clean no-op
 //     (fall through to the end of the script → exit 0) instead of a
-//     `command not found` non-zero that would wrongly block the commit.
+//     `command not found` non-zero that would wrongly block the commit. As
+//     of issue #270 it is not a SILENT no-op: SPEC §3.4 requires a gate that
+//     fails open to say so on stderr, "naming what it looked for and what it
+//     found". This hook is opt-in — the user asked for it by running
+//     `logmind install-hook` — so it not running is exactly what they need
+//     told. Exit status is unchanged (still 0).
+//   - Stale binary: unlike the commit-msg hook, no skew handshake is needed
+//     here. This block PRESERVES check-decisions' exit code, so an engine
+//     that doesn't know the subcommand exits nonzero and BLOCKS — noisy and
+//     visible, never a silent allow. Missing is the only way this gate can
+//     disappear quietly, and that is the branch made loud below.
 //   - Normal completion: check-decisions' own exit code is PRESERVED —
 //     `exit 0` when clean/under-threshold, `exit 1` when it blocks an
 //     undocumented over-threshold change (its designed pre-commit behavior).
@@ -179,7 +224,9 @@ const preCommitMarker = "logmind check-decisions"
 const preCommitGuardedCall = "# logmind check-decisions — hang-guarded (issue #213): run under a\n" +
 	"# deadline so a wedged logmind binary can never stall `git commit`.\n" +
 	"# Fail OPEN (exit 0) on timeout/crash; preserve a real block exit code\n" +
-	"# on the normal path. A missing binary is a clean no-op.\n" +
+	"# on the normal path. A missing binary is a clean no-op — but not a\n" +
+	"# silent one (issue #270): a gate that cannot report its own absence\n" +
+	"# gets trusted long after it stopped working.\n" +
 	"if command -v logmind >/dev/null 2>&1; then\n" +
 	"    logmind check-decisions &\n" +
 	"    __lm_pid=$!\n" +
@@ -193,6 +240,8 @@ const preCommitGuardedCall = "# logmind check-decisions — hang-guarded (issue 
 	"        exit 0\n" +
 	"    fi\n" +
 	"    exit \"$__lm_rc\"\n" +
+	"else\n" +
+	"    printf 'logmind: check-decisions NOT RUN — looked for `logmind` on PATH, found nothing. Commit allowed.\\n' >&2\n" +
 	"fi\n"
 
 // ErrSilent is the cli-layer alias of clierr.ErrSilent. Backward-compat

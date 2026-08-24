@@ -1,3 +1,3 @@
-⚠  25 lines changed without updating docs/decisions.md.
+⚠  25 lines changed without updating docs/decisions-branches/<branch>.md.
    Log this decision: logmind log "Your decision here"
    To skip this check: git commit --no-verify

@@ -4,18 +4,41 @@ import (
 	"github.com/thrillmade/logmind/internal/gitcli"
 )
 
-// derivedDocPaths are the two committed, purely-derived context docs governed by
+// derivedDocPaths are the committed, purely-derived context docs governed by
 // the zero-conflict invariant: on any non-default branch they MUST stay
 // byte-identical to their merge-base-with-main version (the branch never edits
 // them), so git's 3-way merge is conflict-free. They are regenerated only at the
 // integration point (main). Repo-relative, forward-slash (git pathspec form).
-var derivedDocPaths = []string{"docs/timeline.md", "docs/file-structure.md"}
+//
+// docs/timeline-archive.md is the older half of the SPEC §3.3 rendering split
+// and is governed exactly as docs/timeline.md is — §3.3 names all three:
+// "A non-default branch MUST NOT modify any derived file — the history, its
+// archive, or the map." Every restore path takes this list rather than naming
+// files itself, so a doc added here is picked up by all of them at once.
+var derivedDocPaths = []string{"docs/timeline.md", "docs/timeline-archive.md", "docs/file-structure.md"}
 
 // onNonDefaultBranch reports whether cwd is a git repo currently on a branch
-// other than the default branch. Best-effort: false on a non-repo, detached
-// HEAD, unborn branch, or unknown default — the conservative answer, since every
-// caller uses `true` to ENABLE the extra invariant guard and `false` preserves
-// pre-v2.0.0 behavior.
+// other than the default branch. Best-effort: false on a non-repo, a
+// detached HEAD (CurrentBranch == ""), an unresolved default (DefaultBranch
+// == ""), or simply because the current branch already IS the default — the
+// conservative answer in each case, since every caller uses `true` to ENABLE
+// the extra invariant guard and `false` preserves pre-v2.0.0 behavior.
+//
+// An unborn repo is NOT its own case, despite reading like one at a glance:
+// CurrentBranch resolves HEAD's ref before the first commit (see
+// decisions.NonBranchSources), so `git init -b main` returns false because
+// cur == def (both "main") — exactly as it would after a commit. Round 9
+// removed this same false "no branch name" premise from decisions.go,
+// AGENTS.md.template and docs/plan.md; this comment was the ninth copy
+// round 10's panel found still standing.
+//
+// It took until gitcli.DefaultBranch step 4 for the OTHER half to hold. The
+// line above used to add that `git init -b trunk` returns true, "exactly as
+// it would after a commit" — and that was the one illustration in it that
+// was false both ways round: DefaultBranch answered "main" for an unborn
+// `trunk` repo (so: true), while after a single commit the single-branch
+// step answers "trunk" (so: false). Now both sides read the same evidence
+// and an unborn repo genuinely does behave as it will once committed.
 func onNonDefaultBranch(cwd string) bool {
 	if !gitcli.IsRepo(cwd) {
 		return false
@@ -37,7 +60,7 @@ func onNonDefaultBranch(cwd string) bool {
 // L1 restore (log.go) and guardCommitHarness's L2b restore
 // (guard_commit.go) — see either call site for the full seam this closes:
 // `logmind warp`'s merge-base repair (runWarp, warp.go) deliberately STAGES
-// the two derived docs so the fix survives into the next commit, and an
+// the derived docs so the fix survives into the next commit, and an
 // unconditional restore-to-HEAD would silently undo it, re-committing the
 // very divergence the CI gate's remediation advice ("run `logmind warp`,
 // then `logmind log`") told the user to fix.

@@ -6,15 +6,15 @@
 // Mirrors src/logmind/core/parser.py (the DECISION_HEADER regex + the
 // "skip malformed but keep going" error policy).
 //
-// The package also exposes Collect(), the multi-source aggregator that
-// reads decisions.md + decisions-archive.md + decisions-branches/*.md
-// and returns a unified, source-tagged slice. The timeline subcommand
-// consumes that slice directly.
+// The package also exposes Collect(), the multi-source aggregator that reads
+// every NonBranchSources() file (decisions.md + decisions-archive.md) plus
+// decisions-branches/*.md and returns a unified, source-tagged slice. The
+// timeline subcommand consumes that slice directly.
 //
 // SplitRaw / SplitRawBytes expose the same header boundaries as byte
-// ranges rather than just parsed fields — the primitive SPEC §1.3.2's
-// capacity rotation uses to relocate an overflowing entry to
-// docs/decisions-archive.md without ever re-rendering it.
+// ranges rather than just parsed fields — the primitive for moving an entry
+// between files (the §3.2 migration of a legacy main log into
+// docs/decisions-branches/main.md) without ever re-rendering it.
 package decisions
 
 import (
@@ -35,6 +35,131 @@ type Entry struct {
 	Title       string
 	SourcePath  string
 	SourceLabel string
+}
+
+// NonBranchSource names a decision file that the SPEC §3.2 branch-file layout
+// does not name after a branch. File is relative to docsPath; Label is
+// logmind's own source grammar token ("legacy" | "archive" — not a PROTOCOL
+// SPEC grammar) a reader tags its entries with.
+type NonBranchSource struct {
+	File  string
+	Label string
+}
+
+// NonBranchSources returns, in deterministic read order, every decision file
+// that lives outside docs/decisions-branches/ and that EVERY read path
+// (Collect, the timeline's collectMarked, `search`, `show --all`) MUST read.
+//
+// This is the single owner of that list. A read path that hardcodes one of
+// these filenames instead of ranging over this function is the bug class this
+// exists to make unrepresentable: §3.2 collapsed the layout by dropping
+// docs/decisions-archive.md from four read paths independently, and a repo
+// that had rotated under the old `max_recent: 20` default silently lost every
+// archived decision from `search`, `show --all`, and the timeline.
+//
+//   - decisions.md — the pre-§3.2 main log, labeled "legacy" (round-10 fix:
+//     was "main" until §3.2 collapsed the layout and made main a branch like
+//     any other — a real decision made on the main branch now labels as
+//     "branch:main", so the bare token needed to stop meaning two different
+//     things depending on when you read it. "legacy" is also what
+//     showBannerTitle already called this file's raw-stream banner). Still
+//     WRITTEN, but only where the router cannot resolve a branch name to
+//     name a file after: a non-git directory (which also fires when the
+//     `git` binary itself is unreachable, even inside a real repo on a real
+//     branch), a detached HEAD, or decisions.branch_aware explicitly off
+//     (resolveDecisionsPath in internal/cli/log.go routes those three here,
+//     and owns the rule — see its doc comment for why "no branch NAME" is
+//     not quite the right description of all three). An unborn repo is NOT
+//     among them — symbolic-ref resolves HEAD's ref before the first
+//     commit, so a fresh `git init` routes to main.md. It is no longer
+//     where a decision made ON the default branch goes — that is
+//     docs/decisions-branches/main.md like any other branch.
+//   - decisions-archive.md — the pre-§3.2 rotation overflow, written by the
+//     retired `max_recent` cap. NOTHING writes it now, in any state. It is
+//     read-only legacy: a repo that rotated before upgrading keeps every
+//     archived decision findable. Nothing here migrates its contents into
+//     main.md — rewriting a user-owned artifact is not this code's business
+//     (SPEC line 1101); the read paths simply surface it where it lies.
+//
+// Order is the read order callers append in, so output stays deterministic.
+func NonBranchSources() []NonBranchSource {
+	return []NonBranchSource{
+		{File: "decisions.md", Label: "legacy"},
+		{File: "decisions-archive.md", Label: "archive"},
+	}
+}
+
+// Source is one decision file that exists on disk right now, as discovered by
+// ListSources.
+//
+//   - Path is absolute (join of docsPath and Rel), the value a reader opens.
+//   - Rel is the docs-relative, forward-slash path readers quote in output
+//     ("decisions.md", "decisions-branches/feat__x.md").
+//   - Label is logmind's own source-grammar token for the file (not a
+//     PROTOCOL SPEC grammar — §3.2 defines branch routing, not a source
+//     label vocabulary): "legacy" or "archive" for a non-branch source, the
+//     un-sanitized branch name for a branch file. `show` prefixes branch
+//     labels with "branch:" for its own --json/--brief grammar; the raw
+//     name is kept here so every caller can render it its own way.
+//   - IsBranch distinguishes docs/decisions-branches/*.md from the two files
+//     that are named after no branch, which is the only distinction the read
+//     paths actually make.
+type Source struct {
+	Path     string
+	Rel      string
+	Label    string
+	IsBranch bool
+}
+
+// ListSources is THE source-discovery primitive. Every read path — Collect,
+// the timeline's collectMarked, `logmind search`, `logmind show` — finds its
+// decision files here and nowhere else.
+//
+// It ENUMERATES: the NonBranchSources() files that exist, then every
+// docs/decisions-branches/*.md ListBranchFiles reports, sorted by filename.
+// Nothing is resolved, guessed, or named in advance.
+//
+// That is the whole point, and it is a regression fence. `search` used to
+// discover the default branch's file by RESOLVING a branch name
+// (gitcli.DefaultBranch) and joining it into a path. That resolver's fallback
+// chain ends "…→ single-branch repo → that branch IS the default → unborn
+// HEAD → 'main'", so wherever origin/HEAD is unset — a `git clone
+// --single-branch`, an `actions/checkout` working copy, and EVERY
+// locally-created repo — the resolved name collapsed onto the
+// current branch or onto a "main" that does not exist, and the default
+// branch's decision file was silently dropped from the search even though it
+// was sitting on disk. `show --all` and `timeline` never had the bug, because
+// they enumerate. Enumeration cannot miss a file that exists; name resolution
+// can, and did.
+//
+// A caller that still wants a default-branch-aware ORDER or LABEL resolves
+// that AFTER this returns — never as a precondition for finding the file.
+//
+// Missing files are dropped silently: a repo with no legacy main log, no
+// archive, or no branches directory at all still reads whatever exists.
+func ListSources(docsPath string) ([]Source, error) {
+	var out []Source
+	for _, src := range NonBranchSources() {
+		p := filepath.Join(docsPath, src.File)
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		out = append(out, Source{Path: p, Rel: src.File, Label: src.Label})
+	}
+	branchFiles, err := ListBranchFiles(filepath.Join(docsPath, "decisions-branches"))
+	if err != nil {
+		return nil, err
+	}
+	for _, bf := range branchFiles {
+		base := filepath.Base(bf)
+		out = append(out, Source{
+			Path:     bf,
+			Rel:      "decisions-branches/" + base,
+			Label:    BranchLabelFromFilename(base),
+			IsBranch: true,
+		})
+	}
+	return out, nil
 }
 
 // decisionHeader mirrors Python's DECISION_HEADER regex
@@ -109,10 +234,10 @@ func Iter(path string, stderr io.Writer) ([]Entry, error) {
 // RawEntry pairs a parsed Entry with the exact bytes of the entry block it
 // was parsed from — from its "## YYYY-MM-DD HH:MM - <title>" header line
 // through (and including) everything up to the next entry's header line, or
-// EOF for the last entry in the file. SPEC §1.3.2 requires FIFO overflow
-// migration to "preserve byte-exact entry content"; RawEntry.Raw is what
-// callers relocate verbatim between docs/decisions.md and
-// docs/decisions-archive.md — it is never re-rendered.
+// EOF for the last entry in the file. RawEntry.Raw is the entry exactly as
+// it sits on disk, so a caller that re-emits it (`show`, the §3.2 migration
+// of a legacy main log into a branch file) does so byte-for-byte — it is
+// never re-rendered.
 type RawEntry struct {
 	Entry
 	Raw string
@@ -135,9 +260,8 @@ func SplitRaw(path string) (preamble string, entries []RawEntry, err error) {
 // SplitRawBytes splits already-loaded decisions-file content into a leading
 // preamble (the file's own top-of-file header block, or the whole content
 // when no entry header is found) and the entries that follow it, in on-disk
-// order. docs/decisions.md and docs/decisions-archive.md are both
-// append-only, so on-disk order is oldest-first — the FIFO overflow callers
-// need (§1.3.2: "the OLDEST entry MUST be moved ... Migration is FIFO").
+// order. Every decision file is append-only (§3.2), so on-disk order is
+// oldest-first.
 //
 // Boundaries are found by scanning line-by-line for the same decisionHeader
 // pattern Iter uses (so a header this misses, Iter misses too, and vice
@@ -189,7 +313,7 @@ func SplitRawBytes(content string) (preamble string, entries []RawEntry) {
 	return preamble, entries
 }
 
-// branchLabelFromFilename reverses logger._sanitize_branch's escaping.
+// BranchLabelFromFilename reverses logger._sanitize_branch's escaping.
 //
 // Mirror of Python core/timeline.py _branch_label_from_filename:
 //   - strip ".md" suffix
@@ -197,7 +321,10 @@ func SplitRawBytes(content string) (preamble string, entries []RawEntry) {
 //
 // Imperfect (the original sanitize step also catches `\` and `:`) but
 // covers the 99% case of feat__auth → feat/auth.
-func branchLabelFromFilename(name string) string {
+//
+// Exported because ListSources stamps it onto every branch Source, so the
+// read paths share one filename→label reversal instead of each keeping a copy.
+func BranchLabelFromFilename(name string) string {
 	stem := strings.TrimSuffix(name, ".md")
 	return strings.ReplaceAll(stem, "__", "/")
 }
@@ -205,11 +332,15 @@ func branchLabelFromFilename(name string) string {
 // Collect walks the canonical logmind sources under docsPath and
 // returns every entry, sorted newest-first.
 //
-// Sources walked (read-only; never written):
+// Sources walked (Collect itself never writes):
 //
-//	docs/decisions.md                    → source_label="main"
+//	docs/decisions.md                    → source_label="legacy"
 //	docs/decisions-archive.md            → source_label="archive"
 //	docs/decisions-branches/<branch>.md  → source_label="<branch>"
+//
+// Discovery is ListSources's job, not this function's — see it for why every
+// read path enumerates instead of resolving a branch name, and NonBranchSources()
+// for why each of the first two is still read and which is still written.
 //
 // Missing files are tolerated; callers get whatever exists.
 func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
@@ -218,44 +349,18 @@ func Collect(docsPath string, stderr io.Writer) ([]Entry, error) {
 	}
 	var out []Entry
 
-	main := filepath.Join(docsPath, "decisions.md")
-	mainEntries, err := Iter(main, stderr)
+	srcs, err := ListSources(docsPath)
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range mainEntries {
-		e.SourcePath = "decisions.md"
-		e.SourceLabel = "main"
-		out = append(out, e)
-	}
-
-	archive := filepath.Join(docsPath, "decisions-archive.md")
-	archiveEntries, err := Iter(archive, stderr)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range archiveEntries {
-		e.SourcePath = "decisions-archive.md"
-		e.SourceLabel = "archive"
-		out = append(out, e)
-	}
-
-	branchesDir := filepath.Join(docsPath, "decisions-branches")
-	branchFiles, err := ListBranchFiles(branchesDir)
-	if err != nil {
-		return nil, err
-	}
-	for _, bf := range branchFiles {
-		base := filepath.Base(bf)
-		entries, err := Iter(bf, stderr)
+	for _, src := range srcs {
+		entries, err := Iter(src.Path, stderr)
 		if err != nil {
 			return nil, err
 		}
-		label := branchLabelFromFilename(base)
-		rel := "decisions-branches/" + base
 		for _, e := range entries {
-			e.SourcePath = rel
-			e.SourceLabel = label
+			e.SourcePath = src.Rel
+			e.SourceLabel = src.Label
 			out = append(out, e)
 		}
 	}
