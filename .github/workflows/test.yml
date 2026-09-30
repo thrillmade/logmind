@@ -103,3 +103,23 @@ jobs:
             exit 1
           fi
           echo "All go test matrix cells + lint passed."
+
+  # `ci` — the status check name the org-wide "CI must pass" ruleset
+  # requires (context: exactly `ci`), distinct from `test` above, which is
+  # pinned by name by the older org-default-protection ruleset's
+  # required_status_checks and is left untouched. `ci` needs only `test`
+  # (not `go`/`lint` directly) since `test` already aggregates both — a
+  # go-matrix or lint failure fails `test` first, and `ci` reads that.
+  required:
+    name: ci
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the test aggregator to have passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::test did not succeed (result: ${{ needs.test.result }})"
+            exit 1
+          fi
+          echo "test succeeded — ci passes."
